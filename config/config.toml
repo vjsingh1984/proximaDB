@@ -47,6 +47,12 @@ data_directory = "/tmp/proximadb/sst_data"
 mmap_enabled = true
 prefetch_enabled = true
 prefetch_size_kb = 64
+# Vector encoding strategy (FullVector, GroupedBlock, GroupedField, TransposeBlock, Auto)
+# FullVector (default): Best for vector databases (WORM workloads, fastest decode in 8/12 configs)
+# GroupedBlock: Best balanced (wins 6/12 = 50%, good for mixed workloads)
+# GroupedField: Max compression (19-22%, best for storage-critical deployments)
+# Auto: Automatically selects strategy (resolves to FullVector for WORM workloads)
+vector_encoding_strategy = "FullVector"
 
 [storage.bloom_filter_config]
 bits_per_key = 10
@@ -60,6 +66,8 @@ compression_level = 3  # Balanced speed/compression (1-22)
 enable_statistics = true
 data_directory = "/tmp/proximadb/viper_data"
 cache_size_mb = 512
+# Note: VIPER uses Parquet's native columnar format and does not use ProximaDataBlocks.
+# vector_encoding_strategy is only for SST engine (which uses ProximaDataBlocks)
 
 [storage.filesystem_config]
 enable_write_strategy_cache = true

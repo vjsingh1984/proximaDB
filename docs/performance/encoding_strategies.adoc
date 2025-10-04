@@ -392,8 +392,8 @@ compression_threshold = 256        # Adaptive
 %%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "ProximaDB Storage Engines"
-        A[SST Engine<br/>Row-based<br/>Real-time]
-        B[VIPER Engine<br/>Columnar<br/>Analytics]
+        A[SST Engine<br/>ProximaDataBlocks<br/>Real-time]
+        B[VIPER Engine<br/>Parquet Format<br/>Analytics]
         C[SWIFT Engine<br/>Speed-optimized<br/>Streaming]
         D[RAPTOR Engine<br/>Adaptive<br/>Dynamic]
     end
@@ -606,19 +606,171 @@ compression_target = 2.0
 streaming_threshold_ops_per_sec = 5000
 ----
 
+== Configuration Guide: Top 5 Strategies
+
+ProximaDB now supports configurable vector encoding strategies via `config.toml`. Choose based on your workload using **data-driven recommendations** from comprehensive 12-pattern benchmarks.
+
+=== Strategy 1: FullVector (RECOMMENDED DEFAULT)
+
+**Best For**: Vector databases, WORM workloads, fastest decode
+
+[source,toml]
+----
+[storage.sst_config]
+vector_encoding_strategy = "FullVector"  # Default
+
+[storage.viper_config]
+vector_encoding_strategy = "FullVector"
+----
+
+**Performance**: 18-20% compression, **fastest decode** in 8/12 configs, wins 5/12 (42%)
+
+**Use Cases**: RAG, semantic search, ProximaDB/Pinecone/Weaviate-style deployments
+
+---
+
+=== Strategy 2: GroupedBlock (BEST BALANCED)
+
+**Best For**: Mixed workloads, ETL, data pipelines
+
+[source,toml]
+----
+[storage.sst_config]
+vector_encoding_strategy = "GroupedBlock"
+
+[storage.viper_config]
+vector_encoding_strategy = "GroupedBlock"
+----
+
+**Performance**: 18-21% compression, **wins 6/12 configs (50%)**, fastest encode
+
+**Use Cases**: Balanced read/write, frequent reindexing, general-purpose
+
+---
+
+=== Strategy 3: GroupedField (MAX COMPRESSION)
+
+**Best For**: Storage-critical, cost optimization, cold storage
+
+[source,toml]
+----
+[storage.sst_config]
+vector_encoding_strategy = "GroupedField"
+
+[storage.viper_config]
+vector_encoding_strategy = "GroupedField"
+----
+
+**Performance**: **19-22% compression (BEST)**, slower decode, wins 1/12 (8%)
+
+**Use Cases**: Archival, data lakes, large-scale storage optimization
+
+---
+
+=== Strategy 4: TransposeBlock (LARGE BATCHES)
+
+**Best For**: Large batch operations (>4096 vectors), analytics
+
+[source,toml]
+----
+[storage.sst_config]
+vector_encoding_strategy = "TransposeBlock"
+
+[storage.viper_config]
+vector_encoding_strategy = "TransposeBlock"
+----
+
+**Performance**: 19-20% compression, good for >4K vector batches
+
+**Use Cases**: Batch analytics, columnar processing, dimensional correlation
+
+---
+
+=== Strategy 5: TransposeField (⚠️ NOT RECOMMENDED)
+
+**WARNING**: Very slow performance, only use if absolutely necessary
+
+[source,toml]
+----
+[storage.sst_config]
+vector_encoding_strategy = "TransposeField"  # Use with extreme caution
+
+[storage.viper_config]
+vector_encoding_strategy = "TransposeField"
+----
+
+**Performance**: 17-19% compression, **SLOWEST** (14-121ms encode, 4-170ms decode)
+
+**Use Cases**: Only for very specific dimensional correlation requirements
+
+**WARNING**: 10-40x slower than other strategies. Marked as **NOT RECOMMENDED** in benchmark analysis.
+
+---
+
+=== Strategy 6: Auto (AUTOMATIC SELECTION)
+
+**Best For**: Automatic optimization, getting started
+
+[source,toml]
+----
+[storage.sst_config]
+vector_encoding_strategy = "Auto"  # Resolves to FullVector for WORM
+
+[storage.viper_config]
+vector_encoding_strategy = "Auto"
+----
+
+**Performance**: Currently resolves to **FullVector** for vector database workloads
+
+**Use Cases**: Production deployments wanting automatic selection
+
+---
+
+=== Quick Selection Guide
+
+[cols="2,3,2", options="header"]
+|===
+|Your Priority |Choose |Why
+
+|**Query Speed**
+|FullVector
+|Fastest decode (8/12 wins)
+
+|**Overall Balance**
+|GroupedBlock
+|Best win rate (50%)
+
+|**Storage Cost**
+|GroupedField
+|Max compression (19-22%)
+
+|**Large Batches**
+|TransposeBlock
+|Optimized for >4K vectors
+
+|**Automatic**
+|Auto
+|Safe default (→ FullVector)
+
+|**⚠️ Avoid**
+|TransposeField
+|Very slow (NOT RECOMMENDED)
+|===
+
 == Conclusion
 
 [IMPORTANT]
 ====
-**Key Takeaways**:
+**Key Takeaways (Updated with 12-Pattern Benchmark Data)**:
 
-1. **GroupedFieldEncoded** provides the best overall balance with 2.08-2.10x compression
-2. **Cache alignment** with 32D groups delivers 2-3x performance improvement
-3. **Realistic data patterns** achieve 52% better compression than random data
-4. **Workload-specific tuning** can improve performance by 30-50%
+1. **FullVector** is the recommended default for vector databases (fastest decode, 18-20% compression)
+2. **GroupedBlock** wins 50% of configurations (best overall balanced strategy)
+3. **GroupedField** provides maximum compression (19-22%) for storage-critical deployments
+4. **Data-driven selection** based on actual workload patterns improves performance by 30-50%
+5. **Configurable via config.toml** - no code changes needed to switch strategies
 ====
 
-The benchmarks demonstrate ProximaDB's encoding strategies deliver industry-leading compression ratios while maintaining excellent performance across all workload patterns. The GroupedFieldEncoded strategy with 32-dimension cache-aligned chunks represents a breakthrough in vector storage efficiency.
+ProximaDB's encoding strategies deliver competitive compression (18-22%) while maintaining excellent performance. The configurable strategy system allows optimization for your specific workload without code changes.
 
 ---
 

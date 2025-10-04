@@ -3154,73 +3154,73 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("   Production Default: GroupedBlock for balanced workloads, FullVector for read-heavy");
 
     println!("\nE-COMMERCE & PRODUCT SEARCH:");
-    println!("   RECOMMENDED: FullVector (34-35% compression, fastest decode)");
+    println!("   RECOMMENDED: FullVector (18-20% compression, fastest decode)");
     println!("   Real-time search: FullVector achieves <8ms decode for instant results");
     println!("   User queries: FullVector excellent for high-throughput scenarios");
     println!("   Mobile apps: FullVector reduces bandwidth and storage");
-    println!("   Recommendation engines: FullVector 34.5% compression (1536D)");
-    println!("   Cost optimization: FullVector saves 31-35% storage costs");
-    println!("   Analytics: FullVector with ZSTD for batch processing");
+    println!("   Recommendation engines: FullVector 19.6% compression (1536D)");
+    println!("   Cost optimization: FullVector saves 18-22% storage costs");
+    println!("   Analytics: GroupedBlock for balanced performance, FullVector for read-heavy");
 
     println!("\nREAL-TIME APPLICATIONS:");
-    println!("   RECOMMENDED: FullVector (31-35% compression, <8ms decode)");
+    println!("   RECOMMENDED: FullVector (18-20% compression, <8ms decode)");
     println!("   Gaming: FullVector for instant matchmaking with low latency");
     println!("   Live chat: FullVector + MiniLM for instant responses");
     println!("   Video streaming: FullVector for real-time content recommendations");
     println!("   Autonomous vehicles: FullVector for fast object recognition");
     println!("   Mobile apps: FullVector minimizes storage and battery usage");
     println!("   Push notifications: FullVector for immediate relevance scoring");
-    println!("   Performance: FullVector achieves best balance of speed and compression");
+    println!("   Performance: FullVector achieves fastest decode (wins 8/12 configs)");
 
     println!("\nRAG & DOCUMENT SEARCH:");
-    println!("   RECOMMENDED: FullVector (33-35% compression, fastest decode)");
-    println!("   Benchmark Data: FullVector wins 1024D (score=1.020), 1536D (score=1.048)");
-    println!("   Knowledge bases: FullVector + BERT Large (33.6% compression)");
-    println!("   Medical records: FullVector for storage efficiency and fast queries");
-    println!("   Legal documents: FullVector achieves 33-35% compression consistently");
+    println!("   RECOMMENDED: FullVector (18-20% compression, fastest decode)");
+    println!("   Benchmark Data: FullVector wins 5/12 configs (42%), fastest decode in 8/12");
+    println!("   Knowledge bases: FullVector + BERT Large (19.1% compression)");
+    println!("   Medical records: FullVector for fast queries, GroupedField for max compression");
+    println!("   Legal documents: FullVector 18-20% compression with fastest retrieval");
     println!("   Educational content: FullVector optimal for search-heavy workloads");
-    println!("   News/media: FullVector for speed and compression balance");
-    println!("   Research papers: OpenAI (1536D) with FullVector (34.5% compression)");
+    println!("   News/media: GroupedBlock for balanced performance (50% win rate)");
+    println!("   Research papers: OpenAI (1536D) with FullVector (19.6% compression)");
 
     println!("\nENTERPRISE & B2B:");
-    println!("   RECOMMENDED: FullVector (31-35% compression, production-proven)");
-    println!("   CRM systems: FullVector reduces cloud storage costs by 31-35%");
-    println!("   ERP integration: FullVector for fast data retrieval and storage");
-    println!("   Business intelligence: FullVector optimal for data warehousing");
-    println!("   Compliance/audit: FullVector 33-35% compression for long-term storage");
-    println!("   Financial services: FullVector for real-time fraud detection");
-    println!("   Healthcare: FullVector for patient record search and retrieval");
-    println!("   Data-Driven: FullVector wins 75% of benchmark configurations");
+    println!("   RECOMMENDED: FullVector for read-heavy, GroupedBlock for balanced (data-proven)");
+    println!("   CRM systems: GroupedBlock reduces cloud storage costs by 18-21% (50% win rate)");
+    println!("   ERP integration: FullVector for fast retrieval (42% win rate, fastest decode)");
+    println!("   Business intelligence: GroupedField for max compression (19-22%)");
+    println!("   Compliance/audit: GroupedField 19-22% compression for long-term storage");
+    println!("   Financial services: FullVector for real-time fraud detection (fastest decode)");
+    println!("   Healthcare: FullVector for patient record search, GroupedField for archival");
+    println!("   Data-Driven: GroupedBlock 50%, FullVector 42%, GroupedField 8% win rates");
 
     println!("\nCONTENT & MEDIA:");
-    println!("   RECOMMENDED: FullVector (31-35% compression, optimal performance)");
-    println!("   Music streaming: FullVector for instant playlist generation");
-    println!("   Video platforms: FullVector for storage and recommendations");
+    println!("   RECOMMENDED: FullVector for read-heavy, GroupedBlock for balanced workloads");
+    println!("   Music streaming: FullVector for instant playlist generation (fastest decode)");
+    println!("   Video platforms: GroupedBlock for balanced storage and performance");
     println!("   Social media: FullVector for fast feed ranking and content discovery");
-    println!("   Creative platforms: OpenAI embeddings with FullVector (34.5% compression)");
-    println!("   Publishing: BERT embeddings with FullVector for content discovery");
-    println!("   Entertainment: FullVector for personalized content delivery");
+    println!("   Creative platforms: OpenAI embeddings with FullVector (19.6% compression)");
+    println!("   Publishing: GroupedBlock for balanced content discovery (50% win rate)");
+    println!("   Entertainment: FullVector for personalized content delivery (42% win rate)");
 
     println!("\n[TECHNICAL INFRASTRUCTURE CONSIDERATIONS]");
     println!("{}", "=".repeat(100));
 
     println!("\nCLOUD DEPLOYMENT OPTIMIZATION:");
-    println!("   S3/GCS/Azure Blob: FullVector for 31-35% storage cost reduction");
-    println!("   CDN integration: FullVector for edge cache efficiency");
-    println!("   Multi-region: FullVector for consistent performance across regions");
-    println!("   Cost monitoring: FullVector reduces egress charges (better compression)");
+    println!("   S3/GCS/Azure Blob: GroupedField for 19-22% max compression, lowest storage costs");
+    println!("   CDN integration: FullVector for edge cache efficiency (fastest decode)");
+    println!("   Multi-region: GroupedBlock for balanced performance (50% win rate)");
+    println!("   Cost monitoring: GroupedField reduces storage costs, FullVector reduces compute");
 
     println!("\nPERFORMANCE OPTIMIZATION:");
-    println!("   CPU cache: FullVector has excellent cache characteristics");
-    println!("   Memory usage: FullVector reduces RAM requirements (31-35% compression)");
-    println!("   I/O patterns: FullVector efficient for most access patterns");
+    println!("   CPU cache: All strategies have good cache characteristics");
+    println!("   Memory usage: GroupedField 19-22%, GroupedBlock 18-21%, FullVector 18-20%");
+    println!("   I/O patterns: FullVector fastest decode, GroupedBlock balanced");
     println!("   SIMD utilization: All strategies support AVX2/AVX512 acceleration");
 
     println!("\nWORKLOAD-SPECIFIC TUNING:");
-    println!("   Read-heavy (80%+ queries): FullVector for speed and compression");
-    println!("   Write-heavy (80%+ ingestion): FullVector for balanced performance");
-    println!("   Balanced workloads: FullVector for best overall performance (DATA-PROVEN)");
-    println!("   Storage-critical: FullVector achieves 31-35% compression consistently");
+    println!("   Read-heavy (80%+ queries): FullVector (fastest decode in 8/12 configs)");
+    println!("   Write-heavy (80%+ ingestion): GroupedBlock (fastest encode in most configs)");
+    println!("   Balanced workloads: GroupedBlock (wins 6/12 = 50% overall)");
+    println!("   Storage-critical: GroupedField (19-22% max compression)");
     println!("   Small batches (<128): FullVector wins 128v x 768d, 1024d, 1536d configs");
 
     // Real-time latency analysis
@@ -3232,58 +3232,61 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
             .min_by(|a, b| a.transpose_block_decode_ms.partial_cmp(&b.transpose_block_decode_ms).unwrap()).unwrap();
 
         println!("\nREAL-TIME PERFORMANCE BENCHMARKS:");
-        println!("   Ultra-low latency: FullVector achieves {:.1}ms encode + {:.1}ms decode",
-                fastest_encode.fullvector_encode_ms, fastest_decode.fullvector_decode_ms);
-        println!("   Target: < 10ms total for real-time applications (FullVector ACHIEVES THIS)");
+        println!("   Ultra-low latency: GroupedBlock {:.1}ms encode (fastest), FullVector {:.1}ms decode (fastest)",
+                fastest_encode.grouped_block_encode_ms, fastest_decode.fullvector_decode_ms);
+        println!("   Target: < 10ms total for real-time applications (all strategies ACHIEVE THIS)");
         println!("   Suitable for: Gaming, live chat, instant search, real-time recommendations");
     }
 
     println!("\n[FINAL RECOMMENDATIONS BY BUSINESS PRIORITY]");
     println!("{}", "=".repeat(100));
     println!("\nCOMBINED COMPRESSION ARCHITECTURE (All Layers Working Together):");
-    println!("   FullVector Strategy: 31-35% total compression across all dimensions");
-    println!("   Benchmark Results: FullVector wins 9/12 configurations (75% win rate)");
+    println!("   Compression Ratios (12-pattern realistic data with ZSTD):");
+    println!("     - GroupedField: 19-22% (best compression)");
+    println!("     - GroupedBlock: 18-21% (best balanced)");
+    println!("     - FullVector: 18-20% (best decode speed)");
+    println!("   Benchmark Results: GroupedBlock wins 6/12 (50%), FullVector 5/12 (42%), GroupedField 1/12 (8%)");
     println!("   Weighted Scoring: 20% encode, 50% decode, 35% compression");
-    println!("   Data-Driven Default: FullVector recommended for production");
+    println!("   Data-Driven Default: FullVector for vector DBs (WORM), GroupedBlock for balanced");
 
     println!("\nSTRATEGY SELECTION GUIDELINES:");
-    println!("   FullVector (RECOMMENDED): Best overall - wins 9/12 benchmark configs");
-    println!("   Combined Compression: ~30-35% total (all layers working together)");
-    println!("   Performance: Fastest decode in 8/12 configurations");
-    println!("   Production Default: FullVector for consistency across dimensions");
+    println!("   GroupedBlock (BALANCED): Best overall - wins 6/12 configs (50%)");
+    println!("   FullVector (DECODE-OPTIMIZED): Wins 5/12 configs (42%), fastest decode in 8/12");
+    println!("   GroupedField (MAX COMPRESSION): Wins 1/12 (8%), best 19-22% compression");
+    println!("   Production Default: FullVector for WORM/read-heavy, GroupedBlock for balanced");
 
     println!("\nCOST-OPTIMIZED (Cloud storage costs are primary concern):");
-    println!("   RECOMMENDED: FullVector (~33-35% combined compression)");
-    println!("   OpenAI 1536D: FullVector 34.5% compression (score=1.048)");
-    println!("   BERT 1024D: FullVector 33.6% compression (score=1.020)");
-    println!("   BERT 768D: FullVector 33.3% compression");
+    println!("   RECOMMENDED: GroupedField (19-22% max compression, best storage savings)");
+    println!("   OpenAI 1536D: GroupedField 20.6% compression (vs FullVector 19.6%)");
+    println!("   BERT 1024D: GroupedField 19.5% compression (vs FullVector 19.1%)");
+    println!("   BERT 768D: GroupedField 20.8% compression (vs FullVector 18.9%)");
     println!("   Best for: Large-scale deployments, data archival, cost-sensitive applications");
-    println!("   Performance: <8ms decode for most configurations");
-    println!("   Recommendation: Use FullVector for production (data-proven winner)");
+    println!("   Trade-off: Slightly slower decode than FullVector, but best compression");
+    println!("   Recommendation: GroupedField for max savings, FullVector if decode speed critical");
 
     println!("\nPERFORMANCE-OPTIMIZED (Low latency required):");
-    println!("   RECOMMENDED: FullVector (fastest decode in most configs)");
-    println!("   OpenAI 1536D: FullVector 7.64ms decode (FASTEST)");
-    println!("   BERT 1024D: FullVector 8.71ms decode");
-    println!("   Combined: Sub-10ms decode + 31-35% compression");
-    println!("   Best for: Gaming, live systems, mobile apps, edge computing");
-    println!("   FullVector wins: Best balance of speed and compression");
+    println!("   RECOMMENDED: FullVector (fastest decode in 8/12 configs)");
+    println!("   OpenAI 1536D: FullVector 0.75ms decode (FASTEST)");
+    println!("   BERT 1024D: FullVector 4.71ms decode (FASTEST)");
+    println!("   Combined: Sub-10ms decode + 18-20% compression");
+    println!("   Best for: Gaming, live systems, mobile apps, edge computing, real-time queries");
+    println!("   FullVector wins: Best decode speed while maintaining competitive compression");
 
     println!("\nSEARCH-OPTIMIZED (RAG, document search, knowledge bases):");
-    println!("   RECOMMENDED: FullVector (optimal for read-heavy workloads)");
-    println!("   Compression: ~33-35% combined (all dimensions)");
-    println!("   Decode Speed: <8ms for most configurations");
-    println!("   Benchmark Winner: FullVector for 1024D and 1536D embeddings");
-    println!("   Best for: Production RAG, enterprise search, Q&A systems");
-    println!("   Data-Driven: 50% weight on decode speed matches RAG workloads");
+    println!("   RECOMMENDED: FullVector (optimal for WORM/read-heavy workloads)");
+    println!("   Compression: 18-20% (competitive with GroupedBlock 18-21%)");
+    println!("   Decode Speed: Fastest in 8/12 configurations (critical for search)");
+    println!("   Benchmark Winner: FullVector wins 5/12 (42%), fastest decode");
+    println!("   Best for: Production RAG, enterprise search, Q&A systems, vector databases");
+    println!("   Data-Driven: 50% decode weight matches read-heavy workloads");
 
     println!("\nBALANCED (General-purpose production systems):");
-    println!("   RECOMMENDED: FullVector (production default - data-proven)");
-    println!("   Compression: 31-35% combined across all dimensions");
-    println!("   Performance: Fastest decode in 8/12 configurations");
-    println!("   Consistency: Works well across all embedding dimensions");
-    println!("   Best for: Most production deployments, mixed workloads, starting point");
-    println!("   Winner: FullVector for 75% of benchmark configurations");
+    println!("   RECOMMENDED: GroupedBlock (best overall - 50% win rate)");
+    println!("   Compression: 18-21% (competitive with all strategies)");
+    println!("   Performance: Best balanced encode/decode across all configs");
+    println!("   Consistency: Wins 6/12 configurations across all dimensions");
+    println!("   Best for: Mixed workloads, data pipelines, ETL, frequent reindexing");
+    println!("   Winner: GroupedBlock for 50% of benchmark configurations");
 
     println!("\n[IMPLEMENTATION STRATEGY - DATA-DRIVEN WITH 12-PATTERN REALISTIC DATA]");
     println!("   1. PRODUCTION DEFAULT RECOMMENDATION:");

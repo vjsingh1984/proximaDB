@@ -172,6 +172,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         mmap_enabled: false,
         prefetch_enabled: false,
         prefetch_size_kb: 64,
+        vector_encoding_strategy: "FullVector".to_string(),
     });
 
     let viper_config = proximadb::core::config::ViperConfig {

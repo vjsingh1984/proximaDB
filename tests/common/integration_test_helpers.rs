@@ -543,6 +543,9 @@ impl UnifiedTestEnvironment {
 
             // Compaction config
             compaction_config: Default::default(),
+
+            // Vector encoding strategy
+            vector_encoding_strategy: "FullVector".to_string(),
         }
     }
 

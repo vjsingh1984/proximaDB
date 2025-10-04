@@ -60,6 +60,7 @@ mod tests {
             prefetch_size_kb: 64,
             decompression_cache_config: None,
             compaction_config: Default::default(),
+            vector_encoding_strategy: "FullVector".to_string(),
         });
 
         // Configure write buffer separately

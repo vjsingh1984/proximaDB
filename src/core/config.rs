@@ -855,9 +855,86 @@ pub struct SstConfig {
     /// Decompression cache configuration
     pub decompression_cache_config:
         Option<crate::storage::engines::impls::sst::decompression_cache::CacheConfig>,
+
+    /// Vector encoding strategy: Controls how vectors are encoded in blocks
+    ///
+    /// # Available Strategies (Data-Driven from 12-Pattern Benchmarks):
+    ///
+    /// * `"FullVector"` (DEFAULT) - Row-wise encoding, fastest decode
+    ///   - Compression: 18-20%
+    ///   - Performance: Fastest decode in 8/12 configs, wins 5/12 (42%)
+    ///   - Best for: Vector databases, WORM workloads, RAG, semantic search
+    ///   - Use when: Query speed is critical (embeddings queried thousands of times)
+    ///
+    /// * `"GroupedBlock"` - Block-grouped encoding, best balanced
+    ///   - Compression: 18-21%
+    ///   - Performance: Wins 6/12 configs (50% - HIGHEST), fastest encode
+    ///   - Best for: Mixed workloads, ETL, data pipelines
+    ///   - Use when: Encode and decode are equally important
+    ///
+    /// * `"GroupedField"` - Field-grouped encoding, maximum compression
+    ///   - Compression: 19-22% (BEST)
+    ///   - Performance: Wins 1/12 (8%), slower decode
+    ///   - Best for: Storage-critical, cost optimization, cold storage
+    ///   - Use when: Storage costs dominate, data read infrequently
+    ///
+    /// * `"TransposeBlock"` - Transpose block-grouped encoding
+    ///   - Compression: 19-20%
+    ///   - Performance: Good for large batches (>4096 vectors)
+    ///   - Best for: Batch analytics, columnar processing
+    ///   - Use when: Processing large batches with dimensional correlation
+    ///
+    /// * `"TransposeField"` - ⚠️ NOT RECOMMENDED (very slow)
+    ///   - Compression: 17-19%
+    ///   - Performance: Slowest encode/decode (14-121ms encode, 4-170ms decode)
+    ///   - Only use if: You have very specific dimensional correlation requirements
+    ///   - Warning: 10-40x slower than other strategies, use with caution
+    ///
+    /// * `"Auto"` - Automatic selection based on workload
+    ///   - Currently resolves to FullVector for vector database workloads
+    ///   - Safe default choice for production
+    ///
+    /// # Configuration Examples:
+    ///
+    /// ```toml
+    /// # config.toml
+    ///
+    /// # Vector database (default - fastest decode)
+    /// [storage.sst_config]
+    /// vector_encoding_strategy = "FullVector"
+    ///
+    /// # Balanced workload
+    /// [storage.sst_config]
+    /// vector_encoding_strategy = "GroupedBlock"
+    ///
+    /// # Storage optimization
+    /// [storage.sst_config]
+    /// vector_encoding_strategy = "GroupedField"
+    /// ```
+    ///
+    /// # Performance Data:
+    ///
+    /// Based on comprehensive 12-pattern benchmark (sparse, gaussian, quantized,
+    /// sinusoidal, random, clustered, time-series, dense, high-freq, power-law,
+    /// binary, exponential) representing production ML embeddings:
+    ///
+    /// - OpenAI 1536D: FullVector 19.6% comp, 0.75ms decode (FASTEST)
+    /// - BERT 1024D:   FullVector 19.1% comp, 4.71ms decode (FASTEST)
+    /// - BERT 768D:    FullVector 18.9% comp, 4.06ms decode (FASTEST)
+    /// - MiniLM 384D:  FullVector 18.5% comp, 0.26ms decode (FASTEST)
+    ///
+    /// Default: FullVector (optimal for vector databases with WORM characteristics)
+    ///
+    /// See: docs/performance/encoding_strategies.adoc for detailed guide
+    #[serde(default = "default_vector_encoding_strategy")]
+    pub vector_encoding_strategy: String,
 }
 
 /// VIPER (columnar storage) engine configuration
+///
+/// **Note**: VIPER uses Parquet's native columnar format and does NOT use ProximaDataBlocks.
+/// Therefore, it does not have `vector_encoding_strategy` (that's only for ProximaDataBlocks
+/// which use columnar encoding within blocks, as used by SST engine).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperConfig {
     /// Parquet file configuration
@@ -894,6 +971,10 @@ fn default_compression_level() -> i32 {
     3 // Balanced compression level
 }
 
+fn default_vector_encoding_strategy() -> String {
+    "FullVector".to_string() // Default to FullVector (best for vector databases - WORM workloads)
+}
+
 // BloomFilterConfig moved to core::bloom module for polymorphic design
 // Re-export for backward compatibility
 pub use crate::core::bloom::BloomFilterConfig;
@@ -921,6 +1002,7 @@ impl Default for SstConfig {
             decompression_cache_config: Some(
                 crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default(),
             ),
+            vector_encoding_strategy: default_vector_encoding_strategy(),
         }
     }
 }
