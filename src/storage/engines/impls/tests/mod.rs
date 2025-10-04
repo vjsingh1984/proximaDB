@@ -34,7 +34,7 @@ pub mod sst;
 pub mod viper;
 
 #[cfg(test)]
-mod nova_tests;
+pub mod nova;
 
 #[cfg(test)]
 pub mod helix;

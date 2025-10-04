@@ -532,7 +532,7 @@ pub async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
 
             match ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
                 Ok(builder) => {
-                    debug!("  =Ë Schema: {:?}", builder.schema());
+                    debug!("  == Schema: {:?}", builder.schema());
 
                     let reader = builder.build()?;
                     let mut total_rows = 0;
@@ -544,7 +544,7 @@ pub async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
                                 batch_count += 1;
                                 let rows = batch.num_rows();
                                 total_rows += rows;
-                                debug!("  =Ê Batch {}: {} rows", batch_count, rows);
+                                debug!("  == Batch {}: {} rows", batch_count, rows);
                             }
                             Err(e) => {
                                 debug!("  L Error reading batch: {}", e);
@@ -552,10 +552,10 @@ pub async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
                         }
                     }
 
-                    debug!("  =Ê Total: {} batches, {} rows", batch_count, total_rows);
+                    debug!("  == Total: {} batches, {} rows", batch_count, total_rows);
 
                     if total_rows == 0 {
-                        debug!("    WARNING: File contains NO DATA!");
+                        debug!("  WARNING: File contains NO DATA!");
                     }
                 }
                 Err(e) => {

@@ -366,7 +366,7 @@ async fn test_sst_engine_end_to_end_flush_and_search() -> Result<()> {
     }
 
     // Step 2: Search for vectors (exact match)
-    info!("= Searching for exact vector match...");
+    info!("== Searching for exact vector match...");
 
     // Use the first vector as query
     let query_vector = vectors[0].vector.clone();
