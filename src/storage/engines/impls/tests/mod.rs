@@ -40,7 +40,7 @@ pub mod nova;
 pub mod helix;
 
 #[cfg(test)]
-mod raptor_tests;
+pub mod raptor;
 
 #[cfg(test)]
 mod swift_tests;
