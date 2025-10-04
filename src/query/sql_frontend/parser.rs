@@ -512,6 +512,62 @@ impl SqlFrontendParser {
                 Ok(Expr::Identifier(combined))
             }
 
+            SqlExpr::Case {
+                operand,
+                conditions,
+                results,
+                else_result,
+            } => {
+                // Convert CASE expression
+                let lowered_operand = if let Some(op) = operand {
+                    Some(Box::new(self.convert_expr(op)?))
+                } else {
+                    None
+                };
+
+                let mut lowered_conditions = Vec::new();
+                for (condition, result) in conditions.iter().zip(results.iter()) {
+                    let when_expr = self.convert_expr(condition)?;
+                    let then_expr = self.convert_expr(result)?;
+                    lowered_conditions.push((when_expr, then_expr));
+                }
+
+                let lowered_else_expr = if let Some(el) = else_result {
+                    Some(Box::new(self.convert_expr(el)?))
+                } else {
+                    None
+                };
+
+                Ok(Expr::Case {
+                    operand: lowered_operand,
+                    conditions: lowered_conditions,
+                    else_expr: lowered_else_expr,
+                })
+            }
+
+            SqlExpr::Subquery(subquery) => {
+                // Convert subquery expression
+                let converted_subquery = self.convert_query(subquery)?;
+                Ok(Expr::Subquery(Box::new(converted_subquery)))
+            }
+
+            SqlExpr::InSubquery {
+                expr,
+                subquery,
+                negated,
+            } => {
+                // Convert IN (SELECT ...) expression as a binary operation
+                let left_expr = Box::new(self.convert_expr(expr)?);
+                let subquery_expr = Box::new(Expr::Subquery(Box::new(self.convert_query(subquery)?)));
+
+                // Create a binary expression with IN operator
+                Ok(Expr::Binary {
+                    left: left_expr,
+                    op: if *negated { BinaryOp::NotIn } else { BinaryOp::In },
+                    right: subquery_expr,
+                })
+            }
+
             _ => Err(anyhow!("Unsupported expression: {:?}", expr)),
         }
     }

@@ -160,6 +160,8 @@ pub enum BinaryOp {
     And,
     Or,
     Like,
+    In,
+    NotIn,
     Add,
     Sub,
     Mul,
