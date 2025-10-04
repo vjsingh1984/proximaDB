@@ -102,7 +102,7 @@ impl EventLogWAL {
         let filesystem = self.filesystem_factory.get_filesystem(current_file_str)?;
 
         // Read existing content if file exists
-        let mut buffer = if filesystem.exists(current_file_str).await {
+        let mut buffer = if filesystem.exists(current_file_str).await? {
             filesystem.read(current_file_str).await?
         } else {
             Vec::new()
@@ -114,7 +114,7 @@ impl EventLogWAL {
         buffer.extend_from_slice(&data);
 
         // Write back to file
-        filesystem.write(current_file_str, buffer).await?;
+        filesystem.write(current_file_str, &buffer, None).await?;
 
         self.current_size += 4 + data.len() as u64;
 
@@ -144,7 +144,7 @@ impl EventLogWAL {
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
         // Read existing content if file exists
-        let mut content = if filesystem.exists(ack_file_str).await {
+        let mut content = if filesystem.exists(ack_file_str).await? {
             String::from_utf8(filesystem.read(ack_file_str).await?)
                 .unwrap_or_default()
         } else {
@@ -155,7 +155,7 @@ impl EventLogWAL {
         content.push_str(&format!("{}\n", event_id));
 
         // Write back
-        filesystem.write(ack_file_str, content.as_bytes().to_vec()).await?;
+        filesystem.write(ack_file_str, content.as_bytes(), None).await?;
 
         Ok(())
     }
@@ -171,7 +171,7 @@ impl EventLogWAL {
         })?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
-        let acknowledged_ids = if filesystem.exists(ack_file_str).await {
+        let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
             let content_bytes = filesystem.read(ack_file_str).await?;
             let content = String::from_utf8(content_bytes).unwrap_or_default();
             content
@@ -188,15 +188,15 @@ impl EventLogWAL {
         })?;
         let wal_filesystem = self.filesystem_factory.get_filesystem(wal_dir_str)?;
 
-        let files = wal_filesystem.list(wal_dir_str).await?;
-        for file_path in files {
+        let entries = wal_filesystem.list(wal_dir_str).await?;
+        for entry in entries {
             // Skip non-WAL files
-            if !file_path.contains("eventlog_wal_") {
+            if !entry.url.contains("eventlog_wal_") {
                 continue;
             }
 
             // Read events from WAL file
-            let path = std::path::Path::new(&file_path);
+            let path = std::path::Path::new(&entry.url);
             let events = self.read_wal_file(path, &acknowledged_ids).await?;
             pending_events.extend(events);
         }
@@ -279,9 +279,9 @@ impl EventLogWAL {
         let filesystem = self.filesystem_factory.get_filesystem(current_file_str)?;
 
         // Read current file content and write to new rotated file
-        if filesystem.exists(current_file_str).await {
+        if filesystem.exists(current_file_str).await? {
             let content = filesystem.read(current_file_str).await?;
-            filesystem.write(rotated_file_str, content).await?;
+            filesystem.write(rotated_file_str, &content, None).await?;
             filesystem.delete(current_file_str).await?;
         }
 
@@ -300,7 +300,7 @@ impl EventLogWAL {
         })?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
-        let acknowledged_ids = if filesystem.exists(ack_file_str).await {
+        let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
             let content_bytes = filesystem.read(ack_file_str).await?;
             let content = String::from_utf8(content_bytes).unwrap_or_default();
             content
@@ -321,10 +321,10 @@ impl EventLogWAL {
         let wal_filesystem = self.filesystem_factory.get_filesystem(wal_dir_str)?;
 
         // List and remove WAL files
-        let files = wal_filesystem.list(wal_dir_str).await?;
-        for file_path in files {
-            if file_path.contains("eventlog_wal_") {
-                wal_filesystem.delete(&file_path).await.ok(); // Ignore errors
+        let entries = wal_filesystem.list(wal_dir_str).await?;
+        for entry in entries {
+            if entry.url.contains("eventlog_wal_") {
+                wal_filesystem.delete(&entry.url).await.ok(); // Ignore errors
             }
         }
 
@@ -436,7 +436,7 @@ mod tests {
     async fn test_wal_rotation() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-        let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
+        let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory.clone()).await?;
 
         // Set small max file size for testing
         wal.max_file_size = 1024; // 1KB
@@ -462,7 +462,7 @@ mod tests {
         let filesystem = filesystem_factory.get_filesystem(wal_dir_str)?;
         let files = filesystem.list(wal_dir_str).await?;
         let wal_files: Vec<_> = files.iter()
-            .filter(|f| f.contains("eventlog_wal_"))
+            .filter(|f| f.url.contains("eventlog_wal_"))
             .collect();
 
         // Should have at least 1 WAL file (rotation creates a new current file)

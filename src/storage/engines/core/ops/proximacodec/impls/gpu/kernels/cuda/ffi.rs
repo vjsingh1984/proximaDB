@@ -254,6 +254,49 @@ extern "C" {
         n: c_int,
         stream: CudaStreamPtr,
     );
+
+    // ========================================================================
+    // DoubleDelta encoding/decoding
+    // ========================================================================
+
+    /// DoubleDelta Phase 1: Convert f32 to i32 bits
+    ///
+    /// # Safety
+    /// - `input` must point to valid device memory of `n` f32 values
+    /// - `output` must point to valid device memory for `n` i32 values
+    /// - `stream` must be a valid CUDA stream or null for default stream
+    pub fn cuda_double_delta_f32_to_bits(
+        input: *const c_float,
+        output: *mut i32,
+        n: c_int,
+        stream: CudaStreamPtr,
+    );
+
+    /// DoubleDelta Phase 2: Compute first deltas
+    ///
+    /// # Safety
+    /// - `bits` must point to valid device memory of `n` i32 values
+    /// - `output` must point to valid device memory for `n-1` i64 values
+    /// - `stream` must be a valid CUDA stream or null for default stream
+    pub fn cuda_double_delta_first_deltas(
+        bits: *const i32,
+        output: *mut i64,
+        n: c_int,
+        stream: CudaStreamPtr,
+    );
+
+    /// DoubleDelta Phase 3: Compute second deltas
+    ///
+    /// # Safety
+    /// - `first_deltas` must point to valid device memory of `n` i64 values
+    /// - `output` must point to valid device memory for `n-1` i64 values
+    /// - `stream` must be a valid CUDA stream or null for default stream
+    pub fn cuda_double_delta_second_deltas(
+        first_deltas: *const i64,
+        output: *mut i64,
+        n: c_int,
+        stream: CudaStreamPtr,
+    );
 }
 
 // ============================================================================

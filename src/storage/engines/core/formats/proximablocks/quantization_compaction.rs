@@ -250,15 +250,19 @@ impl QuantizationAwareCompaction {
     fn select_compaction_layout(&self, dimension: usize) -> VectorEncodingLayout {
         use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
-        // For compacted data, prefer more aggressive compression
+        // For compacted data, balance compression vs decode speed
+        // Benchmark data (12-pattern): GroupedField 19-22% compression, FullVector 18-20%
+        // Compacted blocks are read less frequently, so slightly prefer compression
         if dimension <= 256 {
-            // Transpose for maximum compression
+            // Small dimensions: Transpose for better dimensional correlation exploitation
             VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector
         } else if dimension <= 1536 {
-            // Grouped with block compression
+            // Medium dimensions: GroupedField for best compression (19-22%)
+            // Trade-off: ~1-2% better compression vs slower decode than FullVector
             VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector
         } else {
-            // Keep as-is for very high dimensions
+            // Large dimensions (>1536): FullVector for better decode performance
+            // High-dimensional vectors benefit less from grouping strategies
             VectorEncodingLayout::FullVector
         }
     }

@@ -16,7 +16,7 @@ use proximadb::storage::engines::core::ops::proximacodec::{ProximaCodec, types::
 
 // Baseline implementations (for direct comparisons)
 use proximadb::storage::engines::core::ops::proximacodec::impls::baseline::functions::{
-    delta, double_delta, frame_of_ref, zigzag,
+    raw, delta, double_delta, frame_of_ref, zigzag,
 };
 
 // SIMD implementations (for direct comparisons)
@@ -166,6 +166,39 @@ fn get_platform_info() -> String {
     }
 
     format!("{} {} (Baseline)", os, arch)
+}
+
+// ============================================================================
+// Raw (Identity) Encoding Benchmarks
+// ============================================================================
+
+fn bench_raw_all_variants(c: &mut Criterion) {
+    println!("\n🎯 Platform: {}", get_platform_info());
+    println!("Testing Raw (identity) encoding - baseline for normalized embeddings\n");
+
+    let mut group = c.benchmark_group("raw_comprehensive");
+
+    for column_size in [256, 1024].iter() {
+        group.throughput(Throughput::Elements(*column_size as u64));
+
+        // Use normalized data (the key use case for Raw encoding)
+        let values = generate_normalized(*column_size, 1);
+        let benchmark_id = format!("{}vec", column_size);
+
+        // Baseline (only variant - Raw is identity encoding, no SIMD/GPU acceleration needed)
+        group.bench_with_input(
+            BenchmarkId::new("baseline", &benchmark_id),
+            &values,
+            |b, vals| {
+                b.iter(|| {
+                    let encoded = raw::encode_f32(black_box(vals)).unwrap();
+                    let _decoded = raw::decode_f32(&encoded).unwrap();
+                })
+            },
+        );
+    }
+
+    group.finish();
 }
 
 // ============================================================================
@@ -535,18 +568,15 @@ fn bench_compression_analysis(c: &mut Criterion) {
     ];
 
     // Encoding schemes to test
+    // Only lossless encoding schemes (perfect roundtrip for f32)
     let schemes: Vec<(&'static str, ProximaScheme)> = vec![
+        ("Raw", ProximaScheme::Raw),  // Identity encoding (baseline)
         ("Delta", ProximaScheme::Delta { base: 0 }),
         ("DoubleDelta", ProximaScheme::DoubleDelta { first_value: 0, first_delta: 0 }),
-        ("BitPacked-8", ProximaScheme::BitPacked { bits: 8 }),
-        ("BitPacked-16", ProximaScheme::BitPacked { bits: 16 }),
-        ("FrameOfRef", ProximaScheme::FrameOfReference { reference: 0, bits: 16 }),
-        ("Zigzag-8", ProximaScheme::Zigzag { bits: 8 }),
-        ("Zigzag-16", ProximaScheme::Zigzag { bits: 16 }),
-        ("PForDelta", ProximaScheme::PForDelta { majority_bits: 8, base: 0 }),
+        ("BitPacked-32", ProximaScheme::BitPacked { bits: 32 }),  // Lossless for f32 (full precision)
+        ("PForDelta", ProximaScheme::PForDelta { majority_bits: 20, base: 0 }),
         ("Simple8b", ProximaScheme::Simple8b),
         ("VByte", ProximaScheme::VByte),
-        ("Gorilla", ProximaScheme::Gorilla),
         ("SparseBitmap", ProximaScheme::SparseBitmap),
         ("SparseCOO", ProximaScheme::SparseCOO),
         ("Dictionary", ProximaScheme::Dictionary),
@@ -639,11 +669,11 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
         }
     }
 
-    // Best schemes per pattern (weighted: 40% decode + 40% compression + 20% encode)
-    println!("\n\n═══ 🏆 BEST SCHEME PER DATA PATTERN (40% Decode + 40% Compression + 20% Encode) ═══\n");
-    println!("{:<20} {:<20} {:>15} {:>13} {:>13} {:>10}",
-             "Data Pattern", "Best Scheme", "Compression", "Encode (µs)", "Decode (µs)", "Score");
-    println!("{}", "─".repeat(105));
+    // Best schemes per pattern (weighted: 20% encode + 40% decode + 40% compression)
+    println!("\n\n═══ 🏆 BEST SCHEME PER DATA PATTERN (20% Encode + 40% Decode + 40% Compression) ═══\n");
+    println!("{:<20} {:<24} {:>15} {:>13} {:>13} {:>10}",
+             "Data Pattern", "Recommended Scheme", "Compression", "Encode (µs)", "Decode (µs)", "Score");
+    println!("{}", "─".repeat(110));
 
     for pattern in &patterns {
         // Only consider schemes with positive compression (no expansion)
@@ -744,6 +774,7 @@ criterion_group!(
         .measurement_time(std::time::Duration::from_secs(5));  // 5s max execution
     targets =
         bench_compression_analysis,
+        bench_raw_all_variants,
         bench_double_delta_all_variants,
         bench_delta_all_variants,
         bench_frame_of_reference_all_variants,

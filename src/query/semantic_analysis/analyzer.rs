@@ -105,7 +105,13 @@ impl Analyzer {
                         columns.insert(field.name.clone(), Column { name: field.name.clone(), data_type });
                     }
                 }
-                scope.insert(table_name, Symbol::Table { name: table_name.clone(), columns });
+                // Use alias if provided, otherwise use table name
+                let table_symbol = Symbol::Table { name: table_name.clone(), columns };
+                if let Some(alias) = &table_ref.alias {
+                    scope.insert(alias, table_symbol);
+                } else {
+                    scope.insert(table_name, table_symbol);
+                }
             } else {
                 return Err(anyhow!("Table not found: {}", table_name));
             }
@@ -315,6 +321,47 @@ impl Analyzer {
                     }
                     Some(other) => Err(anyhow!("Unsupported array element type: {:?}", other)),
                     None => Ok(DataType::Vector(0)),
+                }
+            }
+            Expr::AggCall { name, args } => {
+                // Aggregate function calls (COUNT, SUM, AVG, MIN, MAX, etc.)
+                match name.to_uppercase().as_str() {
+                    "COUNT" => {
+                        // COUNT(*) or COUNT(column)
+                        if args.len() == 1 {
+                            // Validate argument - for COUNT(*), arg will be Identifier("*")
+                            if let Expr::Identifier(ident) = &args[0] {
+                                if ident == "*" {
+                                    // COUNT(*) - valid
+                                    return Ok(DataType::Int64);
+                                }
+                            }
+                            // COUNT(column) - analyze the column
+                            let _arg_type = self.analyze_expr(&args[0], scope).await?;
+                            Ok(DataType::Int64)
+                        } else {
+                            Err(anyhow!("COUNT expects exactly one argument"))
+                        }
+                    }
+                    "SUM" | "AVG" => {
+                        if args.len() != 1 {
+                            return Err(anyhow!("{} expects exactly one argument", name));
+                        }
+                        let arg_type = self.analyze_expr(&args[0], scope).await?;
+                        match arg_type {
+                            DataType::Int64 | DataType::Float64 => Ok(DataType::Float64),
+                            _ => Err(anyhow!("{} requires numeric argument", name)),
+                        }
+                    }
+                    "MIN" | "MAX" => {
+                        if args.len() != 1 {
+                            return Err(anyhow!("{} expects exactly one argument", name));
+                        }
+                        let arg_type = self.analyze_expr(&args[0], scope).await?;
+                        // MIN/MAX return the same type as their argument
+                        Ok(arg_type)
+                    }
+                    _ => Err(anyhow!("Unsupported aggregate function: {}", name)),
                 }
             }
             _ => Err(anyhow!("Unsupported expression: {:?}", expr)),

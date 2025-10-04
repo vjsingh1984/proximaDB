@@ -347,3 +347,59 @@ kernel void pfor_decode(
         }
     }
 }
+
+// ============================================================================
+// DOUBLE-DELTA ENCODING KERNELS
+// ============================================================================
+
+/**
+ * DoubleDelta Phase 1: Convert f32 to i32 bits
+ * Each thread performs IEEE 754 bit reinterpretation: f32 → i32
+ */
+kernel void double_delta_f32_to_bits(
+    device const float* input [[buffer(0)]],
+    device int32_t* output [[buffer(1)]],
+    constant int& n [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < n) {
+        // IEEE 754 bit reinterpretation using as_type
+        output[gid] = as_type<int32_t>(input[gid]);
+    }
+}
+
+/**
+ * DoubleDelta Phase 2: Compute first deltas
+ * Each thread computes: delta[i] = bits[i+1] - bits[i]
+ * Parallel subtraction with adjacent reads
+ */
+kernel void first_deltas(
+    device const int32_t* bits [[buffer(0)]],
+    device int64_t* output [[buffer(1)]],
+    constant int& n [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    // Compute n-1 deltas (delta[i] = bits[i+1] - bits[i])
+    if (gid < n - 1) {
+        int64_t curr = (int64_t)bits[gid + 1];
+        int64_t prev = (int64_t)bits[gid];
+        output[gid] = curr - prev;
+    }
+}
+
+/**
+ * DoubleDelta Phase 3: Compute second deltas (double deltas)
+ * Each thread computes: dd[i] = delta[i+1] - delta[i]
+ * Same pattern as first_deltas, applied to delta array
+ */
+kernel void second_deltas(
+    device const int64_t* first_deltas [[buffer(0)]],
+    device int64_t* output [[buffer(1)]],
+    constant int& n [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    // Compute n-1 second deltas (dd[i] = first_deltas[i+1] - first_deltas[i])
+    if (gid < n - 1) {
+        output[gid] = first_deltas[gid + 1] - first_deltas[gid];
+    }
+}

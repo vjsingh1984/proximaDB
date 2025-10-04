@@ -17,5 +17,5 @@ pub mod baseline;
 pub mod simd;
 
 // GPU implementations (conditional per platform and feature)
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "metal"))]
 pub mod gpu;

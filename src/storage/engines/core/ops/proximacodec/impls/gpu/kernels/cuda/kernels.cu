@@ -354,6 +354,65 @@ __global__ void pfor_decode_kernel(
 }
 
 // ============================================================================
+// DOUBLE-DELTA ENCODING KERNELS
+// ============================================================================
+
+/**
+ * DoubleDelta Phase 1: Convert f32 to i32 bits
+ * Each thread performs IEEE 754 bit reinterpretation: f32 → i32
+ */
+__global__ void double_delta_f32_to_bits_kernel(
+    const float* __restrict__ input,
+    int32_t* __restrict__ output,
+    int n
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < n) {
+        // IEEE 754 bit reinterpretation (no conversion, just reinterpret bits)
+        output[idx] = __float_as_int(input[idx]);
+    }
+}
+
+/**
+ * DoubleDelta Phase 2: Compute first deltas
+ * Each thread computes: delta[i] = bits[i+1] - bits[i]
+ * Parallel subtraction with adjacent reads
+ */
+__global__ void first_deltas_kernel(
+    const int32_t* __restrict__ bits,
+    int64_t* __restrict__ output,
+    int n
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Compute n-1 deltas (delta[i] = bits[i+1] - bits[i])
+    if (idx < n - 1) {
+        int64_t curr = (int64_t)bits[idx + 1];
+        int64_t prev = (int64_t)bits[idx];
+        output[idx] = curr - prev;
+    }
+}
+
+/**
+ * DoubleDelta Phase 3: Compute second deltas (double deltas)
+ * Each thread computes: dd[i] = delta[i+1] - delta[i]
+ * Same pattern as first_deltas, applied to delta array
+ */
+__global__ void second_deltas_kernel(
+    const int64_t* __restrict__ first_deltas,
+    int64_t* __restrict__ output,
+    int n
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Compute n-1 second deltas (dd[i] = first_deltas[i+1] - first_deltas[i])
+    if (idx < n - 1) {
+        output[idx] = first_deltas[idx + 1] - first_deltas[idx];
+    }
+}
+
+// ============================================================================
 // C API FOR FFI BINDINGS
 // ============================================================================
 
@@ -519,6 +578,51 @@ void cuda_pfor_decode(
     pfor_decode_kernel<<<num_blocks, threads_per_block, 0, stream>>>(
         packed_input, exceptions_input, exception_indices, num_exceptions,
         output, bit_width, n
+    );
+}
+
+// DoubleDelta Phase 1: f32 → i32 bits
+void cuda_double_delta_f32_to_bits(
+    const float* input,
+    int32_t* output,
+    int n,
+    cudaStream_t stream
+) {
+    int threads_per_block = 256;
+    int num_blocks = (n + threads_per_block - 1) / threads_per_block;
+
+    double_delta_f32_to_bits_kernel<<<num_blocks, threads_per_block, 0, stream>>>(
+        input, output, n
+    );
+}
+
+// DoubleDelta Phase 2: First deltas
+void cuda_double_delta_first_deltas(
+    const int32_t* bits,
+    int64_t* output,
+    int n,
+    cudaStream_t stream
+) {
+    int threads_per_block = 256;
+    int num_blocks = (n + threads_per_block - 1) / threads_per_block;
+
+    first_deltas_kernel<<<num_blocks, threads_per_block, 0, stream>>>(
+        bits, output, n
+    );
+}
+
+// DoubleDelta Phase 3: Second deltas
+void cuda_double_delta_second_deltas(
+    const int64_t* first_deltas,
+    int64_t* output,
+    int n,
+    cudaStream_t stream
+) {
+    int threads_per_block = 256;
+    int num_blocks = (n + threads_per_block - 1) / threads_per_block;
+
+    second_deltas_kernel<<<num_blocks, threads_per_block, 0, stream>>>(
+        first_deltas, output, n
     );
 }
 

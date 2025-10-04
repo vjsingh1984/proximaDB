@@ -379,3 +379,8 @@ name = "bench_16_proxima_simd"
 harness = false
 path = "benches/bench_16_proxima_simd.rs"
 
+[[bench]]
+name = "bench_16_proximacodec_comprehensive"
+harness = false
+path = "benches/bench_16_proximacodec_comprehensive.rs"
+

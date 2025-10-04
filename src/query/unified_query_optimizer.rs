@@ -1519,6 +1519,12 @@ mod tests {
 
         let plan = optimizer.optimize_query(context).await.unwrap();
 
+        // Debug: print the execution plan
+        println!("Execution plan steps:");
+        for (i, step) in plan.execution_steps.iter().enumerate() {
+            println!("  {}: {:?}", i, step);
+        }
+
         // Should produce a combined execution plan
         assert!(!plan.execution_steps.is_empty());
         assert!(matches!(
