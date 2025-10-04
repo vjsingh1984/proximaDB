@@ -265,6 +265,11 @@ async fn setup_analyzer_with_mock() -> Analyzer {
         description: None,
         filterable_columns: vec![
             crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "id".to_string(), // Add id column for ambiguity test
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                ..Default::default()
+            },
+            crate::proto::proximadb_v1::FilterableColumnSpec {
                 name: "user_id".to_string(),
                 data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
                 ..Default::default()

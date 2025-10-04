@@ -77,4 +77,39 @@ impl Scope {
             None
         }
     }
+
+    /// Searches for a column across all tables in the scope.
+    /// Returns a tuple of (found_column, found_count) where found_count > 1 indicates ambiguity.
+    pub fn find_column_in_tables(&self, column_name: &str) -> (Option<Column>, usize, Vec<String>) {
+        let mut found_column: Option<Column> = None;
+        let mut found_count = 0;
+        let mut table_names = Vec::new();
+
+        // Search all symbols in current scope
+        for (table_key, symbol) in &self.symbols {
+            if let Symbol::Table { columns, .. } = symbol {
+                if let Some(column) = columns.get(column_name) {
+                    if found_column.is_none() {
+                        found_column = Some(column.clone());
+                    }
+                    found_count += 1;
+                    table_names.push(table_key.clone());
+                }
+            }
+        }
+
+        // Also search in parent scope if exists
+        if let Some(parent) = &self.parent {
+            let (parent_column, parent_count, parent_tables) = parent.find_column_in_tables(column_name);
+            if parent_column.is_some() {
+                if found_column.is_none() {
+                    found_column = parent_column;
+                }
+                found_count += parent_count;
+                table_names.extend(parent_tables);
+            }
+        }
+
+        (found_column, found_count, table_names)
+    }
 }

@@ -170,35 +170,15 @@ impl Analyzer {
                             _ => Err(anyhow!("Identifier '{}' is not a column or alias", ident)),
                         }
                     } else {
-                        // Try to find in any table if only one table is in scope or column is unambiguous
-                        let mut found_column: Option<Column> = None;
-                        let mut found_count = 0;
-
-                        // Need to iterate through all tables in scope to find the column
-                        // We need to access the scope's internal symbols to search all tables
-                        // This is a limitation of the current Scope API
-
-                        // For now, let's assume we're looking for columns in known tables
-                        // Check if this is a known table name first
-                        if let Some(Symbol::Table { columns, .. }) = scope.lookup("products") {
-                            if let Some(column) = columns.get(ident) {
-                                found_column = Some(column.clone());
-                                found_count += 1;
-                            }
-                        }
-                        if let Some(Symbol::Table { columns, .. }) = scope.lookup("users") {
-                            if let Some(column) = columns.get(ident) {
-                                if found_column.is_some() {
-                                    found_count += 1;
-                                } else {
-                                    found_column = Some(column.clone());
-                                    found_count += 1;
-                                }
-                            }
-                        }
+                        // Try to find in any table - check for ambiguity
+                        let (found_column, found_count, table_names) = scope.find_column_in_tables(ident);
 
                         if found_count > 1 {
-                            Err(anyhow!("Ambiguous column reference: '{}'. Please qualify with table name.", ident))
+                            Err(anyhow!(
+                                "Ambiguous column reference: '{}' found in tables: {}. Please qualify with table name.",
+                                ident,
+                                table_names.join(", ")
+                            ))
                         } else if let Some(column) = found_column {
                             scope.insert(ident, Symbol::Column(column.clone()));
                             Ok(column.data_type.clone())
