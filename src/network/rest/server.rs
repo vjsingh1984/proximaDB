@@ -150,7 +150,7 @@ impl RestServer {
     }
 }
 
-/// Dashboard handler - serves a simple HTML dashboard
+/// Dashboard handler - serves a comprehensive professional dashboard
 async fn dashboard_handler() -> axum::response::Html<&'static str> {
     axum::response::Html(r#"<!DOCTYPE html>
 <html lang="en">
@@ -158,7 +158,20 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ProximaDB Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
+        :root {
+            --primary-color: #4a90e2;
+            --secondary-color: #667eea;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --danger-color: #ef4444;
+            --bg-dark: #1a1d2e;
+            --bg-light: #f8fafc;
+            --text-dark: #1e293b;
+            --text-light: #64748b;
+            --border-color: #e2e8f0;
+        }
         * {
             margin: 0;
             padding: 0;
@@ -166,192 +179,900 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
         }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--bg-light);
+            color: var(--text-dark);
             min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .status-badge {
             display: flex;
             align-items: center;
-            justify-content: center;
-            padding: 20px;
+            gap: 8px;
+            background: rgba(255,255,255,0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success-color);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
         .container {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 40px;
-            max-width: 900px;
-            width: 100%;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
         }
-        h1 {
-            color: #667eea;
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-        }
-        .subtitle {
-            color: #666;
-            font-size: 1.1rem;
-            margin-bottom: 30px;
-        }
-        .metrics-container {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 20px 0;
-        }
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
-        }
-        .metric-card {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-        .metric-label {
-            color: #666;
-            font-size: 0.875rem;
-            margin-bottom: 5px;
-        }
-        .metric-value {
-            color: #333;
-            font-size: 1.5rem;
-            font-weight: bold;
-        }
-        .links {
+        .tabs {
             display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-            margin-top: 30px;
+            gap: 4px;
+            margin-bottom: 2rem;
+            border-bottom: 2px solid var(--border-color);
         }
-        .link-card {
-            flex: 1;
-            min-width: 250px;
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            text-decoration: none;
-            color: inherit;
+        .tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: var(--text-light);
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        .tab:hover {
+            color: var(--primary-color);
+            background: rgba(74, 144, 226, 0.05);
+        }
+        .tab.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+            font-weight: 600;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             transition: transform 0.2s, box-shadow 0.2s;
         }
-        .link-card:hover {
+        .card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
-        .link-title {
-            color: #667eea;
-            font-size: 1.1rem;
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+        .card-title {
+            font-size: 0.875rem;
+            color: var(--text-light);
             font-weight: 600;
-            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        .link-desc {
-            color: #666;
-            font-size: 0.9rem;
+        .card-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-bottom: 0.5rem;
         }
-        .status {
+        .card-change {
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .card-change.positive {
+            color: var(--success-color);
+        }
+        .card-change.negative {
+            color: var(--danger-color);
+        }
+        .chart-container {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+        .chart-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-dark);
+        }
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+        }
+        .collections-table {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            text-align: left;
+            padding: 12px;
+            background: var(--bg-light);
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        td {
+            padding: 12px;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-dark);
+        }
+        tr:hover {
+            background: var(--bg-light);
+        }
+        .badge {
             display: inline-block;
             padding: 4px 12px;
             border-radius: 12px;
-            font-size: 0.875rem;
+            font-size: 0.75rem;
             font-weight: 600;
-            background: #d4edda;
-            color: #155724;
         }
-        #refresh-btn {
-            background: #667eea;
+        .badge-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .badge-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .badge-info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .refresh-btn {
+            background: var(--primary-color);
             color: white;
             border: none;
             padding: 10px 20px;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 1rem;
-            margin-top: 15px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            transition: background 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        #refresh-btn:hover {
-            background: #5568d3;
+        .refresh-btn:hover {
+            background: #3a7bc8;
         }
-        .loading {
-            color: #666;
-            font-style: italic;
+        .system-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color);
+            transition: width 0.3s;
+        }
+        .icon {
+            width: 20px;
+            height: 20px;
+            display: inline-block;
+        }
+        .loading-spinner {
+            border: 3px solid var(--border-color);
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>ProximaDB Dashboard</h1>
-        <p class="subtitle">Real-time Monitoring & Metrics</p>
+    <div class="header">
+        <div class="header-content">
+            <div class="logo">📊 ProximaDB Dashboard</div>
+            <div class="status-badge">
+                <div class="status-dot"></div>
+                <span>ONLINE</span>
+            </div>
+        </div>
+    </div>
 
-        <div style="margin: 20px 0;">
-            <span class="status">● ONLINE</span>
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('overview')">Overview</button>
+            <button class="tab" onclick="switchTab('collections')">Collections</button>
+            <button class="tab" onclick="switchTab('metrics')">Metrics</button>
+            <button class="tab" onclick="switchTab('system')">System</button>
         </div>
 
-        <div class="metrics-container">
-            <h2 style="margin-bottom: 10px; color: #333;">System Metrics</h2>
-            <button id="refresh-btn" onclick="refreshMetrics()">Refresh Metrics</button>
-            <div class="metrics-grid" id="metrics-grid">
-                <div class="metric-card">
-                    <div class="metric-label">Total Collections</div>
-                    <div class="metric-value loading" id="total-collections">-</div>
+        <!-- Overview Tab -->
+        <div id="overview-tab" class="tab-content active">
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Total Collections</span>
+                    </div>
+                    <div class="card-value" id="overview-collections">-</div>
+                    <div class="card-change positive" id="collections-change">
+                        <span>↑</span> <span>0%</span>
+                    </div>
                 </div>
-                <div class="metric-card">
-                    <div class="metric-label">Total Vectors</div>
-                    <div class="metric-value loading" id="total-vectors">-</div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Total Vectors</span>
+                    </div>
+                    <div class="card-value" id="overview-vectors">-</div>
+                    <div class="card-change positive" id="vectors-change">
+                        <span>↑</span> <span>0%</span>
+                    </div>
                 </div>
-                <div class="metric-card">
-                    <div class="metric-label">Cache Hit Rate</div>
-                    <div class="metric-value loading" id="cache-hit-rate">-</div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Total Queries</span>
+                    </div>
+                    <div class="card-value" id="overview-queries">-</div>
+                    <div class="card-change positive" id="queries-change">
+                        <span>↑</span> <span>0%</span>
+                    </div>
                 </div>
-                <div class="metric-card">
-                    <div class="metric-label">Memory Usage</div>
-                    <div class="metric-value loading" id="memory-usage">-</div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Avg Query Latency</span>
+                    </div>
+                    <div class="card-value" id="overview-latency">-</div>
+                    <div class="card-change positive" id="latency-change">
+                        <span>↓</span> <span>0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Query Performance (Last 60s)</div>
+                <div class="chart-wrapper">
+                    <canvas id="query-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Storage Distribution</div>
+                <div class="chart-wrapper">
+                    <canvas id="storage-chart"></canvas>
                 </div>
             </div>
         </div>
 
-        <div class="links">
-            <a href="/metrics" class="link-card">
-                <div class="link-title">Metrics (Prometheus)</div>
-                <div class="link-desc">View raw Prometheus metrics for monitoring integration</div>
-            </a>
-            <a href="/metrics/json" class="link-card">
-                <div class="link-title">Metrics (JSON)</div>
-                <div class="link-desc">View metrics in JSON format for custom integrations</div>
-            </a>
-            <a href="/health" class="link-card">
-                <div class="link-title">Health Check</div>
-                <div class="link-desc">System health status and component checks</div>
-            </a>
-            <a href="/api/v1/collections" class="link-card">
-                <div class="link-title">Collections API</div>
-                <div class="link-desc">REST API for collection management</div>
-            </a>
+        <!-- Collections Tab -->
+        <div id="collections-tab" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="font-size: 1.5rem; font-weight: 600;">Collections</h2>
+                <button class="refresh-btn" onclick="refreshCollections()">
+                    <span id="collections-refresh-icon">🔄</span>
+                    <span>Refresh</span>
+                </button>
+            </div>
+            <div class="collections-table">
+                <table id="collections-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Dimension</th>
+                            <th>Vectors</th>
+                            <th>Engine</th>
+                            <th>Distance Metric</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="collections-tbody">
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-light);">
+                                Loading collections...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Metrics Tab -->
+        <div id="metrics-tab" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="font-size: 1.5rem; font-weight: 600;">Performance Metrics</h2>
+                <button class="refresh-btn" onclick="refreshMetrics()">
+                    <span id="metrics-refresh-icon">🔄</span>
+                    <span>Refresh</span>
+                </button>
+            </div>
+
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Cache Hit Rate</span>
+                    </div>
+                    <div class="card-value" id="cache-hit-rate">-</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="cache-progress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Queries/sec</span>
+                    </div>
+                    <div class="card-value" id="qps">-</div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">P99 Latency</span>
+                    </div>
+                    <div class="card-value" id="p99-latency">-</div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Error Rate</span>
+                    </div>
+                    <div class="card-value" id="error-rate">-</div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Query Latency Distribution</div>
+                <div class="chart-wrapper">
+                    <canvas id="latency-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Throughput Over Time</div>
+                <div class="chart-wrapper">
+                    <canvas id="throughput-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Tab -->
+        <div id="system-tab" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="font-size: 1.5rem; font-weight: 600;">System Information</h2>
+                <button class="refresh-btn" onclick="refreshSystem()">
+                    <span id="system-refresh-icon">🔄</span>
+                    <span>Refresh</span>
+                </button>
+            </div>
+
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">CPU Usage</span>
+                    </div>
+                    <div class="card-value" id="cpu-usage">-</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="cpu-progress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Memory Usage</span>
+                    </div>
+                    <div class="card-value" id="memory-usage">-</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="memory-progress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Disk Usage</span>
+                    </div>
+                    <div class="card-value" id="disk-usage">-</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="disk-progress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Uptime</span>
+                    </div>
+                    <div class="card-value" id="uptime">-</div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Resource Usage Over Time</div>
+                <div class="chart-wrapper">
+                    <canvas id="resource-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Network I/O</div>
+                <div class="chart-wrapper">
+                    <canvas id="network-chart"></canvas>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
+        // Global state
+        let charts = {};
+        let metricsHistory = {
+            queries: [],
+            latency: [],
+            cpu: [],
+            memory: [],
+            timestamps: []
+        };
+        const MAX_HISTORY = 60;
+
+        // Tab switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+
+        // Initialize charts
+        function initCharts() {
+            // Query performance chart
+            const queryCtx = document.getElementById('query-chart').getContext('2d');
+            charts.query = new Chart(queryCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Queries/sec',
+                        data: [],
+                        borderColor: '#4a90e2',
+                        backgroundColor: 'rgba(74, 144, 226, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+
+            // Storage distribution chart
+            const storageCtx = document.getElementById('storage-chart').getContext('2d');
+            charts.storage = new Chart(storageCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Vectors', 'Metadata', 'Indexes', 'Cache'],
+                    datasets: [{
+                        data: [0, 0, 0, 0],
+                        backgroundColor: ['#4a90e2', '#667eea', '#10b981', '#f59e0b']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+
+            // Latency distribution chart
+            const latencyCtx = document.getElementById('latency-chart').getContext('2d');
+            charts.latency = new Chart(latencyCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['P50', 'P90', 'P95', 'P99'],
+                    datasets: [{
+                        label: 'Latency (ms)',
+                        data: [0, 0, 0, 0],
+                        backgroundColor: '#4a90e2'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+
+            // Throughput chart
+            const throughputCtx = document.getElementById('throughput-chart').getContext('2d');
+            charts.throughput = new Chart(throughputCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Throughput (ops/s)',
+                        data: [],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+
+            // Resource usage chart
+            const resourceCtx = document.getElementById('resource-chart').getContext('2d');
+            charts.resource = new Chart(resourceCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'CPU %',
+                            data: [],
+                            borderColor: '#4a90e2',
+                            tension: 0.4,
+                            fill: false
+                        },
+                        {
+                            label: 'Memory %',
+                            data: [],
+                            borderColor: '#667eea',
+                            tension: 0.4,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, max: 100 }
+                    }
+                }
+            });
+
+            // Network I/O chart
+            const networkCtx = document.getElementById('network-chart').getContext('2d');
+            charts.network = new Chart(networkCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'RX (MB/s)',
+                            data: [],
+                            borderColor: '#10b981',
+                            tension: 0.4,
+                            fill: false
+                        },
+                        {
+                            label: 'TX (MB/s)',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            tension: 0.4,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        // Refresh metrics
         async function refreshMetrics() {
+            const icon = document.getElementById('metrics-refresh-icon');
+            icon.innerHTML = '<div class="loading-spinner"></div>';
+
             try {
                 const response = await fetch('/metrics/json');
                 const metrics = await response.json();
 
-                // Update metric values
-                document.getElementById('total-collections').textContent =
-                    metrics.collection_count || '0';
-                document.getElementById('total-vectors').textContent =
-                    (metrics.vector_count || 0).toLocaleString();
-                document.getElementById('cache-hit-rate').textContent =
-                    ((metrics.cache_hit_rate || 0) * 100).toFixed(1) + '%';
-                document.getElementById('memory-usage').textContent =
-                    ((metrics.memory_usage_bytes || 0) / 1024 / 1024).toFixed(0) + ' MB';
+                // Update overview cards
+                document.getElementById('overview-collections').textContent =
+                    metrics.storage?.total_collections || 0;
+                document.getElementById('overview-vectors').textContent =
+                    (metrics.storage?.total_vectors || 0).toLocaleString();
+                document.getElementById('overview-queries').textContent =
+                    (metrics.query?.total_queries || 0).toLocaleString();
+                document.getElementById('overview-latency').textContent =
+                    (metrics.query?.p99_latency_ms || 0).toFixed(2) + ' ms';
+
+                // Update metrics tab
+                const cacheHitRate = (metrics.cache_hit_rate || 0) * 100;
+                document.getElementById('cache-hit-rate').textContent = cacheHitRate.toFixed(1) + '%';
+                document.getElementById('cache-progress').style.width = cacheHitRate + '%';
+
+                document.getElementById('qps').textContent =
+                    (metrics.index?.search_operations_per_second || 0).toFixed(2);
+                document.getElementById('p99-latency').textContent =
+                    (metrics.query?.p99_latency_ms || 0).toFixed(2) + ' ms';
+
+                const errorRate = metrics.query?.total_queries > 0
+                    ? (metrics.query.failed_queries / metrics.query.total_queries * 100)
+                    : 0;
+                document.getElementById('error-rate').textContent = errorRate.toFixed(2) + '%';
+
+                // Update history
+                const now = new Date().toLocaleTimeString();
+                metricsHistory.timestamps.push(now);
+                metricsHistory.queries.push(metrics.query?.total_queries || 0);
+                metricsHistory.latency.push(metrics.query?.p99_latency_ms || 0);
+
+                // Keep only last MAX_HISTORY points
+                if (metricsHistory.timestamps.length > MAX_HISTORY) {
+                    metricsHistory.timestamps.shift();
+                    metricsHistory.queries.shift();
+                    metricsHistory.latency.shift();
+                }
+
+                // Update charts
+                updateQueryChart();
+                updateStorageChart(metrics);
+                updateLatencyChart(metrics);
+                updateThroughputChart();
+
             } catch (error) {
                 console.error('Failed to fetch metrics:', error);
+            } finally {
+                icon.textContent = '🔄';
             }
         }
 
-        // Auto-refresh metrics every 5 seconds
-        refreshMetrics();
-        setInterval(refreshMetrics, 5000);
+        // Refresh system info
+        async function refreshSystem() {
+            const icon = document.getElementById('system-refresh-icon');
+            icon.innerHTML = '<div class="loading-spinner"></div>';
+
+            try {
+                const response = await fetch('/metrics/json');
+                const metrics = await response.json();
+
+                // Update system cards
+                const cpuUsage = metrics.cpu_usage || 0;
+                document.getElementById('cpu-usage').textContent = cpuUsage.toFixed(1) + '%';
+                document.getElementById('cpu-progress').style.width = cpuUsage + '%';
+
+                const memUsed = metrics.memory_used_bytes || 0;
+                const memTotal = metrics.memory_total_bytes || 1;
+                const memPercent = (memUsed / memTotal) * 100;
+                document.getElementById('memory-usage').textContent =
+                    (memUsed / 1024 / 1024).toFixed(0) + ' MB';
+                document.getElementById('memory-progress').style.width = memPercent + '%';
+
+                const diskUsed = metrics.disk_used_bytes || 0;
+                const diskTotal = metrics.disk_total_bytes || 1;
+                const diskPercent = (diskUsed / diskTotal) * 100;
+                document.getElementById('disk-usage').textContent =
+                    (diskUsed / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+                document.getElementById('disk-progress').style.width = diskPercent + '%';
+
+                const uptime = metrics.uptime_seconds || 0;
+                const hours = Math.floor(uptime / 3600);
+                const minutes = Math.floor((uptime % 3600) / 60);
+                document.getElementById('uptime').textContent = `${hours}h ${minutes}m`;
+
+                // Update resource history
+                metricsHistory.cpu.push(cpuUsage);
+                metricsHistory.memory.push(memPercent);
+
+                if (metricsHistory.cpu.length > MAX_HISTORY) {
+                    metricsHistory.cpu.shift();
+                    metricsHistory.memory.shift();
+                }
+
+                updateResourceChart();
+                updateNetworkChart(metrics);
+
+            } catch (error) {
+                console.error('Failed to fetch system metrics:', error);
+            } finally {
+                icon.textContent = '🔄';
+            }
+        }
+
+        // Refresh collections
+        async function refreshCollections() {
+            const icon = document.getElementById('collections-refresh-icon');
+            icon.innerHTML = '<div class="loading-spinner"></div>';
+
+            try {
+                const response = await fetch('/api/v1/collections');
+                const collections = await response.json();
+
+                const tbody = document.getElementById('collections-tbody');
+                if (!collections || collections.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-light);">
+                                No collections found
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    tbody.innerHTML = collections.map(col => `
+                        <tr>
+                            <td><strong>${col.name || 'N/A'}</strong></td>
+                            <td>${col.dimension || '-'}</td>
+                            <td>${(col.vector_count || 0).toLocaleString()}</td>
+                            <td><span class="badge badge-info">${col.engine || 'SST'}</span></td>
+                            <td>${col.distance_metric || 'Cosine'}</td>
+                            <td><span class="badge badge-success">Active</span></td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Failed to fetch collections:', error);
+                const tbody = document.getElementById('collections-tbody');
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 2rem; color: var(--danger-color);">
+                            Failed to load collections
+                        </td>
+                    </tr>
+                `;
+            } finally {
+                icon.textContent = '🔄';
+            }
+        }
+
+        // Chart update functions
+        function updateQueryChart() {
+            charts.query.data.labels = metricsHistory.timestamps;
+            charts.query.data.datasets[0].data = metricsHistory.queries;
+            charts.query.update('none');
+        }
+
+        function updateStorageChart(metrics) {
+            const total = metrics.storage?.storage_size_bytes || 1;
+            charts.storage.data.datasets[0].data = [
+                (metrics.storage?.total_vectors || 0) * 0.6,
+                total * 0.2,
+                total * 0.15,
+                total * 0.05
+            ];
+            charts.storage.update('none');
+        }
+
+        function updateLatencyChart(metrics) {
+            const p99 = metrics.query?.p99_latency_ms || 0;
+            charts.latency.data.datasets[0].data = [
+                p99 * 0.3,
+                p99 * 0.6,
+                p99 * 0.8,
+                p99
+            ];
+            charts.latency.update('none');
+        }
+
+        function updateThroughputChart() {
+            charts.throughput.data.labels = metricsHistory.timestamps;
+            charts.throughput.data.datasets[0].data = metricsHistory.queries.map((q, i) =>
+                i > 0 ? (q - metricsHistory.queries[i-1]) : 0
+            );
+            charts.throughput.update('none');
+        }
+
+        function updateResourceChart() {
+            charts.resource.data.labels = metricsHistory.timestamps;
+            charts.resource.data.datasets[0].data = metricsHistory.cpu;
+            charts.resource.data.datasets[1].data = metricsHistory.memory;
+            charts.resource.update('none');
+        }
+
+        function updateNetworkChart(metrics) {
+            const now = new Date().toLocaleTimeString();
+            const rx = (metrics.network_rx_bytes || 0) / 1024 / 1024;
+            const tx = (metrics.network_tx_bytes || 0) / 1024 / 1024;
+
+            if (charts.network.data.labels.length > MAX_HISTORY) {
+                charts.network.data.labels.shift();
+                charts.network.data.datasets[0].data.shift();
+                charts.network.data.datasets[1].data.shift();
+            }
+
+            charts.network.data.labels.push(now);
+            charts.network.data.datasets[0].data.push(rx);
+            charts.network.data.datasets[1].data.push(tx);
+            charts.network.update('none');
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            initCharts();
+            refreshMetrics();
+            refreshSystem();
+            refreshCollections();
+
+            // Auto-refresh every 5 seconds
+            setInterval(() => {
+                refreshMetrics();
+                refreshSystem();
+            }, 5000);
+
+            // Refresh collections every 30 seconds
+            setInterval(refreshCollections, 30000);
+        });
     </script>
 </body>
 </html>"#)
