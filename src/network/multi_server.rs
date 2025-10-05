@@ -1036,6 +1036,7 @@ impl MultiServer {
 
             let rest_bind_addr = self.config.http_bind_address();
             let unified_handlers = services.unified_handlers.clone();
+            let metrics_collector = services.metrics_collector.clone();
 
             let api_config = self.config.api_config.clone();
             // Compression disabled by default (field doesn't exist in config)
@@ -1049,6 +1050,7 @@ impl MultiServer {
                     unified_handlers,
                     max_request_size_mb,
                     enable_compression,
+                    metrics_collector,
                 )
                 .start()
                 .await
