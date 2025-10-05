@@ -113,8 +113,7 @@ class ChunkerPool:
                 factory = ChunkerFactory(config)
                 self._pools[pool_key] = ResourcePool(
                     factory=factory,
-                    max_size=self.max_pool_size,
-                    name=f"chunker_pool_{pool_key}"
+                    max_size=self.max_pool_size
                 )
             return self._pools[pool_key]
     
