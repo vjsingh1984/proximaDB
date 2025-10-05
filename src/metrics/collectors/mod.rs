@@ -51,6 +51,7 @@ pub struct UnifiedMetricsCollector {
     last_collection: Arc<RwLock<Instant>>,
     current_metrics: Arc<RwLock<crate::metrics::SystemMetrics>>,
     active_alerts: Arc<RwLock<Vec<crate::metrics::Alert>>>,
+    start_time: Instant,
 }
 
 impl UnifiedMetricsCollector {
@@ -60,6 +61,7 @@ impl UnifiedMetricsCollector {
             last_collection: Arc::new(RwLock::new(Instant::now())),
             current_metrics: Arc::new(RwLock::new(crate::metrics::SystemMetrics::default())),
             active_alerts: Arc::new(RwLock::new(Vec::new())),
+            start_time: Instant::now(),
         }
     }
 
@@ -86,7 +88,49 @@ impl UnifiedMetricsCollector {
 
     /// Get current metrics snapshot (for dashboard compatibility)
     pub async fn current_metrics(&self) -> crate::metrics::SystemMetrics {
-        self.current_metrics.read().await.clone()
+        // Calculate uptime
+        let uptime_seconds = self.start_time.elapsed().as_secs_f64();
+
+        // Try to collect fresh system metrics
+        let system_collector = SystemMetricsCollector::new();
+        if let Ok(sample) = system_collector.collect().await {
+            // Update current_metrics with real data
+            let mut metrics = self.current_metrics.write().await;
+
+            // Extract values from sample
+            if let Some(&cpu) = sample.values.get("cpu_usage_percent") {
+                metrics.cpu_usage = cpu as f32;
+            }
+            if let Some(&mem_used) = sample.values.get("memory_used_bytes") {
+                metrics.memory_used_bytes = mem_used as u64;
+            }
+            if let Some(&mem_total) = sample.values.get("memory_total_bytes") {
+                metrics.memory_total_bytes = mem_total as u64;
+            }
+            if let Some(&disk_used) = sample.values.get("disk_used_bytes") {
+                metrics.disk_used_bytes = disk_used as u64;
+            }
+            if let Some(&disk_total) = sample.values.get("disk_total_bytes") {
+                metrics.disk_total_bytes = disk_total as u64;
+            }
+
+            // Set uptime and server metrics
+            metrics.uptime_seconds = uptime_seconds;
+            metrics.server.uptime_seconds = uptime_seconds;
+
+            // Update timestamp
+            metrics.timestamp = chrono::Utc::now();
+
+            // Return the updated metrics
+            metrics.clone()
+        } else {
+            // Fallback to cached metrics with updated uptime
+            let mut metrics = self.current_metrics.read().await.clone();
+            metrics.uptime_seconds = uptime_seconds;
+            metrics.server.uptime_seconds = uptime_seconds;
+            metrics.timestamp = chrono::Utc::now();
+            metrics
+        }
     }
 
     /// Get metrics summary (for dashboard compatibility)

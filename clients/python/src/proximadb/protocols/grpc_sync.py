@@ -17,11 +17,12 @@ from ..exceptions import ProximaDBError
 
 try:
     import grpc
-    from .. import proximadb_pb2 as pb2
     from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
+    from proximadb.v1 import vector_types_pb2 as v1_vector_types_pb2  # type: ignore
     from proximadb.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
     from proximadb.v1 import collection_pb2_grpc as v1_collection_pb2_grpc  # type: ignore
     from proximadb.v1 import collection_types_pb2 as v1_collection_types_pb2  # type: ignore
+    from proximadb.v1 import types_pb2 as v1_types_pb2  # type: ignore
     # Optional graph service (generated via Makefile: gen-proto)
     try:
         from proximadb.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
@@ -167,16 +168,8 @@ class ProximaDBSyncGrpcClient:
         
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-    
-    # Health and System Operations
-    def health_check(self) -> Dict[str, Any]:
-        """Check server health - unified interface"""
-        def _health_operation(stub):
-            request = pb2.HealthRequest()
-            response = stub.Health(request, timeout=self.timeout)
-            return {"status": response.status, "message": "Server is healthy"}
-        
-        return self._execute_with_pool("health_check", _health_operation)
+
+    # Health check via REST endpoint (gRPC doesn't have dedicated Health service in v1)
 
     # Graph (v1) — optional
     def shortest_path(
@@ -435,32 +428,38 @@ class ProximaDBSyncGrpcClient:
             VectorOperationResponse with operation details
         """
         def _insert_vectors_operation(stub):
-            # Convert vectors to proto format
+            # Convert vectors to proto format using v1 VectorRecord
             proto_vectors = []
             for vector_data in vectors:
-                vector_record = pb2.VectorRecord()
-                
+                vector_record = v1_vector_types_pb2.VectorRecord()
+
                 if 'id' in vector_data:
                     vector_record.id = vector_data['id']
                 if 'vector' in vector_data:
                     vector_record.vector.extend(vector_data['vector'])
                 if 'metadata' in vector_data and vector_data['metadata']:
-                    # Convert metadata to MetadataItem format
+                    # Convert metadata to map<string, SqlValue> format
                     for key, value in vector_data['metadata'].items():
-                        metadata_item = pb2.MetadataItem()
-                        metadata_item.key = key
-                        if isinstance(value, str):
-                            metadata_item.string_value = value
-                        elif isinstance(value, (int, float)):
-                            metadata_item.number_value = float(value)
-                        elif isinstance(value, bool):
-                            metadata_item.bool_value = value
-                        vector_record.metadata.append(metadata_item)
-                
+                        sql_value = v1_types_pb2.SqlValue()
+                        if isinstance(value, bool):
+                            # Check bool before int since bool is a subclass of int
+                            sql_value.bool_value = value
+                        elif isinstance(value, int):
+                            sql_value.int64_value = value
+                        elif isinstance(value, float):
+                            sql_value.number_value = value
+                        elif isinstance(value, str):
+                            sql_value.string_value = value
+                        else:
+                            # Fallback to string representation
+                            sql_value.string_value = str(value)
+                        # Assign SqlValue directly to the map
+                        vector_record.metadata[key].CopyFrom(sql_value)
+
                 proto_vectors.append(vector_record)
-            
-            # Use VectorBatch endpoint for inserts
-            request = pb2.VectorBatchRequest(
+
+            # Use VectorBatch endpoint for inserts (v1)
+            request = v1_vector_types_pb2.VectorBatchRequest(
                 collection_id=collection_id,
                 vectors=proto_vectors
             )
@@ -513,82 +512,86 @@ class ProximaDBSyncGrpcClient:
             raise ValueError("Either query_vector or query_vectors must be provided")
         
         def _search_vectors_operation(stub):
-            # Build search queries
+            # Build search queries using v1 protos
             search_queries = []
             for qv in query_vectors:
-                query = pb2.SearchQuery()
+                query = v1_vector_types_pb2.SearchQuery()
                 query.vector.extend(qv)
-                
+
                 # Add metadata filters if provided
                 if metadata_filters:
-                    # Convert metadata filters to MetadataFilter
-                    metadata_filter = pb2.MetadataFilter()
-                    # Simple implementation - would need more complex filter parsing
+                    # Convert to simple filters dict (v1 SearchQuery supports this)
                     for key, value in metadata_filters.items():
-                        condition = pb2.FilterCondition()
-                        condition.field_name = key
-                        condition.operation = pb2.EQUALS
-                        
-                        # Create MetadataValue for the condition
-                        metadata_value = pb2.MetadataValue()
-                        if isinstance(value, str):
-                            metadata_value.string_value = value
-                        elif isinstance(value, (int, float)):
-                            metadata_value.double_value = float(value)
-                        elif isinstance(value, bool):
-                            metadata_value.bool_value = value
-                        condition.value.CopyFrom(metadata_value)
-                        
-                        metadata_filter.conditions.append(condition)
-                    
-                    query.metadata_filter.CopyFrom(metadata_filter)
-                
+                        sql_value = v1_types_pb2.SqlValue()
+                        if isinstance(value, bool):
+                            # Check bool before int since bool is subclass of int
+                            sql_value.bool_value = value
+                        elif isinstance(value, int):
+                            sql_value.int64_value = value
+                        elif isinstance(value, float):
+                            sql_value.number_value = value
+                        elif isinstance(value, str):
+                            sql_value.string_value = value
+                        query.filters[key].CopyFrom(sql_value)
+
                 search_queries.append(query)
-            
+
             # Build include fields
-            include_fields = pb2.IncludeFields(
+            include_fields = v1_vector_types_pb2.IncludeFields(
                 vector=include_vectors,
                 metadata=include_metadata,
                 score=True,
                 rank=True
             )
-            
-            # Build search request
-            request = pb2.VectorSearchRequest(
+
+            # Build search request with v1 proto
+            request = v1_vector_types_pb2.VectorSearchRequest(
                 collection_id=collection_id,
                 queries=search_queries,
                 top_k=top_k,
                 include_fields=include_fields
             )
-            
+
             response = stub.VectorSearch(request, timeout=self.timeout)
-            
-            # Convert response to SearchResult 
+
+            # VectorSearch returns VectorOperationResponse which wraps SearchResult
+            # Extract the SearchResult from the response
+            if not response.success:
+                error_msg = response.error_message if response.error_message else "Search failed"
+                raise ProximaDBError(f"VectorSearch failed: {error_msg}")
+
+            # Access response.results which is a SearchResult message
+            search_result_msg = response.results
+            if not search_result_msg or not search_result_msg.results:
+                return []
+
+            # Convert v1 SearchResult.results (repeated SearchVectorRecord) to list
             results = []
-            if response.compact_results:
-                for result in response.compact_results.results:
-                    vector_result = {
-                        'id': result.id,
-                        'score': result.score,
-                    }
-                    if include_vectors and result.vector:
-                        vector_result['vector'] = list(result.vector)
-                    if include_metadata and result.metadata:
-                        # Convert MetadataItem list to dict
-                        metadata_dict = {}
-                        for item in result.metadata:
-                            if item.string_value:
-                                metadata_dict[item.key] = item.string_value
-                            elif item.number_value:
-                                metadata_dict[item.key] = item.number_value
-                            elif item.bool_value is not None:
-                                metadata_dict[item.key] = item.bool_value
-                        vector_result['metadata'] = metadata_dict
-                    
-                    results.append(vector_result)
-            
-            # Return list of SearchResult instead of wrapping in SearchResult
-            # Each result item becomes a SearchResult
+            for result in search_result_msg.results:
+                vector_result = {
+                    'id': result.id,
+                    'score': result.score,
+                }
+                if include_vectors and result.vector:
+                    vector_result['vector'] = list(result.vector)
+                if include_metadata and result.metadata:
+                    # Convert v1 metadata (map of SqlValue) to dict
+                    metadata_dict = {}
+                    for item in result.metadata:
+                        sql_value = result.metadata[item]
+                        if sql_value.HasField('string_value'):
+                            metadata_dict[item] = sql_value.string_value
+                        elif sql_value.HasField('int64_value'):
+                            metadata_dict[item] = sql_value.int64_value
+                        elif sql_value.HasField('number_value'):
+                            metadata_dict[item] = sql_value.number_value
+                        elif sql_value.HasField('bool_value'):
+                            metadata_dict[item] = sql_value.bool_value
+                    vector_result['metadata'] = metadata_dict
+
+                results.append(vector_result)
+
+            # Return list of SearchResult dataclass objects
             search_results = []
             for result in results:
                 search_result = SearchResult(
@@ -611,48 +614,51 @@ class ProximaDBSyncGrpcClient:
     ) -> Dict[str, Any]:
         """Get single vector by ID"""
         def _get_vector_operation(stub):
-            # Build include fields
-            include_fields = pb2.IncludeFields(
+            # Build include fields using v1 proto
+            include_fields = v1_vector_types_pb2.IncludeFields(
                 vector=include_vector,
                 metadata=include_metadata,
                 score=False,
                 rank=False
             )
-            
-            request = pb2.VectorGetRequest(
+
+            request = v1_vector_types_pb2.VectorGetRequest(
                 collection_id=collection_id,
                 vector_id=vector_id,
                 include_fields=include_fields
             )
             response = stub.VectorGet(request, timeout=self.timeout)
-            
+
             # Convert response to dict
             if not response.success:
                 raise ProximaDBError(f"Vector {vector_id} not found")
-            
-            # Extract from compact_results if available
-            if response.compact_results and response.compact_results.results:
-                result_item = response.compact_results.results[0]
+
+            # Extract from results if available
+            if response.results and response.results.results:
+                result_item = response.results.results[0]
                 result = {
                     'id': result_item.id,
                 }
                 if include_vector and result_item.vector:
                     result['vector'] = list(result_item.vector)
                 if include_metadata and result_item.metadata:
-                    # Convert MetadataItem list to dict
+                    # Convert map<string, SqlValue> to dict
                     metadata_dict = {}
-                    for item in result_item.metadata:
-                        if item.string_value:
-                            metadata_dict[item.key] = item.string_value
-                        elif item.number_value:
-                            metadata_dict[item.key] = item.number_value
-                        elif item.bool_value is not None:
-                            metadata_dict[item.key] = item.bool_value
+                    for key in result_item.metadata:
+                        sql_value = result_item.metadata[key]
+                        if sql_value.HasField('string_value'):
+                            metadata_dict[key] = sql_value.string_value
+                        elif sql_value.HasField('int64_value'):
+                            metadata_dict[key] = sql_value.int64_value
+                        elif sql_value.HasField('number_value'):
+                            metadata_dict[key] = sql_value.number_value
+                        elif sql_value.HasField('bool_value'):
+                            metadata_dict[key] = sql_value.bool_value
                     result['metadata'] = metadata_dict
                 return result
             else:
                 raise ProximaDBError(f"Vector {vector_id} not found")
-        
+
         return self._execute_with_pool("get_vector", _get_vector_operation)
     
     def update_vector(
@@ -686,18 +692,18 @@ class ProximaDBSyncGrpcClient:
     def delete_vector(self, collection_id: str, vector_id: str) -> Dict[str, Any]:
         """Delete single vector - using vector batch with empty vector (mark for deletion)"""
         def _delete_vector_operation(stub):
-            # Create a vector record with just ID for deletion
-            vector_record = pb2.VectorRecord()
+            # Create a vector record with just ID for deletion (v1)
+            vector_record = v1_vector_types_pb2.VectorRecord()
             vector_record.id = vector_id
             # Empty vector indicates deletion (this may need to be adjusted based on actual API)
-            
-            request = pb2.VectorBatchRequest(
+
+            request = v1_vector_types_pb2.VectorBatchRequest(
                 collection_id=collection_id,
                 vectors=[vector_record]
             )
             response = stub.VectorBatch(request, timeout=self.timeout)
             return {"status": "deleted", "vector_id": vector_id, "success": response.success}
-        
+
         return self._execute_with_pool("delete_vector", _delete_vector_operation)
     
     def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> Dict[str, Any]:
@@ -705,10 +711,10 @@ class ProximaDBSyncGrpcClient:
         def _delete_vectors_operation(stub):
             deleted_count = 0
             failed_count = 0
-            
+
             for vector_id in vector_ids:
                 try:
-                    request = pb2.DeleteVectorRequest(
+                    request = v1_vector_types_pb2.DeleteVectorRequest(
                         collection_id=collection_id,
                         vector_id=vector_id
                     )
@@ -719,14 +725,14 @@ class ProximaDBSyncGrpcClient:
                         failed_count += 1
                 except Exception:
                     failed_count += 1
-            
+
             return {
-                "status": "completed", 
+                "status": "completed",
                 "deleted_count": deleted_count,
                 "failed_count": failed_count,
                 "total_requested": len(vector_ids)
             }
-        
+
         return self._execute_with_pool("delete_vectors", _delete_vectors_operation)
     
     def insert_vector(
