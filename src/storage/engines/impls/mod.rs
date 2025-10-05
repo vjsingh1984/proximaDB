@@ -17,3 +17,7 @@ pub use raptor::RaptorEngine;
 pub use sst::SstEngine;
 pub use swift::SwiftEngine;
 pub use viper::ViperEngine;
+
+// Consolidated test module
+#[cfg(test)]
+pub mod tests;

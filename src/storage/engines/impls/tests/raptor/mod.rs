@@ -17,8 +17,9 @@
 //! - ✅ **Compression Tests**: 10 tests migrated
 //! - ✅ **Matrix Tests**: 15 tests migrated (P², K², boundary spillover)
 //! - ✅ **Rowgroup Tests**: 4 tests migrated (smart sizing)
-//! - ⏸️ **Core Tests**: 10 tests identified (deferred)
-//! - **Total**: 41 tests consolidated (80% complete!)
+//! - ✅ **Core Tests**: 5 tests migrated (metadata, constants)
+//! - ⏸️ **Writer/Bloom Tests**: 5 tests deferred (require private types)
+//! - **Total**: 46 tests consolidated (90% complete!)
 //!
 //! ## Module Structure
 //!
@@ -27,6 +28,7 @@
 //! - `compression_tests` - Compression algorithm tests (10 tests)
 //! - `matrix_tests` - P² and K² matrix tests (15 tests)
 //! - `rowgroup_tests` - Smart rowgroup sizing tests (4 tests)
+//! - `core_tests` - Core functionality tests (5 tests)
 //!
 //! ## Original Sources
 //!
@@ -49,3 +51,6 @@ mod matrix_tests;
 
 #[cfg(test)]
 mod rowgroup_tests;
+
+#[cfg(test)]
+mod core_tests;

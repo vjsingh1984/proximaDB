@@ -43,7 +43,7 @@ pub mod helix;
 pub mod raptor;
 
 #[cfg(test)]
-mod swift_tests;
+pub mod swift;
 
 #[cfg(test)]
 mod common_tests;
