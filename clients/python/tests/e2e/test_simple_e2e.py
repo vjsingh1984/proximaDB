@@ -25,23 +25,47 @@ def test_health_check():
 def test_create_collection():
     """Test collection creation"""
     print("📦 Testing collection creation...")
-    
-    collection_data = {
+
+    # Enum values matching server expectations
+    collection_config = {
         "name": "test_collection",
         "dimension": 384,
-        "distance_metric": "COSINE",
-        "storage_engine": "VIPER",
-        "indexing_algorithm": "HNSW",
-        "filterable_metadata_fields": ["category"],
-        "indexing_config": {}
+        "distance_metric": 1,  # COSINE enum value
+        "storage_engine": 1,  # VIPER enum value
+        "tags": [],
+        "filterable_columns": [],
+        "index_configs": [{
+            "index_name": "test_collection_primary",
+            "algorithm": 1,  # HNSW enum value
+            "parameters": {},
+            "enabled": True,
+            "update_mode": 0,
+            "enable_background_optimization": True,
+            "build_concurrency": 4,
+            "memory_limit_mb": 512,
+            "checkpoint_interval_ms": 60000,
+            "is_primary": True,
+            "use_cases": [],
+            "selectivity_threshold": 0.5,
+            "use_quantization": False,
+            "queue_representation": "vector"
+        }],
+        "primary_index": "test_collection_primary",
+        "auto_index_selection": True,
+        "embedding_models": []
     }
-    
+
+    request_data = {
+        "operation": 1,  # COLLECTION_CREATE enum value
+        "collection_config": collection_config,
+        "query_params": {},
+        "options": {},
+        "migration_config": {}
+    }
+
     response = requests.post(
-        f"{SERVER_URL}/api/v1/collection",
-        json={
-            "operation": "create",
-            "config": collection_data
-        },
+        f"{SERVER_URL}/api/v1/collections",
+        json=request_data,
         headers={"Content-Type": "application/json"}
     )
     

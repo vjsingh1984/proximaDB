@@ -1297,6 +1297,13 @@ fn default_global_shrink_factor() -> Option<f64> {
 pub struct MonitoringConfig {
     pub metrics_enabled: bool,
     pub log_level: String,
+    /// Dashboard refresh interval in seconds (default: 60, minimum: 15)
+    #[serde(default = "default_dashboard_refresh_interval")]
+    pub dashboard_refresh_interval_seconds: u64,
+}
+
+fn default_dashboard_refresh_interval() -> u64 {
+    60
 }
 
 impl Default for MonitoringConfig {
@@ -1304,6 +1311,14 @@ impl Default for MonitoringConfig {
         Self {
             metrics_enabled: true,
             log_level: "info".to_string(),
+            dashboard_refresh_interval_seconds: 60,
         }
+    }
+}
+
+impl MonitoringConfig {
+    /// Get dashboard refresh interval, ensuring it's at least 15 seconds
+    pub fn dashboard_refresh_interval(&self) -> u64 {
+        self.dashboard_refresh_interval_seconds.max(15)
     }
 }

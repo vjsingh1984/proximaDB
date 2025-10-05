@@ -845,14 +845,25 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
             icon.innerHTML = '<div class="loading-spinner"></div>';
 
             try {
-                const response = await fetch('/metrics/json');
-                const metrics = await response.json();
+                // Fetch both metrics and collections data
+                const [metricsResponse, collectionsResponse] = await Promise.all([
+                    fetch('/metrics/json'),
+                    fetch('/api/v1/collections')
+                ]);
 
-                // Update overview cards
-                document.getElementById('overview-collections').textContent =
-                    metrics.storage?.total_collections || 0;
-                document.getElementById('overview-vectors').textContent =
-                    (metrics.storage?.total_vectors || 0).toLocaleString();
+                const metrics = await metricsResponse.json();
+                const collectionsData = await collectionsResponse.json();
+                const collections = collectionsData.collections || collectionsData || [];
+
+                // Compute actual totals from collections
+                const totalCollections = collections.length;
+                const totalVectors = collections.reduce((sum, col) => {
+                    return sum + (col.stats?.vector_count || col.vector_count || 0);
+                }, 0);
+
+                // Update overview cards with real data
+                document.getElementById('overview-collections').textContent = totalCollections;
+                document.getElementById('overview-vectors').textContent = totalVectors.toLocaleString();
                 document.getElementById('overview-queries').textContent =
                     (metrics.query?.total_queries || 0).toLocaleString();
                 document.getElementById('overview-latency').textContent =
@@ -886,9 +897,18 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
                     metricsHistory.latency.shift();
                 }
 
-                // Update charts
+                // Update charts with real collection count
                 updateQueryChart();
-                updateStorageChart(metrics);
+                // Update storage chart with real totals
+                const enhancedMetrics = {
+                    ...metrics,
+                    storage: {
+                        ...metrics.storage,
+                        total_collections: totalCollections,
+                        total_vectors: totalVectors
+                    }
+                };
+                updateStorageChart(enhancedMetrics);
                 updateLatencyChart(metrics);
                 updateThroughputChart();
 
@@ -958,7 +978,10 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
 
             try {
                 const response = await fetch('/api/v1/collections');
-                const collections = await response.json();
+                const data = await response.json();
+
+                // Extract collections array from response object
+                const collections = data.collections || data || [];
 
                 const tbody = document.getElementById('collections-tbody');
                 if (!collections || collections.length === 0) {
@@ -970,16 +993,27 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
                         </tr>
                     `;
                 } else {
-                    tbody.innerHTML = collections.map(col => `
-                        <tr>
-                            <td><strong>${col.name || 'N/A'}</strong></td>
-                            <td>${col.dimension || '-'}</td>
-                            <td>${(col.vector_count || 0).toLocaleString()}</td>
-                            <td><span class="badge badge-info">${col.engine || 'SST'}</span></td>
-                            <td>${col.distance_metric || 'Cosine'}</td>
-                            <td><span class="badge badge-success">Active</span></td>
-                        </tr>
-                    `).join('');
+                    tbody.innerHTML = collections.map(col => {
+                        // Extract name and other fields from config if nested
+                        const name = col.config?.name || col.name || 'N/A';
+                        const dimension = col.config?.dimension || col.dimension || '-';
+                        const vectorCount = col.vector_count || 0;
+                        const engine = col.config?.storage_engine || col.engine || 0;
+                        const engineName = ['AUTO', 'VIPER', 'SST', 'NOVA', 'HELIX', 'SWIFT', 'RAPTOR'][engine] || 'SST';
+                        const distanceMetric = col.config?.distance_metric || col.distance_metric || 1;
+                        const metricName = ['UNSPECIFIED', 'COSINE', 'EUCLIDEAN', 'DOT_PRODUCT'][distanceMetric] || 'COSINE';
+
+                        return `
+                            <tr>
+                                <td><strong>${name}</strong></td>
+                                <td>${dimension}</td>
+                                <td>${vectorCount.toLocaleString()}</td>
+                                <td><span class="badge badge-info">${engineName}</span></td>
+                                <td>${metricName}</td>
+                                <td><span class="badge badge-success">Active</span></td>
+                            </tr>
+                        `;
+                    }).join('');
                 }
             } catch (error) {
                 console.error('Failed to fetch collections:', error);
@@ -1064,14 +1098,18 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
             refreshSystem();
             refreshCollections();
 
-            // Auto-refresh every 5 seconds
+            // Auto-refresh interval (default: 60 seconds, minimum: 15 seconds)
+            // To change: update monitoring.dashboard_refresh_interval_seconds in config.toml
+            // Note: This value is currently hardcoded in the dashboard HTML for simplicity.
+            // For dynamic configuration, the backend would need to serve this value via an API endpoint.
+            const refreshInterval = 60000; // 60 seconds in milliseconds
             setInterval(() => {
                 refreshMetrics();
                 refreshSystem();
-            }, 5000);
+            }, refreshInterval);
 
-            // Refresh collections every 30 seconds
-            setInterval(refreshCollections, 30000);
+            // Refresh collections at the same interval
+            setInterval(refreshCollections, refreshInterval);
         });
     </script>
 </body>

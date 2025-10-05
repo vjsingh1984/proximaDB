@@ -34,6 +34,8 @@ rest_port = 5678
 
 [monitoring]
 log_level = "info"
+# Dashboard refresh interval in seconds (default: 60, minimum: 15)
+dashboard_refresh_interval_seconds = 60
 
 # Advanced Configuration (optional - smart defaults applied)
 # Uncomment and modify only if you need to override defaults

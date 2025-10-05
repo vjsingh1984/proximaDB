@@ -769,6 +769,37 @@ class ProximaDBSyncGrpcClient:
             upsert=upsert
         )
 
+    def health_check(self):
+        """Check server health status
+
+        Returns:
+            Proto health status object (for compatibility with unified_client)
+        """
+        try:
+            # Simple connection test - attempt to list collections
+            with self._connection_pool.get_channel() as ctx:
+                collection_stub = v1_collection_pb2_grpc.CollectionServiceStub(ctx.channel)
+                request = v1_collection_types_pb2.CollectionRequest(
+                    operation=2,  # COLLECTION_LIST enum value
+                    query_params={},
+                    options={},
+                    migration_config={}
+                )
+                response = collection_stub.ManageCollections(request, timeout=self.timeout)
+                # Return a simple object with status and message attributes
+                class HealthStatus:
+                    status = "healthy"
+                    message = "Server is responding"
+                    uptime_seconds = 0
+                return HealthStatus()
+        except Exception as e:
+            logger.warning(f"Health check failed: {e}")
+            class HealthStatus:
+                status = "unhealthy"
+                message = str(e)
+                uptime_seconds = 0
+            return HealthStatus()
+
 
 # Alias for consistency
 ProximaDBClient = ProximaDBSyncGrpcClient

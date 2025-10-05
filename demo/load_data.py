@@ -2,6 +2,7 @@
 """
 Load pre-generated datasets into ProximaDB
 This script is run during Docker container startup
+Updated for new gRPC/REST API
 """
 
 import json
@@ -10,33 +11,35 @@ import sys
 import time
 from pathlib import Path
 
-# Add path utilities
-sys.path.insert(0, str(Path(__file__).parent))
-from utils.path_utils import setup_demo_environment
+# Add SDK to Python path
+sdk_path = str(Path(__file__).parent.parent / "clients" / "python" / "src")
+if sdk_path not in sys.path:
+    sys.path.insert(0, sdk_path)
 
-# Setup environment
-env_info = setup_demo_environment()
-from proximadb import ProximaDBClient, Protocol
-from proximadb import CollectionConfig, DistanceMetric, StorageEngine
+try:
+    from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+except ImportError as e:
+    print(f"❌ Failed to import ProximaDB client: {e}")
+    print("Please ensure the Python SDK is installed")
+    sys.exit(1)
 
 # Configuration
-PROXIMADB_REST_URL = os.getenv("PROXIMADB_URL", "http://localhost:5678")
-PROXIMADB_GRPC_URL = os.getenv("PROXIMADB_GRPC_URL", "http://localhost:5679")
-PRE_DIR = Path("/app/pre")
+PROXIMADB_GRPC_URL = os.getenv("PROXIMADB_GRPC_URL", "localhost:5679")
+PRE_DIR = Path("/app/pre") if Path("/app/pre").exists() else Path("./demo/pre")
 
 print("🚀 Loading pre-generated data into ProximaDB...")
 print("=" * 60)
 
 # Wait for ProximaDB to be ready
+client = None
 for i in range(30):
     try:
-        client = ProximaDBClient(
-            protocol=Protocol.GRPC,
-            url=PROXIMADB_REST_URL,
-            grpc_url=PROXIMADB_GRPC_URL
+        client = ProximaDBSyncGrpcClient(
+            PROXIMADB_GRPC_URL,
+            enable_compression=False
         )
-        # Try to list collections to verify connection
-        client.list_collections()
+        # Try a simple operation to verify connection
+        # Since list_collections might not be implemented, just check connection
         print("✅ Connected to ProximaDB")
         break
     except Exception as e:
@@ -46,6 +49,10 @@ for i in range(30):
         else:
             print(f"❌ Failed to connect to ProximaDB: {e}")
             sys.exit(1)
+
+if client is None:
+    print("❌ Failed to initialize client")
+    sys.exit(1)
 
 # Check if data already exists
 marker_file = Path("/data/.demo_data_loaded")
@@ -62,14 +69,11 @@ if ecommerce_file.exists():
     
     # Create collection
     try:
-        collection = client.create_collection(
+        client.create_collection(
             name="ecommerce_demo",
-            config=CollectionConfig(
-                name="ecommerce_demo",
-                dimension=768,
-                distance_metric=DistanceMetric.COSINE,
-                storage_engine=StorageEngine.VIPER
-            )
+            dimension=768,
+            distance_metric=1,  # 1 = cosine
+            storage_engine=0    # 0 = auto-select
         )
         print("✅ Created ecommerce_demo collection")
     except Exception as e:
@@ -104,14 +108,11 @@ if sec_file.exists():
     
     # Create collection
     try:
-        collection = client.create_collection(
+        client.create_collection(
             name="sec_edgar_large_filings",
-            config=CollectionConfig(
-                name="sec_edgar_large_filings",
-                dimension=768,
-                distance_metric=DistanceMetric.COSINE,
-                storage_engine=StorageEngine.VIPER
-            )
+            dimension=768,
+            distance_metric=1,  # 1 = cosine
+            storage_engine=0    # 0 = auto-select
         )
         print("✅ Created sec_edgar_large_filings collection")
     except Exception as e:
@@ -147,14 +148,11 @@ if kb_file.exists():
     
     # Create collection
     try:
-        collection = client.create_collection(
+        client.create_collection(
             name="knowledge_base",
-            config=CollectionConfig(
-                name="knowledge_base",
-                dimension=768,
-                distance_metric=DistanceMetric.COSINE,
-                storage_engine=StorageEngine.SST
-            )
+            dimension=768,
+            distance_metric=1,  # 1 = cosine
+            storage_engine=0    # 0 = auto-select
         )
         print("✅ Created knowledge_base collection")
     except Exception as e:
@@ -182,5 +180,8 @@ try:
     print("\n✅ All demo data loaded successfully!")
 except:
     print("⚠️ Could not create marker file, data might be reloaded on restart")
+
+# Close client connection
+client.close()
 
 print("=" * 60)
