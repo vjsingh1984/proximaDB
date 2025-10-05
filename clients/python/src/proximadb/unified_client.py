@@ -853,12 +853,14 @@ class ProximaDBClient:
     
     def _proto_to_pydantic_health_status(self, proto_health: 'pb2.HealthResponse') -> HealthStatus:
         """Convert proto HealthResponse to Pydantic HealthStatus"""
+        # Use timestamp_ms from proto_health if available, otherwise generate current time
+        timestamp_ms = getattr(proto_health, 'timestamp_ms', int(time.time() * 1000))
         return HealthStatus(
             status=proto_health.status,
             version=proto_health.version,
             uptime_seconds=proto_health.uptime_seconds,
             services={},  # gRPC health doesn't include services info
-            timestamp=int(time.time() * 1000000)  # Current timestamp in microseconds
+            timestamp_ms=timestamp_ms  # Milliseconds since epoch
         )
     
     # Public API methods
