@@ -1762,7 +1762,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
             // Convert Option<i64> to Option<u32> for Arrow UInt32Array compatibility
             versions.push(record.version.map(|v| v as u32));
-            timestamps.push(Some(record.timestamp as i64));
+            timestamps.push(Some(record.timestamp.unwrap_or(0) as i64));
         }
 
         let id_array = Arc::new(StringArray::from(ids)) as ArrayRef;

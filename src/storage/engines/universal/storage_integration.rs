@@ -314,7 +314,7 @@ impl StorageEngineAdapter for PRISMAdapter {
                 id: id.to_string(),
                 vector: vec![0.0; 128], // Placeholder vector
                 metadata: std::collections::HashMap::new(), // Empty metadata items
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 source: None,
@@ -518,7 +518,7 @@ impl StorageEngineAdapter for NOVAAdapter {
                 id: id.to_string(),
                 vector: vec![0.0; 256], // NOVA typically handles larger vectors
                 metadata: std::collections::HashMap::new(), // Empty metadata items
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 source: None,
@@ -697,7 +697,7 @@ macro_rules! create_simple_adapter {
                         vector: vec![0.0; 128],
                         metadata: std::collections::HashMap::new(), // Empty metadata
                         version: Some(1),
-                        timestamp: chrono::Utc::now().timestamp(),
+                        timestamp: Some(chrono::Utc::now().timestamp()),
                         updated_at: Some(chrono::Utc::now().timestamp()),
                         expires_at: None,
                         source: None,

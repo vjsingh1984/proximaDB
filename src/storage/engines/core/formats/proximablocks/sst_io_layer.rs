@@ -517,7 +517,7 @@ impl SharedSstFormatReader {
                         vector: Some(Arc::new(record.vector.clone())),
                         debug_info: None,
                         version: None,
-                        timestamp: Some(record.timestamp),
+                        timestamp: record.timestamp,
                         updated_at: None,
                         expires_at: None,
                         source: None,

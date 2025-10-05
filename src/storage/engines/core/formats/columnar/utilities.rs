@@ -256,13 +256,13 @@ impl ColumnarUtilities {
             *dimension_frequencies.entry(metadata.dimension).or_insert(0) += 1;
 
             // Track quantization usage
-            if metadata.quantization.enable_binary {
+            if metadata.quantization.enable_binary.unwrap_or(false) {
                 *quantization_usage.entry("binary".to_string()).or_insert(0) += 1;
             }
-            if metadata.quantization.enable_int8 {
+            if metadata.quantization.enable_int8.unwrap_or(false) {
                 *quantization_usage.entry("int8".to_string()).or_insert(0) += 1;
             }
-            if metadata.quantization.enable_pq {
+            if metadata.quantization.enable_pq.unwrap_or(false) {
                 *quantization_usage.entry("pq".to_string()).or_insert(0) += 1;
             }
         }

@@ -248,7 +248,7 @@ impl ProximaEntityStore {
                             }
                             sql_metadata
                         },
-                        timestamp: 0i64,
+                        timestamp: Some(0i64),
                         updated_at: Some(0i64),
                         expires_at: Some(0i64),
                         version: Some(1u32),

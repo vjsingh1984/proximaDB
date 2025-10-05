@@ -498,7 +498,7 @@ impl ColumnarSchemaBuilder {
         let mut quantized_count = 0;
 
         // Binary quantization - ultra-fast filtering
-        if quant_config.enable_binary {
+        if quant_config.enable_binary.unwrap_or(false) {
             let binary_size = (config.dimension + 7) / 8; // Bits to bytes
             fields.push(Field::new(
                 "vector_binary",
@@ -519,7 +519,7 @@ impl ColumnarSchemaBuilder {
         }
 
         // INT8 quantization - good balance of speed and quality
-        if quant_config.enable_int8 {
+        if quant_config.enable_int8.unwrap_or(false) {
             fields.push(Field::new(
                 "vector_int8",
                 DataType::FixedSizeBinary(config.dimension as i32),
@@ -541,8 +541,8 @@ impl ColumnarSchemaBuilder {
         }
 
         // Product Quantization - configurable precision
-        if quant_config.enable_pq {
-            let pq_size = quant_config.pq_segments as i32;
+        if quant_config.enable_pq.unwrap_or(false) {
+            let pq_size = quant_config.pq_segments.unwrap_or(1) as i32;
             fields.push(Field::new(
                 "vector_pq",
                 DataType::FixedSizeBinary(pq_size),
@@ -558,7 +558,7 @@ impl ColumnarSchemaBuilder {
 
             quantized_count += 1;
             trace!(
-                "Added PQ quantization field ({} segments)",
+                "Added PQ quantization field ({:?} segments)",
                 quant_config.pq_segments
             );
         }
@@ -850,19 +850,19 @@ pub fn validate_schema_compatibility(
     quantization: &QuantizationConfig,
 ) -> Result<()> {
     // Check that required quantized columns exist
-    if quantization.enable_binary && schema.field_with_name("vector_binary").is_err() {
+    if quantization.enable_binary.unwrap_or(false) && schema.field_with_name("vector_binary").is_err() {
         return Err(anyhow::anyhow!(
             "Binary quantization enabled but vector_binary column missing"
         ));
     }
 
-    if quantization.enable_int8 && schema.field_with_name("vector_int8").is_err() {
+    if quantization.enable_int8.unwrap_or(false) && schema.field_with_name("vector_int8").is_err() {
         return Err(anyhow::anyhow!(
             "INT8 quantization enabled but vector_int8 column missing"
         ));
     }
 
-    if quantization.enable_pq && schema.field_with_name("vector_pq").is_err() {
+    if quantization.enable_pq.unwrap_or(false) && schema.field_with_name("vector_pq").is_err() {
         return Err(anyhow::anyhow!(
             "PQ quantization enabled but vector_pq column missing"
         ));

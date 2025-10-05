@@ -43,16 +43,16 @@ impl SstEngine {
         let config = CollectionConfig {
             name: collection_id.to_string(),
             dimension: 1536, // Default dimension
-            distance_metric: 0, // Default metric
-            storage_engine: 0, // SST engine
+            distance_metric: Some(0), // Default metric
+            storage_engine: Some(0), // SST engine
             tags: vec![],
             description: None,
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
             storage_config: None,
-            primary_index: "default".to_string(),
-            auto_index_selection: true,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(true),
             owner: None,
             embedding_models: vec![],
         };

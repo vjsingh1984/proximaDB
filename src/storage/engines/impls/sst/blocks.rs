@@ -86,7 +86,7 @@ impl SstRecord {
             sequence_number,
             level,
             is_tombstone: false,
-            timestamp: record.timestamp as u64,
+            timestamp: record.timestamp.unwrap_or(0) as u64,
         }
     }
 
@@ -300,12 +300,12 @@ pub mod utils {
             .unwrap_or_default();
 
         let min_timestamp = records.iter()
-            .map(|r| r.timestamp as u64)
+            .map(|r| r.timestamp.unwrap_or(0) as u64)
             .min()
             .unwrap_or(0);
 
         let max_timestamp = records.iter()
-            .map(|r| r.timestamp as u64)
+            .map(|r| r.timestamp.unwrap_or(0) as u64)
             .max()
             .unwrap_or(0);
 

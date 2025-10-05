@@ -1205,7 +1205,7 @@ impl ViperEngine {
                             id: vector_id.to_string(),
                             vector,
                             metadata: metadata_map,
-                            timestamp: timestamp as i64,
+                            timestamp: Some(timestamp as i64),
                             updated_at: Some(updated_at as i64),
                             expires_at: expires_at.map(|v| v as i64),
                             version: Some(version as u32),
@@ -1411,8 +1411,8 @@ impl ViperEngine {
             config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: collection_id.to_string(),
                 dimension: query_vector.len() as u32,
-                distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-                storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
+                distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+                storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32),
                 ..Default::default()
             }),
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
@@ -2095,10 +2095,10 @@ impl UnifiedStorageEngine for ViperEngine {
 
             if let Some(quant_config) = &config.quantization {
                 debug!("  🔧 VIPER Quantization Analysis:");
-                debug!("    ✅ Enabled: {}", quant_config.enabled);
+                debug!("    ✅ Enabled: {:?}", quant_config.enabled);
                 debug!("    🎛️  Strategy: {:?}", quant_config.strategy);
                 debug!(
-                    "    🔄 Progressive search: {}",
+                    "    🔄 Progressive search: {:?}",
                     quant_config.enable_progressive_search
                 );
                 debug!(

@@ -215,7 +215,7 @@ mod tests {
                 id: format!("integration_vector_{}", i),
                 vector: vec![0.1; 384],
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),

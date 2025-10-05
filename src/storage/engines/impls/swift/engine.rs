@@ -657,7 +657,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            .flatten().unwrap_or(false);
 
         if quantization_enabled {
             debug!("🔄 SWIFT FLUSH: Quantization enabled, processing with quantization support");
@@ -700,9 +700,9 @@ impl UnifiedStorageEngine for SwiftEngine {
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.storage_config.as_ref())
             .and_then(|s| {
-                if s.compression != 0 {
+                if s.compression.unwrap_or(0) != 0 {
                     Some(crate::proto::proximadb_v1::CompressionConfig {
-                        algorithm: s.compression,
+                        algorithm: s.compression.unwrap_or(0),
                         level: None,
                         adaptive: false,
                         min_ratio: None,
@@ -760,7 +760,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .and_then(|c| c.config.as_ref())
                 .and_then(|cfg| cfg.quantization.as_ref())
                 .map(|q| q.enabled)
-                .unwrap_or(false);
+                .flatten().unwrap_or(false);
 
             // Use the actual file that was written
             let flushed_files = vec![filename.clone()];
@@ -1289,7 +1289,7 @@ impl SwiftEngine {
                     );
 
                 let id = if record.id.is_empty() {
-                    format!("unknown_{}", record.timestamp)
+                    format!("unknown_{:?}", record.timestamp)
                 } else {
                     record.id.clone()
                 };
@@ -1301,7 +1301,7 @@ impl SwiftEngine {
                         .with_metadata(record.metadata.clone());
 
                 if let Some(version) = record.version {
-                    search_record = search_record.with_version_info(version, record.timestamp);
+                    search_record = search_record.with_version_info(version, record.timestamp.unwrap_or(0));
                 }
 
                 // Try to insert into bounded queue - only keeps top-k

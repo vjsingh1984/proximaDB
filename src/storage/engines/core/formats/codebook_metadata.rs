@@ -353,9 +353,9 @@ impl CodebookSerializer {
         };
 
         // Add binary codebook if configured
-        if config.enable_binary {
+        if config.enable_binary.unwrap_or(false) {
             metadata.binary_codebook = Some(BinaryCodebook {
-                threshold: if config.binary_threshold != 0.0 { config.binary_threshold } else { 0.0 },
+                threshold: if config.binary_threshold.unwrap_or(0.0) != 0.0 { config.binary_threshold.unwrap_or(0.0) } else { 0.0 },
                 mean: None,
                 dimension,
             });
@@ -363,7 +363,7 @@ impl CodebookSerializer {
 
         // Add INT8 codebook if configured (INT8 doesn't have a specific enable flag)
         // Use enable_progressive_search as a proxy for INT8 support
-        if config.enable_progressive_search {
+        if config.enable_progressive_search.unwrap_or(false) {
             metadata.int8_codebook = Some(Int8Codebook {
                 scale: 1.0,
                 zero_point: 0,
@@ -374,9 +374,9 @@ impl CodebookSerializer {
         }
 
         // Add PQ codebooks if configured
-        if config.enable_pq {
-            let bits = if config.pq_bits != 0 { config.pq_bits } else { 8 };
-            let subvectors = if config.pq_segments != 0 { config.pq_segments } else { 8 };
+        if config.enable_pq.unwrap_or(false) {
+            let bits = config.pq_bits.unwrap_or(8);
+            let subvectors = config.pq_segments.unwrap_or(8);
             let key = format!("pq{}_{}", bits, subvectors);
 
             // Create empty PQ codebook structure

@@ -34,13 +34,13 @@ impl CollectionService for CollectionServiceImpl {
             collection_config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: cfg.name.clone(),
                 dimension: cfg.dimension,
-                distance_metric: cfg.distance_metric as i32,
-                storage_engine: cfg.storage_engine as i32,
+                distance_metric: Some(cfg.distance_metric.unwrap_or(0) as i32),
+                storage_engine: Some(cfg.storage_engine.unwrap_or(0) as i32),
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
-                primary_index: "default".to_string(),
-                auto_index_selection: false,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(false),
                 storage_config: None,
                 embedding_models: vec![],
                 owner: Some(String::new()),
@@ -56,11 +56,16 @@ impl CollectionService for CollectionServiceImpl {
             .handle_collection_operation(request)
             .await
             .map_err(|e| Status::internal(format!("CreateCollection failed: {}", e)))?;
+
+        tracing::debug!("CreateCollection response: success={}, has_collection={}, error_code={:?}",
+            resp.success, resp.collection.is_some(), resp.error_code);
+
         if let Some(collection) = resp.collection {
             Ok(Response::new(collection))
         } else {
             Err(Status::internal(
-                "CreateCollection did not return a collection",
+                format!("CreateCollection did not return a collection (success={}, error_code={:?})",
+                    resp.success, resp.error_code)
             ))
         }
     }

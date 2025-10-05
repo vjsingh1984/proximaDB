@@ -483,12 +483,12 @@ impl MetadataStoreInterface for MetadataStore {
                 let config = CollectionConfig {
                     name: versioned.name.clone(),
                     dimension: versioned.dimension as u32,
-                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine.into(), // Default
-                    storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper.into(), // Default
+                    distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32), // Default
+                    storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32), // Default
                     storage_config: None,
                     index_configs: Vec::new(),
-                    primary_index: String::new(),
-                    auto_index_selection: true,
+                    primary_index: Some(String::new()),
+                    auto_index_selection: Some(true),
                     filterable_columns: Vec::new(),
                     quantization: None,
                     description: versioned.description.clone(),
@@ -577,12 +577,12 @@ impl MetadataStoreInterface for MetadataStore {
                     let config = CollectionConfig {
                         name: versioned.name.clone(),
                         dimension: versioned.dimension as u32,
-                        distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine.into(),
-                        storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper.into(),
+                        distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+                        storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32),
                         storage_config: None,
                         index_configs: Vec::new(),
-                        primary_index: String::new(),
-                        auto_index_selection: true,
+                        primary_index: Some(String::new()),
+                        auto_index_selection: Some(true),
                         filterable_columns: Vec::new(),
                         quantization: None,
                         description: versioned.description.clone(),

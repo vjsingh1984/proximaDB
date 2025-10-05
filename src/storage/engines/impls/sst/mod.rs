@@ -507,7 +507,7 @@ impl SstEntry {
                 id: id,
                 vector: vec![], // Empty vector for tombstone
                 metadata: std::collections::HashMap::new(),
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 updated_at: None,
                 expires_at: Some(0), // Expired immediately
                 version: None,
@@ -529,7 +529,7 @@ impl SstEntry {
             .with_metadata(self.record.metadata.clone());
 
         if let Some(version) = self.record.version {
-            search_record = search_record.with_version_info(version, self.record.timestamp);
+            search_record = search_record.with_version_info(version, self.record.timestamp.unwrap_or(0));
         }
 
         if let Some(source) = &self.record.source {
@@ -1262,7 +1262,7 @@ mod block_utils {
             encoded_data.write_all(id.as_bytes())?;
 
             // Encode timestamp
-            encoded_data.write_all(&record.timestamp.to_le_bytes())?;
+            encoded_data.write_all(&record.timestamp.unwrap_or(0).to_le_bytes())?;
         }
 
         Ok(encoded_data)
@@ -1336,7 +1336,7 @@ mod block_utils {
             records.push(VectorRecord {
                 id,
                 vector,
-                timestamp: timestamp as i64,
+                timestamp: Some(timestamp as i64),
                 metadata: std::collections::HashMap::new(),
                 updated_at: None,
                 expires_at: None,
@@ -1365,8 +1365,8 @@ mod block_utils {
         if let Some(first) = records.first() {
             min_key = first.id.clone();
             max_key = first.id.clone();
-            min_timestamp = first.timestamp as u32;
-            max_timestamp = first.timestamp as u32;
+            min_timestamp = first.timestamp.unwrap_or(0) as u32;
+            max_timestamp = first.timestamp.unwrap_or(0) as u32;
         }
 
         // Process all records for statistics
@@ -1383,8 +1383,8 @@ mod block_utils {
             }
 
             // Update timestamp range
-            min_timestamp = min_timestamp.min(record.timestamp as u32);
-            max_timestamp = max_timestamp.max(record.timestamp as u32);
+            min_timestamp = min_timestamp.min(record.timestamp.unwrap_or(0) as u32);
+            max_timestamp = max_timestamp.max(record.timestamp.unwrap_or(0) as u32);
 
             // Process metadata
             for item in &record.metadata {

@@ -107,14 +107,14 @@ fn test_create_vector_schema() {
 
     // Check quantized fields based on actual config
     // Default config has binary and int8 enabled, but not PQ
-    if config.enable_binary {
+    if config.enable_binary.unwrap_or(false) {
         assert!(schema.field_with_name("vector_binary").is_ok());
     }
-    if config.enable_int8 {
+    if config.enable_int8.unwrap_or(false) {
         assert!(schema.field_with_name("vector_int8").is_ok());
     }
     // PQ is disabled by default, so this field won't exist
-    if config.enable_pq {
+    if config.enable_pq.unwrap_or(false) {
         assert!(schema.field_with_name("vector_pq").is_ok());
     }
 

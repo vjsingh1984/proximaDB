@@ -582,7 +582,7 @@ impl ColumnarOptimizer {
                 .unwrap_or_else(|| format!("unknown_{}", candidate.row_offset)),
             vector: vec![0.0; 768], // Placeholder
             metadata: std::collections::HashMap::new(),
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             expires_at: None,
             version: None,

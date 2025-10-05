@@ -188,7 +188,7 @@ impl Default for IndexConfig {
 impl IndexConfig {
     /// Create IndexConfig from protobuf with smart defaults
     pub fn from_proto(proto: &crate::proto::proximadb_v1::IndexConfig) -> Result<Self> {
-        let update_mode = match proto.update_mode {
+        let update_mode = match proto.update_mode.unwrap_or(0) {
             1 => IndexUpdateMode::Synchronous,
             2 => IndexUpdateMode::Asynchronous,
             3 => IndexUpdateMode::Hybrid,
@@ -196,35 +196,35 @@ impl IndexConfig {
         };
 
         let hnsw_config = proto.hnsw_config.as_ref().map(|h| HnswConfig {
-            m: h.m as usize,
-            ef_construction: h.ef_construction as usize,
-            ef_search: h.ef_search as usize,
-            max_partition_size: h.max_partition_size as usize,
-            adaptive_parameters: h.adaptive_parameters,
-            use_simd: h.use_simd,
-            memory_limit_mb: h.memory_limit_mb as usize,
-            lazy_loading: h.lazy_loading,
+            m: h.m.unwrap_or(16) as usize,
+            ef_construction: h.ef_construction.unwrap_or(200) as usize,
+            ef_search: h.ef_search.unwrap_or(100) as usize,
+            max_partition_size: h.max_partition_size.unwrap_or(100000) as usize,
+            adaptive_parameters: h.adaptive_parameters.unwrap_or(true),
+            use_simd: h.use_simd.unwrap_or(true),
+            memory_limit_mb: h.memory_limit_mb.unwrap_or(512) as usize,
+            lazy_loading: h.lazy_loading.unwrap_or(false),
             prune_connections: 0,  // Default value - field not in proto
             level_multiplier: 1.0, // Default value - field not in proto
         });
 
         let ivf_config = proto.ivf_config.as_ref().map(|i| IvfConfig {
-            n_lists: i.n_lists as usize,
-            n_probe: i.n_probe as usize,
-            quantization_bits: i.quantization_bits as usize,
-            use_pq: i.use_pq,
-            pq_subspaces: i.pq_subspaces as usize,
-            train_on_insert: i.train_on_insert,
-            min_train_size: i.min_train_size as usize,
+            n_lists: i.n_lists.unwrap_or(1000) as usize,
+            n_probe: i.n_probe.unwrap_or(10) as usize,
+            quantization_bits: i.quantization_bits.unwrap_or(8) as usize,
+            use_pq: i.use_pq.unwrap_or(false),
+            pq_subspaces: i.pq_subspaces.unwrap_or(8) as usize,
+            train_on_insert: i.train_on_insert.unwrap_or(false),
+            min_train_size: i.min_train_size.unwrap_or(1000) as usize,
         });
 
         let lsh_config = proto.lsh_config.as_ref().map(|l| LshConfig {
-            n_hash_tables: l.n_hash_tables as u32,
-            n_hash_functions: l.n_hash_functions as u32,
-            bucket_width: l.bucket_width,
-            binary_vectors: l.binary_vectors,
-            max_candidates: l.max_candidates as u32,
-            projection: match l.projection {
+            n_hash_tables: l.n_hash_tables.unwrap_or(10) as u32,
+            n_hash_functions: l.n_hash_functions.unwrap_or(8) as u32,
+            bucket_width: l.bucket_width.unwrap_or(4.0),
+            binary_vectors: l.binary_vectors.unwrap_or(false),
+            max_candidates: l.max_candidates.unwrap_or(100) as u32,
+            projection: match l.projection.unwrap_or(0) {
                 1 => RandomProjection::Binary,
                 2 => RandomProjection::Sparse,
                 _ => RandomProjection::Gaussian,
@@ -235,13 +235,13 @@ impl IndexConfig {
             update_mode,
             async_update_timeout_ms: proto.async_update_timeout_ms.map(|t| t as u64),
             async_update_batch_size: proto.async_update_batch_size.map(|b| b as usize),
-            enable_background_optimization: proto.enable_background_optimization,
+            enable_background_optimization: proto.enable_background_optimization.unwrap_or(true),
             hnsw_config,
             ivf_config,
             lsh_config,
-            build_concurrency: Some(proto.build_concurrency as usize),
-            memory_limit_mb: Some(proto.memory_limit_mb as u64),
-            checkpoint_interval_ms: Some(proto.checkpoint_interval_ms as u64),
+            build_concurrency: proto.build_concurrency.map(|x| x as usize),
+            memory_limit_mb: proto.memory_limit_mb.map(|x| x as u64),
+            checkpoint_interval_ms: proto.checkpoint_interval_ms.map(|x| x as u64),
         })
     }
 
@@ -257,14 +257,14 @@ impl IndexConfig {
             self.hnsw_config
                 .as_ref()
                 .map(|h| crate::proto::proximadb_v1::HnswConfig {
-                    m: h.m as u32,
-                    ef_construction: h.ef_construction as u32,
-                    ef_search: h.ef_search as u32,
-                    max_partition_size: h.max_partition_size as u32,
-                    adaptive_parameters: h.adaptive_parameters,
-                    use_simd: h.use_simd,
-                    memory_limit_mb: h.memory_limit_mb as u32,
-                    lazy_loading: h.lazy_loading,
+                    m: Some(h.m as u32),
+                    ef_construction: Some(h.ef_construction as u32),
+                    ef_search: Some(h.ef_search as u32),
+                    max_partition_size: Some(h.max_partition_size as u32),
+                    adaptive_parameters: Some(h.adaptive_parameters),
+                    use_simd: Some(h.use_simd),
+                    memory_limit_mb: Some(h.memory_limit_mb as u32),
+                    lazy_loading: Some(h.lazy_loading),
                     // prune_connections and level_multiplier not in proto definition
                 });
 
@@ -272,29 +272,29 @@ impl IndexConfig {
             .ivf_config
             .as_ref()
             .map(|i| crate::proto::proximadb_v1::IvfConfig {
-                n_lists: i.n_lists as u32,
-                n_probe: i.n_probe as u32,
-                quantization_bits: i.quantization_bits as u32,
-                use_pq: i.use_pq,
-                pq_subspaces: i.pq_subspaces as u32,
-                train_on_insert: i.train_on_insert,
-                min_train_size: i.min_train_size as u32,
+                n_lists: Some(i.n_lists as u32),
+                n_probe: Some(i.n_probe as u32),
+                quantization_bits: Some(i.quantization_bits as u32),
+                use_pq: Some(i.use_pq),
+                pq_subspaces: Some(i.pq_subspaces as u32),
+                train_on_insert: Some(i.train_on_insert),
+                min_train_size: Some(i.min_train_size as u32),
             });
 
         let lsh_config = self
             .lsh_config
             .as_ref()
             .map(|l| crate::proto::proximadb_v1::LshConfig {
-                n_hash_tables: l.n_hash_tables,
-                n_hash_functions: l.n_hash_functions,
-                bucket_width: l.bucket_width,
-                binary_vectors: l.binary_vectors,
-                max_candidates: l.max_candidates,
-                projection: match l.projection {
+                n_hash_tables: Some(l.n_hash_tables),
+                n_hash_functions: Some(l.n_hash_functions),
+                bucket_width: Some(l.bucket_width),
+                binary_vectors: Some(l.binary_vectors),
+                max_candidates: Some(l.max_candidates),
+                projection: Some(match l.projection {
                     RandomProjection::Gaussian => 0,
                     RandomProjection::Binary => 1,
                     RandomProjection::Sparse => 2,
-                },
+                }),
             });
 
         crate::proto::proximadb_v1::IndexConfig {
@@ -310,29 +310,29 @@ impl IndexConfig {
                 },
             },
             parameters: std::collections::HashMap::new(), // Empty parameters map
-            enabled: true,                                // Index enabled by default
-            update_mode,
+            enabled: Some(true),                                // Index enabled by default
+            update_mode: Some(update_mode),
             async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as u32),
             async_update_batch_size: self.async_update_batch_size.map(|b| b as u32),
-            enable_background_optimization: self.enable_background_optimization,
+            enable_background_optimization: Some(self.enable_background_optimization),
             hnsw_config,
             ivf_config,
             flat_config: None, // Flat config is algorithm-specific, set when FLAT algorithm is selected
             pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected
             annoy_config: None, // Annoy config is algorithm-specific, set when ANNOY algorithm is selected
             lsh_config,
-            build_concurrency: self.build_concurrency.map(|x| x as u32).unwrap_or(1),
-            memory_limit_mb: self.memory_limit_mb.map(|x| x as u32).unwrap_or(512),
-            checkpoint_interval_ms: self
+            build_concurrency: Some(self.build_concurrency.map(|x| x as u32).unwrap_or(1)),
+            memory_limit_mb: Some(self.memory_limit_mb.map(|x| x as u32).unwrap_or(512)),
+            checkpoint_interval_ms: Some(self
                 .checkpoint_interval_ms
                 .map(|x| x as u32)
-                .unwrap_or(30000),
-            is_primary: true,                         // Default to primary index
+                .unwrap_or(30000)),
+            is_primary: Some(true),                         // Default to primary index
             use_cases: vec![],                        // Default empty use cases
-            selectivity_threshold: 0.0,               // Default no selectivity threshold
-            use_quantization: false,                  // Default: no quantization
+            selectivity_threshold: Some(0.0),               // Default no selectivity threshold
+            use_quantization: Some(false),                  // Default: no quantization
             quantization_override: None,              // Default: no override
-            queue_representation: "auto".to_string(), // Default: auto-detect from queue
+            queue_representation: Some("auto".to_string()), // Default: auto-detect from queue
         }
     }
 
@@ -806,8 +806,8 @@ impl IndexConfig {
         let mut config = Self::create_for_algorithm(algorithm, collection_size_hint);
 
         // Override with user-provided values from proto
-        if proto.update_mode != 0 {
-            config.update_mode = match proto.update_mode {
+        if proto.update_mode.unwrap_or(0) != 0 {
+            config.update_mode = match proto.update_mode.unwrap_or(0) {
                 1 => IndexUpdateMode::Synchronous,
                 2 => IndexUpdateMode::Asynchronous,
                 3 => IndexUpdateMode::Hybrid,
@@ -823,7 +823,7 @@ impl IndexConfig {
             config.async_update_batch_size = Some(batch_size as usize);
         }
 
-        config.enable_background_optimization = proto.enable_background_optimization;
+        config.enable_background_optimization = proto.enable_background_optimization.unwrap_or(true);
 
         // Handle algorithm-specific overrides
         match algorithm {
@@ -831,27 +831,33 @@ impl IndexConfig {
                 if let Some(user_hnsw) = &proto.hnsw_config {
                     if let Some(mut smart_hnsw) = config.hnsw_config.take() {
                         // Apply user overrides to smart defaults
-                        if user_hnsw.m != 0 {
-                            smart_hnsw.m = user_hnsw.m as usize;
+                        if user_hnsw.m.unwrap_or(0) != 0 {
+                            smart_hnsw.m = user_hnsw.m.unwrap_or(16) as usize;
                         }
-                        if user_hnsw.ef_construction != 0 {
-                            smart_hnsw.ef_construction = user_hnsw.ef_construction as usize;
+                        if user_hnsw.ef_construction.unwrap_or(0) != 0 {
+                            smart_hnsw.ef_construction = user_hnsw.ef_construction.unwrap_or(200) as usize;
                         }
-                        if user_hnsw.ef_search != 0 {
-                            smart_hnsw.ef_search = user_hnsw.ef_search as usize;
+                        if user_hnsw.ef_search.unwrap_or(0) != 0 {
+                            smart_hnsw.ef_search = user_hnsw.ef_search.unwrap_or(100) as usize;
                         }
-                        if user_hnsw.max_partition_size != 0 {
-                            smart_hnsw.max_partition_size = user_hnsw.max_partition_size as usize;
+                        if user_hnsw.max_partition_size.unwrap_or(0) != 0 {
+                            smart_hnsw.max_partition_size = user_hnsw.max_partition_size.unwrap_or(100000) as usize;
                         }
-                        if user_hnsw.memory_limit_mb != 0 {
-                            smart_hnsw.memory_limit_mb = user_hnsw.memory_limit_mb as usize;
+                        if user_hnsw.memory_limit_mb.unwrap_or(0) != 0 {
+                            smart_hnsw.memory_limit_mb = user_hnsw.memory_limit_mb.unwrap_or(512) as usize;
                         }
                         // prune_connections and level_multiplier are not in proto - use smart defaults
 
                         // Boolean fields: use user value if explicitly set, otherwise keep smart default
-                        smart_hnsw.adaptive_parameters = user_hnsw.adaptive_parameters;
-                        smart_hnsw.use_simd = user_hnsw.use_simd;
-                        smart_hnsw.lazy_loading = user_hnsw.lazy_loading;
+                        if let Some(adaptive) = user_hnsw.adaptive_parameters {
+                            smart_hnsw.adaptive_parameters = adaptive;
+                        }
+                        if let Some(simd) = user_hnsw.use_simd {
+                            smart_hnsw.use_simd = simd;
+                        }
+                        if let Some(lazy) = user_hnsw.lazy_loading {
+                            smart_hnsw.lazy_loading = lazy;
+                        }
 
                         config.hnsw_config = Some(smart_hnsw);
                     }
@@ -861,25 +867,29 @@ impl IndexConfig {
                 if let Some(user_ivf) = &proto.ivf_config {
                     if let Some(mut smart_ivf) = config.ivf_config.take() {
                         // Apply user overrides to smart defaults
-                        if user_ivf.n_lists != 0 {
-                            smart_ivf.n_lists = user_ivf.n_lists as usize;
+                        if user_ivf.n_lists.unwrap_or(0) != 0 {
+                            smart_ivf.n_lists = user_ivf.n_lists.unwrap_or(1000) as usize;
                         }
-                        if user_ivf.n_probe != 0 {
-                            smart_ivf.n_probe = user_ivf.n_probe as usize;
+                        if user_ivf.n_probe.unwrap_or(0) != 0 {
+                            smart_ivf.n_probe = user_ivf.n_probe.unwrap_or(10) as usize;
                         }
-                        if user_ivf.quantization_bits != 0 {
-                            smart_ivf.quantization_bits = user_ivf.quantization_bits as usize;
+                        if user_ivf.quantization_bits.unwrap_or(0) != 0 {
+                            smart_ivf.quantization_bits = user_ivf.quantization_bits.unwrap_or(8) as usize;
                         }
-                        if user_ivf.pq_subspaces != 0 {
-                            smart_ivf.pq_subspaces = user_ivf.pq_subspaces as usize;
+                        if user_ivf.pq_subspaces.unwrap_or(0) != 0 {
+                            smart_ivf.pq_subspaces = user_ivf.pq_subspaces.unwrap_or(8) as usize;
                         }
-                        if user_ivf.min_train_size != 0 {
-                            smart_ivf.min_train_size = user_ivf.min_train_size as usize;
+                        if user_ivf.min_train_size.unwrap_or(0) != 0 {
+                            smart_ivf.min_train_size = user_ivf.min_train_size.unwrap_or(1000) as usize;
                         }
 
                         // Boolean fields: use user value if explicitly set, otherwise keep smart default
-                        smart_ivf.use_pq = user_ivf.use_pq;
-                        smart_ivf.train_on_insert = user_ivf.train_on_insert;
+                        if let Some(pq) = user_ivf.use_pq {
+                            smart_ivf.use_pq = pq;
+                        }
+                        if let Some(train) = user_ivf.train_on_insert {
+                            smart_ivf.train_on_insert = train;
+                        }
 
                         config.ivf_config = Some(smart_ivf);
                     }
@@ -889,14 +899,14 @@ impl IndexConfig {
         }
 
         // Apply general overrides
-        if proto.build_concurrency > 0 {
-            config.build_concurrency = Some(proto.build_concurrency as usize);
+        if proto.build_concurrency.unwrap_or(0) > 0 {
+            config.build_concurrency = Some(proto.build_concurrency.unwrap_or(1) as usize);
         }
-        if proto.memory_limit_mb > 0 {
-            config.memory_limit_mb = Some(proto.memory_limit_mb as u64);
+        if proto.memory_limit_mb.unwrap_or(0) > 0 {
+            config.memory_limit_mb = Some(proto.memory_limit_mb.unwrap_or(512) as u64);
         }
-        if proto.checkpoint_interval_ms > 0 {
-            config.checkpoint_interval_ms = Some(proto.checkpoint_interval_ms as u64);
+        if proto.checkpoint_interval_ms.unwrap_or(0) > 0 {
+            config.checkpoint_interval_ms = Some(proto.checkpoint_interval_ms.unwrap_or(60000) as u64);
         }
 
         // Validate the final configuration

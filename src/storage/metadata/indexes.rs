@@ -59,7 +59,7 @@ impl From<&Collection> for CollectionLookupResult {
             indexing_algorithm: record
                 .config
                 .as_ref()
-                .map(|c| c.primary_index.clone())
+                .and_then(|c| c.primary_index.clone())
                 .unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
             vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),

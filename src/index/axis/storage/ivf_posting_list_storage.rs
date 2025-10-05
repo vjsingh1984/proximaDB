@@ -190,10 +190,10 @@ impl PostingListStorage {
                             id,
                             vector,
                             metadata,
-                            timestamp: std::time::SystemTime::now()
+                            timestamp: Some(std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap()
-                                .as_secs() as i64,
+                                .as_secs() as i64),
                             updated_at: None,
                             expires_at: None,
                             version: None,

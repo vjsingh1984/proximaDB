@@ -128,7 +128,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                     // Convert microsecond timestamp to seconds (much smaller)
                     fields.push((
                         "timestamp".to_string(),
-                        Value::Int((v.timestamp / 1_000_000) as i32),
+                        Value::Int((v.timestamp.unwrap_or(0) / 1_000_000) as i32),
                     ));
 
                     fields.push((
@@ -328,7 +328,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 id: id.unwrap_or_default(),
                                 vector: vector.unwrap_or_default(),
                                 metadata: metadata.unwrap_or_default(),
-                                timestamp: timestamp_micros as i64,
+                                timestamp: Some(timestamp_micros as i64),
                                 updated_at: Some(timestamp_micros as i64),
                                 expires_at: vector_record
                                     .iter()

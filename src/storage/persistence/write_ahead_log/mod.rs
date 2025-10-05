@@ -1330,10 +1330,10 @@ impl WriteAheadLogManager {
             vector: Vec::new(),
             metadata: HashMap::new(),
             version: None,
-            timestamp: std::time::SystemTime::now()
+            timestamp: Some(std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as i64,
+                .as_secs() as i64),
             updated_at: None,
             expires_at: Some(0), // Setting to 0 or past time marks for deletion
             source: None, // No source content for deletion record
@@ -1710,7 +1710,7 @@ impl WriteAheadLogManager {
                         vector: r.vector,
                         metadata: r.metadata,
                         version: r.version,
-                        timestamp: r.timestamp.unwrap_or(0),
+                        timestamp: Some(r.timestamp.unwrap_or(0)),
                         expires_at: None,
                                     source: None,
                         updated_at: None,
@@ -1820,7 +1820,7 @@ impl WriteAheadLogManager {
                     },
                     debug_info: None,
                     version: vector_record.version,
-                    timestamp: Some(vector_record.timestamp),
+                    timestamp: Some(vector_record.timestamp.unwrap_or(0)),
                     updated_at: vector_record.updated_at,
                     expires_at: vector_record.expires_at,
                     source: vector_record.source.as_ref().map(|s| crate::proto::proximadb_v1::SourceContent {

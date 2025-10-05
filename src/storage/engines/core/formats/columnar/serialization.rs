@@ -378,19 +378,19 @@ impl ColumnarSerializer {
                 let quantized_data = self.quantize_vectors(&vectors, engine).await?;
                 quantization_time = quant_start.elapsed().as_secs_f64() * 1000.0;
 
-                let binary = if quant_config.enable_binary {
+                let binary = if quant_config.enable_binary.unwrap_or(false) {
                     Some(self.serialize_binary_vectors(&quantized_data)?)
                 } else {
                     None
                 };
 
-                let int8 = if quant_config.enable_int8 {
+                let int8 = if quant_config.enable_int8.unwrap_or(false) {
                     Some(self.serialize_int8_vectors(&quantized_data)?)
                 } else {
                     None
                 };
 
-                let pq = if quant_config.enable_pq {
+                let pq = if quant_config.enable_pq.unwrap_or(false) {
                     Some(self.serialize_pq_vectors(&quantized_data)?)
                 } else {
                     None
@@ -510,7 +510,7 @@ impl ColumnarSerializer {
             .map(|(i, vector)| VectorRecord {
                 id: format!("record_{}", i), // Placeholder - would come from ID column
                 vector,
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 ..Default::default()
             })
             .collect();
@@ -696,7 +696,7 @@ impl ColumnarSerializer {
             .config
             .quantization
             .as_ref()
-            .map(|q| q.pq_segments as usize)
+            .map(|q| q.pq_segments.unwrap_or(8) as usize)
             .unwrap_or(16); // Default PQ segments
 
         let mut builder = FixedSizeBinaryBuilder::new(pq_size as i32);

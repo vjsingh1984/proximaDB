@@ -645,7 +645,7 @@ mod edge_tests {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
                 metadata: std::collections::HashMap::new(),
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),

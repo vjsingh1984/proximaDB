@@ -1,4 +1,5 @@
-# ProximaDB Configuration
+# ProximaDB Configuration - Minimal with Smart Defaults
+# Full configuration documentation: https://docs.proximadb.com/configuration
 
 [server]
 node_id = "proximadb-local"
@@ -7,203 +8,52 @@ port = 5678
 data_dir = "/tmp/proximadb/data"
 
 [storage]
-# Local metadata URL
+# Single metadata URL for all metadata operations
 metadata_url = "file:///tmp/proximadb/metadata"
 
-# Storage locations
-storage_locations = ["file:///tmp/proximadb/data"]
+# Multiple storage locations for data distribution
+# ProximaDB will distribute collections across these locations
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb1/data"
+weight = 1
+tags = ["local", "primary"]
 
-# Assignment configuration
-[storage.assignment_config]
-strategy = "hash"
-affinity = true
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb2/data"
+weight = 1
+tags = ["local", "secondary"]
 
-# Memory and performance settings for local testing
-mmap_enabled = true
-cache_size_mb = 256
-
-[storage.write_buffer_config]
-write_buffer_size_mb = 8192  # 8GB total across all collections
-memory_flush_size_bytes = 16777216  # 16MB per batch
-memtable_type = "BTree"
-sync_mode = "PerBatch"
-write_buffer_directory = "/tmp/proximadb/write_buffer"
-enable_wal = true
-
-[storage.sst_config]
-level_count = 7
-compaction_threshold = 5  # Minimum 5 files before compaction
-block_size_kb = 2048  # 2MB blocks (2048 KB) - optimal balance for disk IOPS and cloud storage
-compaction_strategy = "leveled"
-compression = "zstd"  # ZSTD for better compression ratio
-compression_enabled = true  # Enable compression by default
-compression_level = 3  # Balanced speed/compression (1-22)
-cache_size_mb = 128
-max_files_per_level = 10
-level_size_multiplier = 10
-max_levels = 7
-background_thread_count = 4
-data_directory = "/tmp/proximadb/sst_data"
-mmap_enabled = true
-prefetch_enabled = true
-prefetch_size_kb = 64
-# Vector encoding strategy (FullVector, GroupedBlock, GroupedField, TransposeBlock, Auto)
-# FullVector (default): Best for vector databases (WORM workloads, fastest decode in 8/12 configs)
-# GroupedBlock: Best balanced (wins 6/12 = 50%, good for mixed workloads)
-# GroupedField: Max compression (19-22%, best for storage-critical deployments)
-# Auto: Automatically selects strategy (resolves to FullVector for WORM workloads)
-vector_encoding_strategy = "FullVector"
-
-[storage.bloom_filter_config]
-bits_per_key = 10
-enabled = true
-
-[storage.viper_config]
-row_group_size = 100000
-compression = "zstd"  # ZSTD for columnar data
-compression_enabled = true  # Enable compression by default
-compression_level = 3  # Balanced speed/compression (1-22)
-enable_statistics = true
-data_directory = "/tmp/proximadb/viper_data"
-cache_size_mb = 512
-# Note: VIPER uses Parquet's native columnar format and does not use ProximaDataBlocks.
-# vector_encoding_strategy is only for SST engine (which uses ProximaDataBlocks)
-
-[storage.filesystem_config]
-enable_write_strategy_cache = true
-temp_strategy = "SameDirectory"
-
-[storage.filesystem_config.atomic_config]
-enable_local_atomic = true
-enable_object_store_atomic = false
-cleanup_temp_on_startup = true
+# Assignment configuration (optional - smart defaults applied)
+# [storage.assignment_config]
+# strategy = "hash"  # Options: hash, round-robin, weighted
+# affinity = true    # Keep collection data together on same disk
 
 [api]
 grpc_port = 5679
 rest_port = 5678
-max_request_size_mb = 64
-timeout_seconds = 30
-enable_tls = true  # TLS enabled by default for production security
-# Background TTL sweeper interval in seconds (default 900 = 15 minutes)
-ttl_sweep_interval_seconds = 900
 
 [monitoring]
-metrics_enabled = true
 log_level = "info"
 
-[consensus]
-node_id = 1
-cluster_peers = []
-election_timeout_ms = 5000
-heartbeat_interval_ms = 1000
-snapshot_threshold = 10
+# Advanced Configuration (optional - smart defaults applied)
+# Uncomment and modify only if you need to override defaults
 
-[performance]
-sync_mode = "PerBatch"
+# [storage.write_buffer_config]
+# write_buffer_size_mb = 8192
+# memory_flush_size_bytes = 16777216
+# enable_wal = true
 
-# Security Configuration
-[security]
-enabled = true
-mode = "development"  # Options: development | production | enterprise
+# [storage.sst_config]
+# block_size_kb = 2048
+# compression = "zstd"
+# vector_encoding_strategy = "FullVector"
 
-[security.authentication]
-# Authentication methods to enable
-methods = ["api_key"]  # Options: sso, jwt, api_key, mtls
-require_authentication = false  # Set to true for production
-default_session_timeout_minutes = 480
+# [storage.viper_config]
+# row_group_size = 100000
+# compression = "zstd"
 
-[security.api_keys]
-# Development API keys (replace in production)
-"dev-key-001" = { user_id = "developer", tenant_id = "default", permissions = ["read", "write"] }
+# [cache]
+# total_memory_mb = 512
 
-[security.jwt]
-enabled = false  # Enable for production JWT authentication
-secret = "development-secret-change-in-production"
-access_token_expiration_minutes = 60
-refresh_token_expiration_days = 7
-issuer = "proximadb"
-audience = "proximadb-clients"
-
-[security.sso]
-enabled = false  # Enable for enterprise SSO integration
-providers = []  # Options: aws_iam, azure_ad, google_workspace
-token_cache_ttl_minutes = 5
-
-[security.rbac]
-enabled = true
-enable_field_level_permissions = true
-enable_audit_logging = true
-default_deny = false  # Set to true for production zero-trust
-
-[security.audit]
-enabled = true
-storage_backend = "file"  # Options: file, database, s3, combined
-log_directory = "/tmp/proximadb/audit"
-encryption_enabled = false  # Enable for production
-retention_days = 90  # 90 days for development, 2555 for compliance
-enable_real_time_alerts = false
-
-[security.tls]
-enabled = true
-require_client_certificates = false  # Set to true for mTLS
-cert_file = ""  # Path to TLS certificate
-key_file = ""   # Path to TLS private key
-ca_file = ""    # Path to CA certificate for mTLS
-
-# Cache Configuration
-[cache]
-total_memory_mb = 512
-enable_warming = false
-
-# System Optimization Configuration
-[search.optimization]
-enabled = true
-
-# Memory Sharing Strategy
-# Philosophy: Two strategies, no auto-switching
-# User explicitly chooses - system respects choice and never switches
-[search.optimization.memory_sharing]
-strategy = "Arc"  # Options: "Arc" (default, 82-169x faster) | "DeepCopy" (if explicitly needed)
-track_clone_statistics = true
-enable_unified_metrics = true   # Default: centralized observability (set false for local stats only)
-# Note: Arc is proven 82-169x faster at ALL dimensions - always recommended
-
-# Sparse Vector Kernels
-[search.optimization.sparse]
-enable_sparse_kernels = true
-sparse_threshold = 0.5              # 50% zeros to trigger sparse kernels
-warn_cosine_sparse_threshold = 0.7  # Warn at 70% sparsity
-enable_simd_sparse = true
-sparse_detection_sample_size = 100
-cache_sparsity_info = true
-sparsity_cache_size = 10000
-
-# Distance Metric Strategy
-# Philosophy: User specifies metric in query - no auto-switching
-# System respects user choice and never automatically switches metrics
-[search.optimization.distance_metric]
-# User specifies distance metric in query or collection default
-# No warnings or automatic fallbacks - user choice is respected
-# Note: Sparse vectors have < 10% impact on cosine performance
-
-# Batch Strategy Selection (delegates to UnifiedDistanceCompute for actual processing)
-[search.optimization.batch_strategy]
-sequential_threshold = 16           # ≤16 items: use sequential processing
-parallel_threshold = 5000           # ≥5000 items: use sequential (parallel overhead dominates)
-# Recommendation based on bench_12_system_optimization.log:
-# - Batches < 5000: Use PARALLEL (2.6-3.6x faster)
-# - Batches ≥ 5000: Use SEQUENTIAL (parallel overhead: 1.18x slower)
-# Note: Actual batch sizing uses existing UnifiedDistanceCompute hardware detection
-# - AVX512: 128-item batches
-# - AVX2: 64-item batches
-# - SSE2/NEON: 32-item batches
-# - Scalar: 16-item batches
-
-# Metadata Projection
-[search.optimization.metadata_projection]
-enabled = true
-projection_threshold = 5            # Use projection if ≤5 fields needed
-auto_analyze = true                 # Automatically analyze access patterns
-cache_projections = true
-max_cached_projections = 1000
-track_access_patterns = true
+# [security]
+# enabled = false  # Enable for production

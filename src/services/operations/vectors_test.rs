@@ -39,7 +39,7 @@ mod tests {
                 }
                 map
             },
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
@@ -53,7 +53,7 @@ mod tests {
             id: id.to_string(),
             vector,
             metadata: HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

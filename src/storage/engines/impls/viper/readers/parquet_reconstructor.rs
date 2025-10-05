@@ -483,7 +483,7 @@ impl ParquetReconstructor {
                 id,
                 vector,
                 metadata: metadata_map,
-                timestamp: chrono::Utc::now().timestamp(), // i64, not u32
+                timestamp: Some(chrono::Utc::now().timestamp()), // i64, not u32
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),

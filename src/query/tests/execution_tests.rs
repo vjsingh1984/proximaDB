@@ -644,8 +644,8 @@ async fn create_test_executor_with_collection() -> QueryExecutor {
         index_configs: vec![],
         quantization: None,
         storage_config: None,
-        primary_index: "default".to_string(),
-        auto_index_selection: true,
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(true),
         owner: None,
         embedding_models: vec![],
     };

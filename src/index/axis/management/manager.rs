@@ -421,7 +421,7 @@ impl AxisManager {
             // Check if quantization is enabled for this collection
             if let Some(config) = &collection.config {
                 if let Some(quant_config) = &config.quantization {
-                    if quant_config.enabled {
+                    if quant_config.enabled.unwrap_or(false) {
                         // Quantize vector for in-memory index using collection settings
                         // This reuses our existing quantization infrastructure
                         self.quantize_for_index(vector, quant_config, config)
@@ -1162,7 +1162,7 @@ impl AxisManager {
         }
 
         // Use helper function for distance metric conversion
-        let distance_metric = proto_distance_to_internal(collection_config.distance_metric);
+        let distance_metric = proto_distance_to_internal(collection_config.distance_metric.unwrap_or(0));
 
         // Create quantization config using collection settings with proper field mapping
         let storage_config = StorageQuantizationConfig {
@@ -1184,7 +1184,7 @@ impl AxisManager {
             filter_threshold: 0.8,
             candidate_multiplier: 10,
             // quality_threshold removed -  0.95,
-            training_sample_size: quant_config.training_sample_size as usize,
+            training_sample_size: quant_config.training_sample_size.unwrap_or(10000) as usize,
             memory_budget_mb: 512,
             enable_hardware_acceleration: true,
         };

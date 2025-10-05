@@ -322,14 +322,14 @@ mod tests {
                 id: "batch_1".to_string(),
                 vector: vec![1.0, 2.0],
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
+                timestamp: Some(0),
                 ..Default::default()
             },
             VectorRecord {
                 id: "batch_2".to_string(),
                 vector: vec![3.0, 4.0],
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
+                timestamp: Some(0),
                 ..Default::default()
             },
         ];

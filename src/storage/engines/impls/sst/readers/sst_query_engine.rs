@@ -2483,7 +2483,7 @@ impl UnifiedSstableReader {
                     .with_similarity(similarity.normalized_score)
                     .add_vector(record.vector.clone())
                     .with_metadata(record.metadata.clone())
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp);
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0));
 
                 // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_record);

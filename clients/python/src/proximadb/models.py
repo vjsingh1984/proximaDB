@@ -668,7 +668,7 @@ class CollectionConfig(BaseModel):
     distance_metric: Optional[DistanceMetric] = DistanceMetric.COSINE  # Default to most common metric
     
     # STORAGE CONFIGURATION
-    storage_engine: Optional[StorageEngine] = StorageEngine.VIPER  # Align with server default
+    storage_engine: Optional[StorageEngine] = StorageEngine.SST  # Default to SST (fast, production-ready)
     storage_config: Optional['StorageConfig'] = None  # Complete storage configuration
     compression: Optional['CompressionConfig'] = None  # Optional compression configuration (SDK convenience)
     
@@ -919,6 +919,7 @@ class MetadataFilter(BaseModel):
 class SearchQuery(BaseModel):
     """Search query"""
     vector: List[float]
+    filters: Dict[str, Any] = {}  # Simple equality filters (proto map field - always include)
     id: Optional[str] = None
     metadata_filter: Optional[MetadataFilter] = None
 

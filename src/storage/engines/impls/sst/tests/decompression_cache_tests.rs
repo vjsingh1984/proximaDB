@@ -67,7 +67,7 @@ mod tests {
                     id: format!("id_{}", j),
                     vector: vec![0.0; 128], // 128-dim vector
                     metadata: vec![],
-                    timestamp: 0,
+                    timestamp: Some(0),
                     updated_at: None,
                     expires_at: None,
                     version: None,
@@ -242,7 +242,7 @@ mod tests {
                     id: format!("id_{}_{}", i, j),
                     vector: vec![i as f32; 64],
                     metadata: vec![],
-                    timestamp: 0,
+                    timestamp: Some(0),
                     updated_at: None,
                     expires_at: None,
                     version: None,

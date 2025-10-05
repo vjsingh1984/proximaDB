@@ -488,7 +488,7 @@ pub fn create_columnar_schema(
     ];
 
     // Add quantized columns if enabled
-    if config.enable_binary {
+    if config.enable_binary.unwrap_or(false) {
         fields.push(Field::new(
             "vector_binary",
             DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
@@ -496,7 +496,7 @@ pub fn create_columnar_schema(
         ));
     }
 
-    if config.enable_int8 {
+    if config.enable_int8.unwrap_or(false) {
         fields.push(Field::new(
             "vector_int8",
             DataType::FixedSizeBinary(dimension as i32),
@@ -506,10 +506,10 @@ pub fn create_columnar_schema(
         fields.push(Field::new("int8_zero_point", DataType::Int8, true));
     }
 
-    if config.enable_pq {
+    if config.enable_pq.unwrap_or(false) {
         fields.push(Field::new(
             "vector_pq",
-            DataType::FixedSizeBinary(config.pq_segments as i32),
+            DataType::FixedSizeBinary(config.pq_segments.unwrap_or(8) as i32),
             true,
         ));
         fields.push(Field::new("pq_codebook", DataType::Binary, true));

@@ -1598,7 +1598,7 @@ impl StorageQueryContext {
         quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
         dimension: usize,
     ) -> Option<ParsedQuantizationConfig> {
-        if !quant_config.enabled {
+        if !quant_config.enabled.unwrap_or(false) {
             return None;
         }
 
@@ -1620,16 +1620,16 @@ impl StorageQueryContext {
 
         Some(ParsedQuantizationConfig {
             strategy: quant_config.strategy(),
-            progressive_search_enabled: quant_config.enable_progressive_search,
+            progressive_search_enabled: quant_config.enable_progressive_search.unwrap_or(false),
             progressive_levels,
-            binary_filter_selectivity: quant_config.binary_filter_selectivity,
-            int8_ranking_selectivity: quant_config.int8_ranking_selectivity,
-            pq_ranking_selectivity: quant_config.pq_ranking_selectivity,
-            quality_threshold: quant_config.quality_threshold,
-            training_sample_size: quant_config.training_sample_size as i32,
-            enable_simd_acceleration: quant_config.enable_simd_acceleration,
-            optimize_for_storage: quant_config.optimize_for_storage,
-            optimize_for_memory: quant_config.optimize_for_memory,
+            binary_filter_selectivity: quant_config.binary_filter_selectivity.unwrap_or(0.3),
+            int8_ranking_selectivity: quant_config.int8_ranking_selectivity.unwrap_or(0.1),
+            pq_ranking_selectivity: quant_config.pq_ranking_selectivity.unwrap_or(0.05),
+            quality_threshold: quant_config.quality_threshold.unwrap_or(0.95),
+            training_sample_size: quant_config.training_sample_size.unwrap_or(10000) as i32,
+            enable_simd_acceleration: quant_config.enable_simd_acceleration.unwrap_or(true),
+            optimize_for_storage: quant_config.optimize_for_storage.unwrap_or(false),
+            optimize_for_memory: quant_config.optimize_for_memory.unwrap_or(false),
         })
     }
 
@@ -1691,19 +1691,19 @@ impl StorageQueryContext {
             dimension: config.map(|c| c.dimension as usize).unwrap_or(0),
             distance_metric: config
                 .map(|c| match c.distance_metric {
-                    0 => crate::compute::distance_computation::DistanceMetric::Euclidean,
-                    1 => crate::compute::distance_computation::DistanceMetric::Cosine,
-                    2 => crate::compute::distance_computation::DistanceMetric::DotProduct,
+                    Some(0) => crate::compute::distance_computation::DistanceMetric::Euclidean,
+                    Some(1) => crate::compute::distance_computation::DistanceMetric::Cosine,
+                    Some(2) => crate::compute::distance_computation::DistanceMetric::DotProduct,
                     _ => crate::compute::distance_computation::DistanceMetric::Cosine,
                 })
                 .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
             storage_strategy: config
                 .map(|c| match c.storage_engine {
-                    0 => StorageEngineStrategy::Viper, // VIPER
-                    1 => StorageEngineStrategy::Sst,   // SST
-                    3 => StorageEngineStrategy::Nova,   // NOVA
-                    4 => StorageEngineStrategy::Swift,   // SWIFT
-                    5 => StorageEngineStrategy::Raptor,   // RAPTOR
+                    Some(0) => StorageEngineStrategy::Viper, // VIPER
+                    Some(1) => StorageEngineStrategy::Sst,   // SST
+                    Some(2) => StorageEngineStrategy::Nova,   // NOVA
+                    Some(3) => StorageEngineStrategy::Swift,   // SWIFT
+                    Some(4) => StorageEngineStrategy::Raptor,   // RAPTOR
                     _ => StorageEngineStrategy::Viper,
                 })
                 .unwrap_or(StorageEngineStrategy::Viper),
@@ -1715,7 +1715,7 @@ impl StorageQueryContext {
             performance_tier: PerformanceTier::Warm, // Default since preset field doesn't exist
             compression_enabled: config
                 .and_then(|c| c.storage_config.as_ref())
-                .map(|s| s.compression != 0)  // Assume 0 means no compression
+                .map(|s| s.compression.unwrap_or(0) != 0)  // Assume 0 means no compression
                 .unwrap_or(false),
             quantization_enabled: config
                 .and_then(|c| c.quantization.as_ref())

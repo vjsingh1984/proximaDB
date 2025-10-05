@@ -53,10 +53,10 @@ impl QuantizationSelector {
             .and_then(|collection| collection.config.as_ref())
             .and_then(|config| config.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            ;
         let has_collection_id = params.collection_id.is_some();
 
-        if has_collection_config && quantization_enabled && has_collection_id {
+        if has_collection_config && quantization_enabled.flatten().unwrap_or(false) && has_collection_id {
             debug!(
                 "🎯 {}: Using persistent StorageQuantizationEngine for collection: {:?}",
                 engine_name, params.collection_id
@@ -83,10 +83,10 @@ impl QuantizationSelector {
             .and_then(|collection| collection.config.as_ref())
             .and_then(|config| config.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            ;
         let has_collection_id = params.collection_id.is_some();
 
-        if has_collection_config && quantization_enabled && has_collection_id {
+        if has_collection_config && quantization_enabled.flatten().unwrap_or(false) && has_collection_id {
             QuantizationSelectionReason::Persistent {
                 engine: engine_name.to_string(),
                 collection_id: params.collection_id.clone().unwrap_or_default(),
@@ -98,7 +98,7 @@ impl QuantizationSelector {
             if !has_collection_config {
                 missing_requirements.push("collection_config");
             }
-            if !quantization_enabled {
+            if !quantization_enabled.flatten().unwrap_or(false) {
                 missing_requirements.push("quantization_enabled");
             }
             if !has_collection_id {

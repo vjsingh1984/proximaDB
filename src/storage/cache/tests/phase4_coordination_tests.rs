@@ -236,7 +236,7 @@ async fn test_cache_orchestrator_integration() {
         id: "vec1".to_string(),
         vector: vec![1.0; 128],
         metadata: std::collections::HashMap::new(),
-        timestamp: 0,
+        timestamp: Some(0),
         updated_at: None,
         expires_at: None,
         version: Some(1),

@@ -191,7 +191,7 @@ mod tests {
                 id: "test_1".to_string(),
                 vector: vec![1.0; 128],
                 metadata: Default::default(),
-                timestamp: 0,
+                timestamp: Some(0),
                 ..Default::default()
             },
             VectorRecord {
@@ -242,7 +242,7 @@ mod tests {
                 id: "test_1".to_string(),
                 vector: vec![1.0; 64],
                 metadata: metadata.clone(),
-                timestamp: 0,
+                timestamp: Some(0),
                 ..Default::default()
             },
         ];

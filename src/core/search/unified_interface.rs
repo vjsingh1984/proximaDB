@@ -280,7 +280,8 @@ impl IntegratedSearchOptimizer {
 
         // Build collection config
         let collection_config = collection.config.as_ref().map(|config| CollectionConfig {
-            default_distance_metric: DistanceMetric::try_from(config.distance_metric)
+            default_distance_metric: config.distance_metric
+                .and_then(|m| DistanceMetric::try_from(m).ok())
                 .unwrap_or(DistanceMetric::Cosine),
             vector_dimension: config.dimension as usize,
             enable_quantization: config.quantization.is_some(),

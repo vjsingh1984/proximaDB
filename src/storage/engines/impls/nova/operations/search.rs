@@ -186,7 +186,7 @@ impl NovaSearchOperations {
                     metadata: record.metadata,
                     debug_info: None,
                     version: record.version,
-                    timestamp: Some(record.timestamp),
+                    timestamp: record.timestamp,
                     updated_at: None,
                     expires_at: None,
                     source: None,

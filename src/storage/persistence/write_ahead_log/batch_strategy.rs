@@ -406,7 +406,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                         id: search_result.id.clone(),
                         vector: search_result.vector.clone(),
                         metadata: search_result.metadata.clone(),
-                        timestamp: search_result.timestamp.unwrap_or(0),
+                        timestamp: Some(search_result.timestamp.unwrap_or(0)),
                         updated_at: None,
                         expires_at: None,
                         version: search_result.version,
@@ -892,7 +892,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             id: vector_id.clone(),
             vector: vec![], // Empty vector for tombstone
             metadata: std::collections::HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: Some(chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)), // 30 days
             version: None, // None for tombstone

@@ -70,7 +70,7 @@ use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::core::config::StorageConfig;
-use crate::proto::proximadb_v1::{Collection, CollectionConfig};
+use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
 use crate::utils::StoragePath;
@@ -257,7 +257,7 @@ impl CollectionService {
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<CollectionServiceResponse> {
         debug!(
-            "🆕 Creating collection: {} with distance_metric={}",
+            "🆕 Creating collection: {} with distance_metric={:?}",
             config.name, config.distance_metric
         );
         let start_time = std::time::Instant::now();
@@ -326,10 +326,10 @@ impl CollectionService {
         if let Some(ref mut storage_cfg) = enriched_config.storage_config {
             let resolved_compression = self.resolve_compression_config(
                 None, // No existing compression config to resolve from
-                config.storage_engine,
+                config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
             );
             if let Some(compression_config) = resolved_compression {
-                storage_cfg.compression = compression_config.algorithm;
+                storage_cfg.compression = Some(compression_config.algorithm as i32);
             }
         }
 
@@ -353,31 +353,31 @@ impl CollectionService {
                     );
                     // Fallback to simple default
                     enriched_config.quantization = Some(crate::proto::proximadb_v1::QuantizationConfig {
-                        enabled: true,
-                        strategy: crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults as i32,
+                        enabled: Some(true),
+                        strategy: Some(crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults as i32),
                         custom_levels: vec![],
-                        enable_progressive_search: true,
-                        binary_filter_selectivity: 0.3,
-                        int8_ranking_selectivity: 0.1,
-                        pq_ranking_selectivity: 0.05,
-                        training_sample_size: 10000,
-                        quality_threshold: 0.95,
-                        enable_adaptive_training: true,
-                        optimize_for_storage: false,
-                        optimize_for_memory: false,
-                        enable_simd_acceleration: true,
+                        enable_progressive_search: Some(true),
+                        binary_filter_selectivity: Some(0.3),
+                        int8_ranking_selectivity: Some(0.1),
+                        pq_ranking_selectivity: Some(0.05),
+                        training_sample_size: Some(10000),
+                        quality_threshold: Some(0.95),
+                        enable_adaptive_training: Some(true),
+                        optimize_for_storage: Some(false),
+                        optimize_for_memory: Some(false),
+                        enable_simd_acceleration: Some(true),
                         // NEW: Direct quantization type enables
-                        enable_binary: true,
-                        enable_int8: true,
-                        enable_pq: true,
+                        enable_binary: Some(true),
+                        enable_int8: Some(true),
+                        enable_pq: Some(true),
                         // Product Quantization specific settings
-                        pq_segments: 8,
-                        pq_bits: 8,
-                        pq_codebooks: 0,
+                        pq_segments: Some(8),
+                        pq_bits: Some(8),
+                        pq_codebooks: Some(0),
                         // Thresholds for progressive search
-                        binary_threshold: 0.3,
-                        int8_threshold: 0.1,
-                        pq_threshold: 0.05,
+                        binary_threshold: Some(0.3),
+                        int8_threshold: Some(0.1),
+                        pq_threshold: Some(0.05),
                     });
                 }
             }
@@ -387,15 +387,15 @@ impl CollectionService {
         // SDK defines compression config in collection metadata and it drives datablock compression
         if let Some(ref storage_cfg) = enriched_config.storage_config {
             // storage_cfg.compression is i32 in proto v1, check if it's set
-            if storage_cfg.compression != 0 {
+            if storage_cfg.compression.unwrap_or(0) != 0 {
                 use crate::proto::proximadb_v1::CompressionAlgorithm;
                 use crate::storage::engine_capabilities::EngineCapabilities;
 
                 // Convert engine type to enum
-                let engine = EngineCapabilities::engine_from_int(config.storage_engine);
+                let engine = EngineCapabilities::engine_from_int(config.storage_engine.unwrap_or(StorageEngine::Sst as i32));
 
                 // Try to convert compression algorithm from i32
-                if let Ok(algorithm) = CompressionAlgorithm::try_from(storage_cfg.compression) {
+                if let Ok(algorithm) = CompressionAlgorithm::try_from(storage_cfg.compression.unwrap_or(0)) {
                     if !EngineCapabilities::is_compression_supported(engine, algorithm) {
                         let engine_name = EngineCapabilities::get_engine_name(engine);
                         let unsupported =
@@ -411,7 +411,7 @@ impl CollectionService {
                 } else {
                     return Ok(CollectionServiceResponse::error(
                         format!(
-                            "INVALID_COMPRESSION: Invalid compression algorithm: {}",
+                            "INVALID_COMPRESSION: Invalid compression algorithm: {:?}",
                             storage_cfg.compression
                         ),
                         start_time.elapsed().as_micros() as i64,
@@ -446,7 +446,7 @@ impl CollectionService {
 
         // Validate quantization configuration
         if let Some(quant_config) = &enriched_config.quantization {
-            if quant_config.enabled {
+            if quant_config.enabled.unwrap_or(false) {
                 info!(
                     "⚠️ Collection '{}' has quantization enabled. All vectors MUST have unique IDs for tracking quantized representations",
                     config.name
@@ -476,9 +476,9 @@ impl CollectionService {
 
         // Get storage location - use provided or pick randomly from config
         let base_location = if let Some(ref storage_config) = enriched_config.storage_config {
-            if !storage_config.storage_path.is_empty() {
+            if storage_config.storage_path.as_ref().map_or(false, |p| !p.is_empty()) {
                 // User provided storage location
-                storage_config.storage_path.clone()
+                storage_config.storage_path.clone().unwrap_or_default()
             } else {
                 // Pick randomly from configured locations
                 use rand::seq::SliceRandom;
@@ -520,7 +520,7 @@ impl CollectionService {
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 primary_path: base_location.clone(),
                 backup_paths: vec![],
-                engine: config.storage_engine,
+                engine: config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_location.clone(),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
@@ -678,7 +678,7 @@ impl CollectionService {
             .config
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
-        let indexing_algorithm: crate::core::IndexingAlgorithm = match config.primary_index.as_str() {
+        let indexing_algorithm: crate::core::IndexingAlgorithm = match config.primary_index.as_deref().unwrap_or("default") {
             "hnsw" => "hnsw".to_string(),
             "ivf" => "ivf".to_string(),
             "pq" => "pq".to_string(),
@@ -750,16 +750,16 @@ impl CollectionService {
                     // Override with algorithm-specific parameters
                     if let Some(hnsw_config) = &first_index.hnsw_config {
                         hints["ef_search"] = serde_json::json!(hnsw_config.ef_search);
-                        hints["max_candidates"] = serde_json::json!(hnsw_config.ef_search * 2);
+                        hints["max_candidates"] = serde_json::json!(hnsw_config.ef_search.unwrap_or(100) * 2);
                     }
                     if let Some(ivf_config) = &first_index.ivf_config {
                         hints["n_probe"] = serde_json::json!(ivf_config.n_probe);
-                        hints["max_candidates"] = serde_json::json!(ivf_config.n_probe * 100);
+                        hints["max_candidates"] = serde_json::json!(ivf_config.n_probe.unwrap_or(10) * 100);
                     }
                 }
 
                 // Add storage engine specific hints
-                hints["storage_engine"] = match config.storage_engine {
+                hints["storage_engine"] = match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
                     1 => serde_json::json!("VIPER"),
                     2 => serde_json::json!("LSM"),
                     _ => serde_json::json!("LSM"),
@@ -806,7 +806,7 @@ impl CollectionService {
         if let Some(_proto) = self.get_native_proto(identifier).await? {
             if let Some(config) = _proto.config.as_ref() {
                 // Build storage config from proto
-                let engine_name = match config.storage_engine {
+                let engine_name = match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
                     1 => "VIPER",
                     2 => "LSM",
                     _ => "LSM", // Default
@@ -1044,10 +1044,10 @@ impl CollectionService {
                 if new_config.dimension > 0 {
                     existing_config.dimension = new_config.dimension;
                 }
-                if new_config.distance_metric != 0 {
+                if new_config.distance_metric.unwrap_or(0) != 0 {
                     existing_config.distance_metric = new_config.distance_metric;
                 }
-                if new_config.storage_engine != 0 {
+                if new_config.storage_engine.unwrap_or(0) != 0 {
                     existing_config.storage_engine = new_config.storage_engine;
                 }
                 if new_config.description.is_some() {
@@ -1177,7 +1177,7 @@ impl CollectionService {
             }
             // Set compression in storage_config
             if let Some(ref mut storage_config) = config.storage_config {
-                storage_config.compression = compression.algorithm;
+                storage_config.compression = Some(compression.algorithm);
             }
         }
 
@@ -1257,50 +1257,29 @@ impl CollectionService {
 
         // Create directories
         if let Ok(filesystem) = self.filesystem_factory.get_filesystem(base_location) {
-            // Create WAL directory and subdirectories
+            // Create WAL directory
             if let Err(e) = filesystem.create_dir_all(&write_buffer_dir).await {
                 warn!(
                     "⚠️ Failed to create WAL directory {}: {}",
                     write_buffer_dir, e
                 );
             } else {
-                for subdir in &["logs", "checkpoints"] {
-                    let full_path = format!("{}/{}", write_buffer_dir, subdir);
-                    if let Err(e) = filesystem.create_dir_all(&full_path).await {
-                        warn!("⚠️ Failed to create WAL subdirectory {}: {}", full_path, e);
-                    }
-                }
                 info!("✅ Created WAL storage directory: {}", write_buffer_dir);
                 created_components.push(StorageComponentType::Wal);
             }
 
-            // Create data directory
+            // Create data directory (flat structure for unified compaction framework)
             if let Err(e) = filesystem.create_dir_all(&data_dir).await {
                 warn!("⚠️ Failed to create data directory {}: {}", data_dir, e);
             } else {
-                for subdir in &["sstables", "parquet", "metadata_info"] {
-                    let full_path = format!("{}/{}", data_dir, subdir);
-                    if let Err(e) = filesystem.create_dir_all(&full_path).await {
-                        warn!("⚠️ Failed to create data subdirectory {}: {}", full_path, e);
-                    }
-                }
                 info!("✅ Created data storage directory: {}", data_dir);
                 created_components.push(StorageComponentType::Storage);
             }
 
-            // Create index directories
+            // Create index directory
             if let Err(e) = filesystem.create_dir_all(&indexes_dir).await {
                 warn!("⚠️ Failed to create index directory {}: {}", indexes_dir, e);
             } else {
-                for subdir in &["axis", "hnsw", "ivf"] {
-                    let full_path = format!("{}/{}", indexes_dir, subdir);
-                    if let Err(e) = filesystem.create_dir_all(&full_path).await {
-                        warn!(
-                            "⚠️ Failed to create index subdirectory {}: {}",
-                            full_path, e
-                        );
-                    }
-                }
                 info!("✅ Created index storage directory: {}", indexes_dir);
                 created_components.push(StorageComponentType::Index);
             }
@@ -1634,8 +1613,8 @@ mod tests {
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
-            primary_index: "default".to_string(),
-            auto_index_selection: false,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             storage_config: None,
             description: Some("Test collection".to_string()),
             tags: vec![],
@@ -1752,8 +1731,8 @@ mod tests {
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
-                primary_index: "default".to_string(),
-                auto_index_selection: false,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(false),
                 description: Some("Test collection".to_string()),
                 tags: vec![],
                 owner: Some("test".to_string()),

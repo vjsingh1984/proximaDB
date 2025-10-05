@@ -420,7 +420,7 @@ impl ParquetReader {
 
             let record = VectorRecord {
                 id: id_array.value(row).to_string(),
-                timestamp: timestamp_array.value(row) as i64,
+                timestamp: Some(timestamp_array.value(row) as i64),
                 vector: vector_values[row].clone(),
                 metadata,
                 ..Default::default()

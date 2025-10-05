@@ -174,7 +174,7 @@ mod tests {
                 vector: (0..dimension).map(|j| (i + j) as f32 * 0.1).collect(),
                 metadata: HashMap::new(),
                 version: Some(1),
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 source: None,

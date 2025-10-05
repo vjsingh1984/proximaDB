@@ -425,12 +425,46 @@ class ProximaDBClient:
             )
             warnings.warn(combined_message, UserWarning)
         
-        # Build config object as expected by server
+        # Enum mappings for proto values
+        DISTANCE_METRIC_MAP = {
+            "cosine": 1, "euclidean": 2, "dot_product": 3, "hamming": 4,
+            "manhattan": 5, "jaccard": 6, "angular": 7, "chebyshev": 8, "canberra": 9
+        }
+        STORAGE_ENGINE_MAP = {
+            "viper": 1, "sst": 2, "nova": 3, "helix": 4, "swift": 5, "raptor": 6, "mmap": 7, "hybrid": 8
+        }
+
+        # Convert distance_metric to integer
+        distance_metric_str = config.distance_metric if isinstance(config.distance_metric, str) else getattr(config.distance_metric, 'value', 'cosine')
+        distance_metric_int = DISTANCE_METRIC_MAP.get(distance_metric_str.lower(), 1)  # Default to COSINE
+
+        # Convert storage_engine to integer
+        storage_engine_str = getattr(config, 'storage_engine', 'sst')  # Default to SST
+        if not isinstance(storage_engine_str, str):
+            storage_engine_str = getattr(storage_engine_str, 'value', 'sst')
+        storage_engine_int = STORAGE_ENGINE_MAP.get(storage_engine_str.lower(), 2)  # Default to SST=2
+
+        # Build config object as expected by server (all required proto fields)
         config_data: Dict[str, Any] = {
             "name": name,
             "dimension": config.dimension,
-            "distance_metric": config.distance_metric if isinstance(config.distance_metric, str) else getattr(config.distance_metric, 'value', 'cosine'),
-            "storage_engine": getattr(config, 'storage_engine', 'viper') if isinstance(getattr(config, 'storage_engine', 'viper'), str) else getattr(getattr(config, 'storage_engine', None), 'value', 'viper'),
+            "distance_metric": distance_metric_int,
+            "storage_engine": storage_engine_int,
+            "tags": [],  # Required
+            "filterable_columns": [],  # Required (will be populated below if needed)
+            "index_configs": [],  # Required (will be populated below)
+            "primary_index": "",  # Required (will be set below)
+            "auto_index_selection": True,  # Required
+            "embedding_models": [],  # Required
+        }
+
+        # Add optional description if provided
+        if config.description:
+            config_data["description"] = config.description
+
+        # Enum mapping for indexing algorithms
+        INDEXING_ALGORITHM_MAP = {
+            "hnsw": 1, "ivf": 2, "pq": 3, "flat": 4, "annoy": 5, "lsh": 6
         }
 
         # Build index_configs aligned with proto
@@ -439,10 +473,22 @@ class ProximaDBClient:
         if getattr(config, 'index_configs', None):
             for ic in (config.index_configs or []):
                 algo_str = ic.algorithm if isinstance(ic.algorithm, str) else ic.algorithm.value
+                algo_int = INDEXING_ALGORITHM_MAP.get(algo_str.lower(), 1)  # Default to HNSW
                 entry: Dict[str, Any] = {
                     "index_name": ic.index_name,
-                    "algorithm": algo_str,
+                    "algorithm": algo_int,
+                    "parameters": {},
+                    "enabled": True,
+                    "update_mode": 0,
+                    "enable_background_optimization": True,
+                    "build_concurrency": 4,
+                    "memory_limit_mb": 512,
+                    "checkpoint_interval_ms": 60000,
                     "is_primary": bool(getattr(ic, 'is_primary', False)),
+                    "use_cases": [],
+                    "selectivity_threshold": 0.5,
+                    "use_quantization": False,
+                    "queue_representation": "vector",
                 }
                 if entry["is_primary"]:
                     primary_index_name = ic.index_name
@@ -452,8 +498,19 @@ class ProximaDBClient:
             primary_index_name = f"{name}_primary"
             index_configs.append({
                 "index_name": primary_index_name,
-                "algorithm": "hnsw",
+                "algorithm": 1,  # HNSW enum value
+                "parameters": {},
+                "enabled": True,
+                "update_mode": 0,
+                "enable_background_optimization": True,
+                "build_concurrency": 4,
+                "memory_limit_mb": 512,
+                "checkpoint_interval_ms": 60000,
                 "is_primary": True,
+                "use_cases": [],
+                "selectivity_threshold": 0.5,
+                "use_quantization": False,
+                "queue_representation": "vector",
             })
 
         config_data["index_configs"] = index_configs
@@ -473,8 +530,11 @@ class ProximaDBClient:
             config_data["quantization"] = q
         
         request_data = {
-            "operation": "create",
-            "config": config_data
+            "operation": 1,  # COLLECTION_CREATE enum value
+            "collection_config": config_data,
+            "query_params": {},  # Required map field
+            "options": {},  # Required map field
+            "migration_config": {},  # Required map field
         }
         
         # Debug print
@@ -508,11 +568,45 @@ class ProximaDBClient:
 
             # Build config from response if present; otherwise fallback to request config
             cfg_src = coll_data.get("config", {})
+
+            # Map Proto enum integers to string values for Pydantic
+            # Server returns Proto enums as integers
+            DISTANCE_METRIC_MAP = {
+                0: "cosine", 1: "cosine", 2: "euclidean", 3: "dot_product",
+                4: "manhattan", 5: "hamming", 6: "jaccard", 7: "chebyshev",
+                8: "canberra", 9: "minkowski", 10: "angular",
+                11: "bray_curtis", 12: "hellinger", 13: "custom"
+            }
+            STORAGE_ENGINE_MAP = {
+                0: "viper", 1: "viper", 2: "sst", 3: "nova",
+                4: "helix", 5: "swift", 6: "raptor", 7: "mmap", 8: "hybrid"
+            }
+
+            # Extract and convert distance_metric
+            dm_val = cfg_src.get("distance_metric")
+            if isinstance(dm_val, int):
+                distance_metric = DISTANCE_METRIC_MAP.get(dm_val, "cosine")
+            elif dm_val:
+                distance_metric = dm_val
+            else:
+                dm = getattr(config, 'distance_metric', 'cosine')
+                distance_metric = dm.value if hasattr(dm, 'value') else dm
+
+            # Extract and convert storage_engine
+            se_val = cfg_src.get("storage_engine")
+            if isinstance(se_val, int):
+                storage_engine = STORAGE_ENGINE_MAP.get(se_val, "viper")
+            elif se_val:
+                storage_engine = se_val
+            else:
+                se = getattr(config, 'storage_engine', 'viper')
+                storage_engine = se.value if hasattr(se, 'value') else se
+
             cfg = CollectionConfig(
                 name=cfg_src.get("name", name),
                 dimension=cfg_src.get("dimension", config.dimension),
-                distance_metric=cfg_src.get("distance_metric", getattr(config, 'distance_metric', 'cosine')),
-                storage_engine=cfg_src.get("storage_engine", getattr(config, 'storage_engine', 'viper')),
+                distance_metric=distance_metric,
+                storage_engine=storage_engine,
             )
             return Collection(
                 id=coll_data.get("id", name),
@@ -596,20 +690,42 @@ class ProximaDBClient:
         collections_data = response_data.get("collections", [])
         
         for coll_data in collections_data:
+            # Extract config - it can be nested or flat
+            cfg_src = coll_data.get("config", coll_data)
+
+            # Map Proto enum integers to strings (same as create_collection)
+            DISTANCE_METRIC_MAP = {
+                0: "cosine", 1: "cosine", 2: "euclidean", 3: "dot_product",
+                4: "manhattan", 5: "hamming", 6: "jaccard", 7: "chebyshev",
+                8: "canberra", 9: "minkowski", 10: "angular",
+                11: "bray_curtis", 12: "hellinger", 13: "custom"
+            }
+            STORAGE_ENGINE_MAP = {
+                0: "viper", 1: "viper", 2: "sst", 3: "nova",
+                4: "helix", 5: "swift", 6: "raptor", 7: "mmap", 8: "hybrid"
+            }
+
+            dm_val = cfg_src.get("distance_metric", cfg_src.get("metric"))
+            distance_metric = DISTANCE_METRIC_MAP.get(dm_val, "cosine") if isinstance(dm_val, int) else (dm_val or "cosine")
+
+            se_val = cfg_src.get("storage_engine")
+            storage_engine = STORAGE_ENGINE_MAP.get(se_val, "viper") if isinstance(se_val, int) else (se_val or "viper")
+
             # Create CollectionConfig from response
             config = CollectionConfig(
-                name=coll_data["name"],
-                dimension=coll_data["dimension"],
-                distance_metric=coll_data.get("metric", "cosine"),
-                storage_engine=coll_data.get("storage_engine", "viper"),
+                name=cfg_src.get("name", coll_data.get("name", "")),
+                dimension=cfg_src.get("dimension", coll_data.get("dimension", 0)),
+                distance_metric=distance_metric,
+                storage_engine=storage_engine,
                 primary_indexing_algorithm = None
             )
-            
+
             # Create CollectionStats if available
+            stats_src = coll_data.get("stats", coll_data)
             stats = CollectionStats(
-                vector_count=coll_data.get("vector_count", 0),
-                index_size_bytes=coll_data.get("index_size_bytes", 0),
-                data_size_bytes=coll_data.get("data_size_bytes", 0)
+                vector_count=stats_src.get("vector_count", 0),
+                index_size_bytes=stats_src.get("index_size_bytes", 0),
+                data_size_bytes=stats_src.get("data_size_bytes", 0)
             )
             
             collections.append(Collection(
@@ -681,7 +797,7 @@ class ProximaDBClient:
             "vectors": [vector_record]
         }
         
-        response = self._make_request("POST", "/api/v1/vector/batch", json=request_data)
+        response = self._make_request("POST", "/api/v1/vectors/batch", json=request_data)
         
         # Convert response to BatchResult
         resp_data = response.json()
@@ -693,29 +809,36 @@ class ProximaDBClient:
             duration_ms=resp_data.get('duration_ms', 0.0)
         )
     
-    def _convert_metadata_to_rest_format(self, metadata_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Convert Python dict metadata to REST API MetadataItem array format"""
+    def _convert_metadata_to_rest_format(self, metadata_dict: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """Convert Python dict metadata to REST API SqlValue format
+
+        The server expects metadata as a dict of SqlValues:
+        {
+            "key1": {"string_value": "value"},
+            "key2": {"int64_value": 42},
+            "key3": {"bool_value": true}
+        }
+        """
         if not metadata_dict:
-            return []
-        
-        items = []
+            return {}
+
+        sql_metadata = {}
         for key, value in metadata_dict.items():
-            item = {"key": key}
-            
-            # Set the appropriate typed value field
+            # Convert to SqlValue format
             if isinstance(value, bool):
-                item["bool_value"] = value
-            elif isinstance(value, (int, float)):
-                item["number_value"] = float(value)
+                sql_metadata[key] = {"bool_value": value}
+            elif isinstance(value, int):
+                sql_metadata[key] = {"int64_value": value}
+            elif isinstance(value, float):
+                sql_metadata[key] = {"number_value": value}
             elif isinstance(value, str):
-                item["string_value"] = value
+                sql_metadata[key] = {"string_value": value}
             elif value is None:
-                item["string_value"] = ""
+                sql_metadata[key] = {"null_value": None}
             else:
-                item["string_value"] = str(value)
-                
-            items.append(item)
-        return items
+                sql_metadata[key] = {"string_value": str(value)}
+
+        return sql_metadata
     
     def insert_vectors(
         self,
@@ -806,7 +929,7 @@ class ProximaDBClient:
                     # Fallback to legacy endpoint
                     response = self._make_request(
                         "POST",
-                        "/api/v1/vector/batch",
+                        "/api/v1/vectors/batch",
                         json=unified_request
                     )
             else:
@@ -862,7 +985,7 @@ class ProximaDBClient:
                     # For multi-batch, use legacy endpoint to minimize negotiation overhead
                     response = self._make_request(
                         "POST",
-                        "/api/v1/vector/batch",
+                        "/api/v1/vectors/batch",
                         json=unified_request
                     )
                     
@@ -984,48 +1107,10 @@ class ProximaDBClient:
             if optimization:
                 request_data['search_optimization'] = optimization
         
-        # Try SKS-aligned endpoint first; fall back to legacy if unavailable
-        if self._sks_search_supported is not False:
-            try:
-                sks_body = {
-                    "vector": vector,
-                    "top_k": top_k,
-                    "include_vector": include_vectors,
-                    "include_metadata": include_metadata,
-                }
-                sks_resp = self._make_request(
-                    "POST",
-                    f"/api/v1/search/{collection_id}",
-                    json=sks_body,
-                    timeout=timeout or self.config.timeout,
-                )
-                sks_data = sks_resp.json()
-                if isinstance(sks_data, dict) and "items" in sks_data:
-                    self._sks_search_supported = True
-                    results: List[SearchResult] = []
-                    for item in sks_data.get("items", []) or []:
-                        results.append(
-                            SearchResult(
-                                id=item.get("entity_id") or item.get("id", ""),
-                                score=item.get("score", 0.0),
-                                vector=None,  # vectors omitted unless server supports include_vector
-                                metadata=(item.get("typed_metadata") or item.get("metadata") or {}) if include_metadata else None,
-                            )
-                        )
-                    return results
-            except Exception as e:
-                # Disable SKS probe on explicit 404/405/501; otherwise leave as None to retry later
-                try:
-                    status = getattr(e, 'response', None).status_code if hasattr(e, 'response') else None
-                except Exception:
-                    status = None
-                if status in (404, 405, 501):
-                    self._sks_search_supported = False
-
-        # Legacy vector search path
+        # Use the standard /api/v1/search endpoint
         response = self._make_request(
             "POST",
-            "/api/v1/vector/search",
+            "/api/v1/search",
             json=request_data,
             timeout=timeout or self.config.timeout,
         )

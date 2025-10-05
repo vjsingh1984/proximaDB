@@ -496,7 +496,7 @@ impl MetadataWriteAheadLog {
                 id: vector_id,
                 vector: vec![0.0], // Vector content irrelevant for delete
                 metadata: HashMap::new(),
-                timestamp: current_time_secs as i64,
+                timestamp: Some(current_time_secs as i64),
                 updated_at: Some(current_time_secs as i64),
                 expires_at: Some((current_time_secs.saturating_sub(1)) as i64), // Mark as expired (logical delete)
                 version: Some(1),
@@ -622,7 +622,7 @@ impl MetadataWriteAheadLog {
             id: format!("metadata_{}", metadata.id),
             vector,
             metadata: HashMap::new(),
-            timestamp: timestamp_secs as i64,
+            timestamp: Some(timestamp_secs as i64),
             updated_at: Some(timestamp_secs as i64),
             expires_at: None,
             version: Some(1),

@@ -71,7 +71,7 @@ fn main() {
             id: format!("vec_{:05}", i),
             vector: vec![0.1; dimension],
             metadata,
-            timestamp: 1000000 + i,
+            timestamp: Some(1000000 + i),
             version: Some(1),
             updated_at: Some(1000000 + i),
             expires_at: None,

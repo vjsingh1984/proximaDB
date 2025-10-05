@@ -86,7 +86,7 @@ impl SwiftEngine {
             superblock_encoding_metadata: None,
             id: self.generate_superblock_id(),
             file_path: String::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             blocks,
             total_size_bytes: 0,
             compressed_size_bytes: 0,

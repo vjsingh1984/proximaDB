@@ -486,7 +486,7 @@ impl StreamingSearchService {
                             .with_similarity(similarity.rank_value)
                             .add_vector(record.vector.clone())
                             .with_metadata(metadata_map)
-                            .with_version_info(record.version.unwrap_or(0), record.timestamp);
+                            .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0));
 
                     results.push(search_result);
                 }

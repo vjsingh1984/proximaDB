@@ -514,19 +514,17 @@ pub fn build_collection_config(
     indexing_algorithm: Option<String>,
     _metadata: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<CollectionConfig> {
-    let config = CollectionConfig {
+    let mut config = CollectionConfig {
         name: name.clone(),
         dimension: dimension as u32,
         distance_metric: distance_metric
             .map(|m| parse_distance_metric(&m))
             .transpose()?
-            .map(|m| m as i32)
-            .unwrap_or(DistanceMetric::Cosine as i32),
+            .map(|m| m as i32),
         storage_engine: storage_engine
             .map(|e| parse_storage_engine(&e))
             .transpose()?
-            .map(|e| e as i32)
-            .unwrap_or(StorageEngine::Viper as i32),
+            .map(|e| e as i32),
         storage_config: None,
         index_configs: indexing_algorithm
             .map(|a| parse_indexing_algorithm(&a))
@@ -540,13 +538,17 @@ pub fn build_collection_config(
             .unwrap_or_default(),
         filterable_columns: vec![],
         quantization: None,
-        primary_index: String::new(),
-        auto_index_selection: false,
+        primary_index: None,
+        auto_index_selection: None,
         embedding_models: vec![],
         description: None,
         tags: vec![],
         owner: None,
     };
+
+    // Apply smart defaults from proto comments
+    crate::proto::defaults::apply_collection_config_defaults(&mut config);
+
     Ok(config)
 }
 

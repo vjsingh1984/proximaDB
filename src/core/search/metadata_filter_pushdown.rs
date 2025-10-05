@@ -671,7 +671,7 @@ mod tests {
                 });
                 map
             },
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             expires_at: None,
             version: None,

@@ -51,8 +51,8 @@ impl QuantizationSmartDefaults {
     /// Create minimal quantization for small dimensions (preserve quality)
     fn create_minimal_config(_dimension: usize) -> QuantizationConfig {
         QuantizationConfig {
-            enabled: true,
-            strategy: Strategy::Minimal as i32,
+            enabled: Some(true),
+            strategy: Some(Strategy::Minimal as i32),
             custom_levels: vec![
                 // Only INT8 quantization for minimal compression
                 QuantizationLevel {
@@ -73,34 +73,34 @@ impl QuantizationSmartDefaults {
                     enable_validation: true,
                 },
             ],
-            enable_progressive_search: true,
-            binary_filter_selectivity: 0.0, // No binary filter for small dimensions
-            int8_ranking_selectivity: 0.3,  // More conservative for quality
-            pq_ranking_selectivity: 0.0,    // No PQ for small dimensions
-            training_sample_size: 5000,     // Smaller training set
-            quality_threshold: 0.95,
-            enable_adaptive_training: true,
-            optimize_for_storage: false,
-            optimize_for_memory: false,
-            enable_simd_acceleration: true,
+            enable_progressive_search: Some(true),
+            binary_filter_selectivity: Some(0.0), // No binary filter for small dimensions
+            int8_ranking_selectivity: Some(0.3),  // More conservative for quality
+            pq_ranking_selectivity: Some(0.0),    // No PQ for small dimensions
+            training_sample_size: Some(5000),     // Smaller training set
+            quality_threshold: Some(0.95),
+            enable_adaptive_training: Some(true),
+            optimize_for_storage: Some(false),
+            optimize_for_memory: Some(false),
+            enable_simd_acceleration: Some(true),
             // New direct fields
-            enable_binary: false, // No binary for small dimensions
-            enable_int8: true,    // Use INT8
-            enable_pq: false,     // No PQ for small dimensions
-            pq_segments: 0,
-            pq_bits: 0,
-            pq_codebooks: 0,
-            binary_threshold: 0.0,
-            int8_threshold: 0.3,
-            pq_threshold: 0.0,
+            enable_binary: Some(false), // No binary for small dimensions
+            enable_int8: Some(true),    // Use INT8
+            enable_pq: Some(false),     // No PQ for small dimensions
+            pq_segments: Some(0),
+            pq_bits: Some(0),
+            pq_codebooks: Some(0),
+            binary_threshold: Some(0.0),
+            int8_threshold: Some(0.3),
+            pq_threshold: Some(0.0),
         }
     }
 
     /// Create balanced config for medium dimensions
     fn create_balanced_config(_dimension: usize) -> QuantizationConfig {
         QuantizationConfig {
-            enabled: true,
-            strategy: Strategy::SmartDefaults as i32,
+            enabled: Some(true),
+            strategy: Some(Strategy::SmartDefaults as i32),
             custom_levels: vec![
                 // Binary filter (first stage)
                 QuantizationLevel {
@@ -139,26 +139,26 @@ impl QuantizationSmartDefaults {
                     enable_validation: true,
                 },
             ],
-            enable_progressive_search: true,
-            binary_filter_selectivity: 0.3, // 30% reduction in first stage
-            int8_ranking_selectivity: 0.1,  // 10% pass to final rerank
-            pq_ranking_selectivity: 0.0,    // No PQ yet for medium dimensions
-            training_sample_size: 10000,
-            quality_threshold: 0.95,
-            enable_adaptive_training: true,
-            optimize_for_storage: false,
-            optimize_for_memory: false,
-            enable_simd_acceleration: true,
+            enable_progressive_search: Some(true),
+            binary_filter_selectivity: Some(0.3), // 30% reduction in first stage
+            int8_ranking_selectivity: Some(0.1),  // 10% pass to final rerank
+            pq_ranking_selectivity: Some(0.0),    // No PQ yet for medium dimensions
+            training_sample_size: Some(10000),
+            quality_threshold: Some(0.95),
+            enable_adaptive_training: Some(true),
+            optimize_for_storage: Some(false),
+            optimize_for_memory: Some(false),
+            enable_simd_acceleration: Some(true),
             // New direct fields
-            enable_binary: true, // Enable binary for filtering
-            enable_int8: true,   // Enable INT8 for ranking
-            enable_pq: false,    // No PQ for medium dimensions
-            pq_segments: 0,
-            pq_bits: 0,
-            pq_codebooks: 0,
-            binary_threshold: 0.3,
-            int8_threshold: 0.1,
-            pq_threshold: 0.0,
+            enable_binary: Some(true), // Enable binary for filtering
+            enable_int8: Some(true),   // Enable INT8 for ranking
+            enable_pq: Some(false),    // No PQ for medium dimensions
+            pq_segments: Some(0),
+            pq_bits: Some(0),
+            pq_codebooks: Some(0),
+            binary_threshold: Some(0.3),
+            int8_threshold: Some(0.1),
+            pq_threshold: Some(0.0),
         }
     }
 
@@ -167,8 +167,8 @@ impl QuantizationSmartDefaults {
         let num_subvectors = Self::calculate_optimal_subvectors(dimension);
 
         QuantizationConfig {
-            enabled: true,
-            strategy: Strategy::SmartDefaults as i32,
+            enabled: Some(true),
+            strategy: Some(Strategy::SmartDefaults as i32),
             custom_levels: vec![
                 // Binary filter (first stage)
                 QuantizationLevel {
@@ -225,26 +225,26 @@ impl QuantizationSmartDefaults {
                     enable_validation: true,
                 },
             ],
-            enable_progressive_search: true,
-            binary_filter_selectivity: 0.3, // 30% reduction
-            int8_ranking_selectivity: 0.1,  // 10% pass to PQ
-            pq_ranking_selectivity: 0.05,   // 5% pass to FP32 rerank
-            training_sample_size: 10000,
-            quality_threshold: 0.95,
-            enable_adaptive_training: true,
-            optimize_for_storage: true, // Enable storage optimization for large dims
-            optimize_for_memory: false,
-            enable_simd_acceleration: true,
+            enable_progressive_search: Some(true),
+            binary_filter_selectivity: Some(0.3), // 30% reduction
+            int8_ranking_selectivity: Some(0.1),  // 10% pass to PQ
+            pq_ranking_selectivity: Some(0.05),   // 5% pass to FP32 rerank
+            training_sample_size: Some(10000),
+            quality_threshold: Some(0.95),
+            enable_adaptive_training: Some(true),
+            optimize_for_storage: Some(true), // Enable storage optimization for large dims
+            optimize_for_memory: Some(false),
+            enable_simd_acceleration: Some(true),
             // New direct fields
-            enable_binary: true, // Enable binary for filtering
-            enable_int8: true,   // Enable INT8 for ranking
-            enable_pq: true,     // Enable PQ for large dimensions
-            pq_segments: num_subvectors as u32,
-            pq_bits: 8,
-            pq_codebooks: 0,
-            binary_threshold: 0.3,
-            int8_threshold: 0.1,
-            pq_threshold: 0.05,
+            enable_binary: Some(true), // Enable binary for filtering
+            enable_int8: Some(true),   // Enable INT8 for ranking
+            enable_pq: Some(true),     // Enable PQ for large dimensions
+            pq_segments: Some(num_subvectors as u32),
+            pq_bits: Some(8),
+            pq_codebooks: Some(0),
+            binary_threshold: Some(0.3),
+            int8_threshold: Some(0.1),
+            pq_threshold: Some(0.05),
         }
     }
 
@@ -253,8 +253,8 @@ impl QuantizationSmartDefaults {
         let num_subvectors = Self::calculate_optimal_subvectors(dimension);
 
         QuantizationConfig {
-            enabled: true,
-            strategy: Strategy::Aggressive as i32,
+            enabled: Some(true),
+            strategy: Some(Strategy::Aggressive as i32),
             custom_levels: vec![
                 // Binary filter (first stage)
                 QuantizationLevel {
@@ -311,26 +311,26 @@ impl QuantizationSmartDefaults {
                     enable_validation: true,
                 },
             ],
-            enable_progressive_search: true,
-            binary_filter_selectivity: 0.4, // More aggressive filtering
-            int8_ranking_selectivity: 0.0,  // Skip INT8 for aggressive mode
-            pq_ranking_selectivity: 0.03,   // Smaller final set for rerank
-            training_sample_size: 15000,    // Larger training set for complex data
-            quality_threshold: 0.9,         // Slightly lower for aggressive compression
-            enable_adaptive_training: true,
-            optimize_for_storage: true, // Prioritize storage savings
-            optimize_for_memory: true,  // Prioritize memory usage
-            enable_simd_acceleration: true,
+            enable_progressive_search: Some(true),
+            binary_filter_selectivity: Some(0.4), // More aggressive filtering
+            int8_ranking_selectivity: Some(0.0),  // Skip INT8 for aggressive mode
+            pq_ranking_selectivity: Some(0.03),   // Smaller final set for rerank
+            training_sample_size: Some(15000),    // Larger training set for complex data
+            quality_threshold: Some(0.9),         // Slightly lower for aggressive compression
+            enable_adaptive_training: Some(true),
+            optimize_for_storage: Some(true), // Prioritize storage savings
+            optimize_for_memory: Some(true),  // Prioritize memory usage
+            enable_simd_acceleration: Some(true),
             // New direct fields
-            enable_binary: true, // Enable binary for aggressive filtering
-            enable_int8: false,  // Skip INT8 in aggressive mode
-            enable_pq: true,     // Enable PQ4 for aggressive compression
-            pq_segments: num_subvectors as u32,
-            pq_bits: 4, // Use PQ4 for aggressive compression
-            pq_codebooks: 0,
-            binary_threshold: 0.4,
-            int8_threshold: 0.0,
-            pq_threshold: 0.03,
+            enable_binary: Some(true), // Enable binary for aggressive filtering
+            enable_int8: Some(false),  // Skip INT8 in aggressive mode
+            enable_pq: Some(true),     // Enable PQ4 for aggressive compression
+            pq_segments: Some(num_subvectors as u32),
+            pq_bits: Some(4), // Use PQ4 for aggressive compression
+            pq_codebooks: Some(0),
+            binary_threshold: Some(0.4),
+            int8_threshold: Some(0.0),
+            pq_threshold: Some(0.03),
         }
     }
 
@@ -365,26 +365,26 @@ impl QuantizationSmartDefaults {
         match use_case {
             "real_time" => {
                 // Optimize for speed over quality
-                config.binary_filter_selectivity = 0.5; // More aggressive filtering
-                config.optimize_for_memory = true;
-                config.quality_threshold = 0.85; // Lower quality threshold
+                config.binary_filter_selectivity = Some(0.5); // More aggressive filtering
+                config.optimize_for_memory = Some(true);
+                config.quality_threshold = Some(0.85); // Lower quality threshold
             }
             "high_quality" => {
                 // Optimize for quality over speed
-                config.binary_filter_selectivity = 0.1; // Less aggressive filtering
-                config.quality_threshold = 0.98; // Higher quality threshold
-                config.training_sample_size = 20000; // More training data
+                config.binary_filter_selectivity = Some(0.1); // Less aggressive filtering
+                config.quality_threshold = Some(0.98); // Higher quality threshold
+                config.training_sample_size = Some(20000); // More training data
             }
             "storage_optimized" => {
                 // Optimize for storage compression
-                config.strategy = Strategy::Aggressive as i32;
-                config.optimize_for_storage = true;
-                config.binary_filter_selectivity = 0.4;
+                config.strategy = Some(Strategy::Aggressive as i32);
+                config.optimize_for_storage = Some(true);
+                config.binary_filter_selectivity = Some(0.4);
             }
             "memory_constrained" => {
                 // Optimize for minimal memory usage
-                config.optimize_for_memory = true;
-                config.training_sample_size = 5000; // Smaller training set
+                config.optimize_for_memory = Some(true);
+                config.training_sample_size = Some(5000); // Smaller training set
                 // Keep only essential levels
                 config.custom_levels.truncate(2);
             }
@@ -402,7 +402,7 @@ impl QuantizationSmartDefaults {
 
     /// Validate quantization configuration for correctness
     pub fn validate_config(config: &QuantizationConfig, dimension: usize) -> Result<()> {
-        if !config.enabled {
+        if !config.enabled.unwrap_or(false) {
             return Ok(()); // No validation needed for disabled quantization
         }
 
@@ -420,11 +420,12 @@ impl QuantizationSmartDefaults {
         }
 
         // Validate progressive search thresholds
-        if config.enable_progressive_search {
-            if config.binary_filter_selectivity < 0.0 || config.binary_filter_selectivity > 1.0 {
+        if config.enable_progressive_search.unwrap_or(true) {
+            let selectivity = config.binary_filter_selectivity.unwrap_or(0.1);
+            if selectivity < 0.0 || selectivity > 1.0 {
                 return Err(anyhow::anyhow!(
-                    "Invalid binary filter selectivity: {} (must be 0.0-1.0)",
-                    config.binary_filter_selectivity
+                    "Invalid binary filter selectivity: {:?} (must be 0.0-1.0)",
+                    selectivity
                 ));
             }
         }
@@ -506,7 +507,7 @@ mod tests {
     #[test]
     fn test_smart_defaults_small_dimension() {
         let config = QuantizationSmartDefaults::generate_for_dimension(32).unwrap();
-        assert_eq!(config.strategy, Strategy::Minimal as i32);
+        assert_eq!(config.strategy, Some(Strategy::Minimal as i32));
         assert_eq!(config.custom_levels.len(), 1);
         assert_eq!(config.custom_levels[0].level_id, "int8");
     }
@@ -514,7 +515,7 @@ mod tests {
     #[test]
     fn test_smart_defaults_medium_dimension() {
         let config = QuantizationSmartDefaults::generate_for_dimension(96).unwrap();
-        assert_eq!(config.strategy, Strategy::SmartDefaults as i32);
+        assert_eq!(config.strategy, Some(Strategy::SmartDefaults as i32));
         assert_eq!(config.custom_levels.len(), 2);
         assert_eq!(config.custom_levels[0].level_id, "binary");
         assert_eq!(config.custom_levels[1].level_id, "int8");
@@ -523,7 +524,7 @@ mod tests {
     #[test]
     fn test_smart_defaults_large_dimension() {
         let config = QuantizationSmartDefaults::generate_for_dimension(384).unwrap();
-        assert_eq!(config.strategy, Strategy::SmartDefaults as i32);
+        assert_eq!(config.strategy, Some(Strategy::SmartDefaults as i32));
         assert_eq!(config.custom_levels.len(), 3);
         assert_eq!(config.custom_levels[0].level_id, "binary");
         assert_eq!(config.custom_levels[1].level_id, "int8");
@@ -533,7 +534,7 @@ mod tests {
     #[test]
     fn test_smart_defaults_very_large_dimension() {
         let config = QuantizationSmartDefaults::generate_for_dimension(1024).unwrap();
-        assert_eq!(config.strategy, Strategy::Aggressive as i32);
+        assert_eq!(config.strategy, Some(Strategy::Aggressive as i32));
         assert_eq!(config.custom_levels.len(), 3);
         assert_eq!(config.custom_levels[1].level_id, "pq4"); // Aggressive uses PQ4
     }
@@ -557,15 +558,15 @@ mod tests {
     #[test]
     fn test_use_case_real_time() {
         let config = QuantizationSmartDefaults::generate_for_use_case("real_time", 384).unwrap();
-        assert!(config.optimize_for_memory);
-        assert_eq!(config.quality_threshold, 0.85);
+        assert_eq!(config.optimize_for_memory, Some(true));
+        assert_eq!(config.quality_threshold, Some(0.85));
     }
 
     #[test]
     fn test_use_case_high_quality() {
         let config = QuantizationSmartDefaults::generate_for_use_case("high_quality", 384).unwrap();
-        assert_eq!(config.quality_threshold, 0.98);
-        assert_eq!(config.training_sample_size, 20000);
+        assert_eq!(config.quality_threshold, Some(0.98));
+        assert_eq!(config.training_sample_size, Some(20000));
     }
 
     #[test]

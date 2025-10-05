@@ -279,7 +279,7 @@ impl UnifiedColumnarCompaction {
         // Get distance metric from config
         let distance_metric = collection_config
             .and_then(|c| c.config.as_ref())
-            .and_then(|c| DistanceMetric::try_from(c.distance_metric).ok())
+            .and_then(|c| DistanceMetric::try_from(c.distance_metric.unwrap_or(0)).ok())
             .unwrap_or(DistanceMetric::Cosine);
 
         // Create storage quantization config based on collection settings
@@ -300,9 +300,9 @@ impl UnifiedColumnarCompaction {
             config.fast_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8());
 
             // PQ only if explicitly enabled due to training cost
-            if q_config.enable_pq {
+            if q_config.enable_pq.unwrap_or(false) {
                 config.primary_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
-                    q_config.pq_segments.max(1) as u8
+                    q_config.pq_segments.unwrap_or(1).max(1) as u8
                 ));
             }
         }

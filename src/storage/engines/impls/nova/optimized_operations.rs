@@ -250,7 +250,7 @@ impl OptimizedNovaOperations {
                             id: format!("rg{}_row{}", rg_idx, row_offsets[idx]),
                             vector: vec.clone(),
                             metadata: Default::default(),
-                            timestamp: 0,
+                            timestamp: Some(0),
                             updated_at: None,
                             expires_at: None,
                             version: None,

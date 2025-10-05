@@ -742,7 +742,7 @@ impl UnifiedProgressiveSearchPipeline {
                     .with_metadata(metadata)
                     .with_version_info(
                         candidate.record.version.unwrap_or(0),
-                        candidate.record.timestamp,
+                        candidate.record.timestamp.unwrap_or(0),
                     )
             })
             .collect()

@@ -622,7 +622,7 @@ impl AxisEventLogConsumer {
         // IVF can work with quantized data
         // PQ indexes prefer quantized data
 
-        let mode = if has_quantization != Some(true) {
+        let mode = if has_quantization != Some(Some(true)) {
             // No quantization, must use FP32
             debug!("[AXIS Consumer] No quantization enabled, using FP32Only mode");
             ExtractionMode::Fp32Only
@@ -959,7 +959,7 @@ impl AxisEventLogConsumer {
                                             // quantized_vector field removed - internalized in storage
                                             metadata: std::collections::HashMap::new(), // TODO: Extract metadata columns
                                             version: Some(version as u32),
-                                            timestamp: timestamp,
+                                            timestamp: Some(timestamp),
                                             expires_at: None,
                                             updated_at: None,
                                             source: None,
@@ -1074,7 +1074,7 @@ impl AxisEventLogConsumer {
                                         vector: vec![0.0; 128], // Placeholder vector
                                         metadata: std::collections::HashMap::new(),
                                         version: Some(0),
-                                        timestamp: 0,
+                                        timestamp: Some(0),
                                         expires_at: None,
                                         updated_at: None,
                                         source: None,

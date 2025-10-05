@@ -903,7 +903,7 @@ impl NovaEngine {
             vector_builder.append(true);
 
             // Timestamp column
-            timestamp_builder.append_value(record.timestamp);
+            timestamp_builder.append_value(record.timestamp.unwrap_or(0));
 
             // Version column
             version_builder.append_option(record.version);
@@ -1275,7 +1275,7 @@ impl NovaFile {
             id: format!("vec_rg{}_row{}", location.row_group_id, location.row_offset),
             vector: vec![0.0; self.metadata.dimension],
             metadata: std::collections::HashMap::new(),
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             expires_at: None,
             version: None,

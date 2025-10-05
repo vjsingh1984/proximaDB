@@ -107,7 +107,7 @@ impl SstManifest {
             collection_id,
             current_version: Arc::new(RwLock::new(ManifestVersion {
                 version: Some(0),
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 files: BTreeMap::new(),
             })),
             manifest_url,
@@ -452,7 +452,7 @@ mod tests {
             record_count: 1000,
             min_key: "a".to_string(),
             max_key: "z".to_string(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             last_compacted_at: None,
             bloom_fpr: 0.01,
             metadata_columns: HashMap::new(),

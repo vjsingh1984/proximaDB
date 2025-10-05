@@ -393,12 +393,12 @@ impl StorageEngineBenchmark {
             config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: "benchmark".to_string(),
                 dimension: dimension as u32,
-                distance_metric: DistanceMetric::Cosine as i32,
+                distance_metric: Some(DistanceMetric::Cosine as i32),
                 quantization: if enable_quantization {
                     Some(crate::proto::proximadb_v1::QuantizationConfig {
-                        enabled: true,
-                        strategy: 0, // SmartDefaults
-                        enable_progressive_search: true,
+                        enabled: Some(true),
+                        strategy: Some(0), // SmartDefaults
+                        enable_progressive_search: Some(true),
                         ..Default::default()
                     })
                 } else {

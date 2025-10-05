@@ -850,7 +850,7 @@ impl Compaction {
             });
             let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
-                let age = (current_time / 1000) - (vector_record.timestamp as i64); // Both in seconds
+                let age = (current_time / 1000) - (vector_record.timestamp.unwrap_or(0) as i64); // Both in seconds
                 let keep_tombstone = age < (60 * 60); // 1 hour in seconds
 
                 if !keep_tombstone {

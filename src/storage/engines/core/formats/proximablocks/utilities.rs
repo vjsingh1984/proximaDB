@@ -141,7 +141,7 @@ impl RowBasedUtilities {
             }
 
             // Check timestamp
-            if record.timestamp < 0 {
+            if record.timestamp.unwrap_or(0) < 0 {
                 record_issues.push("Invalid timestamp".to_string());
             }
 

@@ -466,7 +466,7 @@ impl SearchCandidate {
         let mut result = OptimizedSearchRecord::new(self.record.id.clone(), self.score)
             .with_similarity(self.score)
             .with_metadata(HashMap::new()) // TODO: Fix metadata conversion
-            .with_version_info(self.record.version.unwrap_or(0), self.record.timestamp);
+            .with_version_info(self.record.version.unwrap_or(0), self.record.timestamp.unwrap_or(0));
 
         if self.include_vectors {
             result = result.add_vector(self.record.vector.clone());

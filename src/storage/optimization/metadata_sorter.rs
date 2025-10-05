@@ -349,7 +349,7 @@ mod tests {
             id: id.to_string(),
             vector: vec![1.0, 2.0, 3.0],
             metadata,
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

@@ -486,7 +486,7 @@ impl StreamingRowGroupProcessor {
                     .unwrap_or_else(|| format!("row_{}", candidate.row_offset)),
                 vector: vec![0.0f32; context.query_vector.len()],
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 expires_at: None,
                 version: None,

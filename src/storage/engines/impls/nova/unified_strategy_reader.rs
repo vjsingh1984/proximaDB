@@ -317,7 +317,7 @@ impl UnifiedNOVAReader {
                 id,
                 vector,
                 metadata: HashMap::new(), // TODO: Extract metadata columns if present
-                timestamp,
+                timestamp: Some(timestamp),
                 version,
                 expires_at: None,
                 source: None,

@@ -188,12 +188,12 @@ impl BackgroundFlushContext {
         let config = CollectionConfig {
             name: self.collection_id.clone(),
             dimension: self.dimension as u32,
-            distance_metric: Self::distance_metric_to_proto(&self.distance_metric),
-            storage_engine: Self::storage_engine_to_proto(&self.storage_engine),
+            distance_metric: Some(Self::distance_metric_to_proto(&self.distance_metric)),
+            storage_engine: Some(Self::storage_engine_to_proto(&self.storage_engine)),
             filterable_columns: self.filterable_columns.clone(),
             quantization: self.quantization.as_ref().map(|qc| {
                 crate::proto::proximadb_v1::QuantizationConfig {
-                    enabled: qc.enabled,
+                    enabled: Some(qc.enabled),
                     ..Default::default()
                 }
             }),
@@ -239,11 +239,11 @@ impl BackgroundFlushContext {
             .ok_or_else(|| anyhow!("Collection '{}' has no storage assignment", collection_id))?;
 
         // Parse storage engine type
-        let storage_engine = StorageEngineType::try_from(config.storage_engine)
+        let storage_engine = StorageEngineType::try_from(config.storage_engine.unwrap_or(0))
             .context("Failed to parse storage engine type")?;
 
         // Parse distance metric
-        let distance_metric = DistanceMetric::try_from(config.distance_metric)
+        let distance_metric = DistanceMetric::try_from(config.distance_metric.unwrap_or(0))
             .context("Failed to parse distance metric")?;
 
         // Create compression config based on storage engine defaults
@@ -277,7 +277,7 @@ impl BackgroundFlushContext {
             };
 
             QuantizationConfig {
-                enabled: qc.enabled,
+                enabled: qc.enabled.unwrap_or(false),
                 quantization_type: quantization_type.to_string(),
                 bits_per_component: 8, // Default - could be extracted from specific quantization types
                 subspaces: Some(8), // Default - could be extracted from ProductQuantization config

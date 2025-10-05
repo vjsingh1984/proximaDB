@@ -319,7 +319,7 @@ pub fn create_vector_schema_with_types(
         crate::storage::engines::core::formats::columnar::schema::create_parquet_schema_from_specs(
             dimension,
             filterable_specs,
-            config.enabled,
+            config.enabled.unwrap_or(false),
         )
     } else {
         // Fallback for when we only have column names without specs
@@ -347,7 +347,7 @@ fn create_vector_schema_internal(
     ];
 
     // Add quantized columns if enabled
-    if config.enable_binary {
+    if config.enable_binary.unwrap_or(false) {
         fields.push(Field::new(
             "vector_binary",
             DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
@@ -355,7 +355,7 @@ fn create_vector_schema_internal(
         ));
     }
 
-    if config.enable_int8 {
+    if config.enable_int8.unwrap_or(false) {
         fields.push(Field::new(
             "vector_int8",
             DataType::FixedSizeBinary(dimension as i32),
@@ -365,10 +365,10 @@ fn create_vector_schema_internal(
         fields.push(Field::new("int8_zero_point", DataType::Int8, true));
     }
 
-    if config.enable_pq {
+    if config.enable_pq.unwrap_or(false) {
         fields.push(Field::new(
             "vector_pq",
-            DataType::FixedSizeBinary(config.pq_segments as i32),
+            DataType::FixedSizeBinary(config.pq_segments.unwrap_or(8) as i32),
             true,
         ));
     }
@@ -443,14 +443,14 @@ mod tests {
 
         // Check quantized fields based on actual config
         // Default config has binary and int8 enabled, but not PQ
-        if config.enable_binary {
+        if config.enable_binary.unwrap_or(false) {
             assert!(schema.field_with_name("vector_binary").is_ok());
         }
-        if config.enable_int8 {
+        if config.enable_int8.unwrap_or(false) {
             assert!(schema.field_with_name("vector_int8").is_ok());
         }
         // PQ is disabled by default, so this field won't exist
-        if config.enable_pq {
+        if config.enable_pq.unwrap_or(false) {
             assert!(schema.field_with_name("vector_pq").is_ok());
         }
 

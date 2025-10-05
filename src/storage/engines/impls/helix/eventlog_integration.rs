@@ -56,7 +56,7 @@ impl HelixFlushHandler {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
-            .map(|q| q.enabled)
+            .and_then(|q| q.enabled)
             .unwrap_or(false);
 
         // HELIX uses PCA projection + Proxima encoding

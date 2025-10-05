@@ -491,7 +491,7 @@ impl UnifiedParquetReader {
                         metadata: if needs_metadata { record.metadata } else { HashMap::new() },
                         debug_info: None,
                         version: record.version,
-                        timestamp: Some(record.timestamp),
+                        timestamp: record.timestamp,
                         updated_at: None,
                         expires_at: None,
                         source: None,
@@ -517,7 +517,7 @@ impl UnifiedParquetReader {
                         metadata: if needs_metadata { record.metadata } else { HashMap::new() },
                         debug_info: None,
                         version: record.version,
-                        timestamp: Some(record.timestamp),
+                        timestamp: record.timestamp,
                         updated_at: None,
                         expires_at: None,
                         source: None,
@@ -983,7 +983,7 @@ impl UnifiedParquetReader {
                 vector,
                 metadata,
                 version: Some(version as u32),
-                timestamp,
+                timestamp: Some(timestamp),
                 ..Default::default()
             });
         }
@@ -1344,7 +1344,7 @@ impl UnifiedParquetReader {
                             _ => return false,
                         };
                         {
-                            if record.timestamp != expected_timestamp {
+                            if record.timestamp.unwrap_or(0) != expected_timestamp {
                                 return false;
                             }
                         }

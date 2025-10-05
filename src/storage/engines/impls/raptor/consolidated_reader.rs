@@ -903,7 +903,7 @@ impl RaptorReader {
             // Extract timestamp fields (optional)
             if let Some(ts_array) = timestamp_array {
                 if !ts_array.is_null(row_idx) {
-                    record.timestamp = ts_array.value(row_idx) as i64;
+                    record.timestamp = Some(ts_array.value(row_idx) as i64);
                 }
             }
 

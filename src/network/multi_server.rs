@@ -581,42 +581,42 @@ impl SharedServices {
                 let collection_config = crate::proto::proximadb_v1::CollectionConfig {
                     name: metadata.name.clone(),
                     dimension: metadata.dimension as u32,
-                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32, // Default
-                    storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32, // Default
+                    distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32), // Default
+                    storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32), // Default: SST
                     filterable_columns: vec![],
                     index_configs: vec![],
                     quantization: Some(crate::proto::proximadb_v1::QuantizationConfig {
-                        enabled: true, // Quantization enabled by default
-                        strategy:
+                        enabled: Some(true), // Quantization enabled by default
+                        strategy: Some(
                             crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults
-                                as i32,
+                                as i32),
                         custom_levels: vec![],
-                        enable_progressive_search: true, // Progressive search enabled by default
-                        binary_filter_selectivity: 0.3,
-                        int8_ranking_selectivity: 0.1,
-                        pq_ranking_selectivity: 0.05,
-                        training_sample_size: 10000,
-                        quality_threshold: 0.95,
-                        enable_adaptive_training: true,
-                        optimize_for_storage: false,
-                        optimize_for_memory: false,
-                        enable_simd_acceleration: true,
+                        enable_progressive_search: Some(true), // Progressive search enabled by default
+                        binary_filter_selectivity: Some(0.3),
+                        int8_ranking_selectivity: Some(0.1),
+                        pq_ranking_selectivity: Some(0.05),
+                        training_sample_size: Some(10000),
+                        quality_threshold: Some(0.95),
+                        enable_adaptive_training: Some(true),
+                        optimize_for_storage: Some(false),
+                        optimize_for_memory: Some(false),
+                        enable_simd_acceleration: Some(true),
                         // NEW: Direct quantization type enables
-                        enable_binary: true,
-                        enable_int8: true,
-                        enable_pq: true,
+                        enable_binary: Some(true),
+                        enable_int8: Some(true),
+                        enable_pq: Some(true),
                         // Product Quantization specific settings
-                        pq_segments: 8,
-                        pq_bits: 8,
-                        pq_codebooks: 0,
+                        pq_segments: Some(8),
+                        pq_bits: Some(8),
+                        pq_codebooks: Some(0),
                         // Thresholds for progressive search
-                        binary_threshold: 0.3,
-                        int8_threshold: 0.1,
-                        pq_threshold: 0.05,
+                        binary_threshold: Some(0.3),
+                        int8_threshold: Some(0.1),
+                        pq_threshold: Some(0.05),
                     }),
                     storage_config: None, // VersionedCollectionMetadata doesn't have storage_assignment field
-                    primary_index: String::new(),
-                    auto_index_selection: false,
+                    primary_index: Some(String::new()),
+                    auto_index_selection: Some(false),
                     description: None,
                     tags: vec![],
                     owner: None,

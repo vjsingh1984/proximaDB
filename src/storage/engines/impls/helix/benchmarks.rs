@@ -408,7 +408,7 @@ mod benchmarks {
                     checksum: 0,
                     compression_algorithm: CompressionAlgorithm::Zstd,
                     encoding_marker: 0x10,
-                    min_timestamp: 0,
+                    min_timestamp: Some(0),
                     max_timestamp: 1000,
                     hilbert_min: Some(i as i64 * 1000),
                     hilbert_max: Some((i + 1) as i64 * 1000),

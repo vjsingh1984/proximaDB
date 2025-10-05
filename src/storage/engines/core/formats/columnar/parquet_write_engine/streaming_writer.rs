@@ -297,13 +297,13 @@ impl StreamingParquetWriter {
         arrays.push(Arc::new(fixed_list_array));
 
         // Add quantization arrays if enabled using UnifiedQuantizationEngine
-        if self.config.quantization.enable_binary || self.config.quantization.enable_int8 || self.config.quantization.enable_pq {
+        if self.config.quantization.enable_binary.unwrap_or(false) || self.config.quantization.enable_int8.unwrap_or(false) || self.config.quantization.enable_pq.unwrap_or(false) {
             self.add_quantization_arrays(&mut arrays, records)?;
         }
 
         // Timestamp
         let timestamps: Vec<i64> = records.iter()
-            .map(|r| r.timestamp as i64)
+            .map(|r| r.timestamp.unwrap_or(0) as i64)
             .collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
 
@@ -478,7 +478,7 @@ impl StreamingParquetWriter {
         let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
 
         // Binary quantization
-        if self.config.quantization.enable_binary {
+        if self.config.quantization.enable_binary.unwrap_or(false) {
             let mut builder = BinaryBuilder::new();
             for record in records {
                 let binary_vec = engine.quantize_to_binary(&record.vector)?;
@@ -488,7 +488,7 @@ impl StreamingParquetWriter {
         }
 
         // INT8 quantization
-        if self.config.quantization.enable_int8 {
+        if self.config.quantization.enable_int8.unwrap_or(false) {
             let mut int8_builder = BinaryBuilder::new();
             let mut scale_values = Vec::with_capacity(records.len());
             let mut min_values = Vec::with_capacity(records.len());
@@ -514,7 +514,7 @@ impl StreamingParquetWriter {
         }
 
         // PQ quantization
-        if self.config.quantization.enable_pq {
+        if self.config.quantization.enable_pq.unwrap_or(false) {
             // TODO: Implement PQ quantization
             // PQ requires async codebook training and proper sidecar file storage
             // For now, store null values
@@ -667,7 +667,7 @@ impl StreamingParquetWriter {
             index_build_duration: std::time::Duration::default(),
             throughput_records_per_sec: 0.0,
             throughput_mb_per_sec: 0.0,
-            quantization_enabled: self.config.quantization.enabled,
+            quantization_enabled: self.config.quantization.enabled.unwrap_or(false),
             quantization_levels: vec![],
             quantization_space_saved: 0,
             filterable_columns_count: self.filterable_columns.len(),

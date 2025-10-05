@@ -405,7 +405,7 @@ mod tests {
                 id: "test".to_string(),
                 vector: vec![1.0; 768],
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 expires_at: None,
                 version: None,

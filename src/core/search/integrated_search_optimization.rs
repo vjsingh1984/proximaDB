@@ -986,7 +986,7 @@ impl AdvancedSearchOptimizer {
                     .with_similarity(dist_result.normalized_score)
                     .add_vector(record.vector.clone())
                     .with_metadata(record.metadata.clone())
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp),
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0)),
             );
         }
 

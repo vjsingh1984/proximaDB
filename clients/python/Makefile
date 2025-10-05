@@ -3,17 +3,16 @@ OUT_DIR=src
 
 # Full proto set for Python SDK generation
 PROTO_SRC= \
-	$(PROTO_DIR)/proximadb.proto \
 	$(PROTO_DIR)/proximadb/v1/types.proto \
-	$(PROTO_DIR)/proximadb/v1/vector_types.proto \
+	$(PROTO_DIR)/proximadb/v1/collection_types.proto \
 	$(PROTO_DIR)/proximadb/v1/vector.proto \
 	$(PROTO_DIR)/proximadb/v1/sql.proto \
-	$(PROTO_DIR)/proximadb/v1/collection_types.proto \
 	$(PROTO_DIR)/proximadb/v1/collection.proto \
 	$(PROTO_DIR)/proximadb/v1/entity.proto \
 	$(PROTO_DIR)/proximadb/v1/relations.proto \
 	$(PROTO_DIR)/proximadb/v1/context.proto \
-	$(PROTO_DIR)/proximadb/v1/graph.proto
+	$(PROTO_DIR)/proximadb/v1/graph.proto \
+	$(PROTO_DIR)/proximadb/v1/graph_collection.proto
 
 .PHONY: gen-proto
 gen-proto:

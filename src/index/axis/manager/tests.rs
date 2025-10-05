@@ -54,7 +54,7 @@ fn create_test_vector(id: &str, _collection_id: &str, dimension: usize) -> Vecto
             proximadb::MetadataItem {
                 key: "category".to_string(),
                 value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("test".to_string())),
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             expires_at: None,
             similarity: None,
@@ -79,7 +79,7 @@ fn create_expired_vector(id: &str, _collection_id: &str, dimension: usize) -> Ve
         metadata: vec![],
         timestamp: Utc::now().timestamp_micros(),
         expires_at: Some(Utc::now().timestamp_millis() - 1000), // Expired 1 second ago,
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             similarity: None,
             // rank removed -  None,

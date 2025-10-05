@@ -301,7 +301,7 @@ impl WALFlushCoordinator {
             if let Some(ref config) = metadata.config {
                 // Map proto storage engine enum to string
                 use crate::proto::proximadb_v1::StorageEngine;
-                match StorageEngine::try_from(config.storage_engine) {
+                match StorageEngine::try_from(config.storage_engine.unwrap_or(0)) {
                     Ok(StorageEngine::Viper) => "viper",
                     Ok(StorageEngine::Sst) => "sst",
                     _ => preferred_engine.unwrap_or("viper"), // Default to viper or provided preference

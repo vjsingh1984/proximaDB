@@ -106,7 +106,7 @@ impl ColumnarSchema {
         ];
 
         // Add quantized vector columns if enabled
-        if config.enable_binary {
+        if config.enable_binary.unwrap_or(false) {
             fields.push(Field::new(
                 "vector_binary",
                 DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
@@ -115,7 +115,7 @@ impl ColumnarSchema {
             debug!("Added binary quantization column");
         }
 
-        if config.enable_int8 {
+        if config.enable_int8.unwrap_or(false) {
             fields.extend([
                 Field::new(
                     "vector_int8",
@@ -128,11 +128,11 @@ impl ColumnarSchema {
             debug!("Added INT8 quantization columns");
         }
 
-        if config.enable_pq {
+        if config.enable_pq.unwrap_or(false) {
             fields.extend([
                 Field::new(
                     "vector_pq",
-                    DataType::FixedSizeBinary(config.pq_segments as i32),
+                    DataType::FixedSizeBinary(config.pq_segments.unwrap_or(8) as i32),
                     true,
                 ),
                 Field::new("pq_codebook_id", DataType::Utf8, true),
@@ -408,7 +408,7 @@ impl ColumnarSchema {
 
         // Add new quantization columns if requested
         if let Some(ref quant_config) = new_requirements.new_quantization {
-            if quant_config.enable_binary
+            if quant_config.enable_binary.unwrap_or(false)
                 && existing_schema.field_with_name("vector_binary").is_err()
             {
                 fields.push(Arc::new(Field::new(
@@ -418,7 +418,7 @@ impl ColumnarSchema {
                 )));
             }
 
-            if quant_config.enable_int8 && existing_schema.field_with_name("vector_int8").is_err() {
+            if quant_config.enable_int8.unwrap_or(false) && existing_schema.field_with_name("vector_int8").is_err() {
                 fields.extend([
                     Arc::new(Field::new(
                         "vector_int8",
@@ -430,11 +430,11 @@ impl ColumnarSchema {
                 ]);
             }
 
-            if quant_config.enable_pq && existing_schema.field_with_name("vector_pq").is_err() {
+            if quant_config.enable_pq.unwrap_or(false) && existing_schema.field_with_name("vector_pq").is_err() {
                 fields.extend([
                     Arc::new(Field::new(
                         "vector_pq",
-                        DataType::FixedSizeBinary(quant_config.pq_segments as i32),
+                        DataType::FixedSizeBinary(quant_config.pq_segments.unwrap_or(1) as i32),
                         true,
                     )),
                     Arc::new(Field::new("pq_codebook_id", DataType::Utf8, true)),

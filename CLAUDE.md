@@ -241,11 +241,14 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 - `build_and_test.sh`: Full build and test pipeline
 - `build_minimal.sh`: Minimal build for quick iteration
 - `build-docker.sh`: Docker image build script
+- `benchmark_simd_performance.sh`: SIMD performance benchmarking
 - `consolidate_docs.sh`: Documentation consolidation utility
+- `consolidate_search_api.sh`: Search API consolidation
 - `run_demo.sh`: Run demo application with sample data
+- `docker-demo-test.sh`: Docker demonstration and testing
 - `deploy_enterprise_release_1.sh`: Enterprise deployment script
-- `start_all_emulators.sh`: Start cloud emulators for testing (S3, Azure, GCS)
-- `stop_all_emulators.sh`: Stop all cloud emulators
+- `install-proximadb-service.sh`: System service installation
+- `install-user-service.sh`: User-level service installation
 
 ### Available Benchmarks
 Located in `benches/` directory - Run with `cargo bench` or specific benchmark:
@@ -284,9 +287,9 @@ cargo test --verbose
 make test-integration
 cargo test --test integration --verbose
 
-# Python SDK tests
+# Python SDK tests (tests are in tests/python/, not clients/python/)
 make test-python
-cd clients/python && pytest tests/ -v
+cd tests/python && PYTHONPATH=/workspace/clients/python/src python3 -m pytest -v
 
 # Performance tests with server
 make perf-test
@@ -370,8 +373,6 @@ make help                    # Show all available commands
 make perf-test              # Performance tests with real server
 make integration-full       # Full integration test with server
 make test-python-install    # Install Python test dependencies
-make docker-build           # Build Docker image
-make docker-run             # Run ProximaDB in Docker
 make docs-update-gaps       # Update critical documentation gaps
 ```
 
@@ -689,8 +690,9 @@ The caching system has been recently unified (`src/storage/cache/`):
    - Each storage engine has dedicated test modules
 
 4. **Python SDK Tests**:
-   - Location: `clients/python/test_*.py` (individual test files)
-   - No pytest directory structure - run files directly
+   - Location: `tests/python/` (test files with pytest)
+   - Client SDK source: `clients/python/src/proximadb/`
+   - Run with: `cd tests/python && PYTHONPATH=/workspace/clients/python/src python3 -m pytest -v`
 
 5. **Test Scripts**:
    - `tests/run_tests.sh`: Comprehensive test runner
@@ -809,8 +811,9 @@ for result in results:
 
 **Run Tests:**
 ```bash
-cd clients/python
-python test_v1_client.py  # Run individual test files
+cd tests/python
+PYTHONPATH=/workspace/clients/python/src python3 -m pytest -v  # Run all tests
+python test_v1_client.py  # Run individual test file
 ```
 
 ## 2025 Development Roadmap Implementation
@@ -873,7 +876,7 @@ Each guide follows this structure:
 
 ## Recent Development Context
 
-### Current Development Status (December 2024)
+### Current Development Status (October 2024)
 - **Active Branch**: `development` (main branch: `main`)
 - **Recent Changes**: Storage engine optimizations, unified cache system, test infrastructure improvements
 

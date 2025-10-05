@@ -24,8 +24,8 @@ impl MockCollectionService {
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
                     name: "products".to_string(),
                     dimension: 1536,
-                    distance_metric: 0, // Cosine metric
-                    storage_engine: 0, // Default storage engine
+                    distance_metric: Some(0), // Cosine metric
+                    storage_engine: Some(0), // Default storage engine
                     tags: vec![],
                     description: None,
                     filterable_columns: vec![
@@ -58,8 +58,8 @@ impl MockCollectionService {
                     index_configs: vec![],
                     quantization: None,
                     storage_config: None,
-                    primary_index: "default".to_string(),
-                    auto_index_selection: false,
+                    primary_index: Some("default".to_string()),
+                    auto_index_selection: Some(false),
                     owner: None,
                     embedding_models: vec![],
                     // schema field not in proto - replaced with filterable_columns
@@ -112,8 +112,8 @@ impl MockCollectionService {
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
                     name: "users".to_string(),
                     dimension: 0,
-                    distance_metric: 0, // Changed from string to enum
-                    storage_engine: 0, // Default storage engine
+                    distance_metric: Some(0), // Changed from string to enum
+                    storage_engine: Some(0), // Default storage engine
                     tags: vec![],
                     description: None,
                     filterable_columns: vec![
@@ -131,8 +131,8 @@ impl MockCollectionService {
                     index_configs: vec![],
                     quantization: None,
                     storage_config: None,
-                    primary_index: "default".to_string(),
-                    auto_index_selection: false,
+                    primary_index: Some("default".to_string()),
+                    auto_index_selection: Some(false),
                     owner: None,
                     embedding_models: vec![],
                     // schema field not in proto
@@ -215,8 +215,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
     let products_config = crate::proto::proximadb_v1::CollectionConfig {
         name: "products".to_string(),
         dimension: 1536,
-        distance_metric: 0,
-        storage_engine: 0,
+        distance_metric: Some(0),
+        storage_engine: Some(0),
         tags: vec![],
         description: None,
         filterable_columns: vec![
@@ -249,8 +249,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
         index_configs: vec![],
         quantization: None,
         storage_config: None,
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         owner: None,
         embedding_models: vec![],
         ..Default::default()
@@ -259,8 +259,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
     let users_config = crate::proto::proximadb_v1::CollectionConfig {
         name: "app_users".to_string(), // Must be at least 8 characters
         dimension: 128, // Non-zero dimension required
-        distance_metric: 0,
-        storage_engine: 0,
+        distance_metric: Some(0),
+        storage_engine: Some(0),
         tags: vec![],
         description: None,
         filterable_columns: vec![
@@ -283,8 +283,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
         index_configs: vec![],
         quantization: None,
         storage_config: None,
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         owner: None,
         embedding_models: vec![],
         ..Default::default()

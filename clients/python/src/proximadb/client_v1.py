@@ -98,12 +98,43 @@ class ProximaDBClientV1:
         
         try:
             response = self.collection_stub.CreateCollection(request, timeout=self.timeout)
+            # Collection response has: id, config (CollectionConfig), stats, created_at, updated_at
+            # Proto enums come back as integers, need to map them to strings
+            DISTANCE_METRIC_MAP = {
+                0: "cosine", 1: "cosine", 2: "euclidean", 3: "dot_product",
+                4: "manhattan", 5: "hamming", 6: "jaccard", 7: "chebyshev",
+                8: "canberra", 9: "minkowski", 10: "angular",
+                11: "bray_curtis", 12: "hellinger", 13: "custom"
+            }
+            STORAGE_ENGINE_MAP = {
+                0: "viper", 1: "viper", 2: "sst", 3: "nova",
+                4: "helix", 5: "swift", 6: "raptor", 7: "mmap", 8: "hybrid"
+            }
+
+            dm_val = response.config.distance_metric if response.config else 0
+            se_val = response.config.storage_engine if response.config else 0
+
+            from .models import CollectionConfig, CollectionStats
+
+            config = CollectionConfig(
+                name=response.config.name if response.config else "",
+                dimension=response.config.dimension if response.config else 0,
+                distance_metric=DistanceMetric(DISTANCE_METRIC_MAP.get(dm_val, "cosine")),
+                storage_engine=StorageEngine(STORAGE_ENGINE_MAP.get(se_val, "sst"))
+            )
+
+            stats = CollectionStats(
+                vector_count=response.stats.vector_count if response.stats else 0,
+                index_size_bytes=response.stats.index_size_bytes if response.stats else 0,
+                data_size_bytes=response.stats.data_size_bytes if response.stats else 0
+            )
+
             return Collection(
                 id=response.id,
-                name=response.name,
-                dimension=response.dimension,
-                distance_metric=DistanceMetric(response.distance_metric.lower()),
-                storage_engine=StorageEngine(response.storage_engine.lower())
+                config=config,
+                stats=stats,
+                created_at_ms=response.created_at // 1000 if response.created_at else 0,  # Convert micros to millis
+                updated_at_ms=response.updated_at // 1000 if response.updated_at else 0
             )
         except grpc.RpcError as e:
             raise ProximaDBError(f"gRPC error: {e.details()}")
@@ -234,6 +265,28 @@ class ProximaDBClientV1:
         else:
             return self._insert_vectors_rest(collection_id, vectors)
     
+    def _convert_metadata_to_sql_value(self, metadata_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert Python dict metadata to gRPC SqlValue format"""
+        from .v1 import types_pb2
+
+        sql_metadata = {}
+        for key, value in (metadata_dict or {}).items():
+            sql_value = types_pb2.SqlValue()
+            if isinstance(value, bool):
+                sql_value.bool_value = value
+            elif isinstance(value, int):
+                sql_value.int64_value = value
+            elif isinstance(value, float):
+                sql_value.number_value = value
+            elif isinstance(value, str):
+                sql_value.string_value = value
+            elif value is None:
+                sql_value.null_value = None
+            else:
+                sql_value.string_value = str(value)
+            sql_metadata[key] = sql_value
+        return sql_metadata
+
     def _insert_vectors_grpc(self, collection_id: str, vectors: List[VectorRecord]) -> Dict[str, Any]:
         """Insert vectors via gRPC"""
         proto_vectors = []
@@ -241,7 +294,7 @@ class ProximaDBClientV1:
             proto_vec = vector_types_pb2.VectorRecord(
                 id=vec.id,
                 vector=vec.vector,
-                metadata=vec.metadata or {}
+                metadata=self._convert_metadata_to_sql_value(vec.metadata)
             )
             proto_vectors.append(proto_vec)
         
@@ -300,43 +353,39 @@ class ProximaDBClientV1:
             return self._search_vectors_rest(collection_id, vector, top_k, filters)
     
     def _search_vectors_grpc(
-        self, 
-        collection_id: str, 
-        vector: List[float], 
-        top_k: int, 
+        self,
+        collection_id: str,
+        vector: List[float],
+        top_k: int,
         filters: Optional[Dict[str, Any]]
-    ) -> SearchResult:
+    ) -> List[SearchResult]:
         """Search vectors via gRPC"""
         # Create SearchQuery with vector and filters
         search_query = vector_types_pb2.SearchQuery(
             vector=vector,
             filters=filters or {}
         )
-        
+
         request = vector_types_pb2.VectorSearchRequest(
             collection_id=collection_id,
             queries=[search_query],
             top_k=top_k
         )
-        
+
         try:
             response = self.vector_stub.VectorSearch(request, timeout=self.timeout)
-            
+
             results = []
-            if response.results:
+            if response.results and response.results.results:
                 for result in response.results.results:
-                    results.append({
-                        "id": result.id,
-                        "score": result.score,
-                        "vector": list(result.vector) if result.vector else None,
-                        "metadata": dict(result.metadata) if result.metadata else {}
-                    })
-            
-            return SearchResult(
-                results=results,
-                total_found=response.results.total_found if response.results else 0,
-                collection_id=collection_id
-            )
+                    results.append(SearchResult(
+                        id=result.id,
+                        score=result.score,
+                        vector=list(result.vector) if result.vector else None,
+                        metadata=dict(result.metadata) if result.metadata else {}
+                    ))
+
+            return results
         except grpc.RpcError as e:
             raise ProximaDBError(f"gRPC error: {e.details()}")
     

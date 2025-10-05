@@ -2602,7 +2602,7 @@ impl RaptorWriter {
             vector: fp32_vector.clone(), // Clone for CompactRow, original used for IVF
             quantized_vector,
             metadata,
-            timestamp: vector.timestamp as u32,
+            timestamp: vector.timestamp.unwrap_or(0) as u32,
             updated_at: vector.updated_at.map(|v| v as u32),
             expires_at: vector.expires_at.map(|v| v as u32),
             version: vector.version.map(|v| v as u32),

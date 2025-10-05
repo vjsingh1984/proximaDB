@@ -568,7 +568,7 @@ impl WALBehaviorWrapper {
                     std::collections::HashMap::new()
                 },
                 version: vector_record.version,
-                timestamp: Some(vector_record.timestamp),
+                timestamp: Some(vector_record.timestamp.unwrap_or(0)),
                 source: None,
                 expanded_context: Vec::new(),
                 quantization_info: None,

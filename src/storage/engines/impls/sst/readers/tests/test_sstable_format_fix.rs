@@ -47,7 +47,7 @@ async fn test_sstable_format_with_bloom_filter() {
             id: format!("vec_{:03}", i),
             vector: vec![i as f32; 3],
             metadata: std::collections::HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

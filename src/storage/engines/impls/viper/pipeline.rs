@@ -3022,7 +3022,7 @@ impl CompactionEngine {
                     }
                     map
                 },
-                timestamp: timestamp as i64,
+                timestamp: Some(timestamp as i64),
                 updated_at: Some(timestamp as i64),
                 expires_at: None,
                 version: Some(1),
@@ -3207,7 +3207,7 @@ impl CompactionEngine {
         let mut time_groups: HashMap<i64, Vec<VectorRecord>> = HashMap::new();
 
         for record in records {
-            let time_bucket = (record.timestamp as i64) / window_size_ms;
+            let time_bucket = (record.timestamp.unwrap_or(0) as i64) / window_size_ms;
             time_groups
                 .entry(time_bucket)
                 .or_insert_with(Vec::new)

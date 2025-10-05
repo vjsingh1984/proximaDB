@@ -63,9 +63,9 @@ impl SstEngine {
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            ;
 
-        if quantization_enabled {
+        if quantization_enabled.flatten().unwrap_or(false) {
             debug!("🔄 SST FLUSH: Quantization enabled, processing with quantization support");
             // Quantization will be handled internally during the flush process
             // The flush_with_quantization method has been removed - quantization is now internalized

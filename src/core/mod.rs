@@ -208,7 +208,7 @@ impl VectorRecordSerialization for VectorRecord {
         let other_fields = VectorRecordOtherFields {
             id: Some(self.id.clone()),
             metadata: metadata_json,
-            timestamp: self.timestamp as u32,
+            timestamp: self.timestamp.unwrap_or(0) as u32,
             updated_at: self.updated_at.map(|t| t as u32),
             expires_at: self.expires_at.map(|t| t as u32),
             version: self.version.map(|v| v as u32),
@@ -290,7 +290,7 @@ impl VectorRecordSerialization for VectorRecord {
             id: other_fields.id.unwrap_or_default(),
             vector,
             metadata,
-            timestamp: other_fields.timestamp as i64,
+            timestamp: Some(other_fields.timestamp as i64),
             updated_at: other_fields.updated_at.map(|t| t as i64),
             expires_at: other_fields.expires_at.map(|t| t as i64),
             version: other_fields.version,

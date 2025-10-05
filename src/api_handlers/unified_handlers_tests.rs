@@ -31,7 +31,7 @@ mod tests {
             storage_config: None,
             embedding_models: vec![],
             primary_index: "hnsw".to_string(),
-            auto_index_selection: true,
+            auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
         }
     }
@@ -280,7 +280,7 @@ mod tests {
             storage_config: None,
             embedding_models: vec![],
             primary_index: "hnsw".to_string(),
-            auto_index_selection: true,
+            auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
         };
 
@@ -368,7 +368,7 @@ mod tests {
             storage_config: None,
             embedding_models: vec![],
             primary_index: "hnsw".to_string(),
-            auto_index_selection: true,
+            auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
         };
 

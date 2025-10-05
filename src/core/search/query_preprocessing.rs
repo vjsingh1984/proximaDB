@@ -540,7 +540,7 @@ impl QueryPreprocessor {
     ) -> Vec<UnifiedQuantizationLevel> {
         use crate::proto::proximadb_v1::quantization_config::Strategy;
 
-        if !config.enabled {
+        if !config.enabled.unwrap_or(false) {
             return vec![];
         }
 

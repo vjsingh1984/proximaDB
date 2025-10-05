@@ -742,8 +742,8 @@ impl StorageEngine {
                                             name: collection_id.to_string(),
                                             dimension: record.vector.len() as u32,
                                             distance_metric:
-                                                crate::proto::proximadb_v1::DistanceMetric::Cosine
-                                                    as i32,
+                                                Some(crate::proto::proximadb_v1::DistanceMetric::Cosine
+                                                    as i32),
                                             ..Default::default()
                                         });
                                     collection.stats =

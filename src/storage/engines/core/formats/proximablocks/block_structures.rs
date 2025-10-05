@@ -656,7 +656,7 @@ impl ProximaDataBlock {
         };
 
         // Calculate timestamp range
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp as i64).collect();
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0) as i64).collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
@@ -801,7 +801,7 @@ impl ProximaDataBlock {
         };
 
         // Calculate timestamp range
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp as i64).collect();
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0) as i64).collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
@@ -1506,7 +1506,7 @@ impl ProximaDataBlock {
         // Collect timestamps in record order - use both timestamp and updated_at
         let timestamps: Vec<i64> = self.records
             .iter()
-            .map(|record| record.timestamp) // Use primary timestamp field
+            .map(|record| record.timestamp.unwrap_or(0)) // Use primary timestamp field
             .collect();
 
         debug!("[ENCODE] Timestamps (first 5): {:?}", &timestamps[..std::cmp::min(5, timestamps.len())]);
@@ -2256,13 +2256,13 @@ impl ProximaDataBlock {
             }
 
             // Set timestamp and optional fields from decoded data
-            record.timestamp = decoded_timestamps.get(i).copied().unwrap_or(0);
+            record.timestamp = Some(decoded_timestamps.get(i).copied().unwrap_or(0));
             record.updated_at = decoded_updated_ats.get(i).copied().flatten();
             record.expires_at = decoded_expires_ats.get(i).copied().flatten();
             record.version = decoded_versions.get(i).copied().flatten();
             // quantized_vector removed - internalized in storage
 
-            trace!("🔧 [DECODE] Record[{}]: ID='{}', Timestamp={}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}",
+            trace!("🔧 [DECODE] Record[{}]: ID='{}', Timestamp={:?}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}",
                 i, record.id, record.timestamp, record.source, record.updated_at, record.expires_at, record.version);
         }
 
@@ -3151,7 +3151,7 @@ impl ProximaDataBlock {
                     metadata: std::collections::HashMap::new(),
                     expires_at: None,
                     source: None,
-                    timestamp: 0,
+                    timestamp: Some(0),
                     updated_at: None,
                     version: None,
                 });
@@ -3173,7 +3173,7 @@ impl ProximaDataBlock {
                     metadata: std::collections::HashMap::new(),
                     expires_at: None,
                     source: None,
-                    timestamp: 0,
+                    timestamp: Some(0),
                     updated_at: None,
                     version: None,
                 });
@@ -3367,7 +3367,7 @@ impl ProximaDataBlock {
                 metadata: std::collections::HashMap::new(),
                 expires_at: None,
                 source: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 version: None,
             });
@@ -3477,7 +3477,7 @@ impl ProximaDataBlock {
                 metadata: std::collections::HashMap::new(),
                 expires_at: None,
                 source: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 version: None,
             });
@@ -3537,7 +3537,7 @@ impl ProximaDataBlock {
                 metadata: std::collections::HashMap::new(),
                 expires_at: None,
                 source: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 version: None,
             });
@@ -3666,7 +3666,7 @@ impl ProximaDataBlock {
                 metadata: std::collections::HashMap::new(),
                 expires_at: None,
                 source: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 version: None,
             });
@@ -3773,7 +3773,7 @@ impl ProximaDataBlock {
                 metadata: std::collections::HashMap::new(),
                 expires_at: None,
                 source: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 version: None,
             });

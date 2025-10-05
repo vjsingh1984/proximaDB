@@ -1090,7 +1090,7 @@ impl UnifiedIvfIndex {
                         id: format!("training_{}", i),
                         vector: v.clone(),
                         metadata: std::collections::HashMap::new(),
-                        timestamp: 0,
+                        timestamp: Some(0),
                         updated_at: None,
                         expires_at: None,
                         version: None,

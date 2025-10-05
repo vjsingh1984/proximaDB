@@ -61,7 +61,7 @@ impl ParquetSchemaBuilder {
         fields.push(vector_field);
 
         // Quantized vectors based on configuration
-        if self.config.quantization.enable_binary {
+        if self.config.quantization.enable_binary.unwrap_or(false) {
             fields.push(Field::new(
                 FIELD_Q_BINARY,
                 DataType::Binary,
@@ -69,7 +69,7 @@ impl ParquetSchemaBuilder {
             ));
         }
 
-        if self.config.quantization.enable_int8 {
+        if self.config.quantization.enable_int8.unwrap_or(false) {
             fields.push(Field::new(
                 FIELD_Q_INT8,
                 DataType::Binary,
@@ -92,14 +92,14 @@ impl ParquetSchemaBuilder {
             ));
         }
 
-        if self.config.quantization.enable_pq {
+        if self.config.quantization.enable_pq.unwrap_or(false) {
             // Determine PQ field based on configured bits
-            let pq_bits = if self.config.quantization.pq_bits > 0 {
+            let pq_bits = if self.config.quantization.pq_bits.unwrap_or(0) > 0 {
                 self.config.quantization.pq_bits
             } else {
-                8 // Default to PQ8 if not specified
+                Some(8) // Default to PQ8 if not specified
             };
-            let pq_field_name = match pq_bits {
+            let pq_field_name = match pq_bits.unwrap_or(8) {
                 4 => FIELD_Q_PQ4,
                 8 => FIELD_Q_PQ8,
                 16 => FIELD_Q_PQ16,

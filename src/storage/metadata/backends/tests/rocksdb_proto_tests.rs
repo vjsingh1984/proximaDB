@@ -115,7 +115,7 @@ mod tests {
                     ..Default::default()
                 }),
                 primary_index: "primary_hnsw".to_string(),
-                auto_index_selection: true,
+                auto_index_selection: Some(true),
                 description: None,
                 tags: vec![],
                 owner: None,
@@ -130,7 +130,7 @@ mod tests {
                 last_updated: chrono::Utc::now().timestamp(),
             }),
             metadata: Some(CollectionMetadata {
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 updated_at: chrono::Utc::now().timestamp(),
                 version: Some(1),
                 description: Some("Test collection with RocksDB backend".to_string()),

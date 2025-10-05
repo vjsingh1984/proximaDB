@@ -55,7 +55,8 @@ impl ViperFlushNotifier {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
-            .map(|q| q.enabled);
+            .and_then(|q| q.enabled)
+            .unwrap_or(false);
 
         let has_fp32 = true; // VIPER always has FP32 column
 
@@ -66,7 +67,7 @@ impl ViperFlushNotifier {
                 collection_id,
                 flushed_files.clone(),
                 records.len(),
-                has_quantized.unwrap_or(false),
+                has_quantized,
                 has_fp32,
                 StorageEngineType::VIPER,
             )

@@ -30,7 +30,7 @@ fn create_test_vector(id: &str) -> VectorRecord {
             });
             metadata
         },
-        timestamp: chrono::Utc::now().timestamp(),
+        timestamp: Some(chrono::Utc::now().timestamp()),
         updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),

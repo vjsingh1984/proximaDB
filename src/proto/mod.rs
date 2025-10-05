@@ -223,3 +223,6 @@ pub mod proximadb_v1;
 
 // Custom serde implementations for oneof types
 pub mod serde_impls;
+
+// Proto defaults module for applying smart defaults to optional fields
+pub mod defaults;

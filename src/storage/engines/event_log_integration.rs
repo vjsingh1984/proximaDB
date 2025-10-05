@@ -17,23 +17,23 @@ use crate::storage::engines::{CompactionParameters, FlushParameters};
 /// Helper trait for storage engines to notify EventLog
 #[async_trait::async_trait]
 pub trait EventLogNotifier {
-    /// Notify about flush completion (fire-and-forget)
-    fn notify_flush(
+    /// Notify about flush completion (blocks until EventLog acknowledges)
+    async fn notify_flush(
         &self,
         collection_id: &str,
         flushed_files: Vec<String>,
         vector_count: usize,
         has_quantized: bool,
         has_fp32: bool,
-    );
+    ) -> Result<(), anyhow::Error>;
 
-    /// Notify about compaction completion (fire-and-forget)
-    fn notify_compaction(
+    /// Notify about compaction completion (blocks until EventLog acknowledges)
+    async fn notify_compaction(
         &self,
         collection_id: &str,
         output_files: Vec<String>,
         vector_count: usize,
-    );
+    ) -> Result<(), anyhow::Error>;
 
     /// Check if files can be compacted (async but fast)
     async fn can_compact_files(&self, collection_id: &str, files: &[String]) -> bool;
@@ -52,14 +52,14 @@ impl SstEventLogNotifier {
 
 #[async_trait::async_trait]
 impl EventLogNotifier for SstEventLogNotifier {
-    fn notify_flush(
+    async fn notify_flush(
         &self,
         collection_id: &str,
         flushed_files: Vec<String>,
         vector_count: usize,
         has_quantized: bool,
         has_fp32: bool,
-    ) {
+    ) -> Result<(), anyhow::Error> {
         let event = IndexEventBuilder::flush_event(
             collection_id.to_string(),
             flushed_files,
@@ -69,21 +69,19 @@ impl EventLogNotifier for SstEventLogNotifier {
             has_fp32,
         );
 
-        // Fire and forget - never blocks
-        let event_log = self.event_log.clone();
-        tokio::spawn(async move {
-            let _ = event_log.add_event(event).await;
-        });
+        // Block until EventLog acknowledges
+        self.event_log.add_event(event).await?;
 
-        trace!("Notified EventLog about SST flush for {}", collection_id);
+        trace!("EventLog acknowledged SST flush for {}", collection_id);
+        Ok(())
     }
 
-    fn notify_compaction(
+    async fn notify_compaction(
         &self,
         collection_id: &str,
         output_files: Vec<String>,
         vector_count: usize,
-    ) {
+    ) -> Result<(), anyhow::Error> {
         let event = IndexEventBuilder::compaction_event(
             collection_id.to_string(),
             output_files,
@@ -91,15 +89,14 @@ impl EventLogNotifier for SstEventLogNotifier {
             StorageEngineType::SST,
         );
 
-        let event_log = self.event_log.clone();
-        tokio::spawn(async move {
-            let _ = event_log.add_event(event).await;
-        });
+        // Block until EventLog acknowledges
+        self.event_log.add_event(event).await?;
 
         trace!(
-            "Notified EventLog about SST compaction for {}",
+            "EventLog acknowledged SST compaction for {}",
             collection_id
         );
+        Ok(())
     }
 
     async fn can_compact_files(&self, collection_id: &str, files: &[String]) -> bool {
@@ -136,14 +133,14 @@ impl ViperEventLogNotifier {
 
 #[async_trait::async_trait]
 impl EventLogNotifier for ViperEventLogNotifier {
-    fn notify_flush(
+    async fn notify_flush(
         &self,
         collection_id: &str,
         flushed_files: Vec<String>,
         vector_count: usize,
         has_quantized: bool,
         has_fp32: bool,
-    ) {
+    ) -> Result<(), anyhow::Error> {
         let event = IndexEventBuilder::flush_event(
             collection_id.to_string(),
             flushed_files,
@@ -153,20 +150,19 @@ impl EventLogNotifier for ViperEventLogNotifier {
             has_fp32,
         );
 
-        let event_log = self.event_log.clone();
-        tokio::spawn(async move {
-            let _ = event_log.add_event(event).await;
-        });
+        // Block until EventLog acknowledges
+        self.event_log.add_event(event).await?;
 
-        trace!("Notified EventLog about VIPER flush for {}", collection_id);
+        trace!("EventLog acknowledged VIPER flush for {}", collection_id);
+        Ok(())
     }
 
-    fn notify_compaction(
+    async fn notify_compaction(
         &self,
         collection_id: &str,
         output_files: Vec<String>,
         vector_count: usize,
-    ) {
+    ) -> Result<(), anyhow::Error> {
         let event = IndexEventBuilder::compaction_event(
             collection_id.to_string(),
             output_files,
@@ -174,15 +170,14 @@ impl EventLogNotifier for ViperEventLogNotifier {
             StorageEngineType::VIPER,
         );
 
-        let event_log = self.event_log.clone();
-        tokio::spawn(async move {
-            let _ = event_log.add_event(event).await;
-        });
+        // Block until EventLog acknowledges
+        self.event_log.add_event(event).await?;
 
         trace!(
-            "Notified EventLog about VIPER compaction for {}",
+            "EventLog acknowledged VIPER compaction for {}",
             collection_id
         );
+        Ok(())
     }
 
     async fn can_compact_files(&self, collection_id: &str, files: &[String]) -> bool {
@@ -254,7 +249,7 @@ impl FlushParametersExt for FlushParameters {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|config| config.quantization.as_ref())
-            .map(|q| q.enabled)
+            .map(|q| q.enabled.unwrap_or(false))
             .unwrap_or(false)
     }
 
@@ -330,31 +325,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_notify_flush_never_blocks() {
+    async fn test_notify_flush_blocks_until_acknowledged() {
         let (notifier, event_log, _dir) = create_test_notifier().await;
 
-        // Notification should be instant (main goal: fire-and-forget never blocks)
+        // Notification blocks until EventLog acknowledges
         let start = std::time::Instant::now();
-        for i in 0..1000 {
+        for i in 0..10 {
             notifier.notify_flush(
                 "test_collection",
                 vec![format!("file_{}.sstable", i)],
                 100,
                 false,
                 true,
-            );
+            ).await.expect("Flush notification should succeed");
         }
         let elapsed = start.elapsed();
 
-        // Should complete quickly - this is the main test: notifications never block
-        assert!(elapsed.as_millis() < 100, "Notifications took {:?} - fire-and-forget should be fast", elapsed);
+        // Should complete reasonably fast but not instant (because it waits for acknowledgment)
+        assert!(elapsed.as_millis() < 5000, "Notifications took {:?} - should complete within 5s", elapsed);
 
-        // Give async tasks time to complete (but don't require specific event counts)
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Just verify the event log service is responding (this test is about non-blocking, not event processing)
+        // Verify the event log service is responding
         let health = event_log.get_health().await;
-        assert!(health.is_ok(), "Event log service should be responsive after fire-and-forget notifications");
+        assert!(health.is_ok(), "Event log service should be responsive after flush notifications");
     }
 
     #[tokio::test]

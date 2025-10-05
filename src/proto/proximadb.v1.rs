@@ -2274,13 +2274,14 @@ pub struct VectorRecord {
     pub vector: ::prost::alloc::vec::Vec<f32>,
     #[prost(map = "string, message", tag = "3")]
     pub metadata: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
-    #[prost(int64, tag = "4")]
-    pub timestamp: i64,
+    /// Default: server-generated current time
+    #[prost(int64, optional, tag = "4")]
+    pub timestamp: ::core::option::Option<i64>,
     #[prost(int64, optional, tag = "5")]
     pub updated_at: ::core::option::Option<i64>,
     #[prost(int64, optional, tag = "6")]
     pub expires_at: ::core::option::Option<i64>,
-    /// Version counter, 0-4B versions (realistically won't exceed 255)
+    /// Version counter, 0-4B versions (realistically won't exceed 255), Default: 0
     #[prost(uint32, optional, tag = "7")]
     pub version: ::core::option::Option<u32>,
     /// Original content that generated this vector
@@ -2397,51 +2398,73 @@ pub struct VectorOperationResponse {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuantizationConfig {
-    #[prost(bool, tag = "1")]
-    pub enabled: bool,
-    #[prost(enumeration = "quantization_config::Strategy", tag = "2")]
-    pub strategy: i32,
+    /// Default: false
+    #[prost(bool, optional, tag = "1")]
+    pub enabled: ::core::option::Option<bool>,
+    /// Default: SMART_DEFAULTS
+    #[prost(enumeration = "quantization_config::Strategy", optional, tag = "2")]
+    pub strategy: ::core::option::Option<i32>,
     #[prost(message, repeated, tag = "3")]
     pub custom_levels: ::prost::alloc::vec::Vec<QuantizationLevel>,
-    #[prost(bool, tag = "4")]
-    pub enable_progressive_search: bool,
-    #[prost(float, tag = "5")]
-    pub binary_filter_selectivity: f32,
-    #[prost(float, tag = "6")]
-    pub int8_ranking_selectivity: f32,
-    #[prost(float, tag = "7")]
-    pub pq_ranking_selectivity: f32,
-    #[prost(uint32, tag = "8")]
-    pub training_sample_size: u32,
-    #[prost(float, tag = "9")]
-    pub quality_threshold: f32,
+    /// Default: true
+    #[prost(bool, optional, tag = "4")]
+    pub enable_progressive_search: ::core::option::Option<bool>,
+    /// Default: 0.1
+    #[prost(float, optional, tag = "5")]
+    pub binary_filter_selectivity: ::core::option::Option<f32>,
+    /// Default: 0.3
+    #[prost(float, optional, tag = "6")]
+    pub int8_ranking_selectivity: ::core::option::Option<f32>,
+    /// Default: 0.5
+    #[prost(float, optional, tag = "7")]
+    pub pq_ranking_selectivity: ::core::option::Option<f32>,
+    /// Default: 10000
+    #[prost(uint32, optional, tag = "8")]
+    pub training_sample_size: ::core::option::Option<u32>,
+    /// Default: 0.95
+    #[prost(float, optional, tag = "9")]
+    pub quality_threshold: ::core::option::Option<f32>,
     /// Additional fields for compatibility
-    #[prost(bool, tag = "10")]
-    pub enable_adaptive_training: bool,
-    #[prost(bool, tag = "11")]
-    pub optimize_for_storage: bool,
-    #[prost(bool, tag = "12")]
-    pub optimize_for_memory: bool,
-    #[prost(bool, tag = "13")]
-    pub enable_simd_acceleration: bool,
-    #[prost(bool, tag = "14")]
-    pub enable_binary: bool,
-    #[prost(bool, tag = "15")]
-    pub enable_int8: bool,
-    #[prost(bool, tag = "16")]
-    pub enable_pq: bool,
-    #[prost(uint32, tag = "17")]
-    pub pq_segments: u32,
-    #[prost(uint32, tag = "18")]
-    pub pq_bits: u32,
-    #[prost(uint32, tag = "19")]
-    pub pq_codebooks: u32,
-    #[prost(float, tag = "20")]
-    pub binary_threshold: f32,
-    #[prost(float, tag = "21")]
-    pub int8_threshold: f32,
-    #[prost(float, tag = "22")]
-    pub pq_threshold: f32,
+    ///
+    /// Default: true
+    #[prost(bool, optional, tag = "10")]
+    pub enable_adaptive_training: ::core::option::Option<bool>,
+    /// Default: false
+    #[prost(bool, optional, tag = "11")]
+    pub optimize_for_storage: ::core::option::Option<bool>,
+    /// Default: false
+    #[prost(bool, optional, tag = "12")]
+    pub optimize_for_memory: ::core::option::Option<bool>,
+    /// Default: true
+    #[prost(bool, optional, tag = "13")]
+    pub enable_simd_acceleration: ::core::option::Option<bool>,
+    /// Default: true
+    #[prost(bool, optional, tag = "14")]
+    pub enable_binary: ::core::option::Option<bool>,
+    /// Default: true
+    #[prost(bool, optional, tag = "15")]
+    pub enable_int8: ::core::option::Option<bool>,
+    /// Default: false
+    #[prost(bool, optional, tag = "16")]
+    pub enable_pq: ::core::option::Option<bool>,
+    /// Default: 8
+    #[prost(uint32, optional, tag = "17")]
+    pub pq_segments: ::core::option::Option<u32>,
+    /// Default: 8
+    #[prost(uint32, optional, tag = "18")]
+    pub pq_bits: ::core::option::Option<u32>,
+    /// Default: 256
+    #[prost(uint32, optional, tag = "19")]
+    pub pq_codebooks: ::core::option::Option<u32>,
+    /// Default: 0.0
+    #[prost(float, optional, tag = "20")]
+    pub binary_threshold: ::core::option::Option<f32>,
+    /// Default: 0.0
+    #[prost(float, optional, tag = "21")]
+    pub int8_threshold: ::core::option::Option<f32>,
+    /// Default: 0.0
+    #[prost(float, optional, tag = "22")]
+    pub pq_threshold: ::core::option::Option<f32>,
 }
 /// Nested message and enum types in `QuantizationConfig`.
 pub mod quantization_config {
@@ -2672,59 +2695,79 @@ pub struct FilterCondition {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HnswConfig {
-    #[prost(uint32, tag = "1")]
-    pub m: u32,
-    #[prost(uint32, tag = "2")]
-    pub ef_construction: u32,
-    #[prost(uint32, tag = "3")]
-    pub ef_search: u32,
-    #[prost(uint32, tag = "4")]
-    pub max_partition_size: u32,
-    #[prost(bool, tag = "5")]
-    pub adaptive_parameters: bool,
-    #[prost(bool, tag = "6")]
-    pub use_simd: bool,
-    #[prost(uint32, tag = "7")]
-    pub memory_limit_mb: u32,
-    #[prost(bool, tag = "8")]
-    pub lazy_loading: bool,
+    /// Default: 16
+    #[prost(uint32, optional, tag = "1")]
+    pub m: ::core::option::Option<u32>,
+    /// Default: 200
+    #[prost(uint32, optional, tag = "2")]
+    pub ef_construction: ::core::option::Option<u32>,
+    /// Default: 100
+    #[prost(uint32, optional, tag = "3")]
+    pub ef_search: ::core::option::Option<u32>,
+    /// Default: 100000
+    #[prost(uint32, optional, tag = "4")]
+    pub max_partition_size: ::core::option::Option<u32>,
+    /// Default: true
+    #[prost(bool, optional, tag = "5")]
+    pub adaptive_parameters: ::core::option::Option<bool>,
+    /// Default: true
+    #[prost(bool, optional, tag = "6")]
+    pub use_simd: ::core::option::Option<bool>,
+    /// Default: 512
+    #[prost(uint32, optional, tag = "7")]
+    pub memory_limit_mb: ::core::option::Option<u32>,
+    /// Default: false
+    #[prost(bool, optional, tag = "8")]
+    pub lazy_loading: ::core::option::Option<bool>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IvfConfig {
-    #[prost(uint32, tag = "1")]
-    pub n_lists: u32,
-    #[prost(uint32, tag = "2")]
-    pub n_probe: u32,
-    #[prost(uint32, tag = "3")]
-    pub quantization_bits: u32,
-    #[prost(bool, tag = "4")]
-    pub use_pq: bool,
-    #[prost(uint32, tag = "5")]
-    pub pq_subspaces: u32,
-    #[prost(bool, tag = "6")]
-    pub train_on_insert: bool,
-    #[prost(uint32, tag = "7")]
-    pub min_train_size: u32,
+    /// Default: sqrt(num_vectors)
+    #[prost(uint32, optional, tag = "1")]
+    pub n_lists: ::core::option::Option<u32>,
+    /// Default: 10
+    #[prost(uint32, optional, tag = "2")]
+    pub n_probe: ::core::option::Option<u32>,
+    /// Default: 8
+    #[prost(uint32, optional, tag = "3")]
+    pub quantization_bits: ::core::option::Option<u32>,
+    /// Default: false
+    #[prost(bool, optional, tag = "4")]
+    pub use_pq: ::core::option::Option<bool>,
+    /// Default: 8
+    #[prost(uint32, optional, tag = "5")]
+    pub pq_subspaces: ::core::option::Option<u32>,
+    /// Default: true
+    #[prost(bool, optional, tag = "6")]
+    pub train_on_insert: ::core::option::Option<bool>,
+    /// Default: 1000
+    #[prost(uint32, optional, tag = "7")]
+    pub min_train_size: ::core::option::Option<u32>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LshConfig {
-    #[prost(uint32, tag = "1")]
-    pub n_hash_tables: u32,
-    #[prost(uint32, tag = "2")]
-    pub n_hash_functions: u32,
-    #[prost(float, tag = "3")]
-    pub bucket_width: f32,
-    #[prost(bool, tag = "4")]
-    pub binary_vectors: bool,
-    #[prost(uint32, tag = "5")]
-    pub max_candidates: u32,
-    /// RandomProjectionType enum
-    #[prost(int32, tag = "6")]
-    pub projection: i32,
+    /// Default: 10
+    #[prost(uint32, optional, tag = "1")]
+    pub n_hash_tables: ::core::option::Option<u32>,
+    /// Default: 4
+    #[prost(uint32, optional, tag = "2")]
+    pub n_hash_functions: ::core::option::Option<u32>,
+    /// Default: 4.0
+    #[prost(float, optional, tag = "3")]
+    pub bucket_width: ::core::option::Option<f32>,
+    /// Default: false
+    #[prost(bool, optional, tag = "4")]
+    pub binary_vectors: ::core::option::Option<bool>,
+    /// Default: 1000
+    #[prost(uint32, optional, tag = "5")]
+    pub max_candidates: ::core::option::Option<u32>,
+    /// RandomProjectionType enum, Default: 0
+    #[prost(int32, optional, tag = "6")]
+    pub projection: ::core::option::Option<i32>,
 }
 /// Strongly-typed enums for metrics and engines
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -6259,10 +6302,12 @@ pub struct CollectionConfig {
     pub name: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub dimension: u32,
-    #[prost(enumeration = "DistanceMetric", tag = "3")]
-    pub distance_metric: i32,
-    #[prost(enumeration = "StorageEngine", tag = "4")]
-    pub storage_engine: i32,
+    /// Default: COSINE
+    #[prost(enumeration = "DistanceMetric", optional, tag = "3")]
+    pub distance_metric: ::core::option::Option<i32>,
+    /// Default: SST (primary production engine)
+    #[prost(enumeration = "StorageEngine", optional, tag = "4")]
+    pub storage_engine: ::core::option::Option<i32>,
     #[prost(string, repeated, tag = "5")]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
@@ -6276,10 +6321,12 @@ pub struct CollectionConfig {
     pub quantization: ::core::option::Option<QuantizationConfig>,
     #[prost(message, optional, tag = "10")]
     pub storage_config: ::core::option::Option<StorageConfig>,
-    #[prost(string, tag = "11")]
-    pub primary_index: ::prost::alloc::string::String,
-    #[prost(bool, tag = "12")]
-    pub auto_index_selection: bool,
+    /// Default: "" (no primary index)
+    #[prost(string, optional, tag = "11")]
+    pub primary_index: ::core::option::Option<::prost::alloc::string::String>,
+    /// Default: true
+    #[prost(bool, optional, tag = "12")]
+    pub auto_index_selection: ::core::option::Option<bool>,
     #[prost(string, optional, tag = "13")]
     pub owner: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "14")]
@@ -6327,17 +6374,21 @@ pub struct IndexConfig {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
-    #[prost(bool, tag = "4")]
-    pub enabled: bool,
+    /// Default: true
+    #[prost(bool, optional, tag = "4")]
+    pub enabled: ::core::option::Option<bool>,
     /// Additional fields for compatibility
-    #[prost(int32, tag = "5")]
-    pub update_mode: i32,
+    ///
+    /// Default: 0 (synchronous)
+    #[prost(int32, optional, tag = "5")]
+    pub update_mode: ::core::option::Option<i32>,
     #[prost(uint32, optional, tag = "6")]
     pub async_update_timeout_ms: ::core::option::Option<u32>,
     #[prost(uint32, optional, tag = "7")]
     pub async_update_batch_size: ::core::option::Option<u32>,
-    #[prost(bool, tag = "8")]
-    pub enable_background_optimization: bool,
+    /// Default: true
+    #[prost(bool, optional, tag = "8")]
+    pub enable_background_optimization: ::core::option::Option<bool>,
     #[prost(message, optional, tag = "9")]
     pub hnsw_config: ::core::option::Option<HnswConfig>,
     #[prost(message, optional, tag = "10")]
@@ -6350,40 +6401,51 @@ pub struct IndexConfig {
     pub pq_config: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "14")]
     pub annoy_config: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(uint32, tag = "15")]
-    pub build_concurrency: u32,
-    #[prost(uint32, tag = "16")]
-    pub memory_limit_mb: u32,
-    #[prost(uint32, tag = "17")]
-    pub checkpoint_interval_ms: u32,
-    #[prost(bool, tag = "18")]
-    pub is_primary: bool,
+    /// Default: num_cpus
+    #[prost(uint32, optional, tag = "15")]
+    pub build_concurrency: ::core::option::Option<u32>,
+    /// Default: 20% of system RAM
+    #[prost(uint32, optional, tag = "16")]
+    pub memory_limit_mb: ::core::option::Option<u32>,
+    /// Default: 60000 (1 minute)
+    #[prost(uint32, optional, tag = "17")]
+    pub checkpoint_interval_ms: ::core::option::Option<u32>,
+    /// Default: false
+    #[prost(bool, optional, tag = "18")]
+    pub is_primary: ::core::option::Option<bool>,
     #[prost(string, repeated, tag = "19")]
     pub use_cases: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(float, tag = "20")]
-    pub selectivity_threshold: f32,
-    #[prost(bool, tag = "21")]
-    pub use_quantization: bool,
+    /// Default: 0.1
+    #[prost(float, optional, tag = "20")]
+    pub selectivity_threshold: ::core::option::Option<f32>,
+    /// Default: false
+    #[prost(bool, optional, tag = "21")]
+    pub use_quantization: ::core::option::Option<bool>,
     #[prost(message, optional, tag = "22")]
     pub quantization_override: ::core::option::Option<QuantizationConfig>,
-    #[prost(string, tag = "23")]
-    pub queue_representation: ::prost::alloc::string::String,
+    /// Default: "" (no queue)
+    #[prost(string, optional, tag = "23")]
+    pub queue_representation: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Storage configuration
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StorageConfig {
-    #[prost(string, tag = "1")]
-    pub storage_path: ::prost::alloc::string::String,
+    /// Default: auto-generated based on collection ID
+    #[prost(string, optional, tag = "1")]
+    pub storage_path: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "2")]
     pub data_paths: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(enumeration = "CompressionAlgorithm", tag = "3")]
-    pub compression: i32,
-    #[prost(uint32, tag = "4")]
-    pub max_file_size_mb: u32,
-    #[prost(bool, tag = "5")]
-    pub enable_caching: bool,
+    /// Default: COMPRESSION_ZSTD
+    #[prost(enumeration = "CompressionAlgorithm", optional, tag = "3")]
+    pub compression: ::core::option::Option<i32>,
+    /// Default: 128MB
+    #[prost(uint32, optional, tag = "4")]
+    pub max_file_size_mb: ::core::option::Option<u32>,
+    /// Default: true
+    #[prost(bool, optional, tag = "5")]
+    pub enable_caching: ::core::option::Option<bool>,
 }
 /// Storage assignment information
 #[derive(serde::Serialize, serde::Deserialize)]

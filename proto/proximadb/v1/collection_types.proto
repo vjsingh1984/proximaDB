@@ -7,8 +7,8 @@ import "proximadb/v1/vector_types.proto"; // reuse enums
 message CollectionConfig {
   string name = 1;
   uint32 dimension = 2;
-  DistanceMetric distance_metric = 3;
-  StorageEngine storage_engine = 4;
+  optional DistanceMetric distance_metric = 3; // Default: COSINE
+  optional StorageEngine storage_engine = 4; // Default: SST (primary production engine)
   repeated string tags = 5;
   optional string description = 6;
   // Additional fields needed by collection manager
@@ -16,8 +16,8 @@ message CollectionConfig {
   repeated IndexConfig index_configs = 8;
   optional QuantizationConfig quantization = 9;
   optional StorageConfig storage_config = 10;
-  string primary_index = 11;
-  bool auto_index_selection = 12;
+  optional string primary_index = 11; // Default: "" (no primary index)
+  optional bool auto_index_selection = 12; // Default: true
   optional string owner = 13;
   repeated string embedding_models = 14;
 }
@@ -42,36 +42,36 @@ message IndexConfig {
   string index_name = 1;
   IndexingAlgorithm algorithm = 2;
   map<string, string> parameters = 3;
-  bool enabled = 4;
+  optional bool enabled = 4; // Default: true
   // Additional fields for compatibility
-  int32 update_mode = 5;
+  optional int32 update_mode = 5; // Default: 0 (synchronous)
   optional uint32 async_update_timeout_ms = 6;
   optional uint32 async_update_batch_size = 7;
-  bool enable_background_optimization = 8;
+  optional bool enable_background_optimization = 8; // Default: true
   optional HnswConfig hnsw_config = 9;
   optional IvfConfig ivf_config = 10;
   optional LshConfig lsh_config = 11;
   optional string flat_config = 12;
   optional string pq_config = 13;
   optional string annoy_config = 14;
-  uint32 build_concurrency = 15;
-  uint32 memory_limit_mb = 16;
-  uint32 checkpoint_interval_ms = 17;
-  bool is_primary = 18;
+  optional uint32 build_concurrency = 15; // Default: num_cpus
+  optional uint32 memory_limit_mb = 16; // Default: 20% of system RAM
+  optional uint32 checkpoint_interval_ms = 17; // Default: 60000 (1 minute)
+  optional bool is_primary = 18; // Default: false
   repeated string use_cases = 19;
-  float selectivity_threshold = 20;
-  bool use_quantization = 21;
+  optional float selectivity_threshold = 20; // Default: 0.1
+  optional bool use_quantization = 21; // Default: false
   optional QuantizationConfig quantization_override = 22;
-  string queue_representation = 23;
+  optional string queue_representation = 23; // Default: "" (no queue)
 }
 
 // Storage configuration
 message StorageConfig {
-  string storage_path = 1;
+  optional string storage_path = 1; // Default: auto-generated based on collection ID
   repeated string data_paths = 2;
-  CompressionAlgorithm compression = 3;
-  uint32 max_file_size_mb = 4;
-  bool enable_caching = 5;
+  optional CompressionAlgorithm compression = 3; // Default: COMPRESSION_ZSTD
+  optional uint32 max_file_size_mb = 4; // Default: 128MB
+  optional bool enable_caching = 5; // Default: true
 }
 
 // Storage assignment information

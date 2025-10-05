@@ -282,7 +282,7 @@ impl RaptorCompactor {
                 vector: vector_data,
                 metadata: HashMap::new(), // Would extract metadata if present
                 version: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 expires_at: None,
                 source: None,

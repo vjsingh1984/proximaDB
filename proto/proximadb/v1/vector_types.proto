@@ -104,10 +104,10 @@ message VectorRecord {
   string id = 1;
   repeated float vector = 2;
   map<string, SqlValue> metadata = 3;
-  int64 timestamp = 4;
+  optional int64 timestamp = 4; // Default: server-generated current time
   optional int64 updated_at = 5;
   optional int64 expires_at = 6;
-  optional uint32 version = 7;  // Version counter, 0-4B versions (realistically won't exceed 255)
+  optional uint32 version = 7;  // Version counter, 0-4B versions (realistically won't exceed 255), Default: 0
   optional string source = 8;  // Original content that generated this vector
   // Note: quantized_vector field removed - quantization is now internalized during flush/compaction
   // and stored in ProximaDataBlock's QuantizedSection, not in input records
@@ -211,29 +211,29 @@ enum FilterOperator {
 
 // Quantization configuration
 message QuantizationConfig {
-  bool enabled = 1;
-  Strategy strategy = 2;
+  optional bool enabled = 1; // Default: false
+  optional Strategy strategy = 2; // Default: SMART_DEFAULTS
   repeated QuantizationLevel custom_levels = 3;
-  bool enable_progressive_search = 4;
-  float binary_filter_selectivity = 5;
-  float int8_ranking_selectivity = 6;
-  float pq_ranking_selectivity = 7;
-  uint32 training_sample_size = 8;
-  float quality_threshold = 9;
+  optional bool enable_progressive_search = 4; // Default: true
+  optional float binary_filter_selectivity = 5; // Default: 0.1
+  optional float int8_ranking_selectivity = 6; // Default: 0.3
+  optional float pq_ranking_selectivity = 7; // Default: 0.5
+  optional uint32 training_sample_size = 8; // Default: 10000
+  optional float quality_threshold = 9; // Default: 0.95
   // Additional fields for compatibility
-  bool enable_adaptive_training = 10;
-  bool optimize_for_storage = 11;
-  bool optimize_for_memory = 12;
-  bool enable_simd_acceleration = 13;
-  bool enable_binary = 14;
-  bool enable_int8 = 15;
-  bool enable_pq = 16;
-  uint32 pq_segments = 17;
-  uint32 pq_bits = 18;
-  uint32 pq_codebooks = 19;
-  float binary_threshold = 20;
-  float int8_threshold = 21;
-  float pq_threshold = 22;
+  optional bool enable_adaptive_training = 10; // Default: true
+  optional bool optimize_for_storage = 11; // Default: false
+  optional bool optimize_for_memory = 12; // Default: false
+  optional bool enable_simd_acceleration = 13; // Default: true
+  optional bool enable_binary = 14; // Default: true
+  optional bool enable_int8 = 15; // Default: true
+  optional bool enable_pq = 16; // Default: false
+  optional uint32 pq_segments = 17; // Default: 8
+  optional uint32 pq_bits = 18; // Default: 8
+  optional uint32 pq_codebooks = 19; // Default: 256
+  optional float binary_threshold = 20; // Default: 0.0
+  optional float int8_threshold = 21; // Default: 0.0
+  optional float pq_threshold = 22; // Default: 0.0
   
   enum Strategy {
     SMART_DEFAULTS = 0;
@@ -351,33 +351,33 @@ message FilterCondition {
 
 // Index configurations
 message HnswConfig {
-  uint32 m = 1;
-  uint32 ef_construction = 2;
-  uint32 ef_search = 3;
-  uint32 max_partition_size = 4;
-  bool adaptive_parameters = 5;
-  bool use_simd = 6;
-  uint32 memory_limit_mb = 7;
-  bool lazy_loading = 8;
+  optional uint32 m = 1; // Default: 16
+  optional uint32 ef_construction = 2; // Default: 200
+  optional uint32 ef_search = 3; // Default: 100
+  optional uint32 max_partition_size = 4; // Default: 100000
+  optional bool adaptive_parameters = 5; // Default: true
+  optional bool use_simd = 6; // Default: true
+  optional uint32 memory_limit_mb = 7; // Default: 512
+  optional bool lazy_loading = 8; // Default: false
 }
 
 message IvfConfig {
-  uint32 n_lists = 1;
-  uint32 n_probe = 2;
-  uint32 quantization_bits = 3;
-  bool use_pq = 4;
-  uint32 pq_subspaces = 5;
-  bool train_on_insert = 6;
-  uint32 min_train_size = 7;
+  optional uint32 n_lists = 1; // Default: sqrt(num_vectors)
+  optional uint32 n_probe = 2; // Default: 10
+  optional uint32 quantization_bits = 3; // Default: 8
+  optional bool use_pq = 4; // Default: false
+  optional uint32 pq_subspaces = 5; // Default: 8
+  optional bool train_on_insert = 6; // Default: true
+  optional uint32 min_train_size = 7; // Default: 1000
 }
 
 message LshConfig {
-  uint32 n_hash_tables = 1;
-  uint32 n_hash_functions = 2;
-  float bucket_width = 3;
-  bool binary_vectors = 4;
-  uint32 max_candidates = 5;
-  int32 projection = 6; // RandomProjectionType enum
+  optional uint32 n_hash_tables = 1; // Default: 10
+  optional uint32 n_hash_functions = 2; // Default: 4
+  optional float bucket_width = 3; // Default: 4.0
+  optional bool binary_vectors = 4; // Default: false
+  optional uint32 max_candidates = 5; // Default: 1000
+  optional int32 projection = 6; // RandomProjectionType enum, Default: 0
 }
 
 // Column encoding for VIPER

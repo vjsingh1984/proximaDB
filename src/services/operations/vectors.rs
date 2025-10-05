@@ -357,7 +357,7 @@ impl VectorOperationsService {
                     metadata: rec.metadata,
                     version: rec.version,
                     similarity: None,
-                    timestamp: Some(rec.timestamp),
+                    timestamp: Some(rec.timestamp.unwrap_or(0)),
                     source: None,
                     expanded_context: vec![],
                     semantic_similarity: None,
@@ -513,7 +513,7 @@ impl VectorOperationsService {
                     id: result.id,
                     vector: result.vector,
                     metadata: proto_metadata,
-                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
                     updated_at: None,
                     expires_at: None,
                     version: None,
@@ -1201,6 +1201,7 @@ impl VectorOperationsService {
                             execution_method,
                             quantization_strategy,
                             candidates,
+                            query_vector.clone(),
                             intermediate_results.as_ref(),
                         )
                         .await?;
@@ -1341,7 +1342,7 @@ impl VectorOperationsService {
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
         let distance_metric = match collection.config.as_ref() {
-            Some(cfg) => crate::proto::proximadb_v1::DistanceMetric::try_from(cfg.distance_metric)
+            Some(cfg) => crate::proto::proximadb_v1::DistanceMetric::try_from(cfg.distance_metric.unwrap_or(0))
                 .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine),
             None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
         };
@@ -1615,6 +1616,7 @@ impl VectorOperationsService {
         method: crate::query::unified_query_optimizer::SearchExecutionMethod,
         quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
         candidates: usize,
+        query_vector: Vec<f32>,
         input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
@@ -1624,9 +1626,9 @@ impl VectorOperationsService {
 
         let collection = self.get_or_load_collection(collection_id).await?;
 
-        // Create search parameters
+        // Create search parameters with the query vector
         let search_params = crate::core::search::SearchParams {
-            query_vectors: None, // Query vector will be passed in execute_unified_plan
+            query_vectors: Some(vec![query_vector]),
             vector: None,
             top_k: Some(candidates), // Use candidates as top_k for this stage
             distance_metric: None,

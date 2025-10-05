@@ -42,27 +42,66 @@ Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector d
 
 [NOTE]
 ====
-**Streamlined Documentation**: This structure has been optimized to eliminate duplicates and consolidate related content. All QUICKREF files have been merged into comprehensive guides, and MD files have been converted to AsciiDoc format per CLAUDE.md standards.
+**Streamlined Two-Tier Documentation**:
+
+* **Top-Level (`docs/`)**: High-level overviews, guides, and cross-cutting concerns
+* **Module-Level (`src/*/README.adoc`)**: Detailed implementation docs within code modules
+
+This eliminates duplication - top-level docs **reference** module docs for implementation details.
 ====
+
+=== Top-Level Documentation
 
 ----
 docs/
 ├── quickstart/           # Getting started guides
-├── architecture/         # System architecture (streamlined)
-├── storage/              # Storage engine documentation
-├── automl/               # AutoML complete guide (consolidated)
-├── technical/            # Technical implementation details (AsciiDoc only)
+├── architecture/         # System architecture overviews
+├── storage/              # Storage engine selection guides → references src/storage/
+├── automl/               # AutoML user guide → references src/automl/
+├── technical/            # Technical overviews → references src/ modules
 ├── operations/           # Production operations
 ├── enterprise/           # Enterprise features
-├── performance/          # Comprehensive performance documentation
-├── benchmarks/           # Complete benchmark suite with integrated guides
-├── development/          # Development guides and contributing
+├── performance/          # Performance benchmarks and tuning
+├── benchmarks/           # Benchmark suite documentation
+├── development/          # Contributing and development setup
 ├── guides/               # How-to guides
 ├── reference/            # API reference
-├── security/             # Security documentation
+├── security/             # Security overview → references src/security/
 ├── business/             # Business documentation
-└── 09-roadmap/           # Development roadmap (unchanged)
+└── 09-roadmap/           # Development roadmap
 ----
+
+=== Module-Level Documentation
+
+Implementation details are documented in `README.adoc` files within source modules:
+
+----
+src/
+├── storage/
+│   ├── engines/
+│   │   ├── impls/
+│   │   │   ├── sst/README.adoc        # SST engine implementation details
+│   │   │   ├── viper/README.adoc      # VIPER engine implementation
+│   │   │   ├── nova/README.adoc       # NOVA engine implementation
+│   │   │   └── ...
+│   │   └── core/
+│   │       └── ops/
+│   │           └── proximacodec/README.adoc  # ProximaCodec internals
+├── index/
+│   └── axis/
+│       └── eventlog/README.adoc       # AXIS EventLog coordination
+├── services/
+│   └── events/README.adoc             # Event services architecture
+├── compute/
+│   └── quantization/README.adoc       # Quantization implementation
+└── ...
+----
+
+**Navigation Pattern**:
+
+1. Start with `docs/` for **what** and **why**
+2. Follow references to `src/*/README.adoc` for **how** (implementation details)
+3. Use module docs to understand code structure before modifying
 
 == Contributing
 

@@ -1266,8 +1266,8 @@ impl HybridQueryEngine {
                                     id: rec.id,
                                     vector,
                                     metadata: rec.metadata.clone(),
-                                    timestamp: rec.timestamp.unwrap_or(0) as i64,
-                                    updated_at: Some(rec.updated_at.unwrap_or(0) as i64),
+                                    timestamp: Some(rec.timestamp.unwrap_or(0)),
+                                    updated_at: Some(rec.updated_at.unwrap_or(0)),
                                     expires_at: None,
                                     version: None,
                                     source: None,
@@ -1327,7 +1327,7 @@ impl HybridQueryEngine {
                                     value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v))
                                 }))
                                 .collect(),
-                            timestamp: node.created_at_ms,
+                            timestamp: Some(node.created_at_ms),
                             updated_at: Some(node.updated_at_ms),
                             expires_at: None,
                             version: None,

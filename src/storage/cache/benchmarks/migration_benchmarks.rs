@@ -54,7 +54,7 @@ fn benchmark_legacy_cache_operations(c: &mut Criterion) {
                     metadata: HashMap::new(),
                     collection_id: "bench_collection".to_string(),
                     version: 1,
-                    timestamp: 0,
+                    timestamp: Some(0),
                 };
                 
                 legacy_cache.put_vector(&key, vector).await.unwrap();
@@ -98,7 +98,7 @@ fn benchmark_specialized_cache_operations(c: &mut Criterion) {
                     metadata: HashMap::new(),
                     collection_id: "bench_collection".to_string(),
                     version: 1,
-                    timestamp: 0,
+                    timestamp: Some(0),
                 };
                 
                 vector_cache.put(&key.to_string(), vector).await.unwrap();
@@ -159,7 +159,7 @@ fn benchmark_adapter_migration(c: &mut Criterion) {
                             metadata: HashMap::new(),
                             collection_id: "bench_collection".to_string(),
                             version: 1,
-                            timestamp: 0,
+                            timestamp: Some(0),
                         };
                         
                         legacy_cache.put_vector(&key, vector).await.unwrap();
@@ -204,7 +204,7 @@ fn benchmark_adapter_operations(c: &mut Criterion) {
                     metadata: HashMap::new(),
                     collection_id: "bench_collection".to_string(),
                     version: 1,
-                    timestamp: 0,
+                    timestamp: Some(0),
                 };
                 
                 adapter.put(&key.to_string(), vector).await.unwrap();

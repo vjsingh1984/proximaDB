@@ -421,7 +421,7 @@ async fn phase3_pq_refinement(
 ) -> Result<Vec<Candidate>> {
     // Create distance computation engine for PQ operations
     // Note: Skip PQ distance table computation for now, use direct computation
-    let distance_table: Option<Vec<Vec<f32>>> = if sst.header.quantization.pq_codebooks > 0
+    let distance_table: Option<Vec<Vec<f32>>> = if sst.header.quantization.pq_codebooks.unwrap_or(0) > 0
     {
         // TODO: Implement proper PQ distance table computation
         None
@@ -607,7 +607,7 @@ async fn phase4_full_precision(
             vector: search_record.vector.map(|v| (*v).clone()).unwrap_or_default(),
             metadata: search_record.metadata,
             version: None,
-            timestamp: 0,
+            timestamp: Some(0),
             expires_at: None,
             updated_at: None,
             source: None,

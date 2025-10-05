@@ -336,18 +336,24 @@ impl UnifiedHandlers {
         };
 
         // Convert v1 vectors to core VectorRecord (expected by vector service)
+        // Apply defaults at API boundary for all incoming records
         let legacy_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = request
             .vectors
             .into_iter()
-            .map(|v| crate::proto::proximadb_v1::VectorRecord {
-                id: v.id,
-                vector: v.vector,
-                metadata: v.metadata,
-                timestamp: v.timestamp,
-                updated_at: v.updated_at.map(|x| x as i64),
-                expires_at: v.expires_at.map(|x| x as i64),
-                version: v.version,
-                source: v.source,
+            .map(|mut v| {
+                // Apply smart defaults for optional fields
+                crate::proto::defaults::apply_vector_record_defaults(&mut v);
+
+                crate::proto::proximadb_v1::VectorRecord {
+                    id: v.id,
+                    vector: v.vector,
+                    metadata: v.metadata,
+                    timestamp: v.timestamp,
+                    updated_at: v.updated_at.map(|x| x as i64),
+                    expires_at: v.expires_at.map(|x| x as i64),
+                    version: v.version,
+                    source: v.source,
+                }
             })
             .collect();
 
@@ -808,9 +814,12 @@ impl UnifiedHandlers {
         Option<String>,
         Option<String>,
     )> {
-        let config = request
+        let mut config = request
             .collection_config
             .context("Missing collection config")?;
+
+        // Apply smart defaults at API boundary
+        crate::proto::defaults::apply_collection_config_defaults(&mut config);
 
         match self.collection_service.create_collection(&config).await {
             Ok(response) => {
