@@ -775,29 +775,32 @@ class ProximaDBSyncGrpcClient:
         Returns:
             Proto health status object (for compatibility with unified_client)
         """
+        import time
         try:
-            # Simple connection test - attempt to list collections
-            with self._connection_pool.get_channel() as ctx:
-                collection_stub = v1_collection_pb2_grpc.CollectionServiceStub(ctx.channel)
-                request = v1_collection_types_pb2.CollectionRequest(
-                    operation=2,  # COLLECTION_LIST enum value
-                    query_params={},
-                    options={},
-                    migration_config={}
-                )
-                response = collection_stub.ManageCollections(request, timeout=self.timeout)
-                # Return a simple object with status and message attributes
+            # Get a channel from the pool
+            channel = self._connection_pool.get_channel()
+            try:
+                # Simple connection test - attempt to list collections
+                collection_stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+                request = v1_collection_types_pb2.ListCollectionsRequest()
+                response = collection_stub.ListCollections(request, timeout=self.timeout)
+                # Return a simple object with all required attributes
                 class HealthStatus:
                     status = "healthy"
-                    message = "Server is responding"
+                    version = "0.1.4"
                     uptime_seconds = 0
+                    timestamp_ms = int(time.time() * 1000)
                 return HealthStatus()
+            finally:
+                # Return channel to pool
+                self._connection_pool.return_channel(channel, success=True)
         except Exception as e:
             logger.warning(f"Health check failed: {e}")
             class HealthStatus:
                 status = "unhealthy"
-                message = str(e)
+                version = "0.1.4"
                 uptime_seconds = 0
+                timestamp_ms = int(time.time() * 1000)
             return HealthStatus()
 
 
