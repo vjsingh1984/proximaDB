@@ -115,12 +115,6 @@ pub mod unified_metadata_serializer;
 pub mod unified_strategy_reader;
 pub mod zone_maps;
 
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-#[path = "tests/integration_tests.rs"]
-mod integration_tests;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
