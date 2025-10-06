@@ -286,11 +286,11 @@ pub fn extract_query_characteristics(query: &[f32], top_k: usize) -> QueryCharac
     let sparsity = query.iter().filter(|&&x| x.abs() < 0.01).count() as f32 / query.len() as f32;
 
     QueryCharacteristics {
+        norm,
+        sparsity,
+        dominant_dimensions: vec![],
+        distance_metric,
         top_k,
-        query_norm: norm,
-        query_sparsity: sparsity,
-        estimated_selectivity: top_k as f32 / 10000.0, // Assume 10K vectors default
-        has_metadata_filter: false,
     }
 }
 

@@ -67,7 +67,7 @@ fn test_binary_sketch() {
 
 #[test]
 fn test_int8_vector() {
-    use crate::storage::engines::impls/nova::progressive_search::*;
+    use crate::storage::engines::impls::nova::progressive_search::*;
 
     let vector = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     // Int8Vector is private, test via int8 config

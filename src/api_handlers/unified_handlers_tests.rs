@@ -20,9 +20,9 @@ mod tests {
 
         CollectionConfig {
             name: name.to_string(),
-            dimension: 128,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            dimension: Some(128),
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -30,7 +30,7 @@ mod tests {
             tags: vec!["test".to_string()],
             storage_config: None,
             embedding_models: vec![],
-            primary_index: "hnsw".to_string(),
+            primary_index: Some("hnsw".to_string()),
             auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
         }
@@ -42,7 +42,7 @@ mod tests {
             id: id.to_string(),
             vector: (0..dimension).map(|i| i as f32 * 0.1).collect(),
             metadata: HashMap::new(),
-            timestamp: Utc::now().timestamp(),
+            timestamp: Some(Utc::now().timestamp()),
             updated_at: Some(Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
@@ -88,9 +88,9 @@ mod tests {
         let config = create_test_collection_config("test_collection");
 
         assert_eq!(config.name, "test_collection");
-        assert_eq!(config.dimension, 128);
-        assert_eq!(config.distance_metric, DistanceMetric::Cosine as i32);
-        assert_eq!(config.storage_engine, StorageEngine::Sst as i32);
+        assert_eq!(config.dimension, Some(128));
+        assert_eq!(config.distance_metric, Some(DistanceMetric::Cosine as i32));
+        assert_eq!(config.storage_engine, Some(StorageEngine::Sst as i32));
         assert!(config.description.is_some());
         assert!(!config.tags.is_empty());
         assert!(config.filterable_columns.is_empty());
@@ -246,7 +246,7 @@ mod tests {
             id: "test_id".to_string(),
             vector: vec![1.0, 2.0, 3.0],
             metadata: HashMap::new(),
-            timestamp: 1234567890,
+            timestamp: Some(1234567890),
             updated_at: Some(1234567890),
             expires_at: Some(1234567999),
             version: Some(2),
@@ -255,7 +255,7 @@ mod tests {
 
         assert_eq!(record.id, "test_id");
         assert_eq!(record.vector.len(), 3);
-        assert_eq!(record.timestamp, 1234567890);
+        assert_eq!(record.timestamp, Some(1234567890));
         // Note: created_at is now timestamp in proto VectorRecord
         assert_eq!(record.updated_at, Some(1234567890));
         assert_eq!(record.expires_at.unwrap(), 1234567999);
@@ -269,9 +269,9 @@ mod tests {
 
         let mut config = CollectionConfig {
             name: "test".to_string(),
-            dimension: 256,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            dimension: Some(256),
+            distance_metric: Some(DistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -279,13 +279,13 @@ mod tests {
             tags: vec![],
             storage_config: None,
             embedding_models: vec![],
-            primary_index: "hnsw".to_string(),
+            primary_index: Some("hnsw".to_string()),
             auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
         };
 
-        assert_eq!(config.dimension, 256);
-        assert_eq!(config.distance_metric, DistanceMetric::Euclidean as i32);
+        assert_eq!(config.dimension, Some(256));
+        assert_eq!(config.distance_metric, Some(DistanceMetric::Euclidean as i32));
         assert!(config.description.is_none());
         assert!(config.tags.is_empty());
 
@@ -357,9 +357,9 @@ mod tests {
 
         let config = CollectionConfig {
             name: "metadata_test".to_string(),
-            dimension: 100,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            dimension: Some(100),
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -367,7 +367,7 @@ mod tests {
             tags: vec!["production".to_string(), "v1".to_string()],
             storage_config: None,
             embedding_models: vec![],
-            primary_index: "hnsw".to_string(),
+            primary_index: Some("hnsw".to_string()),
             auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
         };

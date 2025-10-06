@@ -1256,6 +1256,6 @@ mod tests {
     fn test_quantization_config_default() {
         let config = QuantizationConfig::default();
         // Proto bool fields default to false
-        assert!(!config.enabled);
+        assert!(!config.enabled.unwrap_or(false));
     }
 }

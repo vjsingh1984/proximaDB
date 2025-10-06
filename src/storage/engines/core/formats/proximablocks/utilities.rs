@@ -652,19 +652,19 @@ mod tests {
             VectorRecord {
                 id: "valid".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                timestamp: 1000,
+                timestamp: Some(1000),
                 ..Default::default()
             },
             VectorRecord {
                 id: "".to_string(), // Invalid - no ID
                 vector: vec![4.0, 5.0, 6.0],
-                timestamp: 2000,
+                timestamp: Some(2000),
                 ..Default::default()
             },
             VectorRecord {
                 id: "invalid_vector".to_string(),
                 vector: vec![f32::NAN, 2.0, f32::INFINITY], // Invalid - NaN and Infinity
-                timestamp: 3000,
+                timestamp: Some(3000),
                 ..Default::default()
             },
         ];

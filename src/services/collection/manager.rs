@@ -1607,9 +1607,9 @@ mod tests {
         // Valid config
         let valid_config = CollectionConfig {
             name: "valid_collection".to_string(),
-            dimension: 128,
-            distance_metric: 1,
-            storage_engine: 1,
+            dimension: Some(128),
+            distance_metric: Some(1),
+            storage_engine: Some(1),
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -1725,9 +1725,9 @@ mod tests {
         for (name, should_succeed, expected_error_code) in test_cases {
             let config = CollectionConfig {
                 name: name.to_string(),
-                dimension: 128,
-                distance_metric: 1,
-                storage_engine: 1,
+                dimension: Some(128),
+                distance_metric: Some(1),
+                storage_engine: Some(1),
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,

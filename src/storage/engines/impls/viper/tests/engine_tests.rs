@@ -220,9 +220,9 @@ async fn search_with_params(
         id: collection_id.to_string(),
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: collection_id.to_string(),
-            dimension: query_vector.len() as u32,
-            distance_metric: distance_metric as i32,
-            storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
+            dimension: Some(query_vector.len() as u32),
+            distance_metric: Some(distance_metric as i32),
+            storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32),
             ..Default::default()
         }),
         storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {

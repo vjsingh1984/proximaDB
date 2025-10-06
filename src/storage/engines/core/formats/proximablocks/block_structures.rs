@@ -3967,13 +3967,13 @@ mod tests {
             VectorRecord {
                 id: "vec_1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                timestamp: 1000,
+                timestamp: Some(1000),
                 ..Default::default()
             },
             VectorRecord {
                 id: "vec_2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
-                timestamp: 2000,
+                timestamp: Some(2000),
                 ..Default::default()
             },
         ];

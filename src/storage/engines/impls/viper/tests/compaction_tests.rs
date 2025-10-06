@@ -74,7 +74,7 @@ fn create_test_collection(
             index_configs: vec![],
             quantization: Some(crate::proto::proximadb_v1::QuantizationConfig {
                 enabled: true,                         // Quantization enabled by default for VIPER
-                enable_progressive_search: true, // Progressive search enabled by default
+                enable_progressive_search: Some(true), // Progressive search enabled by default
                 ..Default::default()
             }),
             storage_config: None,

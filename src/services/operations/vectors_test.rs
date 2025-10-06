@@ -201,7 +201,7 @@ mod tests {
     async fn test_timestamp_fields() {
         let record = create_test_vector_record("time_test", vec![1.0], vec![]);
 
-        assert!(record.timestamp > 0);
+        assert!(record.timestamp.unwrap() > 0);
         assert!(record.updated_at.is_some());
         assert!(record.updated_at.unwrap() > 0);
         assert_eq!(record.version, Some(1));

@@ -41,7 +41,7 @@ mod tests {
             id,
             vector,
             metadata: std::collections::HashMap::new(), // Convert to HashMap if needed
-            timestamp: get_timestamp() as i64,
+            timestamp: Some(get_timestamp() as i64),
             updated_at: None,
             expires_at: None,
             version: Some(1),

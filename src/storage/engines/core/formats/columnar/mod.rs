@@ -769,11 +769,11 @@ mod inline_tests {
         let config = QuantizationConfig::default();
 
         // Proto defaults are all false/0
-        assert!(!config.enable_binary);
-        assert!(!config.enable_int8);
-        assert!(!config.enable_pq);
-        assert_eq!(config.pq_segments, 0);
-        assert_eq!(config.pq_bits, 0);
+        assert!(!config.enable_binary.unwrap_or(false));
+        assert!(!config.enable_int8.unwrap_or(false));
+        assert!(!config.enable_pq.unwrap_or(false));
+        assert_eq!(config.pq_segments.unwrap_or(0), 0);
+        assert_eq!(config.pq_bits.unwrap_or(0), 0);
     }
 
     #[test]
@@ -853,9 +853,9 @@ mod inline_tests {
         assert_eq!(config.max_cache_size_bytes, 512 * 1024 * 1024);
 
         // Test quantization defaults - proto defaults are all false
-        assert!(!config.quantization.enable_binary);
-        assert!(!config.quantization.enable_int8);
-        assert!(!config.quantization.enable_pq);
+        assert!(!config.quantization.enable_binary.unwrap_or(false));
+        assert!(!config.quantization.enable_int8.unwrap_or(false));
+        assert!(!config.quantization.enable_pq.unwrap_or(false));
 
         // Test optimization thresholds
         assert_eq!(

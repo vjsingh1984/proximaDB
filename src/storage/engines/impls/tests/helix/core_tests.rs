@@ -31,7 +31,7 @@ use crate::storage::engines::core::formats::proximablocks::bloom_filter::{
 };
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
 use crate::storage::engines::impls::helix::*;
-use crate::storage::engines::impls::helix::benchmarks::*;
+// Benchmarks module removed - use benches/ directory instead
 use crate::storage::engines::impls::helix::clustering::{PCAModel, compute_hilbert_key, QueryPatternTracker, LiquidClusteringConfig};
 use crate::storage::engines::impls::helix::compaction::LeveledCompactor;
 use crate::storage::engines::impls::helix::eventlog_integration::HelixFlushHandler;
@@ -59,49 +59,50 @@ use tempfile::TempDir;
 // BENCHMARK TESTS (6 tests from benchmarks.rs)
 // =============================================================================
 
-#[bench]
-fn bench_pca_training(b: &mut Bencher) {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-    let vectors = generate_random_vectors(1000, 768, 42);
-
-    b.iter(|| {
-        let model = clustering::PCAModel::train(&vectors, 16).unwrap();
-        black_box(model);
-    });
-}
-
-#[bench]
-fn bench_pca_projection(b: &mut Bencher) {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-    let vectors = generate_random_vectors(100, 768, 42);
-    let model = clustering::PCAModel::train(&vectors, 16).unwrap();
-    let test_vector = vec![0.5; 768];
-
-    b.iter(|| {
-        let projected = model.project(&test_vector).unwrap();
-        black_box(projected);
-    });
-}
-
-#[bench]
-fn bench_hilbert_key_computation(b: &mut Bencher) {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-    let vectors = vec![
-        vec![0.1, 0.2, 0.3],
-        vec![0.4, 0.5, 0.6],
-        vec![0.7, 0.8, 0.9],
-    ];
-
-    b.iter(|| {
-        for v in &vectors {
-            let key = clustering::compute_hilbert_key(v);
-            black_box(key);
-        }
-    });
-}
+// Benchmarks moved to benches/ directory - #[bench] requires unstable feature
+// #[bench]
+// fn bench_pca_training(b: &mut Bencher) {
+//     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+//
+//     let vectors = generate_random_vectors(1000, 768, 42);
+//
+//     b.iter(|| {
+//         let model = clustering::PCAModel::train(&vectors, 16).unwrap();
+//         black_box(model);
+//     });
+// }
+//
+// #[bench]
+// fn bench_pca_projection(b: &mut Bencher) {
+//     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+//
+//     let vectors = generate_random_vectors(100, 768, 42);
+//     let model = clustering::PCAModel::train(&vectors, 16).unwrap();
+//     let test_vector = vec![0.5; 768];
+//
+//     b.iter(|| {
+//         let projected = model.project(&test_vector).unwrap();
+//         black_box(projected);
+//     });
+// }
+//
+// #[bench]
+// fn bench_hilbert_key_computation(b: &mut Bencher) {
+//     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+//
+//     let vectors = vec![
+//         vec![0.1, 0.2, 0.3],
+//         vec![0.4, 0.5, 0.6],
+//         vec![0.7, 0.8, 0.9],
+//     ];
+//
+//     b.iter(|| {
+//         for v in &vectors {
+//             let key = clustering::compute_hilbert_key(v);
+//             black_box(key);
+//         }
+//     });
+// }
 
 #[tokio::test]
 async fn bench_flush_performance() {
@@ -178,8 +179,8 @@ async fn bench_search_with_pruning() {
     let collection_config = CollectionConfig {
         name: "bench_collection".to_string(),
         dimension: 128,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
+        distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Helix as i32),
         ..Default::default()
     };
 

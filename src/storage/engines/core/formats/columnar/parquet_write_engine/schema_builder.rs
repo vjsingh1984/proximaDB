@@ -245,10 +245,10 @@ mod tests {
         use crate::storage::engines::core::formats::columnar::constants::*;
 
         let mut config = ParquetWriterConfig::default();
-        config.quantization.enable_binary = true;
-        config.quantization.enable_int8 = true;
-        config.quantization.enable_pq = true;
-        config.quantization.pq_bits = 8; // Use PQ8
+        config.quantization.enable_binary = Some(true);
+        config.quantization.enable_int8 = Some(true);
+        config.quantization.enable_pq = Some(true);
+        config.quantization.pq_bits = Some(8); // Use PQ8
 
         let builder = ParquetSchemaBuilder::new(256, config);
         let schema = builder.build_schema().unwrap();

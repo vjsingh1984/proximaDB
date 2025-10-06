@@ -34,9 +34,9 @@ use tempfile::TempDir;
 
 use crate::storage::engines::impls::sst::{
     core::SstEngine,
-    SstConfig,
     flush::{FlushCoordinator, FlushOptimizer, FlushOperations},
 };
+use crate::core::SstConfig;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::compute::distance_computation::{
     engine::UnifiedDistanceCompute,
@@ -655,7 +655,6 @@ fn create_test_vector_record(
         timestamp,
         updated_at: None,
         expires_at,
-        similarity: None,
         version: None,
         ..Default::default()
     }
@@ -686,9 +685,9 @@ async fn create_sst_files_with_engine(
         id: collection_id.to_string(),
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: collection_id.to_string(),
-            dimension: 3,
-            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-            storage_engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
+            dimension: Some(3),
+            distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+            storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
             ..Default::default()
         }),
         storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {

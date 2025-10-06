@@ -22,7 +22,9 @@ use std::path::Path;
 use anyhow::Result;
 use tempfile::TempDir;
 
-use crate::storage::engines::impls::sst::{SstEngine, SstConfig, SstRecord};
+use crate::storage::engines::impls::sst::{SstEngine, SstRecord};
+use crate::core::SstConfig;
+use crate::storage::engines::core::search::SearchResult;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::distance_computation::DistanceMetric;
@@ -31,7 +33,8 @@ use crate::proto::proximadb_v1::{VectorRecord, MetadataItem, Collection, Collect
 use crate::storage::engines::impls::sst::readers::sst_query_engine::{
     UnifiedSstableReader, ReaderConfig, CollectionContext,
 };
-use crate::storage::engines::impls::sst::manifest::SstManifest;
+// manifest module is not exposed - tests may need refactoring
+// use crate::storage::engines::impls::sst::manifest::SstManifest;
 use crate::core::search::{SearchParams, SearchPlan, StorageInfo, FilterableColumn, CollectionConfig as SearchCollectionConfig};
 use crate::core::BloomFilterConfig;
 
@@ -106,6 +109,7 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
         level_count: 4,
         max_levels: 4,
         compaction_threshold: 2,
+        compaction_config: None,
         max_files_per_level: 4,
         level_size_multiplier: 4.0,
 
@@ -116,6 +120,7 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
         compaction_strategy: "leveled".to_string(),
         compression: "none".to_string(),
         compression_level: 0,
+        vector_encoding_strategy: "FullVector".to_string(),
 
         // Bloom filter
         bloom_filter_config: Some(BloomFilterConfig {
@@ -220,9 +225,6 @@ pub fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
             )),
         }],
         timestamp: 1000,
-        updated_at: Some(1000),
-        expires_at: None,
-        version: Some(1),
         is_tombstone: false,
         sequence_number: 1,
         level: 0,
@@ -248,13 +250,12 @@ pub fn create_test_vector_record(
     metadata_items: Vec<MetadataItem>,
 ) -> VectorRecord {
     VectorRecord {
-        id: Some(id),
+        id,
         vector,
         metadata: metadata_items,
-        timestamp,
+        timestamp: Some(timestamp as i64),
         updated_at: None,
-        expires_at,
-        similarity: None,
+        expires_at: expires_at.map(|t| t as i64),
         version: None,
         ..Default::default()
     }
@@ -270,13 +271,12 @@ pub fn create_test_vector_record(
 /// VectorRecord with simple test data
 pub fn create_simple_vector_record(id: &str, dim: usize) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![0.1; dim],
         metadata: vec![],
-        timestamp: 1000,
+        timestamp: Some(1000),
         updated_at: None,
         expires_at: None,
-        similarity: None,
         version: None,
         ..Default::default()
     }
@@ -295,10 +295,13 @@ pub async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
     let fs = fs_factory.get_filesystem("file:///tmp/proximadb-test").await.unwrap();
 
     let config = ReaderConfig {
-        enable_bloom_filters: true,
-        enable_block_cache: true,
-        cache_size_mb: 64,
-        prefetch_size_kb: 256,
+        block_cache_size: 64 * 1024 * 1024, // 64MB in bytes
+        index_cache_size: 16 * 1024 * 1024, // 16MB in bytes
+        bloom_filter_threshold: 0.01,
+        range_scan_threshold: 100,
+        metadata_selectivity_threshold: 0.1,
+        enable_read_ahead: true,
+        read_ahead_blocks: 4,
     };
 
     Arc::new(UnifiedSstableReader::new(fs, config))
@@ -319,36 +322,45 @@ pub async fn create_test_reader() -> UnifiedSstableReader {
 /// # Returns
 /// SearchPlan with default test values
 pub fn create_test_search_context() -> SearchPlan {
+    use crate::core::search::unified_interface::ColumnData;
+
     SearchPlan {
-        storage_info: StorageInfo {
-            storage_type: "LSM".to_string(),
-            file_count: 5,
-            estimated_size_mb: 100.0,
-            is_cloud_storage: false,
-            supports_range_requests: true,
-        },
-        available_quantization: vec![],
-        filterable_columns: vec![
-            FilterableColumn {
-                name: "category".to_string(),
-                is_indexed: true,
-                estimated_cardinality: 100,
-            },
-            FilterableColumn {
-                name: "score".to_string(),
-                is_indexed: false,
-                estimated_cardinality: 1000,
-            },
-        ],
+        collection_id: "test_collection".to_string(),
         collection_config: Some(SearchCollectionConfig {
             default_distance_metric: DistanceMetric::Cosine,
             vector_dimension: 128,
             enable_quantization: false,
             enable_metadata_filtering: true,
             estimated_document_count: 10000,
-            compression: None,
-            optimization_hints: None,
         }),
+        filterable_columns: vec![
+            FilterableColumn {
+                name: "category".to_string(),
+                data_type: ColumnData::String,
+                is_indexed: true,
+                estimated_cardinality: Some(100),
+            },
+            FilterableColumn {
+                name: "score".to_string(),
+                data_type: ColumnData::Float,
+                is_indexed: false,
+                estimated_cardinality: Some(1000),
+            },
+        ],
+        available_quantization: vec![],
+        storage_info: StorageInfo {
+            is_cloud_storage: false,
+            storage_type: "LSM".to_string(),
+            estimated_size_mb: 100.0,
+            file_count: 5,
+            supports_range_requests: true,
+            file_paths: None,
+        },
+        metadata_filters: vec![],
+        query_vector: None,
+        top_k: 10,
+        min_score: None,
+        enable_early_termination: false,
     }
 }
 
@@ -359,18 +371,25 @@ pub fn create_test_search_context() -> SearchPlan {
 pub fn create_test_search_params() -> SearchParams {
     SearchParams {
         query_vectors: Some(vec![vec![0.1; 128]]),
+        vector: None,
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Cosine),
-        filters: None,
         filter_expression: None,
+        filters: None,
         accuracy_threshold: None,
         include_expired: Some(false),
         timeout_ms: None,
         enable_two_stage: Some(false),
-        enable_clustering_hint: Some(false),
-        enable_metadata_filtering_hint: Some(true),
         quantization_hint: None,
+        enable_clustering_hint: Some(false),
+        runtime_hints: None,
+        enable_metadata_filtering_hint: Some(true),
         custom_hints: None,
+        requires_ordering: None,
+        enable_progressive_search: None,
+        progressive_scenario: None,
+        progressive_recalls: None,
+        optimization_hint: None,
     }
 }
 
@@ -381,11 +400,11 @@ pub fn create_test_search_params() -> SearchParams {
 ///
 /// # Returns
 /// Vector of mock SearchResult objects
-pub fn create_mock_search_results(count: usize) -> Vec<crate::core::search::SearchResult> {
+pub fn create_mock_search_results(count: usize) -> Vec<SearchResult> {
     use chrono::Utc;
 
     (0..count).map(|i| {
-        crate::core::search::SearchResult {
+        SearchResult {
             id: format!("result_{}", i),
             vector_id: Some(format!("vector_{}", i)),
             similarity: Some(1.0 - (i as f32 * 0.1)),
@@ -433,22 +452,23 @@ pub fn create_test_collection_context() -> CollectionContext {
 ///
 /// # Returns
 /// Tuple of (SstManifest, TempDir) for testing
-pub async fn create_test_manifest() -> (SstManifest, TempDir) {
-    let temp_dir = TempDir::new().unwrap();
-    let filesystem = Arc::new(
-        FilesystemFactory::new(Default::default()).await.unwrap()
-    );
-
-    let storage_url = format!("file://{}", temp_dir.path().display());
-    let manifest = SstManifest::new(
-        "test_collection".to_string(),
-        storage_url,
-        filesystem,
-        None,
-    );
-
-    (manifest, temp_dir)
-}
+/// Disabled - SstManifest is not accessible (manifest module not exposed)
+// pub async fn create_test_manifest() -> (SstManifest, TempDir) {
+//     let temp_dir = TempDir::new().unwrap();
+//     let filesystem = Arc::new(
+//         FilesystemFactory::new(Default::default()).await.unwrap()
+//     );
+//
+//     let storage_url = format!("file://{}", temp_dir.path().display());
+//     let manifest = SstManifest::new(
+//         "test_collection".to_string(),
+//         storage_url,
+//         filesystem,
+//         None,
+//     );
+//
+//     (manifest, temp_dir)
+// }
 
 // ============================================================================
 // Collection and Storage Utilities
@@ -479,8 +499,8 @@ pub fn create_test_collection(collection_id: &str, dimension: u32) -> Collection
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
             dimension,
-            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-            storage_engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
+            distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+            storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
             ..Default::default()
         }),
         ..Default::default()
@@ -578,7 +598,7 @@ pub fn assert_flush_success(result: &crate::storage::traits::FlushResult) {
 ///
 /// # Panics
 /// If results don't match expectations
-pub fn assert_search_results(results: &[crate::core::search::SearchResult], expected_count: usize) {
+pub fn assert_search_results(results: &[SearchResult], expected_count: usize) {
     assert_eq!(
         results.len(),
         expected_count,

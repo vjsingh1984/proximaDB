@@ -299,8 +299,8 @@ mod tests {
             config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
-                distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-                storage_engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
+                distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+                storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
                 ..Default::default()
             }),
             stats: Some(crate::proto::proximadb_v1::CollectionStats::default()),

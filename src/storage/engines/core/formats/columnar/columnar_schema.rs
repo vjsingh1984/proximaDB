@@ -556,11 +556,11 @@ mod tests {
         let manager = ColumnarSchema::new();
 
         let config = QuantizationConfig {
-            enable_binary: true,
-            enable_int8: true,
-            enable_pq: true,
-            pq_segments: 16,
-            pq_bits: 8,
+            enable_binary: Some(true),
+            enable_int8: Some(true),
+            enable_pq: Some(true),
+            pq_segments: Some(16),
+            pq_bits: Some(8),
             ..Default::default()
         };
 

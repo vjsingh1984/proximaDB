@@ -175,8 +175,8 @@ async fn test_flush_and_compaction() {
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 64,
-            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
-            storage_engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+            distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
+            storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Helix as i32),
             ..Default::default()
         }),
         stats: Some(crate::proto::proximadb_v1::CollectionStats {
@@ -465,8 +465,8 @@ async fn test_end_to_end_search() {
     let collection_config = crate::proto::proximadb_v1::CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 64,
-        distance_metric: crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
-        storage_engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+        distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
+        storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Helix as i32),
         ..Default::default()
     };
 
@@ -520,8 +520,8 @@ async fn test_end_to_end_search() {
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 64,
-            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
-            storage_engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+            distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
+            storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Helix as i32),
             ..Default::default()
         }),
         stats: Some(crate::proto::proximadb_v1::CollectionStats {
@@ -736,8 +736,8 @@ async fn test_flush_operation() {
     let collection_config = CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 128,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
+        distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Helix as i32),
         ..Default::default()
     };
 
@@ -808,8 +808,8 @@ async fn test_vector_search() {
     let collection_config = CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 128,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
+        distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Helix as i32),
         ..Default::default()
     };
 
@@ -900,8 +900,8 @@ async fn test_vector_by_id() {
     let collection_config = CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 128,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
+        distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Helix as i32),
         ..Default::default()
     };
 
@@ -978,8 +978,8 @@ async fn test_compaction() {
     let collection_config = CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 128,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
+        distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Helix as i32),
         ..Default::default()
     };
 
@@ -1179,8 +1179,8 @@ async fn test_metrics_collection() {
     let collection_config = CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 128,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
+        distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Helix as i32),
         ..Default::default()
     };
 

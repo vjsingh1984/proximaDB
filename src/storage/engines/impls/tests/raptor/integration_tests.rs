@@ -52,7 +52,7 @@ async fn test_insert_and_retrieve() -> Result<()> {
             }),
         ]),
         version: Some(1),
-        timestamp: 1234567890,
+        timestamp: Some(1234567890),
         updated_at: None,
         expires_at: None,
         source: None,
@@ -140,7 +140,7 @@ async fn test_search_vectors() -> Result<()> {
             vector: vec![1.0, 0.0, 0.0, 0.0],
             metadata: HashMap::new(),
             version: Some(1),
-            timestamp: 1234567890,
+            timestamp: Some(1234567890),
             ..Default::default()
         },
         VectorRecord {
@@ -148,7 +148,7 @@ async fn test_search_vectors() -> Result<()> {
             vector: vec![0.0, 1.0, 0.0, 0.0],
             metadata: HashMap::new(),
             version: Some(1),
-            timestamp: 1234567891,
+            timestamp: Some(1234567891),
             ..Default::default()
         },
         VectorRecord {
@@ -156,7 +156,7 @@ async fn test_search_vectors() -> Result<()> {
             vector: vec![0.0, 0.0, 1.0, 0.0],
             metadata: HashMap::new(),
             version: Some(1),
-            timestamp: 1234567892,
+            timestamp: Some(1234567892),
             ..Default::default()
         },
     ];
@@ -259,7 +259,7 @@ async fn test_flush_operation() -> Result<()> {
             vector: vec![i as f32 * 0.1; 4],
             metadata: HashMap::new(),
             version: Some(1),
-            timestamp: 1234567890 + i,
+            timestamp: Some(1234567890 + i),
             ..Default::default()
         })
         .collect();

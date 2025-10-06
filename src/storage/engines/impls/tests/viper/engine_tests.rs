@@ -35,7 +35,7 @@ use crate::utils::StoragePath;
 #[tokio::test]
 async fn test_viper_engine_creation() {
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_default_test_config(temp_dir.path().to_str().unwrap());
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
 
     let engine = ViperEngine::from_core_config(
@@ -78,7 +78,7 @@ async fn test_single_vector_operations() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_default_test_config(temp_dir.path().to_str().unwrap());
 
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
@@ -169,7 +169,7 @@ async fn test_single_vector_operations() {
 #[tokio::test]
 async fn test_batch_insertion_and_flush() {
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_default_test_config(temp_dir.path().to_str().unwrap());
 
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(

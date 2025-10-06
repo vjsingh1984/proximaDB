@@ -65,7 +65,7 @@ fn test_quantization_metadata() {
 
 #[test]
 fn test_unified_columnar_config() {
-    use crate::storage::engines::impls::nova::unified_columnar_integration::UnifiedColumnarConfig;
+    use crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarConfig;
 
     let config = UnifiedColumnarConfig::default();
     assert!(config.enable_quantized_columns);

@@ -99,13 +99,12 @@ pub fn create_test_vector_record(
     metadata_items: Vec<MetadataItem>,
 ) -> VectorRecord {
     VectorRecord {
-        id: Some(id),
+        id,
         vector,
         metadata: metadata_items,
-        timestamp,
+        timestamp: Some(timestamp as i64),
         updated_at: None,
-        expires_at,
-        similarity: None,
+        expires_at: expires_at.map(|t| t as i64),
         version: None,
         ..Default::default()
     }
@@ -121,13 +120,12 @@ pub fn create_test_vector_record(
 /// VectorRecord with simple test data
 pub fn create_simple_vector_record(id: &str, dim: usize) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![0.1; dim],
         metadata: vec![],
-        timestamp: 1000,
+        timestamp: Some(1000),
         updated_at: None,
         expires_at: None,
-        similarity: None,
         version: None,
         ..Default::default()
     }

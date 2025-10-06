@@ -61,11 +61,11 @@ pub async fn viper_optimization_example() -> Result<()> {
 
     // Create optimized writer configuration
     let quantization = QuantizationConfig {
-        enable_binary: true,
-        enable_int8: true,
-        enable_pq: true,
-        pq_segments: 32,
-        pq_bits: 8,
+        enable_binary: Some(true),
+        enable_int8: Some(true),
+        enable_pq: Some(true),
+        pq_segments: Some(32),
+        pq_bits: Some(8),
         ..Default::default()
     };
 
@@ -102,7 +102,7 @@ pub async fn viper_optimization_example() -> Result<()> {
                 },
                 vector,
                 metadata,
-                timestamp: i as i64,
+                timestamp: Some(i as i64),
                 source: None,
                 updated_at: None,
                 expires_at: None,
@@ -315,11 +315,11 @@ pub async fn nova_optimization_example() -> Result<()> {
 
     // NOVA benefits from the same infrastructure with different configuration
     let quantization = QuantizationConfig {
-        enable_binary: true,
-        enable_int8: true,
-        enable_pq: true,
-        pq_segments: 64, // More segments for higher dimensions
-        pq_bits: 4,      // Lower bits for more compression
+        enable_binary: Some(true),
+        enable_int8: Some(true),
+        enable_pq: Some(true),
+        pq_segments: Some(64), // More segments for higher dimensions
+        pq_bits: Some(4),      // Lower bits for more compression
         ..Default::default()
     };
 
@@ -371,7 +371,7 @@ pub async fn nova_optimization_example() -> Result<()> {
                 },
                 vector,
                 metadata,
-                timestamp: (1700000000 + i) as i64,
+                timestamp: Some((1700000000 + i) as i64),
                 source: None,
                 updated_at: None,
                 expires_at: None,

@@ -331,12 +331,11 @@ fn test_performance_tracker() {
     let mut tracker = PerformanceTracker::new();
 
     let characteristics = QueryCharacteristics {
-        dimension: 768,
-        top_k: 10,
+        norm: 1.0,
+        sparsity: 0.1,
+        dominant_dimensions: vec![],
         distance_metric: DistanceMetric::Euclidean,
-        query_norm: 1.0,
-        query_sparsity: 0.1,
-        estimated_selectivity: 0.5,
+        top_k: 10,
     };
 
     let performance = ActualPerformance {
@@ -360,12 +359,11 @@ fn test_selectivity_estimation() {
 
     // Test sparse query
     let sparse_characteristics = QueryCharacteristics {
-        dimension: 768,
-        top_k: 10,
+        norm: 1.0,
+        sparsity: 0.9, // Very sparse
+        dominant_dimensions: vec![],
         distance_metric: DistanceMetric::Euclidean,
-        query_norm: 1.0,
-        query_sparsity: 0.9, // Very sparse
-        estimated_selectivity: 0.5, // Will be updated
+        top_k: 10,
     };
 
     let selectivity = tracker.estimate_selectivity(&sparse_characteristics);
@@ -373,12 +371,11 @@ fn test_selectivity_estimation() {
 
     // Test dense query
     let dense_characteristics = QueryCharacteristics {
-        dimension: 768,
-        top_k: 10,
+        norm: 1.0,
+        sparsity: 0.1, // Dense
+        dominant_dimensions: vec![],
         distance_metric: DistanceMetric::Euclidean,
-        query_norm: 1.0,
-        query_sparsity: 0.1, // Dense
-        estimated_selectivity: 0.5, // Will be updated
+        top_k: 10,
     };
 
     let selectivity = tracker.estimate_selectivity(&dense_characteristics);
@@ -422,7 +419,6 @@ fn test_end_to_end_optimization_pipeline() {
     let query = create_test_query(768);
     let characteristics = QueryCharacteristics::from_query(&query, DistanceMetric::Euclidean, 10);
 
-    assert_eq!(characteristics.dimension, 768);
     assert_eq!(characteristics.top_k, 10);
     assert!(characteristics.norm > 0.0);
 }

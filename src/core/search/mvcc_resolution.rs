@@ -213,7 +213,7 @@ mod tests {
             id: id.unwrap_or_default(),
             vector: vec![1.0, 2.0, 3.0],
             metadata: std::collections::HashMap::new(),
-            timestamp: timestamp as i64,
+            timestamp: Some(timestamp as i64),
             updated_at: Some(timestamp as i64),
             expires_at: expires_at.map(|t| t as i64),
             version,
@@ -285,7 +285,7 @@ mod tests {
 
         // Should pick the one with earliest timestamp
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].timestamp, 100);
+        assert_eq!(resolved[0].timestamp, Some(100));
     }
 
     #[test]
@@ -337,7 +337,7 @@ mod tests {
         }
         assert_eq!(by_id.get("id1").unwrap().version, Some(2));
         assert_eq!(by_id.get("id2").unwrap().version, None); // Original None preserved
-        assert_eq!(by_id.get("id2").unwrap().timestamp, 120); // Earlier timestamp wins
+        assert_eq!(by_id.get("id2").unwrap().timestamp, Some(120)); // Earlier timestamp wins
     }
 
     #[test]

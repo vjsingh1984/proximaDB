@@ -922,10 +922,10 @@ mod tests {
         let builder = ColumnarSchemaBuilder::new();
 
         let quant_config = QuantizationConfig {
-            enable_binary: true,
-            enable_int8: true,
-            enable_pq: true,
-            pq_segments: 16,
+            enable_binary: Some(true),
+            enable_int8: Some(true),
+            enable_pq: Some(true),
+            pq_segments: Some(16),
             ..Default::default()
         };
 

@@ -172,7 +172,7 @@ pub fn create_test_vector_records(count: usize, dimension: usize) -> Vec<VectorR
             vector: (0..dimension).map(|j| (i as f32 + j as f32) * 0.1).collect(),
             metadata: HashMap::new(),
             version: Some(1),
-            timestamp: 1234567890 + i as i64,
+            timestamp: Some(1234567890 + i as i64),
             ..Default::default()
         })
         .collect()
@@ -193,7 +193,7 @@ pub fn create_collection_with_compression(compression: CompressionAlgorithm) -> 
             storage_config: Some(StorageConfig {
                 storage_path: "/tmp".to_string(),
                 data_paths: vec![],
-                compression: compression as i32,
+                compression: Some(compression as i32),
                 max_file_size_mb: 100,
                 enable_caching: true,
             }),

@@ -100,7 +100,7 @@ pub fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
                     value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
                 }),
             ]),
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             expires_at: None,
             source: None,
             updated_at: None,
@@ -130,7 +130,7 @@ pub fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord>
             id: format!("vec_{:06}", i),
             vector,
             metadata: HashMap::new(),
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             expires_at: None,
             updated_at: Some(i as i64),
             version: Some(1),
@@ -162,7 +162,7 @@ pub fn generate_random_vectors(count: usize, dims: usize, seed: u64) -> Vec<Vect
                         value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue((i % 10).to_string()))
                     }),
                 ]),
-                timestamp: i as i64,
+                timestamp: Some(i as i64),
                 expires_at: None,
                 source: None,
                 updated_at: None,
@@ -202,7 +202,7 @@ pub fn generate_clustered_vectors(
                         value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(cluster_id.to_string()))
                     }),
                 ]),
-                timestamp: (cluster_id * vectors_per_cluster + i) as i64,
+                timestamp: Some((cluster_id * vectors_per_cluster + i) as i64),
                 expires_at: None,
                 source: None,
                 updated_at: None,
@@ -227,8 +227,8 @@ pub fn create_test_collection(
     let collection_config = CollectionConfig {
         name: collection_id.to_string(),
         dimension: dimension as u32,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
+        distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Helix as i32),
         ..Default::default()
     };
 

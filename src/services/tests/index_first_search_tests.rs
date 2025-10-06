@@ -105,9 +105,9 @@ mod tests {
 
             let config = CollectionConfig {
                 name: id.to_string(),
-                dimension: 128,
-                distance_metric: DistanceMetric::Cosine as i32,
-                storage_engine: StorageEngine::Viper as i32,
+                dimension: Some(128),
+                distance_metric: Some(DistanceMetric::Cosine as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
                 ..Default::default()
             };
 

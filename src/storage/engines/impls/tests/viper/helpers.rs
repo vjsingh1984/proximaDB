@@ -112,8 +112,8 @@ pub fn create_test_collection(collection_id: &str, base_path: &str) -> Collectio
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
             dimension: 128,
-            distance_metric: 0, // Cosine
-            storage_engine: 1,  // VIPER
+            distance_metric: Some(0), // Cosine
+            storage_engine: Some(1),  // VIPER
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -171,8 +171,8 @@ pub fn create_test_collection_config(collection_id: &str, dimension: usize) -> C
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
             dimension: dimension as u32,
-            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-            storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
+            distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+            storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32),
             ..Default::default()
         }),
         ..Default::default()
@@ -246,7 +246,7 @@ pub fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecor
         id: id.to_string(),
         vector: vec![value; dimension],
         metadata,
-        timestamp: chrono::Utc::now().timestamp(),
+        timestamp: Some(chrono::Utc::now().timestamp()),
         updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
@@ -285,7 +285,7 @@ pub fn create_sequential_test_vector(id: &str, dimension: usize) -> VectorRecord
             .map(|i| (i as f32) / (dimension as f32))
             .collect(),
         metadata,
-        timestamp: chrono::Utc::now().timestamp(),
+        timestamp: Some(chrono::Utc::now().timestamp()),
         updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
@@ -337,7 +337,7 @@ pub fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<Vec
                     );
                     metadata
                 },
-                timestamp: now,
+                timestamp: Some(now),
                 updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),
@@ -382,7 +382,7 @@ pub fn create_test_vector_with_metadata(
             .map(|i| (i as f32) / (dimension as f32))
             .collect(),
         metadata,
-        timestamp: chrono::Utc::now().timestamp(),
+        timestamp: Some(chrono::Utc::now().timestamp()),
         updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
@@ -521,7 +521,7 @@ pub async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use tracing::debug;
 
-    debug!("\n= DEBUG: {} - Reading {}", label, file_path);
+    debug!("\n=\r DEBUG: {} - Reading {}", label, file_path);
 
     let fs = FilesystemFactory::new(Default::default()).await?;
     let filesystem = fs.get_filesystem(file_path)?;

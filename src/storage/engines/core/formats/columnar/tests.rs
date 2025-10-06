@@ -146,7 +146,7 @@ async fn test_parquet_flush_and_read_pattern() {
             id: format!("vec_{:06}", i),
             vector: vec![i as f32 * 0.1; 128],
             metadata: HashMap::new(),
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -276,7 +276,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
             id: format!("record_{:04}", i),
             vector: vec![i as f32 * 0.1; 128],
             metadata,
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -519,7 +519,7 @@ async fn test_multi_file_directory_scan() {
                     id: format!("record_{:08}", global_id),
                     vector: vec![global_id as f32 * 0.01; 256],
                     metadata: HashMap::new(),
-                    timestamp: global_id as i64,
+                    timestamp: Some(global_id as i64),
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
@@ -629,7 +629,7 @@ async fn test_dictionary_encoding_optimization() {
                 id: format!("user_group_{:02}", i % 20), // Only 20 unique IDs, repeated
                 vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
                 metadata,
-                timestamp: i as i64,
+                timestamp: Some(i as i64),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
@@ -680,7 +680,7 @@ async fn test_dictionary_encoding_optimization() {
             id: "user_group_05".to_string(),
             vector: vec![0.5; 128],
             metadata: HashMap::new(),
-            timestamp: 5,
+            timestamp: Some(5),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -690,7 +690,7 @@ async fn test_dictionary_encoding_optimization() {
             id: "user_group_15".to_string(),
             vector: vec![1.5; 128],
             metadata: HashMap::new(),
-            timestamp: 15,
+            timestamp: Some(15),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -724,7 +724,7 @@ async fn test_customer_api_compatibility() {
             id: "cust_001".to_string(),
             vector: (0..384).map(|i| i as f32 * 0.01).collect(),
             metadata: HashMap::new(), // Empty metadata to avoid MapArray issues
-            timestamp: 1000,
+            timestamp: Some(1000),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -734,7 +734,7 @@ async fn test_customer_api_compatibility() {
             id: "cust_002".to_string(),
             vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
             metadata: HashMap::new(), // Empty metadata to avoid MapArray issues
-            timestamp: 2000,
+            timestamp: Some(2000),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -744,7 +744,7 @@ async fn test_customer_api_compatibility() {
             id: "cust_003".to_string(),
             vector: (0..384).map(|i| (i + 200) as f32 * 0.01).collect(),
             metadata: HashMap::new(), // Empty metadata to avoid MapArray issues
-            timestamp: 3000,
+            timestamp: Some(3000),
             updated_at: None,
             expires_at: None,
             version: Some(2),
@@ -783,7 +783,7 @@ async fn test_customer_api_compatibility() {
             id: "cust_002".to_string(),
             vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
             metadata: HashMap::new(),
-            timestamp: 2000,
+            timestamp: Some(2000),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -803,7 +803,7 @@ async fn test_customer_api_compatibility() {
             id: "cust_001".to_string(),
             vector: (0..384).map(|i| i as f32 * 0.01).collect(),
             metadata: HashMap::new(),
-            timestamp: 1000,
+            timestamp: Some(1000),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -813,7 +813,7 @@ async fn test_customer_api_compatibility() {
             id: "cust_003".to_string(),
             vector: (0..384).map(|i| (i + 200) as f32 * 0.01).collect(),
             metadata: HashMap::new(),
-            timestamp: 3000,
+            timestamp: Some(3000),
             updated_at: None,
             expires_at: None,
             version: Some(2),
@@ -897,7 +897,7 @@ async fn test_row_group_offset_optimization() {
             id: "test_id_050".to_string(),
             vector: (0..128).map(|j| (50 + j) as f32 * 0.01).collect(),
             metadata: HashMap::new(),
-            timestamp: 1050,
+            timestamp: Some(1050),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -928,7 +928,7 @@ fn create_test_records(count: usize) -> Vec<VectorRecord> {
                 id: format!("test_id_{:03}", i),
                 vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
                 metadata,
-                timestamp: (1000 + i) as i64,
+                timestamp: Some((1000 + i) as i64),
                 updated_at: None,
                 expires_at: None,
                 version: Some(((i % 5) + 1) as u32),
@@ -953,21 +953,21 @@ async fn test_schema_evolution_with_id_column() {
     // Test that schema evolution preserves ID column requirement
     let quantization_configs = vec![
         QuantizationConfig {
-            enable_binary: false,
-            enable_int8: false,
-            enable_pq: false,
+            enable_binary: Some(false),
+            enable_int8: Some(false),
+            enable_pq: Some(false),
             ..Default::default()
         },
         QuantizationConfig {
-            enable_binary: true,
-            enable_int8: true,
-            enable_pq: false,
+            enable_binary: Some(true),
+            enable_int8: Some(true),
+            enable_pq: Some(false),
             ..Default::default()
         },
         QuantizationConfig {
-            enable_binary: true,
-            enable_int8: true,
-            enable_pq: true,
+            enable_binary: Some(true),
+            enable_int8: Some(true),
+            enable_pq: Some(true),
             ..Default::default()
         },
     ];
@@ -1050,15 +1050,15 @@ fn test_optimization_recommendations_preserve_id_column() {
         // Create schema with recommendations
         let quant_config = match recommendations.quantization_strategy {
             QuantizationStrategy::None => QuantizationConfig {
-                enable_binary: false,
-                enable_int8: false,
-                enable_pq: false,
+                enable_binary: Some(false),
+                enable_int8: Some(false),
+                enable_pq: Some(false),
                 ..Default::default()
             },
             QuantizationStrategy::BinaryOnly => QuantizationConfig {
-                enable_binary: true,
-                enable_int8: false,
-                enable_pq: false,
+                enable_binary: Some(true),
+                enable_int8: Some(false),
+                enable_pq: Some(false),
                 ..Default::default()
             },
             QuantizationStrategy::Int8Only => QuantizationConfig {
