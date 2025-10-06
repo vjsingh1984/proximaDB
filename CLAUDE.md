@@ -453,6 +453,169 @@ Key configuration sections in `config/config.toml`:
 - `/data/collections/`: Per-collection engine-specific files
 - `/data/viper_data/`: VIPER engine columnar storage
 
+### Global WAL Manifest Architecture (New in v0.1.4)
+
+ProximaDB now supports a cloud-optimized global WAL manifest for multi-disk deployments:
+
+**Key Features**:
+- **Centralized Manifest**: Single append-only manifest tracks WAL segments across all disks
+- **Cloud-Optimized**: Designed for object store backends (S3, Azure Blob, GCS)
+- **Multi-Disk Support**: Coordinates WAL operations across multiple storage locations
+- **Atomic Operations**: Manifest updates use atomic append operations
+- **LSN Tracking**: Tracks Log Sequence Numbers across all WAL segments
+
+**Configuration**:
+```toml
+[storage.wal_config]
+global_manifest_url = "file:///path/to/manifest"  # Or s3://bucket/manifest
+enable_wal = true
+write_buffer_size_mb = 8192
+memory_flush_size_bytes = 16777216
+vector_count_threshold = 100000
+```
+
+**Architecture**:
+- **Location**: `src/storage/persistence/write_ahead_log/manifest/`
+- **GlobalManifestService**: Manages manifest lifecycle and LSN tracking (singleton.rs)
+- **WalEntryStatus**: Tracks segment states (Active, Flushed, Compacted, Deleted)
+- **Manifest Format**: Append-only JSONL with atomic writes
+- **Recovery**: Uses manifest to locate and replay WAL segments across all disks
+
+**Manifest Entry Structure**:
+```rust
+pub struct GlobalManifestEntry {
+    pub lsn: u64,                    // Global log sequence number
+    pub collection_id: String,       // Collection UUID
+    pub storage_path: String,        // Disk location (e.g., file:///tmp/proximadb1/data)
+    pub wal_segment_path: String,    // Relative path to WAL segment
+    pub status: WalEntryStatus,      // Active, Flushed, Compacted, Deleted
+    pub created_at: i64,            // Timestamp
+    pub size_bytes: u64,            // Segment size
+}
+```
+
+### WAL Recovery Process (Updated)
+
+**New Global Manifest Recovery Flow**:
+1. **Load Global Manifest**: Read manifest to discover WAL segments across all disks
+2. **Parallel Recovery**: Use thread pool (10 threads by default, based on CPU cores) for concurrent collection recovery
+3. **Direct-to-Storage**: WAL entries recovered directly to storage engines (bypasses memtable)
+4. **Progress Tracking**: Monitor peak concurrent threads and recovery stats
+
+**Recovery Modes**:
+- `DirectToStorage`: Bypass memtable, write directly to storage (default, faster)
+- `ThroughMemtable`: Traditional recovery through in-memory structures (legacy)
+
+**Recovery Thread Pool**:
+```
+🚀 Creating recovery thread pool with 10 threads (CPU cores: 10)
+🔒 Recovery phase started - acquiring 10 threads
+🧵 Starting recovery for collection: <uuid>
+🔓 Recovery phase completed in Xms - 10 threads released for normal operations
+📊 Recovery stats: N collections, M vectors, peak P concurrent threads
+```
+
+**Debugging Recovery**:
+```bash
+# Enable detailed WAL logging
+RUST_LOG=info,proximadb::storage::persistence::write_ahead_log=debug \
+  cargo run --bin proximadb-server -- --config config/config.toml
+
+# Monitor recovery progress
+RUST_LOG=info cargo run --bin proximadb-server 2>&1 | \
+  grep -E "manifest|Recover|Loading" | head -40
+
+# View manifest contents
+cat /tmp/proximadb/manifest/manifest_*.jsonl
+
+# Monitor global manifest operations
+RUST_LOG=info cargo run --bin proximadb-server 2>&1 | \
+  tee /tmp/recovery_debug.log | grep -i "manifest\|global" | head -30
+```
+
+### Server Startup Sequence
+
+ProximaDB follows a precise startup order for proper recovery:
+
+**1. Hardware Detection** (15-20ms)
+```
+🔧 Initializing hardware detection...
+🔍 Detecting hardware capabilities...
+✅ Hardware detection completed in 15.42ms
+🖥️  CPU: Apple Apple Silicon (10 physical cores, 10 logical cores)
+🎯 SIMD: NEON
+🎮 GPU: Not available (CPU-only mode)
+💾 Memory: 64.0GB total, 41.5GB available
+```
+
+**2. SharedServices Initialization**
+```
+🔧 SharedServices: Initializing business logic hub for ALL protocols
+📁 SharedServices: Creating metadata backend from URL
+🏗️ Initializing Filestore metadata backend
+📜 Recovery completed, max sequence: N
+✅ Filestore metadata backend ready
+✅ SharedServices: Collection service created for injection into StorageEngine
+🧠 SharedServices: Global Cross-Cache Orchestrator registered (budget=512MB)
+```
+
+**3. Global WAL Manifest Initialization** (if configured)
+```
+🌐 ProximaDB::new - Initializing global WAL manifest...
+🌐 Initializing global WAL manifest
+📌 Using explicit global manifest location: file:///tmp/proximadb/manifest
+📊 Multi-disk mode: 3 data disks, 1 global manifest location
+🌐 Initializing GlobalManifestService at file:///tmp/proximadb/manifest
+📂 Loading N manifest segments
+✅ Loaded N manifest entries, next LSN: M
+✅ Global manifest initialized
+```
+
+**4. Storage Engine Startup**
+```
+🚀 STORAGE_ENGINE: Starting storage engine
+📊 STORAGE_ENGINE: About to call recover_from_wal()
+🔄 STORAGE_ENGINE: Starting WAL recovery
+📋 STORAGE_ENGINE: Found N existing collections from metadata provider
+🔄 Starting WAL recovery using global manifest (mode: DirectToStorage)
+✅ STORAGE_ENGINE: WAL recovery completed successfully, recovered N entries
+🔍 STORAGE_ENGINE: Loading collections from metadata provider
+📊 Found N collections to load
+🚀 Loading collections in parallel with chunk size: 1
+✅ STORAGE_ENGINE: Parallel loading complete. Loaded N collections
+Starting 2 compaction workers
+✅ STORAGE_ENGINE: Storage engine started successfully
+```
+
+**5. Multi-Server Start**
+```
+🔗 Starting gRPC Server on port 5679
+✅ gRPC Server started on 0.0.0.0:5679
+📡 Starting REST Server on port 5678
+✅ REST Server started on 0.0.0.0:5678
+🎯 Multi-Server started successfully: gRPC:5679 + REST:5678
+```
+
+**6. Recovery Order Summary**
+```
+📋 Recovery Order Summary:
+  1️⃣ Collections: Recovered from metadata snapshots
+  2️⃣ Assignments: Recovered from collection metadata_info
+  3️⃣ Vectors: Recovered from WAL files (coordinated by global manifest)
+     - Global manifest identifies WAL segments across all storage disks
+     - Each collection has WAL subdirectory: <storage_path>/<collection_uuid>/wal/
+     - Recovery reads WAL entries and writes directly to storage engines
+  4️⃣ Services: HTTP/gRPC servers started
+```
+
+**Vector Recovery Details**:
+- WAL files stored per collection: `<disk_path>/<collection_id>/wal/*.wal`
+- Global manifest tracks: collection_id, storage_path, wal_segment_path, LSN
+- Parallel recovery threads read WAL entries and apply to storage engines
+- Recovery mode: DirectToStorage (bypasses memtable for speed)
+
+**Complete Startup Time**: Typically 100-200ms for empty database, varies with data size
+
 
 ## Quantized Vector Precomputation Architecture
 
@@ -878,17 +1041,184 @@ Each guide follows this structure:
 
 ### Current Development Status (October 2024)
 - **Active Branch**: `development` (main branch: `main`)
-- **Recent Changes**: Storage engine optimizations, unified cache system, test infrastructure improvements
+- **Version**: 0.1.4
+- **Recent Major Features**: Global WAL manifest, multi-disk coordination, cloud-optimized recovery
 
 ### Key Recent Changes
-- Test infrastructure improvements and systematic error resolution
-- Benchmark suite optimization with consistent Criterion settings
+
+**Global WAL Manifest (v0.1.4)**:
+- Centralized manifest tracking WAL segments across multiple disks
+- Cloud-optimized append-only design for object store backends
+- LSN (Log Sequence Number) tracking for distributed coordination
+- Parallel recovery with thread pool utilization
+- Direct-to-storage recovery mode for faster startup
+
+**Storage and Performance**:
+- Multi-disk support with configurable storage locations
+- Parallel collection loading during startup
 - Storage engine stability fixes across all 6 engines
-- Documentation compliance with CLAUDE.md specifications
 - Unified cache system implementation in `src/storage/cache/`
+- Test infrastructure improvements and systematic error resolution
+
+**Development Infrastructure**:
+- Benchmark suite optimization with consistent Criterion settings
+- Documentation compliance with CLAUDE.md specifications
 - 2025 roadmap implementation guides created
+- Enhanced logging with emoji-based status indicators for better debugging
+
+## Testing with Multiple Server Instances
+
+### Running Parallel Test Servers
+
+ProximaDB supports running multiple server instances for testing and development:
+
+```bash
+# Server 1: Default config on default ports
+RUST_LOG=info cargo run --bin proximadb-server -- --config config/config.toml &
+
+# Server 2: Custom config (ensure different ports and data dirs)
+RUST_LOG=info cargo run --bin proximadb-server -- --config config/custom.toml &
+
+# Server 3: With debug logging for specific subsystem
+RUST_LOG=debug,proximadb::storage::persistence::write_ahead_log=debug \
+  cargo run --bin proximadb-server 2>&1 | tee /tmp/server.log &
+
+# Monitor manifest and recovery operations
+RUST_LOG=info cargo run --bin proximadb-server 2>&1 | \
+  tee /tmp/recovery_debug.log | grep -i "manifest\|global" | head -30 &
+```
+
+### Managing Background Servers
+
+```bash
+# List all running ProximaDB servers
+ps aux | grep proximadb-server
+
+# Kill all ProximaDB servers
+pkill -f "proximadb-server"
+
+# Kill server by port
+lsof -ti:5678 | xargs kill -9
+lsof -ti:5679 | xargs kill -9
+
+# Graceful shutdown (if signal handling implemented)
+pkill -TERM -f "proximadb-server"
+
+# Check if ports are available
+lsof -i :5678
+lsof -i :5679
+```
+
+### Test Data Cleanup
+
+```bash
+# Clean all test data
+rm -rf /tmp/proximadb*
+
+# Clean specific instance
+rm -rf /tmp/proximadb1
+rm -rf /tmp/proximadb2
+rm -rf /tmp/proximadb/manifest
+
+# Preserve metadata, clean WAL and data only
+rm -rf /tmp/proximadb*/*/wal
+rm -rf /tmp/proximadb*/*/data
+```
 
 ## Troubleshooting
+
+### Common Recovery Issues
+
+**Collections Found But No WAL Entries**:
+```
+⚠️  WARN: Found 5 existing collections but recovered 0 WAL entries. This might indicate:
+   - Collections were created but no vectors were inserted yet
+   - WAL files were cleaned up or lost
+   - WAL recovery is not finding the correct WAL files
+```
+
+**Root Causes**:
+1. Collections created but no data inserted yet (normal)
+2. WAL files manually deleted or cleaned up
+3. Global manifest URL misconfigured
+4. Storage locations don't match config
+
+**Diagnostic Steps**:
+```bash
+# 1. Check storage locations match config
+ls -la /tmp/proximadb1/data/
+ls -la /tmp/proximadb2/data/
+ls -la /tmp/proximadb3/data/
+
+# 2. Verify global manifest exists
+ls -la /tmp/proximadb/manifest/
+cat /tmp/proximadb/manifest/manifest_*.jsonl | jq .
+
+# 3. Ensure collection directories exist
+ls -la /tmp/proximadb1/data/*/
+ls -la /tmp/proximadb1/data/*/wal/
+
+# 4. Check for WAL files
+find /tmp/proximadb* -name "*.wal" -o -name "*.log"
+
+# 5. Review manifest entries
+grep -r "collection_id" /tmp/proximadb/manifest/
+
+# 6. Verify config matches actual directories
+cat config/config.toml | grep -A 10 "storage_locations"
+```
+
+**Storage Engine Registration Error**:
+```
+⚠️  WARN: Collection <uuid> recovery failed: No storage engine registered for collection
+```
+
+**Explanation**: This warning appears when WAL recovery attempts to restore a collection before its storage engine has been registered with the recovery manager. This is **expected behavior** during initial startup.
+
+**What Happens**:
+1. WAL recovery attempts to restore collections from manifest
+2. Storage engines not yet registered → warning appears
+3. Collections then loaded from metadata provider instead
+4. Final result: All collections properly loaded
+
+**When to Worry**: Only if collections fail to load AND metadata provider also fails
+
+**Storage Location Mismatch**:
+```
+ERROR: Failed to create storage directories: No such file or directory
+```
+
+**Solution**:
+```bash
+# Check all storage_locations in config exist
+cat config/config.toml | grep storage_locations -A 20
+
+# Create missing directories
+mkdir -p /tmp/proximadb1/data
+mkdir -p /tmp/proximadb2/data
+mkdir -p /tmp/proximadb/metadata
+mkdir -p /tmp/proximadb/manifest
+
+# Verify permissions
+chmod -R 755 /tmp/proximadb*
+```
+
+**Global Manifest Corruption**:
+```
+ERROR: Failed to parse manifest entry: invalid JSON
+```
+
+**Recovery**:
+```bash
+# Backup existing manifest
+cp -r /tmp/proximadb/manifest /tmp/proximadb/manifest.backup
+
+# Remove corrupted segment
+rm /tmp/proximadb/manifest/manifest_CORRUPTED.jsonl
+
+# Restart server (will create new manifest if needed)
+RUST_LOG=info cargo run --bin proximadb-server
+```
 
 ### Common Issues
 1. **Port conflicts**:
