@@ -308,11 +308,12 @@ impl UnifiedHandlers {
     }
 
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
+    ///
+    /// REFACTORED: Now uses clean typed insert_batch() instead of JSON serialization
     pub async fn handle_vector_batch_v1(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        let start_time = std::time::Instant::now();
         let collection_identifier = &request.collection_id;
 
         // Resolve to canonical collection ID
@@ -337,7 +338,7 @@ impl UnifiedHandlers {
 
         // Convert v1 vectors to core VectorRecord (expected by vector service)
         // Apply defaults at API boundary for all incoming records
-        let legacy_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = request
+        let vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = request
             .vectors
             .into_iter()
             .map(|mut v| {
@@ -357,87 +358,35 @@ impl UnifiedHandlers {
             })
             .collect();
 
+        // Call the clean typed service method
         match self
             .vector_operations_service
-            .handle_vector_batch_proto_vec(&collection_id, legacy_vectors)
+            .insert_batch(&collection_id, vectors)
             .await
         {
-            Ok(response_bytes) => {
-                match serde_json::from_slice::<serde_json::Value>(&response_bytes) {
-                    Ok(response_json) => {
-                        let success = response_json
-                            .get("success")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let vector_ids: Vec<String> = response_json
-                            .get("vector_ids")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_else(|| Vec::new());
-
-                        // Extract metrics from response_json if available, otherwise construct from vector_ids
-                        let metrics = if let Some(metrics_json) = response_json.get("metrics") {
-                            Some(crate::proto::proximadb_v1::OperationMetrics {
-                                total_processed: metrics_json.get("total_processed").and_then(|v| v.as_i64()).unwrap_or(vector_ids.len() as i64),
-                                successful_count: metrics_json.get("successful_count").and_then(|v| v.as_i64()).unwrap_or(if success { vector_ids.len() as i64 } else { 0 }),
-                                failed_count: metrics_json.get("failed_count").and_then(|v| v.as_i64()).unwrap_or(if success { 0 } else { vector_ids.len() as i64 }),
-                                updated_count: metrics_json.get("updated_count").and_then(|v| v.as_i64()).unwrap_or(0),
-                                processing_time_us: metrics_json.get("processing_time_us").and_then(|v| v.as_i64()).unwrap_or(start_time.elapsed().as_micros() as i64),
-                                wal_write_time_us: metrics_json.get("wal_write_time_us").and_then(|v| v.as_i64()).unwrap_or(0),
-                                index_update_time_us: metrics_json.get("index_update_time_us").and_then(|v| v.as_i64()).unwrap_or(0),
-                            })
-                        } else {
-                            Some(crate::proto::proximadb_v1::OperationMetrics {
-                                total_processed: vector_ids.len() as i64,
-                                successful_count: if success { vector_ids.len() as i64 } else { 0 },
-                                failed_count: if success { 0 } else { vector_ids.len() as i64 },
-                                updated_count: 0,
-                                processing_time_us: start_time.elapsed().as_micros() as i64,
-                                wal_write_time_us: 0,
-                                index_update_time_us: 0,
-                            })
-                        };
-
-                        Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-                            success,
-                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
-                                as i32,
-                            metrics,
-                            results: None,
-                            vector_ids,
-                            error_message: None,
-                            error_code: response_json
-                                .get("error_code")
-                                .and_then(|v| v.as_str())
-                                .map(String::from),
-                        })
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to parse vector batch response: {:?}", e);
-                        Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-                            success: false,
-                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
-                                as i32,
-                            metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
-                                total_processed: 0,
-                                successful_count: 0,
-                                failed_count: 0,
-                                updated_count: 0,
-                                processing_time_us: start_time.elapsed().as_micros() as i64,
-                                wal_write_time_us: 0,
-                                index_update_time_us: 0,
-                            }),
-                            results: None,
-                            vector_ids: vec![],
-                            error_message: None,
-                            error_code: Some("PARSE_ERROR".to_string()),
-                        })
-                    }
-                }
+            Ok(result) => {
+                // Convert typed result to proto response - simple, no JSON parsing!
+                Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                    success: result.success,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
+                    metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                        total_processed: result.metrics.total_processed,
+                        successful_count: result.metrics.successful_count,
+                        failed_count: result.metrics.failed_count,
+                        updated_count: result.metrics.updated_count,
+                        processing_time_us: result.metrics.processing_time_us,
+                        wal_write_time_us: result.metrics.wal_write_time_us,
+                        index_update_time_us: result.metrics.index_update_time_us,
+                    }),
+                    results: None,
+                    vector_ids: result.vector_ids,
+                    error_message: if result.errors.is_empty() {
+                        None
+                    } else {
+                        Some(result.errors.join("; "))
+                    },
+                    error_code: result.error_code,
+                })
             }
             Err(e) => {
                 tracing::error!("Failed to process vector batch: {:?}", e);
@@ -450,13 +399,13 @@ impl UnifiedHandlers {
                         successful_count: 0,
                         failed_count: 0,
                         updated_count: 0,
-                        processing_time_us: start_time.elapsed().as_micros() as i64,
+                        processing_time_us: 0,
                         wal_write_time_us: 0,
                         index_update_time_us: 0,
                     }),
                     results: None,
                     vector_ids: vec![],
-                    error_message: None,
+                    error_message: Some(format!("Vector insert failed: {}", e)),
                     error_code: Some("VECTOR_INSERT_FAILED".to_string()),
                 })
             }

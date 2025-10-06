@@ -24,7 +24,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 
 /// SSTable file metadata in the manifest
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstableFileInfo {
     /// Unique identifier for this SSTable
     pub file_id: String,
@@ -56,7 +56,7 @@ pub struct SstableFileInfo {
 }
 
 /// Column statistics for metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
@@ -65,7 +65,7 @@ pub struct ColumnStats {
 }
 
 /// Manifest version information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestVersion {
     pub version: u64,
     pub timestamp: i64,
@@ -92,22 +92,22 @@ pub struct SstManifest {
 impl SstManifest {
     /// Create a new manifest
     pub fn new(
+        collection_id: String,
         storage_url: String,
         filesystem: Arc<FilesystemFactory>,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Self {
         // Construct manifest URL by appending filename to storage URL
-        let manifest_url = format!("{}/{}_manifest.json", 
-            storage_url.trim_end_matches('/'), 
+        let manifest_url = format!("{}/{}_manifest.json",
+            storage_url.trim_end_matches('/'),
             collection_id
         );
         tracing::info!("📋 Creating manifest at: {}", manifest_url);
-        
+
         Self {
-            collection_id,
             current_version: Arc::new(RwLock::new(ManifestVersion {
-                version: Some(0),
-                timestamp: Some(chrono::Utc::now().timestamp()),
+                version: 0,
+                timestamp: chrono::Utc::now().timestamp(),
                 files: BTreeMap::new(),
             })),
             manifest_url,
@@ -193,7 +193,7 @@ impl SstManifest {
         
         // Update version
         current.version += 1;
-        current.created_at = chrono::Utc::now().timestamp();
+        current.timestamp = chrono::Utc::now().timestamp();
         current.files.insert(file_info.file_id.clone(), file_info.clone());
         
         info!("Added SSTable {} to manifest (version {})", 
@@ -220,8 +220,8 @@ impl SstManifest {
         
         // Update version
         current.version += 1;
-        current.created_at = chrono::Utc::now().timestamp();
-        
+        current.timestamp = chrono::Utc::now().timestamp();
+
         for file_id in file_ids {
             if let Some(removed) = current.files.remove(file_id) {
                 debug!("Removed SSTable {} from manifest", removed.file_id);
@@ -296,7 +296,7 @@ impl SstManifest {
                     return false;
                 }
                 
-                if let Some(stats) = f.metadata_columns.get(key) {
+                if let Some(stats) = f.metadata_columns.get(column) {
                     // Check if value falls within the range
                     Self::value_in_range(value, &stats.min_value, &stats.max_value)
                 } else {
@@ -323,7 +323,7 @@ impl SstManifest {
         let mut current_max_key = String::new();
         
         for file in files {
-            if current_group.is_none() || file.min_key <= current_max_key {
+            if current_group.is_empty() || file.min_key <= current_max_key {
                 // File overlaps with current group
                 if file.max_key > current_max_key {
                     current_max_key = file.max_key.clone();
@@ -483,7 +483,6 @@ mod tests {
 impl fmt::Debug for SstManifest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SstManifest")
-            .field("collection_id", &self.collection_id)
             .field("manifest_url", &self.manifest_url)
             .field("max_history_versions", &self.max_history_versions)
             .finish()

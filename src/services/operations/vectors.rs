@@ -107,6 +107,7 @@ impl Default for UnifiedSearchConfig {
 }
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::impls::sst::SstEngine;
+use crate::services::operations::{BatchOperationResult, OperationMetrics};
 
 /// Optional debug/explain hints for vector planning and pruning.
 #[derive(Debug, Clone, Default)]
@@ -1827,6 +1828,60 @@ impl VectorOperationsService {
         );
 
         Ok(serde_json::to_vec(&response)?)
+    }
+
+    /// Clean typed batch insert method
+    ///
+    /// This replaces the convoluted handle_vector_batch_proto_vec flow
+    /// with a direct, type-safe implementation that returns structured results.
+    ///
+    /// # Arguments
+    /// * `collection_id` - The collection to insert into
+    /// * `vectors` - Vector records to insert
+    ///
+    /// # Returns
+    /// Strongly-typed BatchOperationResult with metrics, no JSON serialization
+    pub async fn insert_batch(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<BatchOperationResult> {
+        // Validate vectors before insertion
+        self.validate_vectors_for_insert(collection_id, &vectors).await?;
+
+        let start = std::time::Instant::now();
+        let vectors_arc = Arc::new(vectors);
+
+        // Write to WAL with timing
+        let wal_start = std::time::Instant::now();
+        let _batch_result = self
+            .wal_manager
+            .write_vector_batch_native_arc(collection_id, vectors_arc.clone())
+            .await?;
+        let wal_time = wal_start.elapsed().as_micros() as i64;
+
+        // Collect vector IDs
+        let vector_ids: Vec<String> = vectors_arc.iter().map(|v| v.id.clone()).collect();
+
+        // Build typed result with metrics
+        let metrics = OperationMetrics {
+            total_processed: vector_ids.len() as i64,
+            successful_count: vector_ids.len() as i64,
+            failed_count: 0,
+            updated_count: 0,
+            processing_time_us: start.elapsed().as_micros() as i64,
+            wal_write_time_us: wal_time,
+            index_update_time_us: 0,
+        };
+
+        info!(
+            "✅ Batch insert: {} vectors to collection {} in {}μs",
+            vector_ids.len(),
+            collection_id,
+            metrics.processing_time_us
+        );
+
+        Ok(BatchOperationResult::success(vector_ids, metrics))
     }
 
     pub async fn insert_vectors_direct(
