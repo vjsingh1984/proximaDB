@@ -24,7 +24,7 @@ class ChunkingStrategy(Enum):
 class TextChunk:
     """
     Represents a text chunk with metadata
-    
+
     Pure data structure - no network operations or embeddings
     """
     text: str
@@ -32,7 +32,17 @@ class TextChunk:
     end_pos: int
     chunk_id: str
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
+    @property
+    def start(self) -> int:
+        """Backward compatibility alias for start_pos"""
+        return self.start_pos
+
+    @property
+    def end(self) -> int:
+        """Backward compatibility alias for end_pos"""
+        return self.end_pos
+
     def __post_init__(self):
         """Add chunk-specific metadata"""
         if "chunk_length" not in self.metadata:

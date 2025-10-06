@@ -94,8 +94,8 @@ class ProximaDBClient:
         # Note: DistanceMetric is an enum constant, not a class attribute, so we can't check it this way
         # if not hasattr(pb2_local, 'DistanceMetric'):
         #     raise ProximaDBError(f"pb2_local is missing DistanceMetric: {pb2_local}")
-            
-        logger.debug(f"Proto imports successful: pb2_local={pb2_local}, pb2_grpc_local={pb2_grpc_local}")
+
+        logger.debug(f"Proto imports successful: v1_vector_grpc={v1_vector_pb2_grpc}, v1_sql_grpc={v1_sql_pb2_grpc}")
         
         try:
             # Configure message size limits for bulk vector operations (64MB)
