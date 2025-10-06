@@ -379,11 +379,19 @@ impl UnifiedHandlers {
                             })
                             .unwrap_or_else(|| Vec::new());
 
-                        Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-                            success,
-                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
-                                as i32,
-                            metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                        // Extract metrics from response_json if available, otherwise construct from vector_ids
+                        let metrics = if let Some(metrics_json) = response_json.get("metrics") {
+                            Some(crate::proto::proximadb_v1::OperationMetrics {
+                                total_processed: metrics_json.get("total_processed").and_then(|v| v.as_i64()).unwrap_or(vector_ids.len() as i64),
+                                successful_count: metrics_json.get("successful_count").and_then(|v| v.as_i64()).unwrap_or(if success { vector_ids.len() as i64 } else { 0 }),
+                                failed_count: metrics_json.get("failed_count").and_then(|v| v.as_i64()).unwrap_or(if success { 0 } else { vector_ids.len() as i64 }),
+                                updated_count: metrics_json.get("updated_count").and_then(|v| v.as_i64()).unwrap_or(0),
+                                processing_time_us: metrics_json.get("processing_time_us").and_then(|v| v.as_i64()).unwrap_or(start_time.elapsed().as_micros() as i64),
+                                wal_write_time_us: metrics_json.get("wal_write_time_us").and_then(|v| v.as_i64()).unwrap_or(0),
+                                index_update_time_us: metrics_json.get("index_update_time_us").and_then(|v| v.as_i64()).unwrap_or(0),
+                            })
+                        } else {
+                            Some(crate::proto::proximadb_v1::OperationMetrics {
                                 total_processed: vector_ids.len() as i64,
                                 successful_count: if success { vector_ids.len() as i64 } else { 0 },
                                 failed_count: if success { 0 } else { vector_ids.len() as i64 },
@@ -391,7 +399,14 @@ impl UnifiedHandlers {
                                 processing_time_us: start_time.elapsed().as_micros() as i64,
                                 wal_write_time_us: 0,
                                 index_update_time_us: 0,
-                            }),
+                            })
+                        };
+
+                        Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                            success,
+                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
+                                as i32,
+                            metrics,
                             results: None,
                             vector_ids,
                             error_message: None,

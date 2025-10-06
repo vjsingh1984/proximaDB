@@ -241,6 +241,7 @@ pub mod utils;
 pub mod trait_impl;
 pub mod blocks;
 pub mod codebook_integration;
+pub mod manifest;
 
 // Test modules
 #[cfg(test)]
