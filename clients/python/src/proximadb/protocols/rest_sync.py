@@ -47,6 +47,7 @@ from ..models import (
     IncludeFields,
     MetadataFilter,
     ServerCapabilities,
+    OperationMetrics,
     FilterCondition,
     FilterOperator,
     FilterOperation,
@@ -801,12 +802,19 @@ class ProximaDBClient:
         
         # Convert response to BatchResult
         resp_data = response.json()
+        metrics_data = resp_data.get('metrics', {}) or {}
         return BatchResult(
             total=resp_data.get('total', 1),
             success=resp_data.get('success', 1),
             failed=resp_data.get('failed', 0),
             errors=resp_data.get('errors', []),
-            duration_ms=resp_data.get('duration_ms', 0.0)
+            duration_ms=resp_data.get('duration_ms', 0.0),
+            metrics=OperationMetrics(
+                total_processed=metrics_data.get('total_processed') or resp_data.get('total', 1),
+                successful_count=metrics_data.get('successful_count') or resp_data.get('success', 1),
+                failed_count=metrics_data.get('failed_count') or resp_data.get('failed', 0),
+                processing_time_us=metrics_data.get('processing_time_us') or int(resp_data.get('duration_ms', 0) * 1000)
+            )
         )
     
     def _convert_metadata_to_rest_format(self, metadata_dict: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -958,12 +966,19 @@ class ProximaDBClient:
                 
                 return result
             else:
+                success_count = len(vector_data) if response_data.get("success") else 0
+                failed_count = 0 if response_data.get("success") else len(vector_data)
                 return BatchResult(
                     total=len(vector_data),
-                    success=len(vector_data) if response_data.get("success") else 0,
-                    failed=0 if response_data.get("success") else len(vector_data),
+                    success=success_count,
+                    failed=failed_count,
                     errors=[],
-                    duration_ms=0.0
+                    duration_ms=0.0,
+                    metrics=OperationMetrics(
+                        total_processed=len(vector_data),
+                        successful_count=success_count,
+                        failed_count=failed_count
+                    )
                 )
         
         else:
@@ -1005,11 +1020,16 @@ class ProximaDBClient:
                     all_errors.append(f"Batch {i//effective_batch_size}: {str(e)}")
             
             return BatchResult(
-                total_count=len(vector_data),
-                successful_count=total_successful,
-                failed_count=total_failed,
+                total=len(vector_data),
+                success=total_successful,
+                failed=total_failed,
                 duration_ms=0,  # Total duration not tracked for multi-batch
-                errors=all_errors if all_errors else []
+                errors=all_errors if all_errors else [],
+                metrics=OperationMetrics(
+                    total_processed=len(vector_data),
+                    successful_count=total_successful,
+                    failed_count=total_failed
+                )
             )
     
     def search(
@@ -1592,12 +1612,19 @@ class ProximaDBClient:
         )
         # Convert response to BatchResult
         resp_data = response.json()
+        metrics_data = resp_data.get('metrics', {}) or {}
         return BatchResult(
             total=resp_data.get('total', 1),
             success=resp_data.get('success', 1),
             failed=resp_data.get('failed', 0),
             errors=resp_data.get('errors', []),
-            duration_ms=resp_data.get('duration_ms', 0.0)
+            duration_ms=resp_data.get('duration_ms', 0.0),
+            metrics=OperationMetrics(
+                total_processed=metrics_data.get('total_processed') or resp_data.get('total', 1),
+                successful_count=metrics_data.get('successful_count') or resp_data.get('success', 1),
+                failed_count=metrics_data.get('failed_count') or resp_data.get('failed', 0),
+                processing_time_us=metrics_data.get('processing_time_us') or int(resp_data.get('duration_ms', 0) * 1000)
+            )
         )
     
     def close(self) -> None:

@@ -1098,6 +1098,7 @@ class BatchResult(BaseModel):
     failed: int = 0
     errors: List[str] = Field(default_factory=list)
     duration_ms: float = 0.0
+    metrics: OperationMetrics = Field(default_factory=OperationMetrics)
 
 
 class VectorOperationResponse(BaseModel):
