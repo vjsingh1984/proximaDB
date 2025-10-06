@@ -46,7 +46,7 @@ async fn test_metadata_filtering_basic() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Create SSTable with records having different metadata
     let sstable_path = temp_path.join("metadata_test.sstable");
@@ -293,7 +293,7 @@ async fn test_metadata_bloom_filter_optimization() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Create SSTable with metadata bloom filters
     let sstable_path = temp_path.join("bloom_metadata_test.sstable");

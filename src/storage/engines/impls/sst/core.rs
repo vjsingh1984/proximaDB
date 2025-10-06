@@ -219,7 +219,7 @@ impl SstEngine {
     pub async fn new() -> Result<Self> {
         let config = SstConfig::default();
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await?);
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
         Self::new_with_config(config, filesystem, distance_compute).await
@@ -459,7 +459,7 @@ mod tests {
         config.block_size_kb = 128; // Custom block size
 
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
         let engine = SstEngine::new_with_config(config.clone(), filesystem, distance_compute)

@@ -29,7 +29,7 @@ mod filesystem_api_tests {
             sync_enabled: true,
         });
 
-        let factory = Arc::new(FilesystemFactory::new(config).await?);
+        let factory = Arc::new(FilesystemFactory::create(config).await?);
         let coordinator = Arc::new(TransactionCoordinator::new(factory.clone(), None).await?);
 
         Ok((factory, coordinator))

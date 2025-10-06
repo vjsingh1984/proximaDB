@@ -235,7 +235,7 @@ async fn test_sst_engine_end_to_end_flush_and_search() -> Result<()> {
     // Create filesystem factory with temp directory
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", base_path));
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     // Create SST engine
     let sst_config = SstConfig::default();
@@ -453,7 +453,7 @@ async fn test_sst_engine_no_data_without_flush() -> Result<()> {
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", base_path));
     let filesystem = Arc::new(
-        FilesystemFactory::new(fs_config).await?
+        FilesystemFactory::create(fs_config).await?
     );
 
     let engine = SstEngine::new_with_config(
@@ -538,7 +538,7 @@ async fn test_hierarchical_sst_with_proper_flush() {
     setup_test_directories(base_path).await.unwrap();
 
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(create_test_filesystem_config())
+        FilesystemFactory::create(create_test_filesystem_config())
             .await
             .unwrap(),
     );
@@ -606,7 +606,7 @@ async fn test_hierarchical_sst_with_proper_flush() {
 async fn create_test_engine() -> SstEngine {
     let config = SstConfig::default();
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
     SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()

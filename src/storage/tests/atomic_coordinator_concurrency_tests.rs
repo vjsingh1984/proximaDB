@@ -22,7 +22,7 @@ mod tests {
     async fn create_test_coordinator() -> (TransactionCoordinator, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );

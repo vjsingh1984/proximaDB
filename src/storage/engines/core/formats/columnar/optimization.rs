@@ -744,7 +744,7 @@ mod tests {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(crate::proto::proximadb_v1::DistanceMetric::Cosine));
         let config = ColumnarConfig::default();
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create(Default::default()).await.unwrap());
         let optimizer = ColumnarOptimizer::new(distance_compute, config, filesystem_factory, "test_base_path".to_string(), "test_collection".to_string()).await.unwrap();
         let stats = optimizer.get_optimization_stats();
         assert!(stats.contains_key("bloom_filter_cache_size"));

@@ -22,7 +22,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 /// Helper to create a test reader
 async fn create_test_reader() -> Arc<UnifiedSstableReader> {
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(Default::default())
+        FilesystemFactory::create(Default::default())
             .await
             .expect("Failed to create filesystem factory"),
     );

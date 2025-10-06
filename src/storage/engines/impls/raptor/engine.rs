@@ -417,7 +417,7 @@ impl RaptorEngine {
 
         // Initialize filesystem factory for creating appropriate filesystems
         let filesystem_factory =
-            Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+            Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
         // Storage tier and paths will be determined at runtime from FlushParameters
         // Use defaults for initialization - these will be replaced on first use
@@ -461,7 +461,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         use crate::storage::transaction_coordinator::TransactionCoordinator;
 
         // Create filesystem factory first
-        let fs_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let fs_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
         // Get default filesystem - will be replaced at runtime from FlushParameters
         let base_fs = fs_factory.get_filesystem("file:///tmp")?;

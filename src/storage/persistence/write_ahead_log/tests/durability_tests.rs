@@ -53,7 +53,7 @@ async fn create_test_write_buffer_manager_with_config(
 
     let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let fs_factory = Arc::new(
-        FilesystemFactory::new(fs_config)
+        FilesystemFactory::create(fs_config)
             .await
             .expect("Failed to create filesystem factory"),
     );
@@ -204,7 +204,7 @@ async fn test_batch_sync_coordinator() {
 
     let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let fs_factory = Arc::new(
-        FilesystemFactory::new(fs_config)
+        FilesystemFactory::create(fs_config)
             .await
             .expect("Failed to create filesystem factory"),
     );
@@ -252,7 +252,7 @@ async fn test_manifest_reader_orders_entries() {
     use crate::storage::persistence::write_ahead_log::manifest::{WalManifest, WalManifestEntry};
     let temp_dir = TempDir::new().unwrap();
     let fs_factory = Arc::new(
-        FilesystemFactory::new(Default::default())
+        FilesystemFactory::create(Default::default())
             .await
             .expect("fs factory"),
     );
@@ -288,7 +288,7 @@ async fn test_recovery_skips_corrupted_checksum() {
 
     let temp_dir = TempDir::new().unwrap();
     let fs_factory = Arc::new(
-        FilesystemFactory::new(Default::default())
+        FilesystemFactory::create(Default::default())
             .await
             .expect("fs factory"),
     );

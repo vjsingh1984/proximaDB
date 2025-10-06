@@ -93,6 +93,8 @@ impl UnifiedMetricsCollector {
 
         // Try to collect fresh system metrics
         let system_collector = SystemMetricsCollector::new();
+        let storage_collector = StorageMetricsCollector::new();
+
         if let Ok(sample) = system_collector.collect().await {
             // Update current_metrics with real data
             let mut metrics = self.current_metrics.write().await;
@@ -112,6 +114,19 @@ impl UnifiedMetricsCollector {
             }
             if let Some(&disk_total) = sample.values.get("disk_total_bytes") {
                 metrics.disk_total_bytes = disk_total as u64;
+            }
+
+            // Try to collect storage metrics
+            if let Ok(storage_sample) = storage_collector.collect().await {
+                if let Some(&total_vectors) = storage_sample.values.get("total_vectors") {
+                    metrics.storage.total_vectors = total_vectors as u64;
+                }
+                if let Some(&total_collections) = storage_sample.values.get("total_collections") {
+                    metrics.storage.total_collections = total_collections as u64;
+                }
+                if let Some(&storage_size) = storage_sample.values.get("storage_size_bytes") {
+                    metrics.storage.storage_size_bytes = storage_size as u64;
+                }
             }
 
             // Set uptime and server metrics

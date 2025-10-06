@@ -36,7 +36,7 @@ mod tests {
 
         // Read back
         let filesystem = std::sync::Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default()
             )
             .await

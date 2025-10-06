@@ -284,7 +284,7 @@ impl UniversalPerformanceOptimizer {
         // Initialize filesystem factory for seamless local/cloud integration
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await?);
 
         Ok(Self::new(io_config, strategy, filesystem_factory))
     }

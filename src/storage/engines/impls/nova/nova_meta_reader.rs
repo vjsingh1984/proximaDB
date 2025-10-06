@@ -289,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_bounds_check() {
-        let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::new(
+        let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::create(
             Default::default()
         ).await.unwrap()));
 
@@ -305,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_euclidean_distance() {
-        let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::new(
+        let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::create(
             Default::default()
         ).await.unwrap()));
 

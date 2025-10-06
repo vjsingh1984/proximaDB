@@ -425,7 +425,7 @@ mod tests {
     async fn create_test_manifest() -> (SstManifest, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(
-            FilesystemFactory::new(Default::default()).await.unwrap()
+            FilesystemFactory::create(Default::default()).await.unwrap()
         );
         
         let storage_url = format!("file://{}", temp_dir.path().display());

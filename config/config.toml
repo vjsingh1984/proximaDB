@@ -8,20 +8,24 @@ port = 5678
 data_dir = "/tmp/proximadb/data"
 
 [storage]
-# Single metadata URL for all metadata operations
+# Metadata storage (collection definitions, schemas)
 metadata_url = "file:///tmp/proximadb/metadata"
 
-# Multiple storage locations for data distribution
-# ProximaDB will distribute collections across these locations
+# Data storage locations - ProximaDB distributes collections across these
 [[storage.storage_locations]]
-url = "file:///tmp/proximadb1/data"
+url = "file:///tmp/proximadb/d1"
 weight = 1
-tags = ["local", "primary"]
+tags = ["local", "disk1"]
 
 [[storage.storage_locations]]
-url = "file:///tmp/proximadb2/data"
+url = "file:///tmp/proximadb/d2"
 weight = 1
-tags = ["local", "secondary"]
+tags = ["local", "disk2"]
+
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb/d3"
+weight = 1
+tags = ["local", "disk3"]
 
 # Assignment configuration (optional - smart defaults applied)
 # [storage.assignment_config]
@@ -40,10 +44,14 @@ dashboard_refresh_interval_seconds = 60
 # Advanced Configuration (optional - smart defaults applied)
 # Uncomment and modify only if you need to override defaults
 
-# [storage.write_buffer_config]
-# write_buffer_size_mb = 8192
-# memory_flush_size_bytes = 16777216
-# enable_wal = true
+[storage.wal_config]
+# Global manifest location (centralized tracking of all WAL files)
+global_manifest_url = "file:///tmp/proximadb/manifest"
+memory_flush_size_bytes = 16777216
+global_flush_threshold = 4294967296
+enable_wal = true
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
 
 # [storage.sst_config]
 # block_size_kb = 2048

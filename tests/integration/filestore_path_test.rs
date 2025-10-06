@@ -115,7 +115,7 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     debug!("Testing with relative metadata URL: {}", metadata_url);
 
     // Create filesystem factory WITHOUT root_dir
-    let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let fs_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
 
     // Create filestore backend
     let config = UniversalMetadataConfig {
@@ -189,7 +189,7 @@ async fn test_absolute_url_no_path_duplication() -> Result<()> {
     debug!("Testing with absolute metadata URL: {}", metadata_url);
 
     // Create filesystem factory WITHOUT root_dir
-    let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let fs_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
 
     // Create filestore backend
     let config = UniversalMetadataConfig {
@@ -234,7 +234,7 @@ async fn test_atomic_operations_path_handling() -> Result<()> {
     debug!("Testing atomic operations with URL: {}", metadata_url);
 
     // Create filesystem factory
-    let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let fs_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
 
     // Create filestore backend
     let config = UniversalMetadataConfig {
@@ -284,7 +284,7 @@ async fn test_concurrent_operations_no_conflicts() -> Result<()> {
     debug!("Testing concurrent operations with URL: {}", metadata_url);
 
     // Create filesystem factory
-    let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let fs_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
 
     // Create filestore backend
     let config = UniversalMetadataConfig {
@@ -351,7 +351,7 @@ async fn test_metadata_url_formats() -> Result<()> {
         std::env::set_current_dir(temp_dir.path())?;
 
         // Create filesystem factory
-        let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let fs_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
 
         // Create filestore backend
         let config = UniversalMetadataConfig {

@@ -78,7 +78,7 @@ async fn test_storage_engine_initialization_timeout() {
     // Use a more aggressive timeout for individual components
     let result = timeout(Duration::from_secs(3), async {
         let filesystem_factory = Arc::new(
-            proximadb::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await?
+            proximadb::storage::persistence::filesystem::FilesystemFactory::create(Default::default()).await?
         );
         
         // Test filesystem operations don't hang
@@ -257,7 +257,7 @@ async fn test_atomic_operations_no_hang() {
     
     let result = timeout(Duration::from_secs(5), async {
         let filesystem_factory = Arc::new(
-            proximadb::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await?
+            proximadb::storage::persistence::filesystem::FilesystemFactory::create(Default::default()).await?
         );
         
         let coordinator = proximadb::storage::transaction_coordinator::TransactionCoordinator::new(

@@ -92,7 +92,7 @@ async fn test_filestore_backend_direct_operations() -> Result<()> {
     // Create filesystem factory
     let filesystem_config = FilesystemConfig::default();
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(filesystem_config).await?
+        FilesystemFactory::create(filesystem_config).await?
     );
     
     // Create filestore backend
@@ -232,7 +232,7 @@ async fn test_collection_service_with_filestore_backend() -> Result<()> {
     // Create filesystem factory
     let filesystem_config = FilesystemConfig::default();
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(filesystem_config).await?
+        FilesystemFactory::create(filesystem_config).await?
     );
     
     // Create filestore backend
@@ -347,7 +347,7 @@ async fn test_filestore_persistence_across_restarts() -> Result<()> {
     
     let filesystem_config = FilesystemConfig::default();
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(filesystem_config).await?
+        FilesystemFactory::create(filesystem_config).await?
     );
     
     // Phase 1: Create backend and add collections
@@ -432,7 +432,7 @@ async fn test_filestore_persistence_across_restarts() -> Result<()> {
                 enable_backup: true,
                 enable_snapshot_archival: true,
                 max_archived_snapshots: 5,
-            }, Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?)).await?
+            }, Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?)).await?
         );
         
         let collection_service = CollectionService::new(filestore_backend);

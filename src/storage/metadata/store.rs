@@ -201,7 +201,7 @@ impl MetadataStore {
             default_fs: Some(config.metadata_storage_urls[0].clone()),
             ..Default::default()
         };
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await?);
 
         // Create WAL configuration for metadata
         let mut metadata_wal_config = MetadataWALConfig::default();

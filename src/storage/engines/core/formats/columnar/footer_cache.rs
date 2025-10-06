@@ -739,7 +739,7 @@ mod tests {
     async fn test_footer_cache_creation() {
         let config = FooterCacheConfig::default();
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );
@@ -786,7 +786,7 @@ mod tests {
     async fn test_cache_warming_strategies() {
         let config = FooterCacheConfig::default();
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );

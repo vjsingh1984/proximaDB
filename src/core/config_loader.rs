@@ -38,7 +38,7 @@ impl ConfigLoader {
         config_url: &str,
     ) -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
         // Create filesystem factory
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
 
         // Start with default configuration
         let base_config = Config::default();

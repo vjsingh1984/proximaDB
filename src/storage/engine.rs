@@ -138,7 +138,7 @@ impl StorageEngine {
 
         // Create filesystem factory for WAL
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
@@ -480,7 +480,7 @@ impl StorageEngine {
 
         // Create directory paths based on base_location
         let data_url = StoragePath::collection_data_path(&base_location, &collection_id);
-        let write_buffer_url = StoragePath::collection_write_buffer_path(&base_location, &collection_id);
+        let write_buffer_url = StoragePath::collection_wal_path(&base_location, &collection_id);
         let index_url = StoragePath::collection_index_path(&base_location, &collection_id);
 
         // Create all required directories for the collection

@@ -98,7 +98,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::create(Default::default())
                 .await
                 .expect("Failed to create filesystem factory")
         );
@@ -116,7 +116,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::create(Default::default())
                 .await
                 .expect("Failed to create filesystem factory")
         );
@@ -148,7 +148,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::create(Default::default())
                 .await
                 .expect("Failed to create filesystem factory")
         );
@@ -184,7 +184,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::create(Default::default())
                 .await
                 .expect("Failed to create filesystem factory")
         );
@@ -219,7 +219,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::create(Default::default())
                 .await
                 .expect("Failed to create filesystem factory")
         );
@@ -258,7 +258,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::create(Default::default())
                 .await
                 .expect("Failed to create filesystem factory")
         );
@@ -302,7 +302,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::create(Default::default())
                 .await
                 .expect("Failed to create filesystem factory")
         );

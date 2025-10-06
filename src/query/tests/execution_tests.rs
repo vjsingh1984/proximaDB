@@ -496,7 +496,7 @@ async fn create_test_executor() -> QueryExecutor {
     use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory};
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
     let wal_config = WALConfig::default();
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         wal_config.strategy_type.clone(),
@@ -521,7 +521,7 @@ async fn create_test_executor() -> QueryExecutor {
     use crate::core::config::StorageConfig;
 
     let fs_config = FilesystemConfig::default();
-    let filesystem2 = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
 
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
     let metadata_config = UniversalMetadataConfig {
@@ -581,7 +581,7 @@ async fn create_test_executor_with_collection() -> QueryExecutor {
     use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory};
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
     let wal_config = WALConfig::default();
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         wal_config.strategy_type.clone(),
@@ -606,7 +606,7 @@ async fn create_test_executor_with_collection() -> QueryExecutor {
     use crate::core::config::StorageConfig;
 
     let fs_config = FilesystemConfig::default();
-    let filesystem2 = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
 
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
     let metadata_config = UniversalMetadataConfig {

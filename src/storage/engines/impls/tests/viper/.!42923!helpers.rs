@@ -40,7 +40,7 @@ pub async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
         ..Default::default()
     };
 
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
     let viper_engine =
         ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem)
             .await?;
@@ -67,7 +67,7 @@ pub async fn create_viper_engine_with_config(
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", base_path));
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
     ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory)
         .await
 }
@@ -484,7 +484,7 @@ pub async fn create_test_parquet_reader(
     use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
 
     let fs_config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
     let base_fs = filesystem_factory.get_filesystem("file://")?;
     let cached_filesystem = Arc::new(
         crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
@@ -523,7 +523,7 @@ pub async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
 
     debug!("\n= DEBUG: {} - Reading {}", label, file_path);
 
-    let fs = FilesystemFactory::new(Default::default()).await?;
+    let fs = FilesystemFactory::create(Default::default()).await?;
     let filesystem = fs.get_filesystem(file_path)?;
 
     match filesystem.read(file_path).await {

@@ -90,7 +90,7 @@ fn measure_directory_size(path: &str, runtime: &tokio::runtime::Runtime) -> std:
     }
 
     runtime.block_on(async {
-        let fs_factory = FilesystemFactory::new(FilesystemConfig::default())
+        let fs_factory = FilesystemFactory::create(FilesystemConfig::default())
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         measure_directory_size_async(path, &fs_factory)
@@ -216,7 +216,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             // Clean previous run using filesystem API
             let collection_path = format!("{}/{}", base_path, collection_id);
             runtime.block_on(async {
-                let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
                 let fs = fs_factory.get_filesystem(&format!("file://{}", &collection_path)).ok()?;
                 let _ = fs.remove_dir_all(&collection_path).await;
                 Some(())
@@ -337,7 +337,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
                 eprintln!();
                 // Clean up any partial data
                 runtime.block_on(async {
-                    let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                    let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
                     let fs = fs_factory.get_filesystem(&format!("file://{}", &collection_path)).ok()?;
                     let _ = fs.remove_dir_all(&collection_path).await;
                     Some(())
@@ -347,7 +347,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
             // Verify files were actually created and list them
             let (files_created, file_details) = runtime.block_on(async {
-                let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
                 let fs = fs_factory.get_filesystem(&format!("file://{}", &collection_path)).ok()?;
                 let entries = fs.list(&collection_path).await.ok()?;
 
@@ -694,7 +694,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
             // Clean up immediately after each test using filesystem API
             runtime.block_on(async {
-                let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
                 let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
                 let _ = fs.remove_dir_all(&base_path).await;
                 Some(())
@@ -706,7 +706,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
     // Final cleanup using filesystem API
     eprintln!("\n✅ Benchmark complete, all test data cleaned up");
     runtime.block_on(async {
-        let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+        let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
         // Clean up all engine_compression directories
         let base_path = get_base_path();
         let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
@@ -846,7 +846,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
                 // Clean and load data using filesystem API
                 let collection_path = format!("{}/{}", base_path, collection_id);
                 runtime.block_on(async {
-                    let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                    let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
                     let fs = fs_factory.get_filesystem(&format!("file://{}", collection_path)).ok()?;
                     let _ = fs.remove_dir_all(&collection_path).await;
                     Some(())
@@ -947,7 +947,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
                 // Clean up using filesystem API
                 let collection_path = format!("{}/{}", base_path, collection_id);
                 runtime.block_on(async {
-                    let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                    let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
                     let fs = fs_factory.get_filesystem(&format!("file://{}", collection_path)).ok()?;
                     let _ = fs.remove_dir_all(&collection_path).await;
                     Some(())
@@ -958,7 +958,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
 
     // Final cleanup using filesystem API
     runtime.block_on(async {
-        let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+        let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
         let base_path = get_base_path();
         let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
 
@@ -1007,7 +1007,7 @@ fn bench_insertion_performance(c: &mut Criterion) {
                     let base_path = format!("{}/insert/{}", get_base_path(), engine_name);
 
                     // Clean before each iteration using filesystem API
-                    let fs_factory = match FilesystemFactory::new(FilesystemConfig::default()).await {
+                    let fs_factory = match FilesystemFactory::create(FilesystemConfig::default()).await {
                         Ok(f) => f,
                         Err(_) => return Err(anyhow::anyhow!("Failed to create filesystem factory")),
                     };
@@ -1053,7 +1053,7 @@ fn bench_insertion_performance(c: &mut Criterion) {
 
     // Final cleanup using filesystem API
     runtime.block_on(async {
-        let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+        let fs_factory = FilesystemFactory::create(FilesystemConfig::default()).await.ok()?;
         let cleanup_path = format!("{}/insert", get_base_path());
         let fs = fs_factory.get_filesystem(&format!("file://{}", cleanup_path)).ok()?;
         let _ = fs.remove_dir_all(&cleanup_path).await;

@@ -44,7 +44,7 @@ mod tests {
 
         // Create storage engines
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(Default::default())
+            crate::storage::persistence::filesystem::FilesystemFactory::create(Default::default())
                 .await?,
         );
 

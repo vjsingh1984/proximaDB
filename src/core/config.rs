@@ -701,6 +701,8 @@ pub struct WriteBufferUserConfig {
     pub write_buffer_directory: String,
     /// Enable write-ahead logging
     pub enable_wal: bool,
+    /// Global manifest location (optional)
+    pub global_manifest_url: Option<String>,
 }
 
 impl Default for WriteBufferUserConfig {
@@ -713,6 +715,7 @@ impl Default for WriteBufferUserConfig {
             sync_mode: "PerBatch".to_string(),
             write_buffer_directory: "./data/write_buffer".to_string(),
             enable_wal: true,
+            global_manifest_url: None,
         }
     }
 }
@@ -735,6 +738,7 @@ impl WriteBufferUserConfig {
             enable_ttl: true,
             enable_background_compaction: true,
             collection_overrides: std::collections::HashMap::new(),
+            global_manifest_url: self.global_manifest_url.clone(),
             enable_optimized_writer: false,
             optimized_writer_batch_size: None,
             optimized_writer_batch_timeout_ms: None,
@@ -1187,11 +1191,7 @@ fn default_ttl_sweep_interval() -> u64 {
 /// WAL storage configuration supporting multiple directories and cloud storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
-    /// WAL storage URLs - supports file://, s3://, adls://, gcs://
-    /// Multiple URLs enable multi-disk performance scaling
-    pub write_buffer_urls: Vec<String>,
-
-    /// Distribution strategy for collections across WAL directories
+    /// Distribution strategy for collections across storage locations
     pub distribution_strategy: WalDistributionStrategy,
 
     /// Whether to keep each collection on a single WAL directory
@@ -1224,6 +1224,14 @@ pub struct WalStorageConfig {
     /// Shrink factor for global threshold management (percentage)
     /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
     pub global_shrink_factor: Option<f64>,
+
+    /// Global manifest location (optional - explicit configuration)
+    /// If not specified, defaults to {first write_buffer_url}/wal
+    /// Examples:
+    /// - "file:///data/wal-metadata" (dedicated fast SSD)
+    /// - "file:///shared/nfs/wal" (shared storage for HA)
+    /// - "s3://bucket/wal-global" (cloud-based)
+    pub global_manifest_url: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1245,7 +1253,7 @@ impl Default for WalDistributionStrategy {
 impl Default for WalStorageConfig {
     fn default() -> Self {
         Self {
-            write_buffer_urls: vec!["file://./data/wal".to_string()],
+            global_manifest_url: None,  // Defaults to {storage_locations[0]}/wal
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
             memory_flush_size_bytes: 10 * 1024 * 1024, // 10MB - recommended for collection-level flush

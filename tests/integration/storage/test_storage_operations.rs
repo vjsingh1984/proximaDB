@@ -44,7 +44,7 @@ async fn create_test_setup() -> (
     
     // Create filesystem
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     
     // Create memtable
     let memtable = Arc::new(GlobalPartitionedMemtable::new(

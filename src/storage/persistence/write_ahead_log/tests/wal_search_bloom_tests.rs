@@ -50,7 +50,7 @@ use tracing::{debug, error, info};
         
         // Create WAL manager
         let config = WALConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let wal_manager = WriteAheadLogManager::new(config.clone(), filesystem).await?;
         
         // Create test vectors with different metadata
@@ -150,7 +150,7 @@ use tracing::{debug, error, info};
         info!("🧪 Testing bloom filter performance metrics");
         
         let config = WALConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let wal_manager = WriteAheadLogManager::new(config.clone(), filesystem).await?;
         
         let collection_id = "bloom_perf_test";
@@ -201,7 +201,7 @@ use tracing::{debug, error, info};
         info!("🧪 Testing WAL search with different distance metrics");
         
         let config = WALConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let wal_manager = WriteAheadLogManager::new(config.clone(), filesystem).await?;
         
         let collection_id = "distance_test";
@@ -254,7 +254,7 @@ use tracing::{debug, error, info};
         info!("🧪 Testing search on empty WAL");
         
         let config = WALConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let wal_manager = WriteAheadLogManager::new(config.clone(), filesystem).await?;
         
         let results = wal_manager.search_unflushed_vectors(
@@ -280,7 +280,7 @@ use tracing::{debug, error, info};
         info!("🧪 Testing WAL search result ranking");
         
         let config = WALConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let wal_manager = WriteAheadLogManager::new(config.clone(), filesystem).await?;
         
         let collection_id = "ranking_test";
@@ -329,7 +329,7 @@ use tracing::{debug, error, info};
         info!("🧪 Testing various metadata filter operators");
         
         let config = WALConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let wal_manager = WriteAheadLogManager::new(config.clone(), filesystem).await?;
         
         let collection_id = "operator_test";

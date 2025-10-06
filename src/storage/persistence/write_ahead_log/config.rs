@@ -280,6 +280,14 @@ pub struct WALConfig {
     /// Multi-disk configuration
     pub multi_disk: MultiDiskConfig,
 
+    /// Global manifest location (explicit configuration)
+    /// If None, defaults to {first_data_directory}/wal
+    /// Examples:
+    /// - "file:///data/wal-metadata" (dedicated fast SSD)
+    /// - "file:///shared/nfs/wal" (shared NFS for HA)
+    /// - "s3://bucket/wal-global" (cloud-based for distributed deployments)
+    pub global_manifest_url: Option<String>,
+
     /// Compression settings
     pub compression: CompressionConfig,
 
@@ -326,6 +334,7 @@ impl Default for WALConfig {
             enable_ttl: true,  // Enable for data lifecycle management
             enable_background_compaction: true, // Enable for maintenance and space reclamation
             collection_overrides: std::collections::HashMap::new(),
+            global_manifest_url: None, // Defaults to {first_data_directory}/wal
             enable_optimized_writer: false, // Disabled by default for gradual rollout
             optimized_writer_batch_size: None,
             optimized_writer_batch_timeout_ms: None,
@@ -356,8 +365,9 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
     fn from(core_config: &crate::core::config::WalStorageConfig) -> Self {
         let mut wal_config = WALConfig::default();
 
-        // Convert URLs to MultiDiskConfig
-        wal_config.multi_disk.data_directories = core_config.write_buffer_urls.clone();
+        // WAL uses storage_locations - will be populated by caller
+        // Default to a safe fallback
+        wal_config.multi_disk.data_directories = vec!["file://./data".to_string()];
         wal_config.multi_disk.distribution_strategy = match core_config.distribution_strategy {
             crate::core::config::WalDistributionStrategy::RoundRobin => {
                 DiskDistributionStrategy::RoundRobin
@@ -423,6 +433,9 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
         if let Some(global_shrink_factor) = core_config.global_shrink_factor {
             wal_config.performance.global_shrink_factor = global_shrink_factor;
         }
+
+        // Set global manifest URL from TOML config
+        wal_config.global_manifest_url = core_config.global_manifest_url.clone();
 
         wal_config
     }

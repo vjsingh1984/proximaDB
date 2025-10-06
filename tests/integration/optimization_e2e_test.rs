@@ -186,7 +186,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     };
 
     // Setup infrastructure
-    let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
 
     let coordinator = Arc::new(

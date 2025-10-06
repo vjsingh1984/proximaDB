@@ -11,7 +11,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
-use crate::storage::persistence::write_ahead_log::WriteBufferDiskManager;
+use crate::storage::persistence::write_ahead_log::WriteAheadLogDiskManager;
 use crate::storage::persistence::write_ahead_log::config::DurabilityLevel;
 
 /// Batch sync coordinator for managing WAL durability
@@ -20,7 +20,7 @@ pub struct BatchSyncCoordinator {
     durability_level: DurabilityLevel,
 
     /// Disk manager for sync operations
-    disk_manager: Arc<WriteBufferDiskManager>,
+    disk_manager: Arc<WriteAheadLogDiskManager>,
 
     /// Pending sync requests
     pending_syncs: Arc<Mutex<Vec<PendingSyncRequest>>>,
@@ -68,7 +68,7 @@ impl BatchSyncCoordinator {
     /// Create new batch sync coordinator
     pub fn new(
         durability_level: DurabilityLevel,
-        disk_manager: Arc<WriteBufferDiskManager>,
+        disk_manager: Arc<WriteAheadLogDiskManager>,
     ) -> Self {
         Self {
             durability_level,
@@ -195,7 +195,7 @@ impl BatchSyncCoordinator {
     /// Process pending sync requests
     async fn process_pending_syncs(
         pending_syncs: &Arc<Mutex<Vec<PendingSyncRequest>>>,
-        disk_manager: &Arc<WriteBufferDiskManager>,
+        disk_manager: &Arc<WriteAheadLogDiskManager>,
         stats: &Arc<RwLock<BatchSyncStats>>,
         batch_limit: Option<usize>,
     ) {
@@ -338,11 +338,11 @@ mod tests {
     ) -> (BatchSyncCoordinator, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );
-        let disk_manager = Arc::new(WriteBufferDiskManager::new(
+        let disk_manager = Arc::new(WriteAheadLogDiskManager::new(
             filesystem_factory,
             temp_dir.path().to_str().unwrap(),
         ));

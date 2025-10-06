@@ -259,7 +259,7 @@ async fn search_with_params(
 async fn test_viper_engine_creation() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
@@ -279,7 +279,7 @@ async fn test_single_vector_operations() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -370,7 +370,7 @@ async fn test_batch_insertion_and_flush() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -436,7 +436,7 @@ async fn test_similarity_search() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -517,7 +517,7 @@ async fn test_collection_operations() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -569,7 +569,7 @@ async fn test_compaction() {
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     // Compaction threshold is handled internally
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -648,7 +648,7 @@ async fn test_multi_collection_isolation() {
     let base_path = temp_dir.path().to_str().unwrap();
     let config = create_test_config(base_path);
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -740,7 +740,7 @@ async fn test_persistence_across_restarts() {
     // First engine instance - insert and flush data
     {
         let filesystem_factory =
-            Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let engine = ViperEngine::from_core_config(
             crate::core::config::ViperConfig::default(),
             filesystem_factory,
@@ -780,7 +780,7 @@ async fn test_persistence_across_restarts() {
     // Second engine instance - verify data persisted
     {
         let filesystem_factory =
-            Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let engine = ViperEngine::from_core_config(
             crate::core::config::ViperConfig::default(),
             filesystem_factory,
@@ -806,7 +806,7 @@ async fn test_search_vectors_unified() {
 
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -896,7 +896,7 @@ async fn test_search_vectors_unified() {
         };
         let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
                 .unwrap(),
         );
@@ -1063,7 +1063,7 @@ async fn test_search_vectors_unified() {
             // List what's in the data directory using filesystem
             let data_url = format!("file://{}", data_dir);
             let fs_factory =
-                crate::storage::persistence::filesystem::FilesystemFactory::new(Default::default())
+                crate::storage::persistence::filesystem::FilesystemFactory::create(Default::default())
                     .await
                     .unwrap();
             let fs = fs_factory.get_filesystem(&data_url).unwrap();
@@ -1173,7 +1173,7 @@ async fn test_concurrent_operations() {
     let engine = Arc::new(
         {
             let filesystem_factory =
-                Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+                Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
             ViperEngine::from_core_config(
                 crate::core::config::ViperConfig::default(),
                 filesystem_factory,

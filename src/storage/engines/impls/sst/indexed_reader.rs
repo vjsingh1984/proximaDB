@@ -60,7 +60,7 @@ impl SSTMetadataSource {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?,
         );
@@ -131,7 +131,7 @@ impl SSTIndexBasedReader {
             // Use blocking runtime for synchronous constructor
             tokio::runtime::Handle::current()
                 .block_on(
-                    crate::storage::persistence::filesystem::FilesystemFactory::new(
+                    crate::storage::persistence::filesystem::FilesystemFactory::create(
                         filesystem_config,
                     ),
                 )

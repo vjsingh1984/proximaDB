@@ -428,7 +428,7 @@ mod tests {
         fs_config.default_fs = Some(base_url.clone());
 
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
                 .unwrap(),
         );

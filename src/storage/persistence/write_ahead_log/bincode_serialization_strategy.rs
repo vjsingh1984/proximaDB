@@ -16,7 +16,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
-    MemtableManager, RecoveryManager, WALFlushCoordinator, WriteBufferDiskManager,
+    MemtableManager, RecoveryManager, WALFlushCoordinator, WriteAheadLogDiskManager,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -29,8 +29,8 @@ pub struct BincodeSerializationStrategy {
     /// Memtable manager (shared across strategies)
     memtable_manager: Arc<MemtableManager>,
 
-    /// Disk manager (shared across strategies)
-    disk_manager: Arc<WriteBufferDiskManager>,
+    /// Filesystem factory for creating disk managers per-write
+    filesystem_factory: Arc<FilesystemFactory>,
 
     /// Recovery manager for WAL recovery
     recovery_manager: Arc<RecoveryManager>,
@@ -78,13 +78,6 @@ impl BincodeSerializationStrategy {
         };
         let memtable_manager = Arc::new(MemtableManager::new(memtable_config.clone()));
 
-        // Create disk manager
-        let wal_base_url = &config.multi_disk.data_directories[0];
-        let disk_manager = Arc::new(WriteBufferDiskManager::new(
-            filesystem_factory.clone(),
-            wal_base_url,
-        ));
-
         // Create flush coordinator
         let flush_coordinator = Arc::new(WALFlushCoordinator::new());
 
@@ -106,7 +99,7 @@ impl BincodeSerializationStrategy {
         Ok(Self {
             serializer,
             memtable_manager,
-            disk_manager,
+            filesystem_factory: filesystem_factory.clone(),
             recovery_manager,
             storage_engine: Arc::new(tokio::sync::RwLock::new(None)),
             flush_coordinator,
@@ -169,6 +162,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
     ) -> Result<Vec<u64>> {
         debug!(
             "📝 Writing native batch {} with {} vectors (Bincode format)",
@@ -192,7 +186,14 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
                 _ => false,
             };
 
-            self.disk_manager
+            // Create disk manager per-write with collection-specific base_location
+            // Provided by VectorOperationsService from cached collection metadata
+            let disk_manager = WriteAheadLogDiskManager::new(
+                self.filesystem_factory.clone(),
+                base_location,
+            );
+
+            disk_manager
                 .write_batch_with_sync(
                     collection_id,
                     &batch.batch_id,
@@ -222,9 +223,10 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let sequences = self.write_native_batch(batch, collection_id).await?;
+        let sequences = self.write_native_batch(batch, collection_id, base_location).await?;
 
         if immediate_sync {
             self.force_sync(None).await?;
@@ -378,6 +380,11 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
+        // Mark batches as flushed in global manifest
+        use crate::storage::persistence::write_ahead_log::manifest;
+        let batch_id_strings: Vec<String> = batch_ids.iter().map(|b| b.to_base62()).collect();
+        let _ = manifest::mark_flushed(&batch_id_strings).await;
+
         info!(
             "✅ Flushed {} vectors ({} bytes) from collection {} in {}ms",
             total_vectors, total_bytes, collection_id, duration_ms
@@ -419,13 +426,15 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
     async fn get_stats(&self) -> Result<WALStats> {
         let memtable_stats = self.memtable_manager.get_stats().await?;
-        let disk_stats = self.disk_manager.get_stats().await?;
+        // Note: We no longer track disk stats centrally since disk managers are created per-write
+        // with collection-specific base_locations. Disk stats would need to be aggregated across
+        // all collections' WAL directories.
 
         Ok(WALStats {
             total_entries: memtable_stats.total_vectors_added,
             memory_entries: memtable_stats.total_vectors_added,
-            disk_segments: disk_stats.total_files_written,
-            total_disk_size_bytes: disk_stats.total_bytes_written,
+            disk_segments: 0, // TODO: Aggregate across all collection WAL directories
+            total_disk_size_bytes: 0, // TODO: Aggregate across all collection WAL directories
             memory_size_bytes: memtable_stats.memory_usage_bytes,
             collections_count: memtable_stats.total_collections,
             last_flush_time: None,
@@ -457,20 +466,29 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
                 .await?;
 
             // For each batch, ensure it's synced to disk
+            // Use default base_location from config
+            let base_location = self.config.multi_disk.data_directories
+                .first()
+                .map(|d| d.as_str())
+                .unwrap_or("/tmp/proximadb/data/wal");
+
+            let disk_manager = WriteAheadLogDiskManager::new(
+                self.filesystem_factory.clone(),
+                base_location,
+            );
+
             for batch in unflushed_batches {
-                let file_info = crate::storage::persistence::write_ahead_log::WriteBufferFileInfo {
+                let file_info = crate::storage::persistence::write_ahead_log::WalFileInfo {
                     collection_id: collection_id.to_string(),
                     batch_id: batch.batch_id.clone(),
-                    file_url: self
-                        .disk_manager
+                    file_url: disk_manager
                         .batch_url(collection_id, &batch.batch_id, SerializationFormat::Bincode),
                     size_bytes: 0,
                     format: SerializationFormat::Bincode,
                 };
 
                 // Use filesystem sync_file to ensure durability
-                if let Ok(filesystem) = self
-                    .disk_manager
+                if let Ok(filesystem) = disk_manager
                     .filesystem_factory()
                     .get_filesystem(&file_info.file_url)
                 {
@@ -588,7 +606,7 @@ impl BincodeSerializationStrategy {
         Self {
             serializer: SerializerFactory::create(SerializationFormat::Bincode),
             memtable_manager: self.memtable_manager.clone(),
-            disk_manager: self.disk_manager.clone(),
+            filesystem_factory: self.filesystem_factory.clone(),
             recovery_manager: self.recovery_manager.clone(),
             storage_engine: self.storage_engine.clone(),
             flush_coordinator: self.flush_coordinator.clone(),
@@ -634,16 +652,24 @@ impl BincodeSerializationStrategy {
         limit: Option<usize>,
     ) -> Result<Vec<WALVectorBatch>> {
         debug!("Reading disk Bincode WAL batches for collection: {}", collection_id);
-        
+
+        // Use default base_location from config
+        let base_location = self.config.multi_disk.data_directories
+            .first()
+            .map(|d| d.as_str())
+            .unwrap_or("/tmp/proximadb/data/wal");
+
+        // Create disk manager for this collection
+        let disk_manager = WriteAheadLogDiskManager::new(
+            self.filesystem_factory.clone(),
+            base_location,
+        );
+
         // Get the WAL directory for this collection
-        let collection_wal_dir = format!("{}/{}", 
-            self.config.multi_disk.data_directories.first()
-                .map(|d| d.as_str())
-                .unwrap_or("./data/wal"), 
-            collection_id);
+        let collection_wal_dir = format!("{}/{}", base_location, collection_id);
 
         // List all Bincode WAL files in the directory
-        let filesystem = self.disk_manager
+        let filesystem = disk_manager
             .filesystem_factory()
             .get_filesystem(&collection_wal_dir)?;
 
@@ -696,8 +722,7 @@ impl BincodeSerializationStrategy {
 
     /// Read and deserialize a single Bincode WAL file
     async fn read_and_deserialize_bincode_file(&self, file_path: &str) -> Result<Vec<WALVectorBatch>> {
-        let filesystem = self.disk_manager
-            .filesystem_factory()
+        let filesystem = self.filesystem_factory
             .get_filesystem(file_path)?;
 
         // Read the file data

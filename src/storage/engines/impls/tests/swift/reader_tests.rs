@@ -38,7 +38,7 @@ async fn test_hierarchical_pruning() {
 
 #[tokio::test]
 async fn test_swift_strategy_selection() {
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
 
     // Compaction should use DirectStream
     let compaction_reader = unified_strategy_reader::UnifiedSWIFTReader::for_compaction(
@@ -59,7 +59,7 @@ async fn test_swift_strategy_selection() {
 
 #[tokio::test]
 async fn test_config_updates_with_strategy() {
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
     let mut reader = unified_strategy_reader::UnifiedSWIFTReader::for_search(
         factory,
         "test".to_string(),

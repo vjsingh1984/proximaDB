@@ -131,7 +131,7 @@ async fn test_sst_quantization_e2e_pipeline() {
     
     // Step 3: Create filesystem factory
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default()).await.unwrap()
+        FilesystemFactory::create(FilesystemConfig::default()).await.unwrap()
     );
     
     // Step 4: Write quantized SST file

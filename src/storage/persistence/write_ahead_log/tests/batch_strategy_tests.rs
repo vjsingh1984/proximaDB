@@ -38,7 +38,7 @@ mod tests {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
-            FilesystemFactory::new(filesystem_config)
+            FilesystemFactory::create(filesystem_config)
                 .await
                 .expect("Failed to create filesystem factory"),
         );
@@ -68,7 +68,7 @@ mod tests {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
-            FilesystemFactory::new(filesystem_config)
+            FilesystemFactory::create(filesystem_config)
                 .await
                 .expect("Failed to create filesystem factory"),
         );

@@ -49,7 +49,7 @@ use crate::core::BloomFilterConfig;
 pub async fn create_test_engine() -> SstEngine {
     let config = SstConfig::default();
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
     SstEngine::new_with_config(config, filesystem, distance_compute)
@@ -66,7 +66,7 @@ pub async fn create_test_engine() -> SstEngine {
 /// A fully initialized SST engine with the provided configuration
 pub async fn create_test_engine_with_config(config: SstConfig) -> SstEngine {
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
     SstEngine::new_with_config(config, filesystem, distance_compute)
@@ -84,7 +84,7 @@ pub async fn create_test_engine_with_config(config: SstConfig) -> SstEngine {
 pub async fn create_test_engine_with_metric(metric: DistanceMetric) -> SstEngine {
     let config = SstConfig::default();
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(metric));
 
     SstEngine::new_with_config(config, filesystem, distance_compute)
@@ -184,7 +184,7 @@ pub async fn create_test_filesystem() -> Arc<FilesystemFactory> {
     // Keep temp_dir alive by leaking it for test duration
     std::mem::forget(temp_dir);
 
-    Arc::new(FilesystemFactory::new(config).await.unwrap())
+    Arc::new(FilesystemFactory::create(config).await.unwrap())
 }
 
 /// Setup test directories structure
@@ -291,7 +291,7 @@ pub fn create_simple_vector_record(id: &str, dim: usize) -> VectorRecord {
 /// # Returns
 /// Configured UnifiedSstableReader for testing
 pub async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
-    let fs_factory = Arc::new(FilesystemFactory::new(HashMap::new()).await.unwrap());
+    let fs_factory = Arc::new(FilesystemFactory::create(HashMap::new()).await.unwrap());
     let fs = fs_factory.get_filesystem("file:///tmp/proximadb-test").await.unwrap();
 
     let config = ReaderConfig {
@@ -313,7 +313,7 @@ pub async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
 /// Basic UnifiedSstableReader for testing
 pub async fn create_test_reader() -> UnifiedSstableReader {
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
     UnifiedSstableReader::new(filesystem)
 }
 

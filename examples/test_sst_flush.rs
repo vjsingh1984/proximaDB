@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📁 Using directory: {}", base_path);
 
     // Create filesystem
-    let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
     // Create SST engine using factory
     let engine = StorageEngineFactory::create_sst_async().await?;

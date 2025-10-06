@@ -24,7 +24,7 @@ async fn test_sstable_write_read_format() {
 
     // Create filesystem factory with default config
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     // Create a simple record
     let mut records = BTreeMap::new();
@@ -85,7 +85,7 @@ async fn test_sstable_format_inspection() {
 
     // Create filesystem factory with default config
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     // Create records with metadata for bloom filter
     let mut records = BTreeMap::new();

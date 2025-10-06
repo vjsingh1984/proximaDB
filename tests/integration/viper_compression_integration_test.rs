@@ -229,7 +229,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     // setup_test_assignment("test_collection").await?;
 
     // Setup storage engine
-    let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
 
@@ -347,7 +347,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     // Set up storage assignment for the test collection (handled by UnifiedTestEnvironment)
     // setup_test_assignment("search_test").await?;
 
-    let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
 
@@ -714,7 +714,7 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         // Set up storage assignment for the test collection (handled by UnifiedTestEnvironment)
         // setup_test_assignment("algo_test").await?;
 
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
 
         let coordinator = Arc::new(
@@ -848,7 +848,7 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         // Set up storage assignment for the test collection (handled by UnifiedTestEnvironment)
         // setup_test_assignment("compression_test").await?;
 
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
 
         let coordinator = Arc::new(

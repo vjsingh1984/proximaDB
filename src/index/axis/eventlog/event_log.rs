@@ -499,7 +499,7 @@ mod tests {
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(base_url.clone());
 
-        let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
         let queue = EventLogQueue::new(base_url, "test_collection".to_string(), filesystem_factory)
             .await
@@ -603,7 +603,7 @@ mod tests {
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(base_url.clone());
 
-        let filesystem_factory = Arc::new(FilesystemFactory::new(config.clone()).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(config.clone()).await.unwrap());
 
         // Create queue and add events
         {

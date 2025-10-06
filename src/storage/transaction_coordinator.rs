@@ -1444,7 +1444,7 @@ mod tests {
             ..Default::default()
         };
 
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
         let coordinator = TransactionCoordinator::new(filesystem, None).await.unwrap();
 
         (coordinator, temp_dir)

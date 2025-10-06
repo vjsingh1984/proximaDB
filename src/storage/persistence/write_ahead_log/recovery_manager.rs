@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::storage::persistence::write_ahead_log::{
-    WALFlushCoordinator, WriteBufferDiskManager, WriteBufferFileInfo,
+    WALFlushCoordinator, WriteAheadLogDiskManager, WalFileInfo,
     recovery_thread_pool::get_recovery_thread_pool, serialization::SerializerFactory, serialization::SerializationFormat,
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -33,7 +33,7 @@ pub enum RecoveryMode {
 /// Manager for WAL recovery operations
 pub struct RecoveryManager {
     /// Disk manager for reading WAL files
-    disk_manager: Arc<WriteBufferDiskManager>,
+    disk_manager: Arc<WriteAheadLogDiskManager>,
     /// Storage engines by collection (LSM or VIPER)
     storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
     /// Flush coordinator for managing recovery coordination
@@ -77,7 +77,7 @@ impl RecoveryManager {
         info!("🎯 Creating RecoveryManager with direct-to-storage recovery");
 
         // Create disk manager
-        let disk_manager = Arc::new(WriteBufferDiskManager::new(
+        let disk_manager = Arc::new(WriteAheadLogDiskManager::new(
             filesystem_factory.clone(),
             // Use the first data directory from WAL config as base for disk manager
             config
@@ -130,7 +130,7 @@ impl RecoveryManager {
     /// Recover all collections from disk to storage engines in parallel
     pub async fn recover_all(&self) -> Result<RecoveryStats> {
         info!(
-            "🔄 Starting parallel WAL recovery (mode: {:?})",
+            "🔄 Starting WAL recovery using global manifest (mode: {:?})",
             self.recovery_mode
         );
 
@@ -143,10 +143,27 @@ impl RecoveryManager {
             .await
             .context("Failed to start recovery phase")?;
 
-        // Recovery is starting
+        // Use global manifest for proper LSN ordering
+        info!("🔍 DEBUG: Getting active entries from global manifest...");
+        let all_entries = crate::storage::persistence::write_ahead_log::manifest::get_active_entries().await;
+        info!("🔍 DEBUG: Global manifest returned {} active entries", all_entries.len());
 
-        // Get all collections by listing the collections directory
-        let collections = self.discover_collections().await?;
+        if all_entries.is_empty() {
+            info!("📝 No active WAL entries to recover (manifest is empty or all entries flushed)");
+            recovery_guard.complete(0, 0).await;
+            return Ok(RecoveryStats::default());
+        }
+
+        info!("📂 Found {} WAL batches across collections (sorted by global LSN)", all_entries.len());
+        for (i, entry) in all_entries.iter().take(5).enumerate() {
+            info!("  Entry {}: LSN={}, collection={}, batch={}, status={:?}",
+                  i+1, entry.global_lsn, entry.collection_id, entry.batch_id, entry.status);
+        }
+
+        // Group by collection for organized recovery
+        let mut collections_to_recover: std::collections::HashSet<String> =
+            all_entries.iter().map(|e| e.collection_id.clone()).collect();
+        let collections: Vec<String> = collections_to_recover.into_iter().collect();
         info!(
             "Found {} collections to recover using {} threads",
             collections.len(),
@@ -266,6 +283,15 @@ impl RecoveryManager {
             pool_stats.peak_concurrent_threads,
             pool_stats.total_recovery_time_ms
         );
+
+        // Cleanup manifest: Remove Flushed entries and old segments
+        info!("🧹 Cleaning up global manifest after recovery...");
+        if let Ok(removed) = crate::storage::persistence::write_ahead_log::manifest::cleanup_checkpointed().await {
+            if removed > 0 {
+                info!("🧹 Removed {} flushed manifest entries", removed);
+            }
+        }
+
         Ok(stats)
     }
 
@@ -299,7 +325,7 @@ impl RecoveryManager {
     /// Internal collection recovery logic (can be called from parallel tasks)
     async fn recover_collection_internal(
         collection_id: &str,
-        disk_manager: Arc<WriteBufferDiskManager>,
+        disk_manager: Arc<WriteAheadLogDiskManager>,
         storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         _flush_coordinator: Arc<WALFlushCoordinator>,
         recovery_mode: RecoveryMode,
@@ -317,24 +343,25 @@ impl RecoveryManager {
             }
         }
 
-        let manifest = crate::storage::persistence::write_ahead_log::manifest::WalManifest::new(disk_manager.clone());
-        let entries = manifest.read_entries(collection_id).await.unwrap_or_default();
+        // Get entries from global manifest
+        let entries = crate::storage::persistence::write_ahead_log::manifest::get_collection_entries(collection_id).await;
         let mut vectors_recovered = 0u64;
         let mut files_recovered = 0u64;
 
         for (idx, e) in entries.iter().enumerate() {
-            let coll_url = disk_manager.collection_wal_url(collection_id);
-            let file_url = format!("{}{}", coll_url, e.file_name);
-            let mut file_info = WriteBufferFileInfo {
+            // Use full_url() from manifest entry (includes storage_url + file_path)
+            let file_url = e.full_url();
+
+            let mut file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
                 batch_id: BatchId::from_base62(&e.batch_id).unwrap_or(BatchId::new()),
                 file_url: file_url.clone(),
                 size_bytes: e.size_bytes,
-                format: SerializationFormat::ProtocolBuffers,
+                format: e.format,
             };
-            if let Some(ext) = e.file_name.rsplit('.').next() {
-                file_info.format = match ext { "pbwal" => SerializationFormat::ProtocolBuffers, "bcwal" => SerializationFormat::Bincode, "avwal" => SerializationFormat::Avro, _ => file_info.format };
-            }
+
+            debug!("🔄 Recovering WAL batch {} from {} (LSN: {}, {} bytes)",
+                   e.batch_id, file_url, e.global_lsn, e.size_bytes);
 
             if let Ok(data) = disk_manager.read_batch(&file_info).await {
                 let checksum = crate::utils::checksum::Crc32::checksum(&data);
@@ -346,7 +373,15 @@ impl RecoveryManager {
                 if result.success {
                     files_recovered += 1;
                     vectors_recovered += count;
+
+                    // Delete WAL file (idempotent - safe if already deleted)
                     let _ = disk_manager.delete_wal_file_url(&file_info.file_url).await;
+
+                    // Mark as flushed in global manifest (prevents duplicate recovery)
+                    crate::storage::persistence::write_ahead_log::manifest::mark_flushed(&[e.batch_id.clone()]).await?;
+
+                    info!("✅ Recovered and flushed batch {} (LSN: {}, {} vectors) - marked as Flushed",
+                          e.batch_id, e.global_lsn, count);
                 }
                 if let Some(cb) = &progress_callback { cb(RecoveryProgress { current_file: idx + 1, total_files: entries.len(), current_collection: collection_id.to_string(), vectors_recovered, bytes_processed: e.size_bytes }); }
             }
@@ -356,31 +391,22 @@ impl RecoveryManager {
         let listed = disk_manager.list_collection_files(collection_id).await.unwrap_or_default();
         for fi in listed {
             if let Some(name) = fi.file_url.split('/').last() {
-                if entries.iter().any(|m| m.file_name == name) { continue; }
+                if entries.iter().any(|m| m.file_path.ends_with(name)) { continue; }
             }
             let count = Self::recover_file_internal(&fi, &disk_manager, &storage_engines, recovery_mode).await?;
             vectors_recovered += count;
             files_recovered += 1;
         }
 
-        // Compact manifest to remaining existing files
-        let manifest = crate::storage::persistence::write_ahead_log::manifest::WalManifest::new(disk_manager.clone());
-        let mut remaining = Vec::new();
-        let current_entries = manifest.read_entries(collection_id).await.unwrap_or_default();
-        for e in current_entries {
-            let url = format!("{}{}", disk_manager.collection_wal_url(collection_id), e.file_name);
-            if let Ok(fs) = disk_manager.filesystem_factory().get_filesystem(&url) {
-                if fs.exists(&url).await.unwrap_or(false) { remaining.push(e); }
-            }
-        }
-        let _ = manifest.rewrite_entries(collection_id, &remaining).await;
+        // Note: Global manifest cleanup is handled separately via checkpoint system
+        // No need for per-collection manifest compaction
 
         info!("✅ Recovered {} vectors from {} files for collection {}", vectors_recovered, files_recovered, collection_id);
         Ok((vectors_recovered, files_recovered))
     }
 
     /// Recover a single WAL file (public API)
-    async fn recover_file(&self, file_info: &WriteBufferFileInfo) -> Result<u64> {
+    async fn recover_file(&self, file_info: &WalFileInfo) -> Result<u64> {
         Self::recover_file_internal(
             file_info,
             &self.disk_manager,
@@ -392,8 +418,8 @@ impl RecoveryManager {
 
     /// Internal file recovery logic (can be called from parallel tasks)
     async fn recover_file_internal(
-        file_info: &WriteBufferFileInfo,
-        disk_manager: &Arc<WriteBufferDiskManager>,
+        file_info: &WalFileInfo,
+        disk_manager: &Arc<WriteAheadLogDiskManager>,
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         recovery_mode: RecoveryMode,
     ) -> Result<u64> {
@@ -452,9 +478,9 @@ impl RecoveryManager {
 
     /// Flush recovered vectors to storage engine
     async fn flush_recovered_vectors(
-        file_info: &WriteBufferFileInfo,
+        file_info: &WalFileInfo,
         vectors: Vec<crate::proto::proximadb_v1::VectorRecord>,
-        _disk_manager: &Arc<WriteBufferDiskManager>,
+        _disk_manager: &Arc<WriteAheadLogDiskManager>,
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         _recovery_mode: RecoveryMode,
     ) -> Result<crate::storage::traits::FlushResult> {
@@ -539,7 +565,7 @@ pub struct ParallelRecoveryManager {
 impl ParallelRecoveryManager {
     /// Create a new parallel recovery manager
     pub fn new(
-        disk_manager: Arc<WriteBufferDiskManager>,
+        disk_manager: Arc<WriteAheadLogDiskManager>,
         flush_coordinator: Arc<WALFlushCoordinator>,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         num_workers: Option<usize>,
@@ -720,7 +746,7 @@ mod tests {
     use tempfile::TempDir;
 
     async fn create_test_managers() -> (
-        Arc<WriteBufferDiskManager>,
+        Arc<WriteAheadLogDiskManager>,
         Arc<WALFlushCoordinator>,
         RecoveryManager,
         TempDir,
@@ -730,13 +756,13 @@ mod tests {
         // Create filesystem factory
         let filesystem_config = FilesystemConfig::default();
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(filesystem_config)
+            FilesystemFactory::create(filesystem_config)
                 .await
                 .expect("Failed to create filesystem factory"),
         );
 
         // Create disk manager
-        let disk_manager = Arc::new(WriteBufferDiskManager::new(
+        let disk_manager = Arc::new(WriteAheadLogDiskManager::new(
             filesystem_factory.clone(),
             temp_dir.path().to_str().unwrap(),
         ));
@@ -774,9 +800,8 @@ mod tests {
         let collection_id = "test_collection";
 
         // Create WAL directory structure for collection
-        // Use slug_for to match the actual directory structure used by disk_manager
-        let slug = crate::storage::persistence::write_ahead_log::collection_path::slug_for(collection_id);
-        let wal_dir = temp_dir.path().join(&slug).join("wal");
+        // Use collection_id directly to match the actual directory structure used by disk_manager
+        let wal_dir = temp_dir.path().join(collection_id).join("wal");
         tokio::fs::create_dir_all(&wal_dir)
             .await
             .expect("Failed to create WAL directory");
@@ -940,7 +965,7 @@ mod tests {
 
         // Create a filesystem factory for the mock
         let filesystem_factory = futures::executor::block_on(async {
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .expect("Failed to create filesystem factory")
         });

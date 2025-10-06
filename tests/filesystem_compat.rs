@@ -29,7 +29,7 @@ mod basic_operations {
         let base_path = format!("file://{}", temp_dir.path().display());
 
         // Test with UnifiedCachingFilesystem
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -55,7 +55,7 @@ mod basic_operations {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -90,7 +90,7 @@ mod basic_operations {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -122,7 +122,7 @@ mod basic_operations {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -156,7 +156,7 @@ mod caching {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -197,7 +197,7 @@ mod caching {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -239,7 +239,7 @@ mod error_handling {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -262,7 +262,7 @@ mod error_handling {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -292,7 +292,7 @@ mod concurrency {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),
@@ -331,7 +331,7 @@ mod concurrency {
         let temp_dir = TempDir::new()?;
         let base_path = format!("file://{}", temp_dir.path().display());
 
-        let factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let base_fs = factory.get_filesystem(&base_path)?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::with_serializer(
             base_fs.clone(),

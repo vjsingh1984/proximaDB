@@ -60,7 +60,7 @@ fn test_projection_mask() {
 
 #[tokio::test]
 async fn test_vector_bounds_check() {
-    let reader = nova_meta_reader::NovaMetaReader::new(Arc::new(FilesystemFactory::new(
+    let reader = nova_meta_reader::NovaMetaReader::new(Arc::new(FilesystemFactory::create(
         Default::default()
     ).await.unwrap()));
 
@@ -76,7 +76,7 @@ async fn test_vector_bounds_check() {
 
 #[tokio::test]
 async fn test_euclidean_distance() {
-    let reader = nova_meta_reader::NovaMetaReader::new(Arc::new(FilesystemFactory::new(
+    let reader = nova_meta_reader::NovaMetaReader::new(Arc::new(FilesystemFactory::create(
         Default::default()
     ).await.unwrap()));
 

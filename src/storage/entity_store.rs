@@ -1030,7 +1030,7 @@ mod tests {
     impl NoopEngine {
         async fn new() -> Self {
             let config = FilesystemConfig::default();
-            let filesystem_factory = FilesystemFactory::new(config).await.unwrap();
+            let filesystem_factory = FilesystemFactory::create(config).await.unwrap();
             Self { filesystem_factory }
         }
     }

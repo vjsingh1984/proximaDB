@@ -135,7 +135,7 @@ async fn test_insert_flush_compact_flow() {
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -406,7 +406,7 @@ async fn test_basic_compaction() {
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -807,7 +807,7 @@ async fn test_concurrent_compaction_and_reads() {
     let engine = Arc::new(
         {
             let filesystem_factory =
-                Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+                Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
             ViperEngine::from_core_config(
                 crate::core::config::ViperConfig::default(),
                 filesystem_factory,
@@ -985,7 +985,7 @@ async fn test_concurrent_compaction_across_collections() {
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let engine = Arc::new(
         ViperEngine::from_core_config(
             crate::core::config::ViperConfig::default(),
@@ -1112,7 +1112,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     debug!("🗃️ Created filesystem factory");
 
     let engine = Arc::new(
@@ -1299,7 +1299,7 @@ async fn test_size_tiered_compaction_strategy() {
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -1411,7 +1411,7 @@ async fn test_compaction_with_metadata_filtering() {
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -1631,7 +1631,7 @@ async fn test_incremental_compaction() {
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", test_dir));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,

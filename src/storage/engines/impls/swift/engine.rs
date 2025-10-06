@@ -223,7 +223,7 @@ impl SwiftEngine {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
                 .await?,
         );
 

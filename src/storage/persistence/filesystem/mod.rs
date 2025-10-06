@@ -176,6 +176,7 @@ pub mod auth;
 // intelligent_filesystem removed - using UnifiedCachingFilesystem instead
 pub mod local;
 pub mod manager;
+pub mod scheme_validation;
 pub mod write_strategy;
 // zero_copy_filesystem removed - functionality integrated into UnifiedCachingFilesystem
 
@@ -196,6 +197,12 @@ pub mod tests;
 
 // Filesystem implementations
 pub use local::LocalFileSystem;
+
+// Re-export centralized scheme validation functions
+pub use scheme_validation::{
+    validate_url, extract_scheme, normalize_url, is_supported_scheme,
+    FilesystemScheme,
+};
 
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;
@@ -836,6 +843,10 @@ impl std::fmt::Debug for FilesystemFactory {
 
 impl FilesystemFactory {
     /// Create filesystem factory with default configuration
+    ///
+    /// **DEPRECATED**: Use `create_default()` instead. This method creates a non-functional
+    /// factory without registered filesystems and exists only for backward compatibility.
+    #[deprecated(since = "0.1.5", note = "Use `create_default()` instead - this creates a broken factory")]
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),
@@ -844,8 +855,37 @@ impl FilesystemFactory {
         }
     }
 
-    /// Create new filesystem factory with configuration
-    pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
+    /// Create a fully initialized filesystem factory with default configuration
+    ///
+    /// This is the preferred way to create a FilesystemFactory. It initializes all
+    /// filesystem backends (local, cloud) based on the default configuration.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// let factory = FilesystemFactory::create_default().await?;
+    /// let fs = factory.get_filesystem("file:///tmp/data")?;
+    /// ```
+    pub async fn create_default() -> FsResult<Self> {
+        Self::create(FilesystemConfig::default()).await
+    }
+
+    /// Create a fully initialized filesystem factory with custom configuration
+    ///
+    /// This static factory method creates and initializes a FilesystemFactory with
+    /// all configured filesystem backends registered and ready to use.
+    ///
+    /// # Arguments
+    /// * `config` - Filesystem configuration specifying which backends to enable
+    ///
+    /// # Examples
+    /// ```ignore
+    /// let config = FilesystemConfig {
+    ///     local: Some(LocalConfig::default()),
+    ///     ..Default::default()
+    /// };
+    /// let factory = FilesystemFactory::create(config).await?;
+    /// ```
+    pub async fn create(config: FilesystemConfig) -> FsResult<Self> {
         let mut factory = Self {
             config,
             filesystems: HashMap::new(),
@@ -859,6 +899,16 @@ impl FilesystemFactory {
         factory.initialize_tier_mapping();
 
         Ok(factory)
+    }
+
+    /// Create new filesystem factory with configuration
+    ///
+    /// **DEPRECATED**: Use `create()` instead for clearer semantics.
+    /// Having `new()` on a factory is confusing - factories should have static
+    /// creation methods like `create()`, `create_default()`, etc.
+    #[deprecated(since = "0.1.5", note = "Use `create(config)` instead for clearer factory semantics")]
+    pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
+        Self::create(config).await
     }
 
     /// Initialize all configured filesystem backends
@@ -884,19 +934,14 @@ impl FilesystemFactory {
     ///
     /// Use this when you need raw filesystem access without caching.
     pub fn get_filesystem(&self, url: &str) -> FsResult<Arc<dyn FileSystem>> {
-        // Handle URLs without schemes by prepending file://
-        let normalized_url = if !url.contains("://") {
-            format!("file://{}", url)
-        } else {
-            url.to_string()
-        };
-
-        let scheme = self.extract_scheme(&normalized_url)?;
+        // Use centralized scheme extraction and validation
+        let scheme = extract_scheme(url)?;
+        let scheme_str = scheme.as_str();
 
         self.filesystems
-            .get(&scheme)
+            .get(scheme_str)
             .cloned()
-            .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme))
+            .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme_str.to_string()))
     }
 
     /// Get an IntelligentFilesystem with automatic scheme-specific filesystem selection.
@@ -1082,91 +1127,6 @@ impl FilesystemFactory {
         Ok(())
     }
 
-    /// Validate URL format for supported cloud providers
-    pub fn validate_url(&self, url: &str) -> FsResult<()> {
-        // Handle URLs without schemes by prepending file://
-        let normalized_url = if !url.contains("://") {
-            format!("file://{}", url)
-        } else {
-            url.to_string()
-        };
-
-        // For file:// URLs, don't use URL parsing to avoid issues
-        if normalized_url.starts_with("file://") {
-            // File URLs must have absolute paths
-            let path = if normalized_url.starts_with("file:///") {
-                &normalized_url[8..]  // Remove "file:///"
-            } else {
-                &normalized_url[7..]  // Remove "file://"
-            };
-
-            if !path.starts_with('/') && !path.starts_with("./") {
-                return Err(FilesystemError::InvalidPath(
-                    "File URLs must have absolute paths or explicit relative paths (./...)".to_string(),
-                ));
-            }
-            return Ok(());
-        }
-
-        // For non-file URLs, use URL parsing
-        let parsed_url = Url::parse(&normalized_url)?;
-
-        match parsed_url.scheme() {
-            "s3" => {
-                // S3 URLs must have bucket name
-                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
-                    return Err(FilesystemError::InvalidPath(
-                        "S3 URLs must specify bucket name".to_string(),
-                    ));
-                }
-            }
-            "gs" => {
-                // GCS URLs must have bucket name
-                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
-                    return Err(FilesystemError::InvalidPath(
-                        "GCS URLs must specify bucket name".to_string(),
-                    ));
-                }
-            }
-            "adls" => {
-                // ADLS URLs must have account and container
-                let path_parts: Vec<&str> = parsed_url
-                    .path()
-                    .trim_start_matches('/')
-                    .split('/')
-                    .collect();
-                if path_parts.len() < 2 || path_parts[0].is_empty() || path_parts[1].is_empty() {
-                    return Err(FilesystemError::InvalidPath(
-                        "ADLS URLs must specify account and container".to_string(),
-                    ));
-                }
-            }
-            "abfs" => {
-                // ABFS URLs must have container@account format
-                if parsed_url.host_str().is_none() || !parsed_url.host_str().unwrap().contains('@')
-                {
-                    return Err(FilesystemError::InvalidPath(
-                        "ABFS URLs must use container@account format".to_string(),
-                    ));
-                }
-            }
-            "hdfs" => {
-                // HDFS URLs must have namenode host
-                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
-                    return Err(FilesystemError::InvalidPath(
-                        "HDFS URLs must specify namenode host".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                return Err(FilesystemError::UnsupportedScheme(
-                    parsed_url.scheme().to_string(),
-                ));
-            }
-        }
-
-        Ok(())
-    }
 
     /// Extract bucket/container name from URL
     pub fn extract_bucket_from_url(&self, url: &str) -> FsResult<Option<String>> {
@@ -1687,7 +1647,7 @@ mod inline_tests {
     #[tokio::test]
     async fn test_filesystem_factory_creation() {
         let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::new(config).await.unwrap();
+        let factory = FilesystemFactory::create(config).await.unwrap();
 
         // Should have local filesystem by default
         assert!(factory.available_filesystems().contains(&"file"));
@@ -1696,7 +1656,7 @@ mod inline_tests {
     #[tokio::test]
     async fn test_url_scheme_extraction() {
         let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::new(config).await.unwrap();
+        let factory = FilesystemFactory::create(config).await.unwrap();
 
         assert_eq!(
             factory.extract_scheme("file:///tmp/test.txt").unwrap(),
@@ -1730,7 +1690,7 @@ mod inline_tests {
     #[tokio::test]
     async fn test_path_extraction() {
         let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::new(config).await.unwrap();
+        let factory = FilesystemFactory::create(config).await.unwrap();
 
         assert_eq!(
             FilesystemFactory::resolve_path("file:///tmp/test.txt").unwrap(),

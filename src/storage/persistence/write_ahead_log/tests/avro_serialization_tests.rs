@@ -88,7 +88,7 @@ async fn create_collection_write_buffer_dir(collection_id: &str) {
 #[tokio::test]
 async fn test_avro_strategy_initialization() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
@@ -100,7 +100,7 @@ async fn test_avro_strategy_initialization() {
 #[tokio::test]
 async fn test_avro_write_and_read_batch() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -144,7 +144,7 @@ async fn test_avro_write_and_read_batch() {
 #[tokio::test]
 async fn test_avro_search_by_id() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -180,7 +180,7 @@ async fn test_avro_search_by_id() {
 #[tokio::test]
 async fn test_avro_similarity_search() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -223,7 +223,7 @@ async fn test_avro_similarity_search() {
 #[tokio::test]
 async fn test_avro_stats_tracking() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -260,7 +260,7 @@ async fn test_avro_stats_tracking() {
 #[tokio::test]
 async fn test_avro_collection_stats() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -295,7 +295,7 @@ async fn test_avro_collection_stats() {
 #[tokio::test]
 async fn test_avro_write_with_sync() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -317,7 +317,7 @@ async fn test_avro_write_with_sync() {
 #[tokio::test]
 async fn test_avro_read_all_batches() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -359,7 +359,7 @@ async fn test_avro_read_all_batches() {
 #[tokio::test]
 async fn test_avro_empty_collection_operations() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -389,7 +389,7 @@ async fn test_avro_empty_collection_operations() {
 #[tokio::test]
 async fn test_avro_multiple_collections() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -529,7 +529,7 @@ mod integration_tests {
     async fn test_avro_flush_with_storage_engine() {
         let config = create_test_config();
         let filesystem_factory =
-            Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let strategy = AvroSerializationStrategy::new(&config, filesystem_factory.clone())
             .await
             .expect("Failed to create strategy");

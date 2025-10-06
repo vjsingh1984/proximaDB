@@ -89,7 +89,7 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
 #[tokio::test]
 async fn test_proto_strategy_initialization() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
@@ -108,7 +108,7 @@ async fn test_proto_field_preservation() {
 
     // For now, we'll just test that the strategy can be created and basic operations work
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -202,7 +202,7 @@ async fn test_proto_memory_only_mode() {
     config.performance.sync_mode =
         crate::storage::persistence::write_ahead_log::config::SyncMode::MemoryOnly;
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");

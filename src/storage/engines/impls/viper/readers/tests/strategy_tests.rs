@@ -17,7 +17,7 @@ use super::super::test_data_generator::{ParquetTestDataGenerator, TestDataConfig
 /// Test DirectArrow strategy selection and execution
 #[tokio::test]
 async fn test_direct_arrow_strategy() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -56,7 +56,7 @@ async fn test_direct_arrow_strategy() -> Result<()> {
 /// Test MetadataFiltered strategy selection and execution
 #[tokio::test]
 async fn test_metadata_filtered_strategy() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -98,7 +98,7 @@ async fn test_metadata_filtered_strategy() -> Result<()> {
 /// Test QuantizedTwoStage strategy selection and execution
 #[tokio::test]
 async fn test_quantized_two_stage_strategy() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -137,7 +137,7 @@ async fn test_quantized_two_stage_strategy() -> Result<()> {
 /// Test Hybrid strategy selection and execution
 #[tokio::test]
 async fn test_hybrid_strategy() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let config = ReaderConfig {
         seek_efficiency_threshold: 0.1, // Very aggressive to trigger hybrid
         quantization_candidate_multiplier: 5,
@@ -292,7 +292,7 @@ async fn test_strategy_selector_logic() -> Result<()> {
 /// Test multi-file coordination
 #[tokio::test]
 async fn test_multi_file_coordination() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -331,7 +331,7 @@ async fn test_multi_file_coordination() -> Result<()> {
 /// Test error handling for various scenarios
 #[tokio::test]
 async fn test_error_handling() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     // Test 1: Nonexistent file
@@ -384,7 +384,7 @@ async fn test_error_handling() -> Result<()> {
 /// Test performance characteristics across strategies
 #[tokio::test]
 async fn test_performance_characteristics() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -431,7 +431,7 @@ async fn test_performance_characteristics() -> Result<()> {
 /// Test caching behavior
 #[tokio::test]
 async fn test_caching_behavior() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;

@@ -382,7 +382,7 @@ mod tests {
     async fn test_enhanced_reader_creation() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
         let enhanced_reader = ZeroCopyReaderIntegration::create_enhanced_sst_reader(
             "test_collection",
@@ -400,7 +400,7 @@ mod tests {
     async fn test_batch_reader_creation() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
         let readers = ZeroCopyReaderIntegration::create_enhanced_readers_batch(
             "test_collection",

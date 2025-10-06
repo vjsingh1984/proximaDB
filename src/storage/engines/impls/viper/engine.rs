@@ -328,7 +328,7 @@ impl ViperEngine {
         filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     ) -> Result<Self> {
         // Create a dummy filesystem factory for backward compatibility
-        let filesystem_factory = Arc::new(FilesystemFactory::default());
+        let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
         Self::from_unified_filesystem_and_factory(core_config, filesystem, filesystem_factory).await
     }
 
@@ -346,7 +346,7 @@ impl ViperEngine {
     pub async fn new() -> Result<Self> {
         let core_config = crate::core::config::ViperConfig::default();
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await?);
         let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
 
         Self::new_with_config(core_config, filesystem, distance_compute).await
@@ -1654,7 +1654,7 @@ impl Default for ViperEngine {
             .unwrap()
             .block_on(async {
                 let filesystem_factory = Arc::new(
-                    FilesystemFactory::new(
+                    FilesystemFactory::create(
                         crate::storage::persistence::filesystem::FilesystemConfig::default(),
                     )
                     .await

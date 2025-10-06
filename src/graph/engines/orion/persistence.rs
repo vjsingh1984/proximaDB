@@ -118,7 +118,7 @@ impl OrionPersistence {
         enable_wal: bool,
     ) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
-        let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await
+        let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await
             .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?);
 
         // Get the underlying filesystem from the factory

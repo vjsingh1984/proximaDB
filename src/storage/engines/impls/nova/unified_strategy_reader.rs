@@ -442,7 +442,7 @@ impl CachedNOVAReader {
         let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             dimension,
-            Arc::new(FilesystemFactory::default()),
+            Arc::new(FilesystemFactory::create_default().await?),
             self.cached_filesystem.clone(),
             self.collection_id.clone(),
             "nova".to_string(),

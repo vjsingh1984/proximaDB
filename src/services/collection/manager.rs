@@ -116,7 +116,7 @@ impl CollectionService {
         };
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(fs_config)
+            FilesystemFactory::create(fs_config)
                 .await
                 .context("Failed to initialize filesystem factory")?,
         );
@@ -1251,7 +1251,7 @@ impl CollectionService {
         let mut created_components = Vec::new();
 
         // Build paths under base location using StoragePath utility
-        let write_buffer_dir = StoragePath::collection_write_buffer_path(base_location, &collection_uuid);
+        let write_buffer_dir = StoragePath::collection_wal_path(base_location, &collection_uuid);
         let data_dir = StoragePath::collection_data_path(base_location, &collection_uuid);
         let indexes_dir = StoragePath::collection_index_path(base_location, &collection_uuid);
 
@@ -1591,7 +1591,7 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)
@@ -1698,7 +1698,7 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)

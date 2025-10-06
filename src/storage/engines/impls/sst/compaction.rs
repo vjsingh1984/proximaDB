@@ -177,7 +177,7 @@ impl Compaction {
     ) -> Result<Self> {
         // Create unified reader with filesystem factory
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
@@ -715,7 +715,7 @@ impl Compaction {
 
         // Read and merge all input files using existing infrastructure
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
@@ -962,7 +962,7 @@ impl Compaction {
 
         // TODO: Pass filesystem from compaction manager - for now create a new factory
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await

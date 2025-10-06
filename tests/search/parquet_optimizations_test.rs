@@ -86,7 +86,7 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
 async fn test_footer_cache_functionality() -> Result<()> {
     let dir = tempdir()?;
     let filesystem = Arc::new(
-        proximadb::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await?
+        proximadb::storage::persistence::filesystem::FilesystemFactory::create(Default::default()).await?
     );
     
     // Create test Parquet files

@@ -196,7 +196,7 @@ async fn setup_analyzer_with_mock() -> Analyzer {
         default_fs: Some(format!("file://{}", temp_dir.path().display())),
         ..Default::default()
     };
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     let config = UniversalMetadataConfig {
         storage_url: format!("file://{}", temp_dir.path().display()),

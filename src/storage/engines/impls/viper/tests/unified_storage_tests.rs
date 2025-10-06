@@ -28,7 +28,7 @@ async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
         ..Default::default()
     };
 
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
     let viper_engine =
         ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem)
             .await?;
@@ -163,7 +163,7 @@ async fn test_unified_atomic_operations_lifecycle() -> Result<()> {
         ..Default::default()
     };
 
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     // Test unified atomic coordinator
     let coordinator = TransactionCoordinator::new(filesystem.clone(), None).await?;

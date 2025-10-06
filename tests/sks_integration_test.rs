@@ -115,7 +115,7 @@ mod sks_integration_tests {
                     match tokio::runtime::Handle::try_current() {
                         Ok(handle) => {
                             handle.block_on(async {
-                                FilesystemFactory::new(proximadb::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap()
+                                FilesystemFactory::create(proximadb::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap()
                             })
                         }
                         Err(_) => {

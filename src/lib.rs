@@ -232,7 +232,15 @@ impl ProximaDB {
         .await?;
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
 
-        // Step 3: Create StorageEngine using the CollectionService from SharedServices
+        // Step 3: Initialize global WAL manifest
+        tracing::info!("🌐 ProximaDB::new - Initializing global WAL manifest...");
+        let mut wal_config = config.storage.wal_config.to_engine_config();
+        // Set data directories from storage_locations
+        wal_config.multi_disk.data_directories = config.storage.storage_urls();
+        let _manifest_service = storage::persistence::write_ahead_log::manifest::init(&wal_config).await?;
+        tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
+
+        // Step 4: Create StorageEngine using the CollectionService from SharedServices
         tracing::debug!(
             "🔧 ProximaDB::new - Creating storage engine with injected CollectionService..."
         );
@@ -363,6 +371,11 @@ impl ProximaDB {
     }
 
     pub async fn stop(&mut self) -> Result<()> {
+        // Shutdown global WAL manifest (flush pending writes)
+        tracing::info!("🛑 Shutting down global WAL manifest...");
+        storage::persistence::write_ahead_log::manifest::shutdown().await?;
+        tracing::info!("✅ Global WAL manifest shut down");
+
         // Stop multi-server
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server

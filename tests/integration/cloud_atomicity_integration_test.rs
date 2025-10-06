@@ -73,7 +73,7 @@ fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> Wri
 /// Create test cloud atomicity manager
 async fn create_test_cloud_atomicity_manager() -> Result<Arc<CloudAtomicityManager>> {
     let config = FilesystemConfig::default();
-    let mut factory = FilesystemFactory::new(config);
+    let mut factory = FilesystemFactory::create(config);
     factory.initialize().await?;
     let filesystem_factory = Arc::new(factory);
     
@@ -105,7 +105,7 @@ async fn create_test_cloud_atomicity_manager() -> Result<Arc<CloudAtomicityManag
 /// Create test WAL batch strategy with cloud atomicity
 async fn create_test_wal_strategy_with_cloud_atomicity() -> Result<BincodeWalBatchStrategy> {
     let config = FilesystemConfig::default();
-    let mut factory = FilesystemFactory::new(config);
+    let mut factory = FilesystemFactory::create(config);
     factory.initialize().await?;
     let filesystem = Arc::new(factory);
     
@@ -356,7 +356,7 @@ async fn test_concurrent_cloud_transactions() -> Result<()> {
             let wal_config = WriteBufferConfig::default();
             
             let config = FilesystemConfig::default();
-            let mut factory = FilesystemFactory::new(config);
+            let mut factory = FilesystemFactory::create(config);
             factory.initialize().await?;
             let filesystem = Arc::new(factory);
             

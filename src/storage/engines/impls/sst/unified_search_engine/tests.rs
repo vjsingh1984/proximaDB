@@ -19,7 +19,7 @@ use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 
 /// Create test UnifiedSstableReader with local filesystem
 async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
-    let fs_factory = Arc::new(FilesystemFactory::new(HashMap::new()));
+    let fs_factory = Arc::new(FilesystemFactory::create(HashMap::new()));
     let fs = fs_factory.get_filesystem("file:///tmp/proximadb-test").await.unwrap();
     
     let config = ReaderConfig {

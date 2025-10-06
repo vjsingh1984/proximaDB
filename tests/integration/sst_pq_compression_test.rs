@@ -67,7 +67,7 @@ async fn test_sst_quantization_compression() -> Result<()> {
         let fs_config = FilesystemConfig {
             default_fs: Some(format!("file://{}", base_path)),
         };
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
         
         // Create SST storage engine
         let distance_compute = Arc::new(
@@ -268,7 +268,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
         let fs_config = FilesystemConfig {
             default_fs: Some(format!("file://{}", base_path)),
         };
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
         
         // Create SST storage engine
         let distance_compute = Arc::new(

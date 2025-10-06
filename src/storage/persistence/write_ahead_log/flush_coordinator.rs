@@ -732,7 +732,7 @@ impl WALFlushCoordinator {
         // Note: This assumes we have access to a filesystem factory
         // In production, this would be injected as a dependency
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+        let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
             .await?;
         
         let filesystem = filesystem_factory.get_filesystem(file_path)?;

@@ -69,18 +69,6 @@ impl LocalFileSystem {
         use crate::storage::persistence::filesystem::FilesystemFactory;
 
         let path = FilesystemFactory::resolve_path(url)?;
-
-        // Validate that it's a file URL if it has a scheme
-        if url.contains("://") {
-            use url::Url;
-            let parsed_url = Url::parse(url)?;
-            if parsed_url.scheme() != "file" {
-                return Err(FilesystemError::UnsupportedScheme(
-                    parsed_url.scheme().to_string(),
-                ));
-            }
-        }
-
         Ok(path)
     }
 

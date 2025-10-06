@@ -84,7 +84,7 @@ async fn test_helix_engine_initialization() {
 
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new().await.unwrap();
@@ -379,7 +379,7 @@ async fn test_progressive_search() {
     let query_hilbert = Some(500u64); // Close to first SSTable
 
     let temp_dir = TempDir::new().unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     // Note: This would fail in real execution as files don't exist,
@@ -454,7 +454,7 @@ async fn test_end_to_end_search() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new().await.unwrap();
@@ -717,7 +717,7 @@ async fn test_flush_operation() {
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
     let filesystem_factory = Arc::new(
-        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
             .unwrap()
     );
@@ -791,7 +791,7 @@ async fn test_vector_search() {
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
     let filesystem_factory = Arc::new(
-        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
             .unwrap()
     );
@@ -883,7 +883,7 @@ async fn test_vector_by_id() {
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
     let filesystem_factory = Arc::new(
-        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
             .unwrap()
     );
@@ -959,7 +959,7 @@ async fn test_compaction() {
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
     let filesystem_factory = Arc::new(
-        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
             .unwrap()
     );
@@ -1111,7 +1111,7 @@ async fn test_proxima_integration() {
     // Create filesystem factory with proper config
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_path));
-    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await.unwrap());
     let filesystem = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
 
     let records = create_test_records(100, 128);
@@ -1159,7 +1159,7 @@ async fn test_metrics_collection() {
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
     let filesystem_factory = Arc::new(
-        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
             .unwrap()
     );

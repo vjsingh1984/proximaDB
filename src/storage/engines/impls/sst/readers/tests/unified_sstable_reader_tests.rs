@@ -29,7 +29,7 @@ mod tests {
     // Test helpers
     async fn create_test_reader() -> UnifiedSstableReader {
         let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         UnifiedSstableReader::new(filesystem)
     }
 

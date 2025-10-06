@@ -58,7 +58,7 @@ impl MetadataSource for VIPERParquetMetadataSource {
 impl VIPERParquetMetadataSource {
     /// Create metadata source by reading parquet file metadata
     pub async fn from_parquet_file(file_path: &str) -> Result<Self> {
-        let filesystem_factory = Arc::new(FilesystemFactory::default());
+        let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
         Self::from_parquet_file_with_filesystem(file_path, filesystem_factory).await
     }
 
@@ -183,7 +183,7 @@ impl VIPERIndexBasedReader {
         // For synchronous new, create minimal filesystem factory
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem_factory = tokio::runtime::Handle::current()
-            .block_on(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config))
+            .block_on(crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config))
             .expect("Failed to create filesystem factory");
 
         Self {

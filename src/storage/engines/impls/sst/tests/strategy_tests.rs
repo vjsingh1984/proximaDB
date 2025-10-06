@@ -127,7 +127,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -169,7 +169,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -241,7 +241,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -292,7 +292,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -352,7 +352,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -392,7 +392,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -437,7 +437,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -503,7 +503,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -643,7 +643,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -691,7 +691,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );
@@ -741,7 +741,7 @@ mod tests {
         create_hierarchical_sst_file(&sst_path).await.unwrap();
 
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(sst_path.clone()),
+            crate::storage::persistence::filesystem::FilesystemFactory::create(sst_path.clone()),
         );
         let reader = UnifiedSstableReader::open(fs.clone(), &sst_path)
             .await
@@ -789,7 +789,7 @@ mod tests {
             ..Default::default()
         };
         let fs = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .unwrap(),
         );

@@ -21,7 +21,7 @@ use super::super::test_data_generator::{ParquetTestDataGenerator, TestDataConfig
 /// Test all ReaderConfig variations
 #[tokio::test]
 async fn test_reader_config_variations() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     
     // Test 1: High performance config
     let high_perf_config = ReaderConfig {
@@ -87,7 +87,7 @@ async fn test_reader_config_variations() -> Result<()> {
 /// Test all FilterValue types
 #[tokio::test]
 async fn test_all_filter_value_types() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -180,7 +180,7 @@ async fn test_all_filter_value_types() -> Result<()> {
 /// Test all quantization methods
 #[tokio::test]
 async fn test_all_quantization_methods() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -225,7 +225,7 @@ async fn test_all_quantization_methods() -> Result<()> {
 /// Test all distance metrics
 #[tokio::test]
 async fn test_all_distance_metrics() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -269,7 +269,7 @@ async fn test_all_distance_metrics() -> Result<()> {
 /// Test edge cases and boundary conditions
 #[tokio::test]
 async fn test_edge_cases() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -359,7 +359,7 @@ async fn test_edge_cases() -> Result<()> {
 /// Test error conditions comprehensively
 #[tokio::test]
 async fn test_comprehensive_error_conditions() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     // Test 1: Invalid file path
@@ -411,7 +411,7 @@ async fn test_comprehensive_error_conditions() -> Result<()> {
 /// Test cache behavior extensively
 #[tokio::test]
 async fn test_cache_behavior_extensive() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let config = ReaderConfig {
         schema_cache_size: 5, // Small cache for testing eviction
         ..Default::default()
@@ -576,7 +576,7 @@ async fn test_strategy_selection_thresholds() -> Result<()> {
 /// Test optimization statistics collection
 #[tokio::test]
 async fn test_optimization_statistics() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
@@ -657,7 +657,7 @@ async fn test_optimization_statistics() -> Result<()> {
 /// Test return_vectors flag behavior
 #[tokio::test]
 async fn test_return_vectors_flag() -> Result<()> {
-    let filesystem = Arc::new(FilesystemFactory::new());
+    let filesystem = Arc::new(FilesystemFactory::create());
     let reader = UnifiedParquetReader::new(filesystem);
     
     let mut data_generator = ParquetTestDataGenerator::new()?;
