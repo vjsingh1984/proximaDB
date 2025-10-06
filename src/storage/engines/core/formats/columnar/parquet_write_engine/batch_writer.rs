@@ -198,7 +198,7 @@ mod tests {
                 id: "test_2".to_string(),
                 vector: vec![2.0; 128],
                 metadata: Default::default(),
-                timestamp: 1,
+                timestamp: Some(1),
                 ..Default::default()
             },
         ];

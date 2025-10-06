@@ -1023,9 +1023,9 @@ mod tests {
         let schema = Schema::new(fields);
 
         let quant_config = QuantizationConfig {
-            enable_binary: true,
-            enable_int8: true,
-            enable_pq: true,
+            enable_binary: Some(true),
+            enable_int8: Some(true),
+            enable_pq: Some(true),
             ..Default::default()
         };
 
@@ -1034,9 +1034,9 @@ mod tests {
 
         // Test missing field
         let quant_config_missing = QuantizationConfig {
-            enable_binary: true,
-            enable_int8: true,
-            enable_pq: false,
+            enable_binary: Some(true),
+            enable_int8: Some(true),
+            enable_pq: Some(false),
             ..Default::default()
         };
 

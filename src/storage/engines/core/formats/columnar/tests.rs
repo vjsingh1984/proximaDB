@@ -1062,21 +1062,21 @@ fn test_optimization_recommendations_preserve_id_column() {
                 ..Default::default()
             },
             QuantizationStrategy::Int8Only => QuantizationConfig {
-                enable_binary: false,
-                enable_int8: true,
-                enable_pq: false,
+                enable_binary: Some(false),
+                enable_int8: Some(true),
+                enable_pq: Some(false),
                 ..Default::default()
             },
             QuantizationStrategy::ProductQuantization => QuantizationConfig {
-                enable_binary: false,
-                enable_int8: false,
-                enable_pq: true,
+                enable_binary: Some(false),
+                enable_int8: Some(false),
+                enable_pq: Some(true),
                 ..Default::default()
             },
             QuantizationStrategy::Progressive => QuantizationConfig {
-                enable_binary: true,
-                enable_int8: true,
-                enable_pq: true,
+                enable_binary: Some(true),
+                enable_int8: Some(true),
+                enable_pq: Some(true),
                 ..Default::default()
             },
         };
