@@ -1802,13 +1802,29 @@ impl VectorOperationsService {
             duration_micros
         );
 
+        // Build response with complete metrics information
         let response = serde_json::json!({
             "success": true,
-            "vector_ids": vector_ids,
+            "vector_ids": vector_ids.clone(),
+            "total": vector_ids.len(),
             "message": format!("Successfully wrote {} vectors", vector_ids.len()),
             "duration_micros": duration_micros,
             "batch_ids": batch_result,
+            "metrics": {
+                "total_processed": vector_ids.len(),
+                "successful_count": vector_ids.len(),
+                "failed_count": 0,
+                "updated_count": 0,
+                "processing_time_us": duration_micros,
+                "wal_write_time_us": duration_micros,
+                "index_update_time_us": 0,
+            }
         });
+
+        debug!(
+            "📊 Vector batch response: success={}, total={}, metrics={:?}",
+            true, vector_ids.len(), response.get("metrics")
+        );
 
         Ok(serde_json::to_vec(&response)?)
     }

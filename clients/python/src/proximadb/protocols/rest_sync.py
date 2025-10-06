@@ -802,18 +802,26 @@ class ProximaDBClient:
         
         # Convert response to BatchResult
         resp_data = response.json()
+        logger.debug(f"Server response for batch operation: {resp_data}")
         metrics_data = resp_data.get('metrics', {}) or {}
+        logger.debug(f"Metrics data extracted: {metrics_data}")
+
+        # If server returns metrics but they're all zero, fall back to batch-level counts
+        total_count = resp_data.get('total', 1)
+        success_count = resp_data.get('success', 1)
+        failed_count = resp_data.get('failed', 0)
+
         return BatchResult(
-            total=resp_data.get('total', 1),
-            success=resp_data.get('success', 1),
-            failed=resp_data.get('failed', 0),
+            total=total_count,
+            success=success_count,
+            failed=failed_count,
             errors=resp_data.get('errors', []),
             duration_ms=resp_data.get('duration_ms', 0.0),
             metrics=OperationMetrics(
-                total_processed=metrics_data.get('total_processed') or resp_data.get('total', 1),
-                successful_count=metrics_data.get('successful_count') or resp_data.get('success', 1),
-                failed_count=metrics_data.get('failed_count') or resp_data.get('failed', 0),
-                processing_time_us=metrics_data.get('processing_time_us') or int(resp_data.get('duration_ms', 0) * 1000)
+                total_processed=metrics_data.get('total_processed') if metrics_data.get('total_processed') else total_count,
+                successful_count=metrics_data.get('successful_count') if metrics_data.get('successful_count') else success_count,
+                failed_count=metrics_data.get('failed_count') if metrics_data.get('failed_count') else failed_count,
+                processing_time_us=metrics_data.get('processing_time_us') if metrics_data.get('processing_time_us') else int(resp_data.get('duration_ms', 0) * 1000)
             )
         )
     
@@ -1612,18 +1620,26 @@ class ProximaDBClient:
         )
         # Convert response to BatchResult
         resp_data = response.json()
+        logger.debug(f"Server response for batch operation: {resp_data}")
         metrics_data = resp_data.get('metrics', {}) or {}
+        logger.debug(f"Metrics data extracted: {metrics_data}")
+
+        # If server returns metrics but they're all zero, fall back to batch-level counts
+        total_count = resp_data.get('total', 1)
+        success_count = resp_data.get('success', 1)
+        failed_count = resp_data.get('failed', 0)
+
         return BatchResult(
-            total=resp_data.get('total', 1),
-            success=resp_data.get('success', 1),
-            failed=resp_data.get('failed', 0),
+            total=total_count,
+            success=success_count,
+            failed=failed_count,
             errors=resp_data.get('errors', []),
             duration_ms=resp_data.get('duration_ms', 0.0),
             metrics=OperationMetrics(
-                total_processed=metrics_data.get('total_processed') or resp_data.get('total', 1),
-                successful_count=metrics_data.get('successful_count') or resp_data.get('success', 1),
-                failed_count=metrics_data.get('failed_count') or resp_data.get('failed', 0),
-                processing_time_us=metrics_data.get('processing_time_us') or int(resp_data.get('duration_ms', 0) * 1000)
+                total_processed=metrics_data.get('total_processed') if metrics_data.get('total_processed') else total_count,
+                successful_count=metrics_data.get('successful_count') if metrics_data.get('successful_count') else success_count,
+                failed_count=metrics_data.get('failed_count') if metrics_data.get('failed_count') else failed_count,
+                processing_time_us=metrics_data.get('processing_time_us') if metrics_data.get('processing_time_us') else int(resp_data.get('duration_ms', 0) * 1000)
             )
         )
     
