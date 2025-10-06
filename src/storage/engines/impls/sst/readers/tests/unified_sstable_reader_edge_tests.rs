@@ -32,7 +32,7 @@ mod edge_tests {
     // Helper to create reader
     async fn create_test_reader() -> UnifiedSstableReader {
         let config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
         let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
@@ -631,7 +631,7 @@ mod edge_tests {
 
         // Write test data
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );
@@ -662,7 +662,7 @@ mod edge_tests {
 
         // Create reader and context
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );

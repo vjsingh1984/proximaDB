@@ -110,7 +110,7 @@ pub mod proto_serialization_strategy; // Clean architecture proto implementation
 pub mod recovery_manager; // New centralized recovery operations
 pub mod recovery_thread_pool; // Thread pool for parallel recovery
 pub mod serialization; // New pure serialization layer
-pub mod manifest; // Per-collection manifest
+pub mod manifest; // Global WAL manifest system (unified)
 pub mod collection_path; // Slug codec for collection paths
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
@@ -152,7 +152,7 @@ pub use flush_coordinator::{
 pub use proto_serialization_strategy::ProtoSerializationStrategy;
 // 🔴 UNUSED EXPORT - EnhancedEngineCompactionResult marked for removal
 // pub use compaction_types::EnhancedEngineCompactionResult;
-pub use disk_manager::{DiskStats, WriteBufferDiskManager, WriteBufferFileInfo};
+pub use disk_manager::{DiskStats, WriteAheadLogDiskManager, WalFileInfo};
 pub use memtable_manager::{MemtableManager, MemtableStats};
 pub use recovery_manager::{ParallelRecoveryManager, RecoveryManager, RecoveryMode, RecoveryStats};
 pub use recovery_thread_pool::{
@@ -164,6 +164,19 @@ pub use recovery_thread_pool::{
 
 // Re-export serialization module
 pub use serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer};
+
+// Re-export manifest module (unified global manifest)
+pub use manifest::{
+    // Types
+    GlobalManifestEntry, GlobalCheckpoint, CheckpointCollectionState,
+    GlobalLsnAllocator, WalEntryStatus,
+    // Service
+    GlobalManifestService, GlobalManifestServiceConfig,
+    // Singleton functions (convenience)
+    init as init_global_manifest,
+    get_service as get_global_manifest,
+    shutdown as shutdown_global_manifest,
+};
 
 /// Modern WAL operation - binary payload for batch operations (Proto-first architecture)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,15 +361,8 @@ pub struct WriteAheadLogManager {
         Arc<tokio::sync::RwLock<std::collections::HashMap<String, CollectionAssignment>>>,
     /// **SHARED REFERENCE**: Global WALBehaviorWrapper singleton shared across ALL WriteAheadLogManager instances
     shared_wal_behavior: &'static GlobalWriteBufferBehaviorSingleton,
-    // MARKED FOR REMOVAL: Path resolver no longer needed with simplified storage assignment
-    // path_resolver: Option<Arc<optimized_path_resolver::OptimizedWalPathResolver>>,
-    /// Atomic sync coordinator for disk operations (temporarily disabled)
-    // atomic_sync: Option<Arc<atomic_wal_sync::AtomicWalSync>>,
     /// Strategy type for routing and serialization decisions
     strategy_type: config::WriteBufferStrategyType,
-
-    /// Last time a sync operation was performed (for periodic sync)
-    last_sync_time: Arc<tokio::sync::RwLock<Option<std::time::Instant>>>,
 }
 
 /// Adaptive WriteAheadLogManager Registry with Pool-based Collection Assignment
@@ -797,7 +803,7 @@ impl WriteAheadLogManagerRegistry {
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
                 .await?,
         ); // TODO: Pass proper filesystem
 
@@ -1101,16 +1107,17 @@ impl WriteAheadLogManager {
         // Extract strategy type for routing
         let strategy_type = config.strategy_type.clone();
 
+        // Create filesystem factory for per-collection disk managers
+        // Disk managers will be created at write time using collection's base_location from assigned_collections
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?);
+
         Ok(Self {
             config,
             stats,
             distance_compute: UnifiedDistanceCompute::default(),
             assigned_collections: Arc::new(tokio::sync::RwLock::new(assigned_collections)),
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
-            // path_resolver: None,
-            // atomic_sync: None,
             strategy_type,
-            last_sync_time: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -1159,16 +1166,17 @@ impl WriteAheadLogManager {
         // Extract strategy type for routing
         let strategy_type = config.strategy_type.clone();
 
+        // Create filesystem factory for per-collection disk managers
+        // Disk managers will be created at write time using collection's base_location from assigned_collections
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?);
+
         Ok(Self {
             config,
             stats,
             distance_compute: UnifiedDistanceCompute::default(),
             assigned_collections: Arc::new(tokio::sync::RwLock::new(assigned_collections)),
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
-            // path_resolver: None,
-            // atomic_sync: None,
             strategy_type,
-            last_sync_time: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -1577,6 +1585,7 @@ impl WriteAheadLogManager {
 
     // 🎯 MODERN BATCH API (Recommended)
 
+
     /// PROTO-FIRST ZERO-COPY: Write native VectorRecord with Arc
     /// This is the optimal method for proto-first architecture
     pub async fn write_vector_batch_native_arc(
@@ -1595,21 +1604,150 @@ impl WriteAheadLogManager {
 
         let native_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
             batch_id,
-            vector_records: native_vectors, // Direct Arc, no clone!
+            vector_records: native_vectors.clone(), // Clone Arc (cheap)
             timestamp: std::time::SystemTime::now(),
             total_size_bytes: 0, // Will be calculated by strategy
             is_flushed: false,
             metadata_bloom_filter: None,
         };
 
-        // Delegate to strategy - each strategy handles its own serialization
-        {
+        // Persist WAL batch to disk BEFORE adding to memtable
+        // This ensures durability even if server crashes after write but before flush
+
+        // First, add to memtable
+        let sequences = {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
             wal_behavior
-                .add_vector_batch(collection_id, native_batch)
+                .add_vector_batch(collection_id, native_batch.clone())
                 .await
+        }?;
+
+        // Then, persist to disk if sync mode requires it
+        if self.should_sync_to_disk(collection_id).await? {
+            info!(
+                "🔄 DEBUG: Sync mode enabled - triggering disk persistence for collection: {}",
+                collection_id
+            );
+
+            // Serialize the batch and write to disk
+            use crate::storage::persistence::write_ahead_log::serialization::{
+                SerializationFormat, SerializerFactory,
+            };
+            use crate::storage::persistence::write_ahead_log::WriteAheadLogDiskManager;
+            use crate::storage::persistence::filesystem::FilesystemFactory;
+
+            // Determine serialization format based on strategy type
+            let format = match self.strategy_type {
+                config::WriteBufferStrategyType::BincodeBatch => SerializationFormat::Bincode,
+                config::WriteBufferStrategyType::AvroBatch => SerializationFormat::Avro,
+                config::WriteBufferStrategyType::ProtoBatch => SerializationFormat::ProtocolBuffers,
+            };
+            info!("🔄 DEBUG: Selected serialization format: {:?}", format);
+
+            // Create serializer and serialize batch
+            info!("🔄 DEBUG: Creating serializer for format: {:?}", format);
+            let serializer = SerializerFactory::create(format);
+
+            info!("🔄 DEBUG: Serializing {} vectors", native_batch.vector_records.len());
+            let serialized = match serializer.serialize_batch(&native_batch.vector_records) {
+                Ok(data) => {
+                    info!("🔄 DEBUG: Serialization successful, size: {} bytes", data.len());
+                    data
+                }
+                Err(e) => {
+                    info!("🔄 DEBUG ERROR: Serialization failed: {:?}", e);
+                    return Err(e).context("Failed to serialize batch for WAL");
+                }
+            };
+
+            // Determine if we should sync based on sync mode
+            let should_sync = match self.config.performance.sync_mode {
+                config::SyncMode::Always => true,
+                config::SyncMode::PerBatch => true,
+                _ => false,
+            };
+            info!("🔄 DEBUG: should_sync = {}", should_sync);
+
+            // Get base location for this collection
+            let assigned = self.assigned_collections.read().await;
+            let base_location = assigned
+                .get(collection_id)
+                .map(|assignment| {
+                    info!("🔄 DEBUG: Found assignment for collection {}: {}", collection_id, assignment.base_location);
+                    assignment.base_location.clone()
+                })
+                .unwrap_or_else(|| {
+                    info!("🔄 DEBUG: No assignment found for {}, using default", collection_id);
+                    "/tmp/proximadb2/data".to_string()
+                });
+            drop(assigned);
+            info!("🔄 DEBUG: base_location = {}", base_location);
+
+            // Create disk manager and write batch
+            info!("🔄 DEBUG: Creating FilesystemFactory");
+            let filesystem_factory = match FilesystemFactory::create_default().await {
+                Ok(factory) => {
+                    info!("🔄 DEBUG: FilesystemFactory created successfully");
+                    Arc::new(factory)
+                }
+                Err(e) => {
+                    info!("🔄 DEBUG ERROR: Failed to create FilesystemFactory: {:?}", e);
+                    return Err(anyhow::anyhow!("Failed to create FilesystemFactory: {}", e));
+                }
+            };
+
+            info!("🔄 DEBUG: Creating WriteAheadLogDiskManager with base: {}", base_location);
+            let disk_manager = WriteAheadLogDiskManager::new(
+                filesystem_factory,
+                &base_location,
+            );
+
+            info!(
+                "🔄 DEBUG: Calling write_batch_with_sync - collection_id={}, batch_id={}, data_len={}, format={:?}, sync={}",
+                collection_id,
+                native_batch.batch_id.to_base62(),
+                serialized.len(),
+                format,
+                should_sync
+            );
+
+            match disk_manager
+                .write_batch_with_sync(
+                    collection_id,
+                    &native_batch.batch_id,
+                    &serialized,
+                    format,
+                    should_sync,
+                )
+                .await
+            {
+                Ok(file_info) => {
+                    info!("🔄 DEBUG: write_batch_with_sync SUCCESS: {:?}", file_info);
+                }
+                Err(e) => {
+                    info!("🔄 DEBUG ERROR: write_batch_with_sync FAILED: {:?}", e);
+                    info!("🔄 DEBUG ERROR: Error source chain:");
+                    let mut source = e.source();
+                    let mut level = 1;
+                    while let Some(err) = source {
+                        info!("🔄 DEBUG ERROR:   Level {}: {}", level, err);
+                        source = err.source();
+                        level += 1;
+                    }
+                    return Err(e).context("Failed to write WAL batch to disk");
+                }
+            }
+
+            info!(
+                "💾 WAL batch {} written to disk for collection {} ({} vectors)",
+                native_batch.batch_id.to_base62(),
+                collection_id,
+                native_batch.vector_records.len()
+            );
         }
+
+        Ok(sequences)
     }
 
     /// Insert multiple vectors efficiently (modern API)
@@ -1644,7 +1782,7 @@ impl WriteAheadLogManager {
         let sequences = {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            wal_behavior.add_vector_batch(&collection_id, batch).await
+            wal_behavior.add_vector_batch(&collection_id, batch.clone()).await
         }?;
 
         // Check if we should sync to disk based on sync mode
@@ -1653,10 +1791,65 @@ impl WriteAheadLogManager {
                 "🔄 Sync mode enabled - triggering disk persistence for collection: {}",
                 collection_id
             );
-            // Trigger flush by calling flush_all_vectors which will write to disk
-            let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-            let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            let _ = wal_behavior.flush_all_vectors().await?;
+
+            // Serialize the batch and write to disk
+            use crate::storage::persistence::write_ahead_log::serialization::{
+                SerializationFormat, SerializerFactory,
+            };
+            use crate::storage::persistence::write_ahead_log::WriteAheadLogDiskManager;
+            use crate::storage::persistence::filesystem::FilesystemFactory;
+
+            // Determine serialization format based on strategy type
+            let format = match self.strategy_type {
+                config::WriteBufferStrategyType::BincodeBatch => SerializationFormat::Bincode,
+                config::WriteBufferStrategyType::AvroBatch => SerializationFormat::Avro,
+                config::WriteBufferStrategyType::ProtoBatch => SerializationFormat::ProtocolBuffers,
+            };
+
+            // Create serializer and serialize batch
+            let serializer = SerializerFactory::create(format);
+            let serialized = serializer.serialize_batch(&batch.vector_records)
+                .context("Failed to serialize batch for WAL")?;
+
+            // Determine if we should sync based on sync mode
+            let should_sync = match self.config.performance.sync_mode {
+                config::SyncMode::Always => true,
+                config::SyncMode::PerBatch => true,
+                _ => false,
+            };
+
+            // Get base location for this collection
+            let assigned = self.assigned_collections.read().await;
+            let base_location = assigned
+                .get(&collection_id)
+                .map(|assignment| assignment.base_location.clone())
+                .unwrap_or_else(|| "/tmp/proximadb2/data".to_string());
+            drop(assigned);
+
+            // Create disk manager and write batch
+            let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
+            let disk_manager = WriteAheadLogDiskManager::new(
+                filesystem_factory,
+                &base_location,
+            );
+
+            disk_manager
+                .write_batch_with_sync(
+                    &collection_id,
+                    &batch.batch_id,
+                    &serialized,
+                    format,
+                    should_sync,
+                )
+                .await
+                .context("Failed to write WAL batch to disk")?;
+
+            info!(
+                "💾 WAL batch {} written to disk for collection {} ({} vectors)",
+                batch.batch_id.to_base62(),
+                collection_id,
+                batch.vector_records.len()
+            );
         }
 
         Ok(sequences)
@@ -2238,23 +2431,10 @@ impl WriteAheadLogManager {
             config::SyncMode::Always => Ok(true),
             config::SyncMode::PerBatch => Ok(true),
             config::SyncMode::Periodic => {
-                let mut last_sync_time = self.last_sync_time.write().await;
-                let now = std::time::Instant::now();
-                let sync_interval =
-                    std::time::Duration::from_secs(self.config.performance.sync_interval_seconds);
-
-                if let Some(last_time) = *last_sync_time {
-                    if now.duration_since(last_time) >= sync_interval {
-                        *last_sync_time = Some(now);
-                        Ok(true)
-                    } else {
-                        Ok(false)
-                    }
-                } else {
-                    // First sync, so trigger it
-                    *last_sync_time = Some(now);
-                    Ok(true)
-                }
+                // TODO: Re-implement periodic sync tracking with per-collection last_sync_time
+                // For now, sync every batch when Periodic mode is enabled
+                // This is safer than not syncing at all
+                Ok(true)
             }
             config::SyncMode::Never | config::SyncMode::MemoryOnly => Ok(false),
         }
@@ -2444,7 +2624,7 @@ impl WriteAheadLogManager {
             let filesystem_config =
                 crate::storage::persistence::filesystem::FilesystemConfig::default();
             let filesystem = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+                crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
                     .await?,
             );
 

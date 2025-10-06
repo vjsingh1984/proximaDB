@@ -609,7 +609,7 @@ impl ColumnarFactory {
 
         // Create reader with empty paths and 0 dimension - caller will set actual values
         // Create a default UnifiedCachingFilesystem for testing/default usage
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?);
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(

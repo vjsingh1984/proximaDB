@@ -32,7 +32,7 @@ async fn create_test_environment() -> (Arc<TransactionCoordinator>, TempDir) {
 
     let fs_config = FilesystemConfig::default();
     let fs_factory = Arc::new(
-        FilesystemFactory::new(fs_config)
+        FilesystemFactory::create(fs_config)
             .await
             .expect("Failed to create filesystem factory"),
     );

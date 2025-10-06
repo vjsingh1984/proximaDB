@@ -23,7 +23,7 @@ async fn test_isolated_filesystem_basic_operations() -> Result<()> {
     let env = IsolatedTestEnvironment::new().await?;
 
     // Create filesystem factory
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
     // Get filesystem for local storage
     let storage_url = format!("file://{}", env.temp_dir.path().display());
@@ -64,7 +64,7 @@ async fn test_isolated_filesystem_directory_operations() -> Result<()> {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
 
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
     let storage_url = format!("file://{}", env.temp_dir.path().display());
     let filesystem = factory.get_filesystem(&storage_url)?;
 
@@ -113,7 +113,7 @@ async fn test_isolated_filesystem_concurrent_operations() -> Result<()> {
     let collection_id = env.collection_id().to_string();
 
     // Create filesystem factory and filesystem instances upfront
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
     // Spawn concurrent file operations
     let mut handles = Vec::new();
@@ -210,7 +210,7 @@ async fn test_isolated_filesystem_error_handling() -> Result<()> {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
 
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
     let storage_url = format!("file://{}", env.temp_dir.path().display());
     let filesystem = factory.get_filesystem(&storage_url)?;
 
@@ -253,7 +253,7 @@ async fn test_isolated_filesystem_large_file_operations() -> Result<()> {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
 
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
     let storage_url = format!("file://{}", env.temp_dir.path().display());
     let filesystem = factory.get_filesystem(&storage_url)?;
 
@@ -318,7 +318,7 @@ async fn test_isolated_filesystem_multi_collection_isolation() -> Result<()> {
     let env3 = IsolatedTestEnvironment::new().await?;
 
     let environments = vec![&env1, &env2, &env3];
-    let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
     // Create files in each environment
     for (i, env) in environments.iter().enumerate() {

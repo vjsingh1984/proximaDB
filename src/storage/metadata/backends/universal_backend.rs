@@ -1716,7 +1716,7 @@ mod tests {
             ..Default::default()
         };
 
-        let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let fs_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
         let backend = UniversalMetadataBackend::new(config, fs_factory)
             .await
@@ -1791,7 +1791,7 @@ mod integration_tests {
 
         let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let fs_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
                 .unwrap(),
         );
@@ -1876,7 +1876,7 @@ mod integration_tests {
 
         let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let fs_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
                 .unwrap(),
         );

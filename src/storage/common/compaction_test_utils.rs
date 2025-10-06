@@ -222,7 +222,7 @@ impl CompactionTestEnv {
         // Create data directory
         tokio::fs::create_dir_all(&data_dir).await?;
 
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
         let config = CompactionConfig {
             level0_threshold: 3,
@@ -481,7 +481,7 @@ impl IntegrationTestSuite {
         let data_dir = temp_dir.path().join("data").to_string_lossy().to_string();
         tokio::fs::create_dir_all(&data_dir).await?;
 
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
         let orchestrator = CompactionOrchestrator::new(filesystem, config);
 
         // Create files to trigger compaction

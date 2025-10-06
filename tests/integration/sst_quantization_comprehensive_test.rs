@@ -461,7 +461,7 @@ async fn test_sst_integration_with_quantization() -> Result<()> {
     
     // Create filesystem and writer
     let fs_config = FilesystemConfig::default();
-    let fs_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let fs_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
     
     // Create quantization engine
     let engine = create_quantization_engine().await?;

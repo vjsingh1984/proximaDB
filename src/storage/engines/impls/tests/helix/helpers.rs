@@ -46,7 +46,7 @@ pub async fn create_test_engine_with_config(
 
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
@@ -65,7 +65,7 @@ pub async fn create_minimal_engine(
 
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
@@ -308,7 +308,7 @@ pub async fn create_test_filesystem(
 
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     Ok((temp_dir, filesystem_factory))
 }
@@ -428,7 +428,7 @@ pub async fn setup_test_environment(
 
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let config = HelixConfig::default();
@@ -452,7 +452,7 @@ pub async fn setup_test_environment_with_config(
 
     let mut fs_config = FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", path));
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 

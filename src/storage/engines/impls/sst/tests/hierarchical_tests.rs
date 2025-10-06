@@ -108,7 +108,7 @@ mod tests {
             default_fs: Some("file:///".to_string()),
             ..Default::default()
         };
-        let fs = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let fs = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let writer = SstableWriter::new(&sst_path, 3 * 1024 * 1024, fs.clone());
 
         let mut all_records = BTreeMap::new();
@@ -188,7 +188,7 @@ mod tests {
             default_fs: Some("file:///".to_string()),
             ..Default::default()
         };
-        let fs = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let fs = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let writer = SstableWriter::new(&sst_path, 1024 * 1024, fs.clone()); // 1MB blocks
 
         let mut all_records = BTreeMap::new();
@@ -266,7 +266,7 @@ mod tests {
             ..Default::default()
         };
 
-        let fs = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let fs = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
         let writer = SstableWriter::new(&sst_path, 2 * 1024 * 1024, fs.clone());
 
@@ -378,7 +378,7 @@ mod tests {
             default_fs: Some("file:///".to_string()),
             ..Default::default()
         };
-        let fs = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let fs = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let writer = SstableWriter::new(&sst_path, 512 * 1024, fs.clone()); // 512KB blocks for more blocks
 
         let mut all_records = BTreeMap::new();
@@ -455,7 +455,7 @@ mod tests {
             default_fs: Some("file:///".to_string()),
             ..Default::default()
         };
-        let fs = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let fs = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let writer = SstableWriter::new(&sst_path, 2 * 1024 * 1024, fs.clone());
 
         let mut all_records = BTreeMap::new();

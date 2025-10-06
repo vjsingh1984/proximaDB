@@ -71,7 +71,7 @@ use crate::compute::quantization::types::*;
     async fn create_test_filesystem() -> Arc<FilesystemFactory> {
         use crate::storage::persistence::filesystem::FilesystemConfig;
         let config = FilesystemConfig::default();
-        Arc::new(FilesystemFactory::new(config).await.unwrap())
+        Arc::new(FilesystemFactory::create(config).await.unwrap())
     }
 
     #[test]

@@ -52,7 +52,7 @@ mod tests {
         // Create filesystem factory with temp directory
         let mut fs_config = FilesystemConfig::default();
         fs_config.default_fs = Some(format!("file://{}", base_path));
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
 
         // Create SST engine
         let sst_config = SstConfig::default();
@@ -317,7 +317,7 @@ mod tests {
         let mut fs_config = FilesystemConfig::default();
         fs_config.default_fs = Some(format!("file://{}", base_path));
         let filesystem = Arc::new(
-            FilesystemFactory::new(fs_config).await?
+            FilesystemFactory::create(fs_config).await?
         );
 
         let engine = SstEngine::new_with_config(

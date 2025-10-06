@@ -100,7 +100,7 @@ impl UnifiedTestEnvironment {
         // Setup all required directories
         setup_test_directories(&persistent_dir).await?;
 
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
         // Create optimized configs for testing
         let sst_config = Self::create_test_sst_config(&persistent_dir);
@@ -959,7 +959,7 @@ pub async fn flush_sst_with_block_stats(
     use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
     let fs_config = FilesystemConfig::default();
-    let _filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let _filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Euclidean,
     ));
@@ -1080,7 +1080,7 @@ pub async fn create_test_vector_operations_service() -> Result<VectorOperationsS
 
     // Create WAL manager
     let wal_config = WALConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
     let strategy_type = WriteBufferStrategyType::AvroBatch;
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,
@@ -1108,7 +1108,7 @@ pub async fn create_test_vector_operations_service_with_storage(
 
     // Create WAL manager
     let wal_config = WALConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
     let strategy_type = WriteBufferStrategyType::AvroBatch;
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,

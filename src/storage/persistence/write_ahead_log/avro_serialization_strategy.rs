@@ -16,8 +16,8 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
-    MemtableManager, RecoveryManager, WALFlushCoordinator, WriteBufferDiskManager,
-    WriteBufferFileInfo,
+    MemtableManager, RecoveryManager, WALFlushCoordinator, WriteAheadLogDiskManager,
+    WalFileInfo,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -31,7 +31,7 @@ pub struct AvroSerializationStrategy {
     memtable_manager: Arc<MemtableManager>,
 
     /// Disk manager (shared across strategies)
-    disk_manager: Arc<WriteBufferDiskManager>,
+    disk_manager: Arc<WriteAheadLogDiskManager>,
 
     /// Recovery manager for WAL recovery
     recovery_manager: Arc<RecoveryManager>,
@@ -81,7 +81,7 @@ impl AvroSerializationStrategy {
 
         // Create disk manager
         let wal_base_url = &config.multi_disk.data_directories[0];
-        let disk_manager = Arc::new(WriteBufferDiskManager::new(
+        let disk_manager = Arc::new(WriteAheadLogDiskManager::new(
             filesystem_factory.clone(),
             wal_base_url,
         ));
@@ -166,6 +166,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
     ) -> Result<Vec<u64>> {
         debug!(
             "📝 Writing native batch {} with {} vectors (Avro format)",
@@ -219,9 +220,10 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let sequences = self.write_native_batch(batch, collection_id).await?;
+        let sequences = self.write_native_batch(batch, collection_id, base_location).await?;
 
         if immediate_sync {
             self.force_sync(None).await?;
@@ -375,6 +377,11 @@ impl WALBatchStrategy for AvroSerializationStrategy {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
+        // Mark batches as flushed in global manifest
+        use crate::storage::persistence::write_ahead_log::manifest;
+        let batch_id_strings: Vec<String> = batch_ids.iter().map(|b| b.to_base62()).collect();
+        let _ = manifest::mark_flushed(&batch_id_strings).await;
+
         info!(
             "✅ Flushed {} vectors ({} bytes) from collection {} in {}ms",
             total_vectors, total_bytes, collection_id, duration_ms
@@ -455,7 +462,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
 
             // For each batch, ensure it's synced to disk
             for batch in unflushed_batches {
-                let file_info = WriteBufferFileInfo {
+                let file_info = WalFileInfo {
                     collection_id: collection_id.to_string(),
                     batch_id: batch.batch_id.clone(),
                     file_url: self

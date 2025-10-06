@@ -94,7 +94,7 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
 async fn create_viper_engine() -> Arc<dyn UnifiedStorageEngine> {
     let filesystem_config = FilesystemConfig::default();
     let filesystem = Arc::new(
-        FilesystemFactory::new(filesystem_config)
+        FilesystemFactory::create(filesystem_config)
             .await
             .expect("Failed to create filesystem")
     );

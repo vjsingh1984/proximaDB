@@ -608,7 +608,7 @@ impl StorageSystemBuilder {
         }
 
         // Initialize filesystem factory
-        let filesystem = Arc::new(FilesystemFactory::new(self.config.filesystem.clone()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(self.config.filesystem.clone()).await?);
         tracing::info!("✅ Filesystem factory initialized");
 
         // Build Write Buffer system using new factory pattern

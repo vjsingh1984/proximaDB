@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     // Create filesystem factory
     use proximadb::storage::persistence::filesystem::FilesystemConfig;
     let fs_config = FilesystemConfig::default();
-    let fs_factory = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let fs_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
     
     // Test different compaction strategies
     println!("\n{}", "-".repeat(80));

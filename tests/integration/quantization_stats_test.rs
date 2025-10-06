@@ -147,7 +147,7 @@ async fn run_quantization_test(
         performance_config: FilesystemPerformanceConfig::default(),
         scheme_mapping: HashMap::new(),
     };
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
     let mut sst_storage = SstEngine::new().await?;

@@ -63,7 +63,7 @@ mod wal_writer_tests {
     async fn test_optimized_wal_writer_creation() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let config = Arc::new(create_test_wal_config(&temp_dir));
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
 
         // Create the actual writer from production code
         let writer = OptimizedWriteBufferWriter::new(config, filesystem_factory).await?;
@@ -85,7 +85,7 @@ mod wal_writer_tests {
     async fn test_wal_batch_writes() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let config = Arc::new(create_test_wal_config(&temp_dir));
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let writer = Arc::new(OptimizedWriteBufferWriter::new(config, filesystem_factory).await?);
 
         // Write multiple batches concurrently
@@ -120,7 +120,7 @@ mod wal_writer_tests {
     async fn test_wal_concurrent_writes() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let config = Arc::new(create_test_wal_config(&temp_dir));
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let writer = Arc::new(OptimizedWriteBufferWriter::new(config, filesystem_factory).await?);
 
         // Concurrent writes to multiple collections
@@ -162,7 +162,7 @@ mod wal_writer_tests {
         config.performance.batch_threshold = 10000; // Use batch_threshold field
 
         let config = Arc::new(config);
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
         let writer = OptimizedWriteBufferWriter::new(config, filesystem_factory).await?;
 
         // Write a large batch

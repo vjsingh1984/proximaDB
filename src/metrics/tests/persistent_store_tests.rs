@@ -34,7 +34,7 @@ mod tests {
         let _ = fs::remove_dir_all("/tmp/proximadb_metrics_test").await;
 
         let filesystem_config = Default::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await?);
         MetricsPersistenceLayer::new(filesystem_factory, config).await
     }
 

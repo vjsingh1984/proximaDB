@@ -94,7 +94,7 @@ fn bench_sst_sparsity_compression(c: &mut Criterion) {
                     // Create filesystem factory
                     let filesystem_config = FilesystemConfig::default();
                     let filesystem_factory = Arc::new(
-                        FilesystemFactory::new(filesystem_config).await.unwrap()
+                        FilesystemFactory::create(filesystem_config).await.unwrap()
                     );
 
                     // Create distance compute
@@ -172,7 +172,7 @@ fn bench_viper_sparsity_compression(c: &mut Criterion) {
                     // Create filesystem factory
                     let filesystem_config = FilesystemConfig::default();
                     let filesystem_factory = Arc::new(
-                        FilesystemFactory::new(filesystem_config).await.unwrap()
+                        FilesystemFactory::create(filesystem_config).await.unwrap()
                     );
 
                     // Create VIPER config with compression
@@ -239,7 +239,7 @@ fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
                     // Create filesystem factory
                     let filesystem_config = FilesystemConfig::default();
                     let filesystem_factory = Arc::new(
-                        FilesystemFactory::new(filesystem_config).await.unwrap()
+                        FilesystemFactory::create(filesystem_config).await.unwrap()
                     );
 
                     // Create distance compute

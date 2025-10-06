@@ -307,7 +307,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     crate::storage::persistence::filesystem::FilesystemConfig::default();
                 config.default_fs = Some(file_path.to_string_lossy().to_string());
                 let filesystem_factory =
-                    crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+                    crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?;
                 let filesystem = Arc::new(filesystem_factory);
@@ -363,7 +363,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     crate::storage::persistence::filesystem::FilesystemConfig::default();
                 config.default_fs = Some(file_path.to_string_lossy().to_string());
                 let filesystem_factory =
-                    crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+                    crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?;
                 let filesystem = Arc::new(filesystem_factory);
@@ -492,7 +492,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     scheme_mapping: HashMap::new(),
                 };
                 let filesystem_factory =
-                    crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+                    crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                         .await?;
                 let filesystem = Arc::new(filesystem_factory);
                 let writer = SstableWriter::new(&staging_file, 4096, filesystem);

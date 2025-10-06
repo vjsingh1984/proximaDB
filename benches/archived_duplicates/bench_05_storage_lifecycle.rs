@@ -120,7 +120,7 @@ fn measure_directory_size(path: &str) -> std::io::Result<u64> {
 
     // Create filesystem factory
     let fs_factory = rt.block_on(async {
-        proximadb::storage::persistence::filesystem::FilesystemFactory::new(
+        proximadb::storage::persistence::filesystem::FilesystemFactory::create(
             proximadb::storage::persistence::filesystem::FilesystemConfig::default()
         ).await
     }).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;

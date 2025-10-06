@@ -42,7 +42,7 @@ mod tests {
         let _ = tokio::fs::remove_dir_all("/tmp/proximadb_metrics_updater_test").await;
 
         let filesystem_config = Default::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await?);
         let store = MetricsPersistenceLayer::new(filesystem_factory, config).await?;
         Ok(Arc::new(MetricsUpdateService::new(Arc::new(store))))
     }

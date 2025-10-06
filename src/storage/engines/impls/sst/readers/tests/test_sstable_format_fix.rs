@@ -32,7 +32,7 @@ async fn test_sstable_format_with_bloom_filter() {
 
     // Create filesystem factory
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Write SSTable with bloom filter
     let sstable_path = temp_path.join("test_bloom.sstable");
@@ -65,7 +65,7 @@ async fn test_sstable_format_with_bloom_filter() {
         .unwrap();
 
     // Read SSTable metadata (this will test bloom filter reading)
-    let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
     let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
     let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
         base_fs,
@@ -123,7 +123,7 @@ async fn test_sstable_empty_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Create an empty file
     let empty_file = temp_path.join("empty.sstable");
@@ -162,7 +162,7 @@ async fn test_sstable_truncated_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Create a file with only header length but no header data
     let truncated_file = temp_path.join("truncated.sstable");

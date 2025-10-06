@@ -303,7 +303,7 @@ mod tests {
         let mut fs_config = FilesystemConfig::default();
         fs_config.default_fs = Some(base_url.clone());
 
-        let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
         let collection_cache = Arc::new(DashMap::new());
 

@@ -22,7 +22,7 @@ pub trait VectorBatchSerializer: Send + Sync {
 }
 
 /// Supported serialization formats
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SerializationFormat {
     /// Protocol Buffers - default for proto-first architecture
     ProtocolBuffers,

@@ -125,7 +125,7 @@ mod tests {
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
         SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()

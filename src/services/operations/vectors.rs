@@ -1459,6 +1459,45 @@ impl VectorOperationsService {
                 .collection(collection_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
+
+            // Register collection with WAL manager for persistence
+            if let Some(ref storage_assignment) = collection.storage_assignment {
+                if let Some(ref config) = collection.config {
+                    // Build compression_config from storage_config if available
+                    let compression_config = config.storage_config.as_ref().and_then(|sc| {
+                        sc.compression.map(|alg| {
+                            crate::proto::proximadb_v1::CompressionConfig {
+                                algorithm: alg,
+                                level: Some(3), // default level
+                                adaptive: false,
+                                min_ratio: None,
+                                enable_quantization: false,
+                                quantization_type: None,
+                                normalization_method: None,
+                                block_size_kb: 64,
+                                dynamic_block_sizing: false,
+                            }
+                        })
+                    });
+
+                    // Convert distance_metric from Option<i32> to DistanceMetric
+                    let distance_metric = config.distance_metric
+                        .and_then(|m| crate::proto::proximadb_v1::DistanceMetric::try_from(m).ok())
+                        .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
+
+                    let assignment = crate::storage::persistence::write_ahead_log::CollectionAssignment {
+                        base_location: storage_assignment.base_location.clone(),
+                        storage_engine: crate::proto::proximadb_v1::StorageEngine::try_from(storage_assignment.engine)
+                            .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst),
+                        dimension: config.dimension as i32,
+                        compression_config,
+                        distance_metric,
+                    };
+                    self.wal_manager.assign_collection(collection_id_string.clone(), assignment).await;
+                    tracing::debug!("✅ Registered collection {} with WAL manager", collection_id);
+                }
+            }
+
             let arc_collection = Arc::new(collection);
             self.collection_cache
                 .insert(collection_id_string, arc_collection.clone());

@@ -1076,7 +1076,7 @@ mod tests {
 
         // Create filesystem factory
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await

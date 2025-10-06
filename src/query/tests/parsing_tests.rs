@@ -28,7 +28,7 @@ use std::sync::Arc;
 async fn setup_test_collection_service() -> Arc<CollectionService> {
     let config = UniversalMetadataConfig::default();
     let filesystem_config = Default::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     let backend = crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(config, filesystem_factory).await.unwrap();
     let storage_config = StorageConfig::default();
     let service = Arc::new(CollectionService::new(Arc::new(backend), storage_config).await.unwrap());

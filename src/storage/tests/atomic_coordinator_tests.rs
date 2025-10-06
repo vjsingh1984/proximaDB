@@ -49,7 +49,7 @@ async fn test_atomic_coordinator_creation() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
@@ -78,7 +78,7 @@ async fn test_begin_atomic_operation() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -119,7 +119,7 @@ async fn test_write_to_staging() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -171,7 +171,7 @@ async fn test_finalize_atomic_operation() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -215,7 +215,7 @@ async fn test_finalize_atomic_operation() {
     );
 
     // Verify the file was moved to final location
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let fs = filesystem_factory
         .get_filesystem(&operation.final_url)
         .unwrap();
@@ -237,7 +237,7 @@ async fn test_abort_atomic_operation() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -301,7 +301,7 @@ async fn test_transaction_lifecycle() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -351,7 +351,7 @@ async fn test_transaction_rollback() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory.clone(),
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -426,7 +426,7 @@ async fn test_concurrent_operations() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = Arc::new(
         TransactionCoordinator::new(
             filesystem_factory,
@@ -506,7 +506,7 @@ async fn test_cleanup_orphaned_operations() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -568,7 +568,7 @@ async fn test_viper_atomic_operations() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -643,7 +643,7 @@ async fn test_staging_config_with_custom_staging_dir() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -679,7 +679,7 @@ async fn test_operation_without_collection_id() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -715,7 +715,7 @@ async fn test_invalid_operation_id_handling() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -764,7 +764,7 @@ async fn test_double_finalize_operation() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -813,7 +813,7 @@ async fn test_write_after_finalize() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -866,7 +866,7 @@ async fn test_operation_status_transitions() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -935,7 +935,7 @@ async fn test_empty_data_write() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
@@ -977,7 +977,7 @@ async fn test_wal_atomic_operations() {
         .prefix(&format!("atomic_test_{}_", timestamp))
         .tempdir_in("/tmp")
         .unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),

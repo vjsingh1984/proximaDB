@@ -1091,7 +1091,7 @@ async fn create_test_reader_with_files(file_paths: Vec<String>) -> UnifiedParque
     // Create UnifiedCachingFilesystem for testing
     let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let filesystem_factory = Arc::new(
-        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
             .unwrap()
     );

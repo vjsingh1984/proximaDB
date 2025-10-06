@@ -560,7 +560,7 @@ mod tests {
     async fn test_swift_metadata_serialization() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         // Test serialization
@@ -579,7 +579,7 @@ mod tests {
     async fn test_swift_id_lookup_optimization() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
@@ -606,7 +606,7 @@ mod tests {
     async fn test_swift_segment_optimization() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer

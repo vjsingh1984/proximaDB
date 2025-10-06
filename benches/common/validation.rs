@@ -140,7 +140,7 @@ pub async fn validate_filesystem_write(
 ) -> bool {
     use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
-    let fs_factory = match FilesystemFactory::new(FilesystemConfig::default()).await {
+    let fs_factory = match FilesystemFactory::create(FilesystemConfig::default()).await {
         Ok(factory) => factory,
         Err(e) => {
             eprintln!("    ❌ ERROR: Failed to create filesystem factory: {:?}", e);

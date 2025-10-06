@@ -18,8 +18,15 @@ impl MetricsCollector for StorageMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
         let mut values = HashMap::new();
 
-        // Placeholder values
+        // TODO: Get real metrics from metadata store / vector operations service
+        // For now, use placeholder values to enable testing
+        // These should be populated by:
+        // 1. VectorOperationsService tracking inserts/deletes
+        // 2. CollectionService tracking collection creation/deletion
+        // 3. Storage engines reporting their sizes
         values.insert("total_vectors".to_string(), 100000.0);
+        values.insert("total_collections".to_string(), 0.0);  // Added for compatibility
+        values.insert("storage_size_bytes".to_string(), 1024.0 * 1024.0 * 100.0); // 100MB
         values.insert("cache_hit_rate".to_string(), 0.85);
         values.insert("wal_size_bytes".to_string(), 1024.0 * 1024.0 * 50.0);
 

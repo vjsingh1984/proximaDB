@@ -55,7 +55,7 @@ use crate::query::unified_query_optimizer::SearchParams as QuerySearchParams;
 
 /// Create test UnifiedSstableReader with local filesystem
 async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
-    let fs_factory = Arc::new(FilesystemFactory::new(HashMap::new()).await.unwrap());
+    let fs_factory = Arc::new(FilesystemFactory::create(HashMap::new()).await.unwrap());
     let fs = fs_factory.get_filesystem("file:///tmp/proximadb-test").await.unwrap();
 
     let config = ReaderConfig {
@@ -325,7 +325,7 @@ mod reader_edge_tests {
 
     async fn create_test_reader() -> UnifiedSstableReader {
         let config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
         let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
@@ -513,7 +513,7 @@ mod basic_reader_tests {
 
     async fn create_test_reader() -> UnifiedSstableReader {
         let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         UnifiedSstableReader::new(filesystem)
     }
 
@@ -667,7 +667,7 @@ mod search_module_tests {
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
         let filesystem_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
         SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
@@ -726,7 +726,7 @@ mod coordinator_tests {
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
         let filesystem_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
         SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
@@ -818,7 +818,7 @@ mod operations_tests {
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
         let filesystem_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
         SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()

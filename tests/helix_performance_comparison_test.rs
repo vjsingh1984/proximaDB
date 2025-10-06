@@ -348,7 +348,7 @@ mod performance_comparison_tests {
 
         let sst_config = SstConfig::default();
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
@@ -426,7 +426,7 @@ mod performance_comparison_tests {
 
         let sst_config = SstConfig::default();
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
@@ -502,7 +502,7 @@ mod performance_comparison_tests {
                 let temp_dir = TempDir::new().unwrap();
                 let sst_config = SstConfig::default();
                 let fs_config = FilesystemConfig::default();
-                let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+                let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
                 let distance_compute =
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
@@ -714,7 +714,7 @@ mod performance_comparison_tests {
                 let temp_dir = TempDir::new().unwrap();
                 let sst_config = SstConfig::default();
                 let fs_config = FilesystemConfig::default();
-                let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+                let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
                 let distance_compute =
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
@@ -734,7 +734,7 @@ mod performance_comparison_tests {
                 let temp_dir = TempDir::new().unwrap();
                 let viper_config = ViperConfig::default();
                 let fs_config = FilesystemConfig::default();
-                let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+                let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
                 let distance_compute =
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 

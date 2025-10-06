@@ -572,7 +572,7 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );
@@ -608,7 +608,7 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let filesystem = Arc::new(tokio::runtime::Runtime::new().unwrap().block_on(async {
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap()
         }));

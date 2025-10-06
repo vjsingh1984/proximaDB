@@ -216,7 +216,7 @@ pub fn generate_test_records(count: usize, dimension: usize) -> Vec<VectorRecord
 /// FilesystemFactory configured for testing
 pub async fn create_test_filesystem() -> Arc<FilesystemFactory> {
     let config = FilesystemConfig::default();
-    Arc::new(FilesystemFactory::new(config).await.unwrap())
+    Arc::new(FilesystemFactory::create(config).await.unwrap())
 }
 
 // ============================================================================

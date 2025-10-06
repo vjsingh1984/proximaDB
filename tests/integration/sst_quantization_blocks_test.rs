@@ -57,7 +57,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
             performance_config: Default::default(),
             scheme_mapping: std::collections::HashMap::new(),
         };
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
         let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
@@ -227,7 +227,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
         performance_config: Default::default(),
         scheme_mapping: std::collections::HashMap::new(),
     };
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
     let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));

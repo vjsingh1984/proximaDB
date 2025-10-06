@@ -24,7 +24,7 @@ fn create_temp_dir() -> TempDir {
 async fn test_viper_engine_initialization() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );
@@ -43,7 +43,7 @@ async fn test_viper_engine_initialization() {
 async fn test_collection_metadata_management() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );
@@ -95,7 +95,7 @@ async fn test_collection_metadata_management() {
 async fn test_parquet_file_discovery() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );
@@ -124,7 +124,7 @@ async fn test_parquet_file_discovery() {
 async fn test_cluster_prediction() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );
@@ -150,7 +150,7 @@ async fn test_cluster_prediction() {
 async fn test_search_vectors_basic() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );
@@ -177,7 +177,7 @@ async fn test_search_vectors_basic() {
 async fn test_search_vectors_in_cluster() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );
@@ -210,7 +210,7 @@ async fn test_search_vectors_in_cluster() {
 async fn test_engine_configuration_access() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );
@@ -247,7 +247,7 @@ async fn test_engine_default_creation() {
 async fn test_multiple_collections() {
     let temp_dir = create_temp_dir();
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .expect("Failed to create filesystem factory")
     );

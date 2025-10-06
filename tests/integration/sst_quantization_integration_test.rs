@@ -11,7 +11,7 @@ use proximadb::compute::quantization::precompute::QuantizationPrecomputeService;
 async fn test_sst_flush_with_quantization() -> Result<()> {
     // Setup
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await?);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
     // Create SST engine

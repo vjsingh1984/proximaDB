@@ -123,7 +123,7 @@ mod tests {
 
         // Create reader with filterable columns configured
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap()
         );
@@ -236,7 +236,7 @@ mod tests {
         .unwrap();
 
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap()
         );
@@ -315,7 +315,7 @@ mod tests {
         .unwrap();
 
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap()
         );
@@ -384,7 +384,7 @@ mod tests {
         write_test_data(&file_path, records, vec![]).await.unwrap();
 
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap()
         );
@@ -422,7 +422,7 @@ mod tests {
         .unwrap();
 
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap()
         );
@@ -474,7 +474,7 @@ mod tests {
         write_test_data(&file_path, records, vec![]).await.unwrap();
 
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .unwrap()
         );

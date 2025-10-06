@@ -251,7 +251,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );
@@ -315,7 +315,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );
@@ -453,7 +453,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );
@@ -566,7 +566,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );
@@ -693,7 +693,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );
@@ -852,7 +852,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );
@@ -919,7 +919,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );
@@ -1003,7 +1003,7 @@ mod tests {
         setup_test_directories(base_path).await.unwrap();
 
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(create_test_filesystem_config())
+            FilesystemFactory::create(create_test_filesystem_config())
                 .await
                 .unwrap(),
         );

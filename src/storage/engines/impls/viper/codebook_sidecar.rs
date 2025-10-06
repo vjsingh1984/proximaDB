@@ -322,7 +322,7 @@ mod tests {
     async fn test_viper_sidecar_write_read() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let fs_factory = FilesystemFactory::new(config).await.unwrap();
+        let fs_factory = FilesystemFactory::create(config).await.unwrap();
         let filesystem = fs_factory.get_unified_caching_filesystem("file:///tmp", "test_collection".to_string(), "viper".to_string()).unwrap();
 
         let manager = ViperCodebookSidecarManager::new(

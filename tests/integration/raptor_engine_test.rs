@@ -16,7 +16,7 @@ use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 async fn create_test_setup() -> (Arc<RaptorEngine>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
     // Create collection service - not needed for this test since we're testing the engine directly
     // The collection service would normally manage collections at a higher level

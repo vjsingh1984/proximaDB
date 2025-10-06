@@ -72,7 +72,7 @@ impl StorageTestFixture {
 
         let sst_config = SstConfig::default();
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(

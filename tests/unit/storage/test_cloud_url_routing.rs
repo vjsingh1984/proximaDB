@@ -68,7 +68,7 @@ fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> Wri
 /// Create test filesystem factory with URL validation
 async fn create_test_filesystem_factory() -> Result<Arc<FilesystemFactory>> {
     let config = FilesystemConfig::default();
-    let mut factory = FilesystemFactory::new(config);
+    let mut factory = FilesystemFactory::create(config);
     factory.initialize().await?;
     Ok(Arc::new(factory))
 }

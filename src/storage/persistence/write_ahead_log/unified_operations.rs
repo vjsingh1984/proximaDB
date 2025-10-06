@@ -196,7 +196,7 @@ impl UnifiedWALWriter {
     pub async fn new(base_path: String) -> anyhow::Result<Self> {
         // Create filesystem factory with default config
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
         );
@@ -332,7 +332,7 @@ impl UnifiedWALReader {
     pub async fn new(base_path: String) -> anyhow::Result<Self> {
         // Create filesystem factory with default config
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
         );

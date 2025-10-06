@@ -264,7 +264,7 @@ mod tests {
         };
         
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default()).await.unwrap()
+            FilesystemFactory::create(FilesystemConfig::default()).await.unwrap()
         );
         
         let optimizer = UniversalPerformanceOptimizer::new(

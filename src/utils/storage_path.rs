@@ -44,12 +44,6 @@ impl StoragePath {
         format!("{}/{}/compaction_staging", base_url, collection_id)
     }
 
-    /// Constructs the write buffer directory path for a collection
-    /// Format: {base_url}/{collection_id}/write_buffer
-    pub fn collection_write_buffer_path(base_url: &str, collection_id: &str) -> String {
-        format!("{}/{}/write_buffer", base_url, collection_id)
-    }
-
     /// Constructs a file path within the data directory
     /// Format: {base_url}/{collection_id}/data/{filename}
     pub fn data_file_path(base_url: &str, collection_id: &str, filename: &str) -> String {

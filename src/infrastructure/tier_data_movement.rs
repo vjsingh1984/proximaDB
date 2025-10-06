@@ -252,7 +252,7 @@ impl TierDataMovement {
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(path.clone());
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
@@ -294,7 +294,7 @@ impl TierDataMovement {
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(path.clone());
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
@@ -333,7 +333,7 @@ impl TierDataMovement {
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(path.clone());
         let _filesystem = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );

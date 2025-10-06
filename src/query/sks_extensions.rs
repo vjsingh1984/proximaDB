@@ -954,7 +954,7 @@ mod sks_integration_tests {
             use crate::storage::traits::InternalCollectionProvider;
             use std::sync::Arc;
 
-            let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+            let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
             let sst_engine = Arc::new(SstEngine::new().await.unwrap());
 

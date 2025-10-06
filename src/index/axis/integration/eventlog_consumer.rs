@@ -656,7 +656,7 @@ impl AxisEventLogConsumer {
 
         // Create filesystem factory with proper configuration for zero-copy optimization
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(Default::default())
+            crate::storage::persistence::filesystem::FilesystemFactory::create(Default::default())
                 .await
                 .context("Failed to create filesystem factory")?,
         );
@@ -1023,7 +1023,7 @@ impl AxisEventLogConsumer {
                             // Create filesystem factory
                             let fs_config = FilesystemConfig::default();
                             let fs_factory =
-                                Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+                                Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
                             // Get unified caching filesystem
                             let unified_fs = fs_factory

@@ -25,7 +25,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     let base_path = temp_dir.path().to_str().unwrap();
     
     // Create filesystem
-    let filesystem = Arc::new(FilesystemFactory::new(HashMap::new()));
+    let filesystem = Arc::new(FilesystemFactory::create(HashMap::new()));
     
     // Create test vectors
     let vectors = vec![
@@ -174,7 +174,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
 async fn test_empty_sstable() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path().to_str().unwrap();
-    let filesystem = Arc::new(FilesystemFactory::new(HashMap::new()));
+    let filesystem = Arc::new(FilesystemFactory::create(HashMap::new()));
     
     // Write empty SSTable
     let sst_path = format!("file://{}/empty.sstable", base_path);

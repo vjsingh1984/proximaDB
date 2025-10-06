@@ -18,8 +18,8 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
-    MemtableManager, RecoveryManager, WALFlushCoordinator, WriteBufferDiskManager,
-    WriteBufferFileInfo,
+    MemtableManager, RecoveryManager, WALFlushCoordinator, WriteAheadLogDiskManager,
+    WalFileInfo,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -33,7 +33,7 @@ pub struct ProtoSerializationStrategy {
     pub memtable_manager: Arc<MemtableManager>,
 
     /// Disk manager (shared across strategies)
-    disk_manager: Arc<WriteBufferDiskManager>,
+    disk_manager: Arc<WriteAheadLogDiskManager>,
 
     /// Recovery manager for WAL recovery
     recovery_manager: Arc<RecoveryManager>,
@@ -86,7 +86,7 @@ impl ProtoSerializationStrategy {
 
         // Create disk manager
         let wal_base_url = &config.multi_disk.data_directories[0];
-        let disk_manager = Arc::new(WriteBufferDiskManager::new(
+        let disk_manager = Arc::new(WriteAheadLogDiskManager::new(
             filesystem_factory.clone(),
             wal_base_url,
         ));
@@ -181,6 +181,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
     ) -> Result<Vec<u64>> {
         debug!(
             "📝 Writing native batch {} with {} vectors",
@@ -222,9 +223,10 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let sequences = self.write_native_batch(batch, collection_id).await?;
+        let sequences = self.write_native_batch(batch, collection_id, base_location).await?;
 
         if immediate_sync {
             self.force_sync(None).await?;
@@ -364,7 +366,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             let path = self
                 .disk_manager
                 .batch_url(collection_id, bid, SerializationFormat::ProtocolBuffers);
-            let file_info = WriteBufferFileInfo {
+            let file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
                 batch_id: bid.clone(),
                 file_url: path,
@@ -373,11 +375,10 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             };
             let _ = self.disk_manager.delete_file(&file_info).await;
         }
-        // Remove from manifest
-        let manifest = crate::storage::persistence::write_ahead_log::manifest::WalManifest::new(
-            self.disk_manager.clone(),
-        );
-        let _ = manifest.remove_by_batch_ids(collection_id, &to_delete).await;
+        // Mark entries as flushed in global manifest
+        use crate::storage::persistence::write_ahead_log::manifest;
+        let batch_id_strings: Vec<String> = to_delete.iter().map(|s| s.to_string()).collect();
+        let _ = manifest::mark_flushed(&batch_id_strings).await;
 
         Ok(FlushResult {
             success: flush_result.success,
@@ -389,7 +390,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
-            flushed_batch_ids: batch_ids,
+            flushed_batch_ids: flush_result.flushed_batch_ids.clone(),
         })
     }
 
@@ -454,7 +455,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
 
             // For each batch, ensure it's synced to disk
             for batch in unflushed_batches {
-                let file_info = WriteBufferFileInfo {
+                let file_info = WalFileInfo {
                     collection_id: collection_id.to_string(),
                     batch_id: batch.batch_id.clone(),
                     file_url: self.disk_manager.batch_url(

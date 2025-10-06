@@ -17,7 +17,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.sstable");
-        let filesystem = Arc::new(FilesystemFactory::new());
+        let filesystem = Arc::new(FilesystemFactory::create());
 
         // Create test records
         let records = vec![SstRecord {
@@ -76,7 +76,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("compressed.sstable");
-        let filesystem = Arc::new(FilesystemFactory::new());
+        let filesystem = Arc::new(FilesystemFactory::create());
 
         // Create more records for better compression
         let mut records = vec![];
@@ -134,7 +134,7 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("invalid.sstable");
-        let filesystem = Arc::new(FilesystemFactory::new());
+        let filesystem = Arc::new(FilesystemFactory::create());
 
         // Write a file without SST1 magic bytes
         let fs = filesystem.get_filesystem("file:///").unwrap();
@@ -161,7 +161,7 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new());
+        let filesystem = Arc::new(FilesystemFactory::create());
 
         // Test data
         let records = vec![SstRecord {
@@ -226,7 +226,7 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new());
+        let filesystem = Arc::new(FilesystemFactory::create());
 
         // Test different block sizes
         let block_sizes = vec![4096, 8192, 16384, 32768, 65536];

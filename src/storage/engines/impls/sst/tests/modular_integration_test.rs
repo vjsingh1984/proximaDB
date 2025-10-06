@@ -274,7 +274,7 @@ mod tests {
         // Keep temp_dir alive by leaking it for test duration
         std::mem::forget(temp_dir);
 
-        Arc::new(FilesystemFactory::new(config).await.unwrap())
+        Arc::new(FilesystemFactory::create(config).await.unwrap())
     }
 
     async fn create_test_engine() -> SstEngine {

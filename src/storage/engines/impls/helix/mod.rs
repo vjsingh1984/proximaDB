@@ -564,7 +564,7 @@ impl HelixEngine {
         } else {
             let filesystem_config =
                 crate::storage::persistence::filesystem::FilesystemConfig::default();
-            Arc::new(FilesystemFactory::new(filesystem_config).await?)
+            Arc::new(FilesystemFactory::create(filesystem_config).await?)
         };
 
         // Get the local filesystem

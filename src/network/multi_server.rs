@@ -457,7 +457,7 @@ impl SharedServices {
         // Create filesystem factory for engines
         debug!("🔧 SharedServices::new - Creating filesystem factory for engines...");
         let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await?,
@@ -670,7 +670,7 @@ impl SharedServices {
         let mut graph_service_inst = if let Some(cfg) = opt_config { crate::graph::GraphOperationsService::from_config(cfg) } else { crate::graph::GraphOperationsService::new() };
         // Create a simple file-backed metrics updater under data_root/metrics
         let filesystem_factory =
-            Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+            Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
         let metrics_config = MetricsConfig {
             enabled: true,
             collection_partitions: 16,

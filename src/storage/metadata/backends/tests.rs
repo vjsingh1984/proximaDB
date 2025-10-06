@@ -130,7 +130,7 @@ mod metadata_backend_tests {
         
         // Create filesystem factory
         let fs_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
         
         // Create metadata backend
         let filestore_config = UniversalMetadataConfig {

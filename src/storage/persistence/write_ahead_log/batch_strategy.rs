@@ -54,7 +54,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     ) -> Result<String> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
-            fs.validate_url(cloud_url)
+            crate::storage::persistence::filesystem::validate_url(cloud_url)
                 .context("Invalid cloud URL format")?;
 
             // Serialize vector records to bytes (deref Arc)
@@ -78,7 +78,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             };
 
             // Validate the constructed URL
-            fs.validate_url(&full_url)
+            crate::storage::persistence::filesystem::validate_url(&full_url)
                 .context("Invalid constructed cloud URL")?;
 
             // Get filesystem for URL and write atomically
@@ -127,7 +127,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn read_batch_from_cloud(&self, cloud_url: &str) -> Result<WALVectorBatch> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
-            fs.validate_url(cloud_url)
+            crate::storage::persistence::filesystem::validate_url(cloud_url)
                 .context("Invalid cloud URL format")?;
 
             let filesystem = fs
@@ -257,8 +257,12 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             metadata_bloom_filter: None,
         };
 
+        // TODO: Get base_location from VectorOperationsService collection metadata
+        // For now, use a default fallback - this will break multi-collection with different backends
+        let base_location = "file:///tmp/proximadb/data/wal";
+
         let sequences = self
-            .write_native_batch(batch.clone(), collection_id)
+            .write_native_batch(batch.clone(), collection_id, base_location)
             .await?;
 
         // Step 3: Create WALOperation using strategy-specific serialization
@@ -279,10 +283,17 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
     /// Primary method: Write native WALVectorBatch directly to memtable
     /// This is the core method that all others delegate to
+    ///
+    /// # Arguments
+    /// * `batch` - The vector batch to write
+    /// * `collection_id` - Collection identifier
+    /// * `base_location` - Storage location for this collection (e.g., "s3://bucket/path" or "file:///data/disk1")
+    ///                     Provided by VectorOperationsService from cached collection metadata
     async fn write_native_batch(
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
     ) -> Result<Vec<u64>>;
 
     /// Write vector batch with immediate disk sync for durability
@@ -290,6 +301,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
+        base_location: &str,
         immediate_sync: bool,
     ) -> Result<Vec<u64>>;
 
@@ -732,7 +744,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<String>> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
-            fs.validate_url(cloud_base_url)
+            crate::storage::persistence::filesystem::validate_url(cloud_base_url)
                 .context("Invalid cloud base URL format")?;
 
             let filesystem = fs
@@ -792,7 +804,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn delete_cloud_batch(&self, cloud_url: &str) -> Result<()> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
-            fs.validate_url(cloud_url)
+            crate::storage::persistence::filesystem::validate_url(cloud_url)
                 .context("Invalid cloud URL format")?;
 
             let filesystem = fs
@@ -832,7 +844,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn check_cloud_health(&self, cloud_base_url: &str) -> Result<bool> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
-            match fs.validate_url(cloud_base_url) {
+            match crate::storage::persistence::filesystem::validate_url(cloud_base_url) {
                 Ok(_) => {}
                 Err(e) => {
                     tracing::warn!(
@@ -912,7 +924,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             metadata_bloom_filter: None,
         };
 
-        let sequences = self.write_native_batch(batch, collection_id).await?;
+        // TODO: Get base_location from VectorOperationsService collection metadata
+        // For now, use a default fallback
+        let base_location = "file:///tmp/proximadb/data/wal";
+
+        let sequences = self.write_native_batch(batch, collection_id, base_location).await?;
         Ok(sequences.into_iter().next().unwrap_or(0))
     }
 

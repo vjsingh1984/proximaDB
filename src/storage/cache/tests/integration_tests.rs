@@ -123,7 +123,7 @@ async fn test_cache_metrics_integration() {
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
     let fs_config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let mut metrics_config = MetricsConfig::default();
     // Use temp directory for tests
     metrics_config.storage_path = "file:///tmp/proximadb_cache_metrics_test".to_string();

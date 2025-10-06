@@ -1079,7 +1079,7 @@ mod tests {
     #[test]
     fn test_nova_metadata_serialization() {
         let _temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::default());
+        let filesystem = Arc::new(FilesystemFactory::create_default().await?);
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         // Test serialization
@@ -1097,7 +1097,7 @@ mod tests {
     #[test]
     fn test_nova_columnar_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::default());
+        let filesystem = Arc::new(FilesystemFactory::create_default().await?);
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
@@ -1127,7 +1127,7 @@ mod tests {
     #[test]
     fn test_nova_similarity_search_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::default());
+        let filesystem = Arc::new(FilesystemFactory::create_default().await?);
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer

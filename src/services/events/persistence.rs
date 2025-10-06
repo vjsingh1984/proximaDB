@@ -382,7 +382,7 @@ mod tests {
     #[tokio::test]
     async fn test_wal_persistence_and_recovery() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
 
         // Create test events
@@ -435,7 +435,7 @@ mod tests {
     #[tokio::test]
     async fn test_wal_rotation() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory.clone()).await?;
 
         // Set small max file size for testing
@@ -478,7 +478,7 @@ mod tests {
     #[tokio::test]
     async fn test_wal_compaction() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
 
         // Create and persist multiple events

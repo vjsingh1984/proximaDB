@@ -16,7 +16,7 @@ mod edge_tests {
     // Helper to create reader
     async fn create_test_reader() -> UnifiedParquetReader {
         let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         UnifiedParquetReader::new(filesystem)
     }
 

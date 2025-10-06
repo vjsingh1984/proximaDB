@@ -182,7 +182,7 @@ mod tests {
         }
 
         let filesystem_config = Default::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await?);
         let store = Arc::new(MetricsPersistenceLayer::new(filesystem_factory, config).await?);
         let updater = Arc::new(MetricsUpdateService::new(store.clone()));
 

@@ -27,7 +27,7 @@ async fn test_simple_sstable_write_read() {
 
     // Create filesystem factory
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Write SSTable
     let sstable_path = temp_path.join("test_simple.sstable");

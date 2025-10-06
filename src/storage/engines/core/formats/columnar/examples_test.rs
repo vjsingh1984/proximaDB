@@ -115,7 +115,7 @@ pub async fn viper_optimization_example() -> Result<()> {
 
         // Use HybridParquetWriter to write data
         eprintln!("DEBUG: Step 11 - Creating FilesystemFactory");
-        let filesystem_factory = FilesystemFactory::new(FilesystemConfig::default()).await?;
+        let filesystem_factory = FilesystemFactory::create(FilesystemConfig::default()).await?;
         eprintln!("DEBUG: Step 12 - FilesystemFactory created");
         let hybrid_config = super::hybrid_writer::HybridWriterConfig {
             base_config: ParquetWriterConfig {
@@ -169,7 +169,7 @@ pub async fn viper_optimization_example() -> Result<()> {
     // This would require properly passing the filesystem_factory from write to read
     /*
     {
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
         let config = ColumnarConfig::default();
 
         let reader = ColumnarFactory::create_optimized_reader(
@@ -382,7 +382,7 @@ pub async fn nova_optimization_example() -> Result<()> {
         }
 
         // Use HybridParquetWriter for writing
-        let filesystem_factory = FilesystemFactory::new(FilesystemConfig::default()).await?;
+        let filesystem_factory = FilesystemFactory::create(FilesystemConfig::default()).await?;
         let hybrid_config = super::hybrid_writer::HybridWriterConfig {
             base_config: ParquetWriterConfig {
                 enable_bloom_filters: recommendations.use_bloom_filters,
@@ -434,7 +434,7 @@ pub async fn nova_optimization_example() -> Result<()> {
 
     // NOVA's analytical read patterns
     {
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let filesystem = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
         let config = ColumnarConfig {
             max_cache_size_bytes: 1024 * 1024 * 1024, // 1GB cache for analytics
             optimization_thresholds: OptimizationThresholds {

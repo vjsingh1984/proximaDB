@@ -10,14 +10,13 @@ use tracing::{debug, info, warn};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
-use crate::storage::persistence::write_ahead_log::collection_path::slug_for;
 use crate::utils::checksum::Crc32;
 
 /// Centralized manager for all WAL disk operations
-pub struct WriteBufferDiskManager {
+pub struct WriteAheadLogDiskManager {
     /// Filesystem factory for creating filesystem instances
     filesystem_factory: Arc<FilesystemFactory>,
-    /// Base URL for WriteBuffer files (e.g., file:///path, s3://bucket/prefix)
+    /// Base URL for WAL files (e.g., file:///path, s3://bucket/prefix)
     wal_base_url: String,
     /// Statistics
     stats: Arc<tokio::sync::RwLock<DiskStats>>,
@@ -36,7 +35,7 @@ pub struct DiskStats {
 
 /// WAL file metadata
 #[derive(Debug, Clone)]
-pub struct WriteBufferFileInfo {
+pub struct WalFileInfo {
     pub collection_id: String,
     pub batch_id: BatchId,
     /// Full URL to the WAL file (scheme-preserving)
@@ -45,14 +44,14 @@ pub struct WriteBufferFileInfo {
     pub format: SerializationFormat,
 }
 
-impl WriteBufferDiskManager {
+impl WriteAheadLogDiskManager {
     /// Create a new disk manager
     pub fn new(
         filesystem_factory: Arc<FilesystemFactory>,
         wal_base_url: impl AsRef<str>,
     ) -> Self {
         let wal_base_url = wal_base_url.as_ref().to_string();
-        info!("🎯 Creating WriteBufferDiskManager with base URL: {}", wal_base_url);
+        info!("🎯 Creating WriteAheadLogDiskManager with base URL: {}", wal_base_url);
 
         Self {
             filesystem_factory,
@@ -95,33 +94,33 @@ impl WriteBufferDiskManager {
         &self.wal_base_url
     }
 
-    /// Build the WAL URL for a collection (slugged): {base}/{slug}/wal/
+    /// Build the WAL URL for a collection: {base}/{collection_id}/wal/
     pub fn collection_wal_url(&self, collection_id: &str) -> String {
-        let slug = slug_for(collection_id);
-        Self::join_url(&self.wal_base_url, &[&slug, "wal"], true)
+        // Use collection_id directly - collection IDs are already short base62 UUIDs
+        Self::join_url(&self.wal_base_url, &[collection_id, "wal"], true)
     }
 
-    /// Build WAL batch URL: .../{slug}/wal/<batch_id>.<ext>
+    /// Build WAL batch URL: .../{collection_id}/wal/<batch_id>.<ext>
     pub fn batch_url(
         &self,
         collection_id: &str,
         batch_id: &BatchId,
         format: SerializationFormat,
     ) -> String {
-        let slug = slug_for(collection_id);
+        // Use collection_id directly - collection IDs are already short base62 UUIDs
         let ext = match format {
             SerializationFormat::ProtocolBuffers => "pbwal",
             SerializationFormat::Bincode => "bcwal",
             SerializationFormat::Avro => "avwal",
         };
         let fname = format!("{}.{}", batch_id.to_base62(), ext);
-        Self::join_url(&self.wal_base_url, &[&slug, "wal", &fname], false)
+        Self::join_url(&self.wal_base_url, &[collection_id, "wal", &fname], false)
     }
 
-    /// Build manifest URL: .../{slug}/wal/manifest.log
+    /// Build manifest URL: .../{collection_id}/wal/manifest.log
     pub fn manifest_url(&self, collection_id: &str) -> String {
-        let slug = slug_for(collection_id);
-        Self::join_url(&self.wal_base_url, &[&slug, "wal", "manifest.log"], false)
+        // Use collection_id directly - collection IDs are already short base62 UUIDs
+        Self::join_url(&self.wal_base_url, &[collection_id, "wal", "manifest.log"], false)
     }
 
     /// Write a serialized batch to disk
@@ -131,7 +130,7 @@ impl WriteBufferDiskManager {
         batch_id: &BatchId,
         data: &[u8],
         format: SerializationFormat,
-    ) -> Result<WriteBufferFileInfo> {
+    ) -> Result<WalFileInfo> {
         self.write_batch_with_sync(collection_id, batch_id, data, format, false)
             .await
     }
@@ -144,7 +143,7 @@ impl WriteBufferDiskManager {
         data: &[u8],
         format: SerializationFormat,
         sync_to_disk: bool,
-    ) -> Result<WriteBufferFileInfo> {
+    ) -> Result<WalFileInfo> {
         let file_url = self.batch_url(collection_id, batch_id, format);
 
         debug!(
@@ -184,35 +183,30 @@ impl WriteBufferDiskManager {
             debug!("✅ WriteBuffer batch synced to disk for durability");
         }
 
-        // Append manifest entry with checksum (atomic rewrite of manifest.log)
+        // Register in global manifest
         let checksum = Crc32::checksum(data);
-        // Extract filename from URL for manifest entry
         let file_name = file_url
             .split('/')
             .last()
             .unwrap_or("")
             .to_string();
-        let entry = crate::storage::persistence::write_ahead_log::manifest::WalManifestEntry::from_batch(
-            batch_id,
-            file_name,
-            data.len() as u64,
-            checksum,
-        );
-        let manifest_url = self.manifest_url(collection_id);
-        let mfs = self.filesystem_factory.get_filesystem(&manifest_url)?;
-        let mut manifest_content = if mfs.exists(&manifest_url).await? {
-            mfs.read(&manifest_url).await?
-        } else {
-            Vec::new()
-        };
-        let mut line = serde_json::to_vec(&entry)?;
-        line.push(b'\n');
-        manifest_content.extend_from_slice(&line);
-        let mstrategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
-            ::create_metadata_strategy(&*mfs, None)?;
-        let mopts = mstrategy.create_file_options(&*mfs, &manifest_url)?;
-        mfs.write(&manifest_url, &manifest_content, Some(mopts)).await?;
-        let _ = mfs.sync_file(&manifest_url).await;
+
+        use crate::storage::persistence::write_ahead_log::manifest;
+        if let Some(manifest_service) = manifest::get_service() {
+            let entry = manifest::GlobalManifestEntry::new(
+                0,  // LSN will be auto-allocated
+                collection_id.to_string(),
+                batch_id,
+                file_name,
+                data.len() as u64,
+                checksum,
+                format,
+                0,  // vector_count - TODO: pass from caller
+                self.wal_base_url.clone(),  // Storage URL where this WAL file resides
+            );
+            // Async append (non-blocking, high performance)
+            manifest_service.append_async(entry).await?;
+        }
 
         // Update stats
         {
@@ -221,7 +215,7 @@ impl WriteBufferDiskManager {
             stats.total_files_written += 1;
         }
 
-        let file_info = WriteBufferFileInfo {
+        let file_info = WalFileInfo {
             collection_id: collection_id.to_string(),
             batch_id: batch_id.clone(),
             file_url: file_url.clone(),
@@ -234,7 +228,7 @@ impl WriteBufferDiskManager {
     }
 
     /// Read a serialized batch from disk
-    pub async fn read_batch(&self, file_info: &WriteBufferFileInfo) -> Result<Vec<u8>> {
+    pub async fn read_batch(&self, file_info: &WalFileInfo) -> Result<Vec<u8>> {
         let file_url = file_info.file_url.clone();
 
         debug!(
@@ -265,7 +259,7 @@ impl WriteBufferDiskManager {
     pub async fn list_collection_files(
         &self,
         collection_id: &str,
-    ) -> Result<Vec<WriteBufferFileInfo>> {
+    ) -> Result<Vec<WalFileInfo>> {
         let dir_url = self.collection_wal_url(collection_id);
 
         debug!(
@@ -319,7 +313,7 @@ impl WriteBufferDiskManager {
     }
 
     /// Delete a WAL file
-    pub async fn delete_file(&self, file_info: &WriteBufferFileInfo) -> Result<()> {
+    pub async fn delete_file(&self, file_info: &WalFileInfo) -> Result<()> {
         let file_url = file_info.file_url.clone();
 
         debug!(
@@ -388,7 +382,7 @@ impl WriteBufferDiskManager {
     // get_batch_file_path removed in favor of URL builders
 
     /// Parse a WAL filename to extract metadata
-    fn parse_wal_filename(&self, path: &str, collection_id: &str) -> Option<WriteBufferFileInfo> {
+    fn parse_wal_filename(&self, path: &str, collection_id: &str) -> Option<WalFileInfo> {
         // Use last path segment as filename regardless of scheme
         let file_name = path.split('/').last()?;
 
@@ -416,7 +410,7 @@ impl WriteBufferDiskManager {
         // Parse batch ID
         let batch_id = BatchId::from_base62(batch_id_str)?;
 
-        Some(WriteBufferFileInfo {
+        Some(WalFileInfo {
             collection_id: collection_id.to_string(),
             batch_id,
             file_url: path.to_string(),
@@ -432,16 +426,16 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemConfig;
     use tempfile::TempDir;
 
-    async fn create_test_manager() -> (WriteBufferDiskManager, TempDir) {
+    async fn create_test_manager() -> (WriteAheadLogDiskManager, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let filesystem_config = FilesystemConfig::default();
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(filesystem_config)
+            FilesystemFactory::create(filesystem_config)
                 .await
                 .expect("Failed to create filesystem factory"),
         );
 
-        let manager = WriteBufferDiskManager::new(filesystem_factory, temp_dir.path().to_str().unwrap());
+        let manager = WriteAheadLogDiskManager::new(filesystem_factory, temp_dir.path().to_str().unwrap());
 
         (manager, temp_dir)
     }

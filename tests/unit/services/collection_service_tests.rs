@@ -20,7 +20,7 @@ async fn create_test_service() -> Result<(Arc<CollectionService>, TempDir)> {
 
     // Create filesystem
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     // Create metadata backend
     let metadata_config = UniversalMetadataConfig {

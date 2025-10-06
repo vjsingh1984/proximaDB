@@ -95,7 +95,7 @@ async fn create_collection_write_buffer_dir(collection_id: &str) {
 #[tokio::test]
 async fn test_bincode_strategy_initialization() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
@@ -107,7 +107,7 @@ async fn test_bincode_strategy_initialization() {
 #[tokio::test]
 async fn test_bincode_binary_serialization() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -146,7 +146,7 @@ async fn test_bincode_binary_serialization() {
 #[tokio::test]
 async fn test_bincode_large_batch_performance() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -193,7 +193,7 @@ async fn test_bincode_large_batch_performance() {
 #[tokio::test]
 async fn test_bincode_similarity_search_accuracy() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -252,7 +252,7 @@ async fn test_bincode_similarity_search_accuracy() {
 #[tokio::test]
 async fn test_bincode_memory_management() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -291,7 +291,7 @@ async fn test_bincode_memory_management() {
 #[tokio::test]
 async fn test_bincode_concurrent_writes() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = Arc::new(
         BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
             .await
@@ -344,7 +344,7 @@ async fn test_bincode_concurrent_writes() {
 #[tokio::test]
 async fn test_bincode_edge_cases() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -392,7 +392,7 @@ async fn test_bincode_edge_cases() {
 #[tokio::test]
 async fn test_bincode_collection_isolation() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
@@ -439,7 +439,7 @@ async fn test_bincode_collection_isolation() {
 #[tokio::test]
 async fn test_bincode_batch_metadata() {
     let config = create_test_config();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");

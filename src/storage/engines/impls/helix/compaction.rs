@@ -716,7 +716,7 @@ mod tests {
         // Create filesystem factory with proper config
         let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         fs_config.default_fs = Some("file:///tmp/helix_test".to_string());
-        let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+        let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await.unwrap());
         let filesystem = factory.get_filesystem("file:///tmp/helix_test").unwrap();
 
         let data_dir = PathBuf::from("/tmp/helix_test");

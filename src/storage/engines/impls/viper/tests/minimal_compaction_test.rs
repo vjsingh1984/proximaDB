@@ -41,7 +41,7 @@ async fn test_minimal_viper_compaction() -> Result<()> {
     let core_config = crate::core::config::ViperConfig::default();
     
     // Create engine
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
     let engine = ViperEngine::from_core_config(core_config, filesystem_factory).await?;
     
     let collection_id = "minimal_test";

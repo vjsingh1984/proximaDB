@@ -340,7 +340,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_strategy_initialization() {
         let mut strategy = MockWALBatchStrategy::new("test_strategy");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
 
         assert!(!strategy.initialized);
@@ -355,7 +355,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_write_native_batch() {
         let mut strategy = MockWALBatchStrategy::new("test_write");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -375,7 +375,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_write_vector_batch_with_sync() {
         let mut strategy = MockWALBatchStrategy::new("test_sync");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -398,7 +398,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_read_all_batches() {
         let mut strategy = MockWALBatchStrategy::new("test_read");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -427,7 +427,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_collection_stats() {
         let mut strategy = MockWALBatchStrategy::new("test_stats");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -460,7 +460,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_global_stats() {
         let mut strategy = MockWALBatchStrategy::new("test_global_stats");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -532,7 +532,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_cloud_batch_operations() {
         let mut strategy = MockWALBatchStrategy::new("test_cloud");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -565,7 +565,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_cloud_health_check() {
         let mut strategy = MockWALBatchStrategy::new("test_cloud_health");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -596,7 +596,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_cloud_batch_listing() {
         let mut strategy = MockWALBatchStrategy::new("test_cloud_list");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -656,7 +656,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_empty_batch_handling() {
         let mut strategy = MockWALBatchStrategy::new("test_empty");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -682,7 +682,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_large_batch_handling() {
         let mut strategy = MockWALBatchStrategy::new("test_large");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -706,7 +706,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_concurrent_batch_operations() {
         let mut strategy = Arc::new(MockWALBatchStrategy::new("test_concurrent"));
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
 
         // Initialize strategy through Arc (need mutable reference)
@@ -747,7 +747,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_write_vector_batch_unified_json() {
         let mut strategy = MockWALBatchStrategy::new("test_unified_json");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -773,7 +773,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_write_vector_batch_unified_unsupported_format() {
         let mut strategy = MockWALBatchStrategy::new("test_unified_unsupported");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -798,7 +798,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_search_vectors_similarity() {
         let mut strategy = MockWALBatchStrategy::new("test_similarity");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -833,7 +833,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_search_vector_by_id() {
         let mut strategy = MockWALBatchStrategy::new("test_search_by_id");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -865,7 +865,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_strategy_recovery() {
         let mut strategy = MockWALBatchStrategy::new("test_recovery");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -881,7 +881,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_force_sync() {
         let mut strategy = MockWALBatchStrategy::new("test_force_sync");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -898,7 +898,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_strategy_close() {
         let mut strategy = MockWALBatchStrategy::new("test_close");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -910,7 +910,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_flush_operations() {
         let mut strategy = MockWALBatchStrategy::new("test_flush");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -937,7 +937,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_should_trigger_flush() {
         let mut strategy = MockWALBatchStrategy::new("test_flush_trigger");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
@@ -966,7 +966,7 @@ mod write_ahead_log_batch_strategy_tests {
     #[tokio::test]
     async fn test_delete_vector() {
         let mut strategy = MockWALBatchStrategy::new("test_delete");
-        let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 

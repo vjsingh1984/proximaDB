@@ -81,7 +81,7 @@ async fn test_id_less_storage_warning() {
 
     // Create filesystem factory
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .unwrap(),
     );
@@ -169,7 +169,7 @@ async fn test_parquet_flush_and_read_pattern() {
 
     // Read using filesystem API
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .unwrap()
     );
@@ -305,7 +305,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     // Read back and verify schema
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .unwrap()
     );
@@ -478,7 +478,7 @@ async fn test_multi_file_directory_scan() {
     std::fs::create_dir_all(&data_dir).unwrap();
 
     let filesystem = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default())
+        FilesystemFactory::create(FilesystemConfig::default())
             .await
             .unwrap()
     );
@@ -654,7 +654,7 @@ async fn test_dictionary_encoding_optimization() {
 
     // Verify ID lookups still work correctly
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
@@ -757,7 +757,7 @@ async fn test_customer_api_compatibility() {
 
     // Test get_by_id equivalent
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
@@ -872,7 +872,7 @@ async fn test_row_group_offset_optimization() {
 
     // Verify ID-based lookup still works
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(

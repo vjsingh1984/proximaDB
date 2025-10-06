@@ -140,7 +140,7 @@ async fn test_collection_service_dependency_injection() {
 
     // Create filesystem factory with minimal configuration
     let fs_config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     // Create metadata backend with minimal configuration to prevent stack overflow
     let filestore_config = UniversalMetadataConfig {
@@ -240,7 +240,7 @@ async fn test_metadata_backend_persistence() {
         std::fs::create_dir_all(&metadata_path).unwrap();
         // Use default filesystem configuration
         let fs_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
         let filestore_config = UniversalMetadataConfig {
             storage_url: format!("file://{}", metadata_path.to_string_lossy()),
@@ -385,7 +385,7 @@ async fn test_metadata_backend_deletion() {
     let metadata_path = temp_dir.path().join("metadata");
 
     let fs_config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
@@ -487,7 +487,7 @@ async fn test_concurrent_metadata_operations() {
     let metadata_path = temp_dir.path().join("metadata");
 
     let fs_config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
@@ -587,7 +587,7 @@ async fn test_metadata_backend_updates() {
     let metadata_path = temp_dir.path().join("metadata");
 
     let fs_config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
@@ -714,7 +714,7 @@ async fn test_metadata_backend_trait_implementation() {
 
     // Use default filesystem configuration
     let fs_config = FilesystemConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),

@@ -371,7 +371,7 @@ mod tests {
         let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         fs_config.default_fs = Some(format!("file://{}", path));
         let factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
                 .unwrap()
         );
@@ -401,7 +401,7 @@ mod tests {
         let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         fs_config.default_fs = Some(format!("file://{}", path));
         let factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
                 .unwrap()
         );

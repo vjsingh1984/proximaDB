@@ -18,7 +18,7 @@ use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
     // TODO: Fix CollectionService constructor - needs metadata backend and storage config
     // Placeholder for now

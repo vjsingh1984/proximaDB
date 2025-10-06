@@ -15,7 +15,7 @@ mod tests {
     async fn test_universal_backend_create() {
         // Basic creation test
         let filesystem_factory =
-            Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let config = UniversalMetadataConfig {
             storage_url: "file:///tmp/test_metadata_info".to_string(),
             compression: true,

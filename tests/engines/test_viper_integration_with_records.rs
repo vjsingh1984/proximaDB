@@ -18,7 +18,7 @@ use tracing::{debug, error, info};
 async fn create_viper_engine(_temp_dir: &TempDir) -> Result<ViperEngine> {
     // Create filesystem factory
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
 
     // Create VIPER storage engine using core config
     let viper_engine = ViperEngine::from_core_config(

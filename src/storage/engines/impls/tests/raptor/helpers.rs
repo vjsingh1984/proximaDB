@@ -132,7 +132,7 @@ pub async fn cleanup_test_data() -> Result<()> {
     // Create a filesystem instance using the factory
     let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let filesystem_factory =
-        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await?;
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await?;
     let filesystem = filesystem_factory.get_unified_caching_filesystem(
         "file:///tmp",
         "test_collection".to_string(),

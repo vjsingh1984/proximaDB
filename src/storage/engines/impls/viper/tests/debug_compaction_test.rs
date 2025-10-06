@@ -19,7 +19,7 @@ async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
 
     debug!("\n🔍 DEBUG: {} - Reading {}", label, file_path);
 
-    let fs = FilesystemFactory::new(Default::default()).await?;
+    let fs = FilesystemFactory::create(Default::default()).await?;
     let filesystem = fs.get_filesystem(file_path)?;
 
     match filesystem.read(file_path).await {
@@ -175,7 +175,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     config.flush_size_bytes = Some(512 * 1024); // 512KB
 
     // Create engine
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,

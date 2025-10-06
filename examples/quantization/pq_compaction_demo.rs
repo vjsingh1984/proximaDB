@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     println!("3. Setting up filesystem...");
     
     let filesystem_factory = Arc::new(
-        FilesystemFactory::new(FilesystemConfig::default()).await?
+        FilesystemFactory::create(FilesystemConfig::default()).await?
     );
     
     // Step 4: Create compactor with PQ-based sorting
