@@ -1,5 +1,8 @@
 """
 Comprehensive integration tests for ProximaDB functionality.
+
+NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
+requiring a running ProximaDB server.
 """
 
 import pytest
