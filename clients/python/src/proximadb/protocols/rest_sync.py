@@ -1760,29 +1760,47 @@ class ProximaDBClient:
             self._http_client.close()
     
     # Batch processing
-    def _execute_batch(self, requests: List[Dict[str, Any]]) -> List[Any]:
-        """Execute a batch of requests"""
+    def _execute_batch(self, operation, collection_id, batch_data) -> List[Any]:
+        """Execute a batch of requests
+
+        Args:
+            operation: BatchOperationType (e.g., INSERT_VECTORS, UPSERT_VECTORS, DELETE_VECTORS)
+            collection_id: Collection ID
+            batch_data: List of data items to process
+
+        Returns:
+            List of results for each item
+        """
+        from proximadb.batching_unified import BatchOperationType
         results = []
-        for request in requests:
+
+        # Route to appropriate method based on operation
+        if operation == BatchOperationType.INSERT_VECTORS:
+            # batch_data is already a list of vector items
+            for item in batch_data:
+                try:
+                    result = self.insert_vectors(collection_id, [item])
+                    results.append(result)
+                except Exception as e:
+                    results.append({'success': False, 'error': str(e)})
+
+        elif operation == BatchOperationType.UPSERT_VECTORS:
+            for item in batch_data:
+                try:
+                    result = self.upsert_vectors(collection_id, [item])
+                    results.append(result)
+                except Exception as e:
+                    results.append({'success': False, 'error': str(e)})
+
+        elif operation == BatchOperationType.DELETE_VECTORS:
+            # batch_data is a list of IDs
             try:
-                # Execute each request individually for now
-                # In a real implementation, this would use bulk APIs
-                operation = request.get('operation')
-                params = request.get('params', {})
-
-                # Route to appropriate method
-                if operation == 'insert':
-                    result = self.insert_vectors(**params)
-                elif operation == 'upsert':
-                    result = self.upsert_vectors(**params)
-                elif operation == 'delete':
-                    result = self.delete_vectors(**params)
-                else:
-                    result = {'success': False, 'error': f'Unknown operation: {operation}'}
-
+                result = self.delete_vectors(collection_id, batch_data)
                 results.append(result)
             except Exception as e:
                 results.append({'success': False, 'error': str(e)})
+        else:
+            results.append({'success': False, 'error': f'Unknown operation: {operation}'})
 
         return results
 
@@ -2064,13 +2082,15 @@ class ProximaDBClient:
             }
             vector_data.append(item)
         
-        return self._batch_processor.submit_request(
-            operation="insert_vectors",
+        from proximadb.batching_unified import BatchRequest, BatchOperationType
+        request = BatchRequest(
+            operation=BatchOperationType.INSERT_VECTORS,
             collection_id=collection_id,
             data=vector_data,
             callback=callback,
             priority=priority
         )
+        return self._batch_processor.submit_request(request)
     
     def upsert_vectors_batched(
         self,
@@ -2119,13 +2139,15 @@ class ProximaDBClient:
             }
             vector_data.append(item)
         
-        return self._batch_processor.submit_request(
-            operation="upsert_vectors",
+        from proximadb.batching_unified import BatchRequest, BatchOperationType
+        request = BatchRequest(
+            operation=BatchOperationType.UPSERT_VECTORS,
             collection_id=collection_id,
             data=vector_data,
             callback=callback,
             priority=priority
         )
+        return self._batch_processor.submit_request(request)
     
     def delete_vectors_batched(
         self,
@@ -2148,13 +2170,15 @@ class ProximaDBClient:
         if not self.enable_batching or not self._batch_processor:
             raise RuntimeError("Batching is not enabled. Initialize client with enable_batching=True")
         
-        return self._batch_processor.submit_request(
-            operation="delete_vectors",
+        from proximadb.batching_unified import BatchRequest, BatchOperationType
+        request = BatchRequest(
+            operation=BatchOperationType.DELETE_VECTORS,
             collection_id=collection_id,
             data=ids,
             callback=callback,
             priority=priority
         )
+        return self._batch_processor.submit_request(request)
     
     def get_batch_metrics(self) -> Dict[str, Any]:
         """Get batching performance metrics

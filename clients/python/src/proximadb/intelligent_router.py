@@ -151,7 +151,8 @@ class ProtocolMetrics:
         if self.health_status == ProtocolHealth.UNHEALTHY:
             self.health_status = ProtocolHealth.DEGRADED
         elif self.consecutive_failures == 0 and len(self.latency_samples) > 10:
-            avg_latency = statistics.mean(self.latency_samples)
+            # Create copy to avoid deque mutation during iteration
+            avg_latency = statistics.mean(list(self.latency_samples))
             if avg_latency < 100:  # < 100ms is healthy
                 self.health_status = ProtocolHealth.HEALTHY
                 
@@ -181,13 +182,15 @@ class ProtocolMetrics:
         """Get average latency in ms"""
         if not self.latency_samples:
             return float('inf')
-        return statistics.mean(self.latency_samples)
+        # Create copy to avoid deque mutation during iteration
+        return statistics.mean(list(self.latency_samples))
         
     def get_p95_latency(self) -> float:
         """Get 95th percentile latency"""
         if len(self.latency_samples) < 2:
             return float('inf')
-        sorted_samples = sorted(self.latency_samples)
+        # Create copy to avoid deque mutation during iteration
+        sorted_samples = sorted(list(self.latency_samples))
         p95_index = int(len(sorted_samples) * 0.95)
         return sorted_samples[p95_index]
         
@@ -443,8 +446,8 @@ class IntelligentRouter:
                             return fallback
                             
         elif self.config.strategy == RoutingStrategy.ROUND_ROBIN:
-            # Simple round-robin
-            protocols = [p for p in Protocol if self._is_protocol_healthy(p)]
+            # Simple round-robin (exclude AUTO which is not a real protocol)
+            protocols = [p for p in Protocol if p != Protocol.AUTO and self._is_protocol_healthy(p)]
             if protocols:
                 self._round_robin_index = (self._round_robin_index + 1) % len(protocols)
                 return protocols[self._round_robin_index]

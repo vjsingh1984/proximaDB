@@ -83,13 +83,33 @@ class TestDockerDemoContainer:
             # Test list collections
             collections = client.list_collections()
             assert isinstance(collections, list), "List collections should return a list"
-            collection_names = [c.get("name") for c in collections if isinstance(c, dict)]
+            # Handle both dict and object responses
+            collection_names = []
+            for c in collections:
+                if isinstance(c, dict):
+                    collection_names.append(c.get("name"))
+                elif hasattr(c, 'config') and hasattr(c.config, 'name'):
+                    collection_names.append(c.config.name)
+                elif hasattr(c, 'name'):
+                    collection_names.append(c.name)
+                elif hasattr(c, 'id'):
+                    collection_names.append(c.id)
             assert collection_name in collection_names, f"Created collection should be in list"
 
             # Test get specific collection
             collection_info = client.get_collection(collection_name)
             assert collection_info is not None, "Get collection should return collection info"
-            assert collection_info.get("name") == collection_name, "Collection name should match"
+            # Handle both dict and object responses
+            actual_name = None
+            if isinstance(collection_info, dict):
+                actual_name = collection_info.get("name")
+            elif hasattr(collection_info, 'config') and hasattr(collection_info.config, 'name'):
+                actual_name = collection_info.config.name
+            elif hasattr(collection_info, 'name'):
+                actual_name = collection_info.name
+            elif hasattr(collection_info, 'id'):
+                actual_name = collection_info.id
+            assert actual_name == collection_name, f"Collection name should match: {actual_name} != {collection_name}"
 
         finally:
             # Test delete collection
