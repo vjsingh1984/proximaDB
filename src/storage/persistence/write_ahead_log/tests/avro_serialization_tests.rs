@@ -26,7 +26,6 @@ fn create_test_config() -> WALConfig {
             global_memory_limit: 10 * 1024 * 1024, // 10MB
             mvcc_versions_retained: 5,
             enable_concurrency: true,
-            global_manifest_url: None,
         },
         multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
             data_directories: vec!["/tmp/proximadb-wal-test".to_string()],
@@ -55,7 +54,7 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
                 value: Some(sql_value::Value::StringValue("1".to_string())),
             }),
         ]),
-        timestamp: 1234567890i64,
+        timestamp: Some(1234567890i64),
         updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),
@@ -118,7 +117,7 @@ async fn test_avro_write_and_read_batch() {
 
     // Write batch
     let sequences = strategy
-        .write_native_batch(batch.clone(), collection_id)
+        .write_native_batch(batch.clone(), collection_id, "segment_0")
         .await
         .expect("Failed to write batch");
 
@@ -156,7 +155,7 @@ async fn test_avro_search_by_id() {
     let batch = create_test_batch(vec![vector.clone()]);
 
     strategy
-        .write_native_batch(batch, collection_id)
+        .write_native_batch(batch, collection_id, "segment_0")
         .await
         .expect("Failed to write batch");
 
@@ -200,7 +199,7 @@ async fn test_avro_similarity_search() {
 
     let batch = create_test_batch(vectors);
     strategy
-        .write_native_batch(batch, collection_id)
+        .write_native_batch(batch, collection_id, "segment_0")
         .await
         .expect("Failed to write batch");
 
@@ -246,7 +245,7 @@ async fn test_avro_stats_tracking() {
     let batch = create_test_batch(vectors);
 
     strategy
-        .write_native_batch(batch, collection_id)
+        .write_native_batch(batch, collection_id, "segment_0")
         .await
         .expect("Failed to write batch");
 
@@ -278,7 +277,7 @@ async fn test_avro_collection_stats() {
     let batch = create_test_batch(vectors);
 
     strategy
-        .write_native_batch(batch, collection_id)
+        .write_native_batch(batch, collection_id, "segment_0")
         .await
         .expect("Failed to write batch");
 
@@ -335,7 +334,7 @@ async fn test_avro_read_all_batches() {
         let batch = create_test_batch(vectors);
 
         strategy
-            .write_native_batch(batch, collection_id)
+            .write_native_batch(batch, collection_id, "segment_0")
             .await
             .expect("Failed to write batch");
     }
@@ -551,7 +550,7 @@ mod integration_tests {
         let batch = create_test_batch(vectors);
 
         strategy
-            .write_native_batch(batch, collection_id)
+            .write_native_batch(batch, collection_id, "segment_0")
             .await
             .expect("Failed to write batch");
 

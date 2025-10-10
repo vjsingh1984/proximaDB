@@ -27,7 +27,6 @@ fn create_test_config() -> WALConfig {
             global_memory_limit: 10 * 1024 * 1024, // 10MB
             mvcc_versions_retained: 5,
             enable_concurrency: true,
-            global_manifest_url: None,
         },
         multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
             data_directories: vec!["/tmp/proximadb-bincode-test".to_string()],
@@ -62,7 +61,7 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
             });
             metadata
         },
-        timestamp: 1234567890i64,
+        timestamp: Some(1234567890i64),
         updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),
@@ -124,7 +123,7 @@ async fn test_bincode_binary_serialization() {
         let batch = create_test_batch(vectors);
 
         let sequences = strategy
-            .write_native_batch(batch, collection_id)
+            .write_native_batch(batch, collection_id, "segment_0")
             .await
             .expect("Failed to write batch");
 
@@ -230,7 +229,7 @@ async fn test_bincode_similarity_search_accuracy() {
 
     let batch = create_test_batch(vectors);
     strategy
-        .write_native_batch(batch, collection_id)
+        .write_native_batch(batch, collection_id, "segment_0")
         .await
         .expect("Failed to write batch");
 
@@ -278,7 +277,7 @@ async fn test_bincode_memory_management() {
 
         let batch = create_test_batch(vectors);
         strategy
-            .write_native_batch(batch, collection_id)
+            .write_native_batch(batch, collection_id, "segment_0")
             .await
             .expect("Failed to write batch");
 
@@ -317,7 +316,7 @@ async fn test_bincode_concurrent_writes() {
                 let batch = create_test_batch(vectors);
 
                 strategy_clone
-                    .write_native_batch(batch, &collection_id)
+                    .write_native_batch(batch, &collection_id, "segment_0")
                     .await
                     .expect("Failed to write batch");
             }
@@ -410,7 +409,7 @@ async fn test_bincode_collection_isolation() {
         let batch = create_test_batch(vectors);
 
         strategy
-            .write_native_batch(batch, collection_id)
+            .write_native_batch(batch, collection_id, "segment_0")
             .await
             .expect("Failed to write batch");
     }
@@ -468,7 +467,7 @@ async fn test_bincode_batch_metadata() {
 
     let batch = create_test_batch(vectors);
     strategy
-        .write_native_batch(batch, collection_id)
+        .write_native_batch(batch, collection_id, "segment_0")
         .await
         .expect("Failed to write batch");
 

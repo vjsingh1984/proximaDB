@@ -377,12 +377,20 @@ impl RecoveryManager {
             // Use full_url() from manifest entry (includes storage_url + file_path)
             let file_url = e.full_url();
 
+            // Convert string format to SerializationFormat
+            let format = match e.format.as_str() {
+                "proto" => SerializationFormat::ProtocolBuffers,
+                "bincode" => SerializationFormat::Bincode,
+                "avro" => SerializationFormat::Avro,
+                _ => SerializationFormat::ProtocolBuffers, // Default fallback
+            };
+
             let mut file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
                 batch_id: BatchId::from_base62(&e.batch_id).unwrap_or(BatchId::new()),
                 file_url: file_url.clone(),
                 size_bytes: e.size_bytes,
-                format: e.format,
+                format,
             };
 
             debug!("🔄 Recovering WAL batch {} from {} (LSN: {}, {} bytes)",
@@ -398,7 +406,7 @@ impl RecoveryManager {
                     let serializer = SerializerFactory::create(file_info.format);
                     let vectors = serializer.deserialize_batch(&data).context("Failed to deserialize WAL data")?;
                     let count = vectors.len() as u64;
-                    let result = Self::flush_recovered_vectors(&file_info, vectors, &disk_manager, &storage_engines, recovery_mode, &e.storage_url, &metadata_provider).await?;
+                    let result = Self::flush_recovered_vectors(&file_info, vectors, &disk_manager, &storage_engines, recovery_mode, &e.storage_path, &metadata_provider).await?;
                     if result.success {
                         files_recovered += 1;
                         vectors_recovered += count;

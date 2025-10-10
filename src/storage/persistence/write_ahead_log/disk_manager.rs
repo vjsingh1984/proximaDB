@@ -193,16 +193,20 @@ impl WriteAheadLogDiskManager {
 
         use crate::storage::persistence::write_ahead_log::manifest;
         if let Some(manifest_service) = manifest::get_service() {
+            let format_str = match format {
+                SerializationFormat::ProtocolBuffers => "proto",
+                SerializationFormat::Bincode => "bincode",
+                SerializationFormat::Avro => "avro",
+            };
             let entry = manifest::GlobalManifestEntry::new(
                 0,  // LSN will be auto-allocated
-                collection_id.to_string(),
-                batch_id,
-                file_name,
-                data.len() as u64,
-                checksum,
-                format,
-                0,  // vector_count - TODO: pass from caller
-                self.wal_base_url.clone(),  // Storage URL where this WAL file resides
+                batch_id.to_base62(),  // batch_id as String
+                collection_id.to_string(),  // collection_id
+                self.wal_base_url.clone(),  // storage_path
+                file_name,  // file_path
+                format_str.to_string(),  // format as String
+                checksum,  // checksum_crc32
+                data.len() as u64,  // size_bytes
             );
             // Async append (non-blocking, high performance)
             manifest_service.append_async(entry).await?;

@@ -50,7 +50,6 @@ pub struct MetadataWALConfig {
 
     /// Cache TTL in seconds
     pub cache_ttl_seconds: u64,
-            global_manifest_url: None,
 }
 
 impl Default for MetadataWALConfig {
@@ -89,7 +88,6 @@ impl Default for MetadataWALConfig {
             metadata_flush_threshold: 2_500, // Flush more frequently for durability
             enable_metadata_cache: true,
             cache_ttl_seconds: 600, // 10 minutes (metadata changes less frequently)
-            global_manifest_url: None,
         }
     }
 }

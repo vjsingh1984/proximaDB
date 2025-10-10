@@ -849,7 +849,6 @@ impl SharedServices {
     ) -> crate::storage::persistence::write_ahead_log::config::WALConfig {
         use crate::storage::persistence::write_ahead_log::config::{
             MemTableConfig, MemTableType, PerformanceConfig, SyncMode, WALConfig,
-            global_manifest_url: None,
         };
 
         // Create performance config with values from TOML
@@ -900,8 +899,8 @@ impl SharedServices {
             enable_ttl: true,                   // Enable TTL support
             enable_background_compaction: true, // Enable background compaction
             enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
+            global_manifest_url: toml_config.global_manifest_url.clone(),
             ..Default::default()
-            global_manifest_url: None,
         }
     }
 }

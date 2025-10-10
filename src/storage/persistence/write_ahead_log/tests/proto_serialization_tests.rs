@@ -27,7 +27,6 @@ fn create_test_config() -> WALConfig {
             global_memory_limit: 10 * 1024 * 1024, // 10MB
             mvcc_versions_retained: 5,
             enable_concurrency: true,
-            global_manifest_url: None,
         },
         multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
             data_directories: vec!["/tmp/proximadb-proto-test".to_string()],
@@ -66,7 +65,7 @@ fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
             );
             map
         },
-        timestamp: 1234567890,
+        timestamp: Some(1234567890),
         updated_at: Some(1234567890),
         expires_at: Some(1234567890 + 86400), // 24 hours later
         version: Some(1),

@@ -32,7 +32,6 @@ mod tests {
         use crate::storage::persistence::write_ahead_log::config::MemTableType;
         use crate::storage::persistence::write_ahead_log::{
             WALConfig, config::WriteBufferStrategyType,
-            global_manifest_url: None,
         };
 
         let mut base_config = WALConfig::default();
@@ -62,8 +61,8 @@ mod tests {
             config: Some(proximadb_v1::CollectionConfig {
                 name: format!("Test Collection {}", collection_id),
                 dimension: 128,
-                distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
-                storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                distance_metric: Some(proximadb_v1::DistanceMetric::Cosine as i32),
+                storage_engine: Some(proximadb_v1::StorageEngine::Sst as i32),
                 tags: vec!["test".to_string()],
                 description: Some("Test collection".to_string()),
                 filterable_columns: vec![],
@@ -94,7 +93,7 @@ mod tests {
             id: collection.id.clone(),
             name: config.name.clone(),
             dimension: config.dimension as usize,
-            distance_metric: format!("{:?}", proximadb_v1::DistanceMetric::try_from(config.distance_metric).unwrap_or_default()),
+            distance_metric: format!("{:?}", proximadb_v1::DistanceMetric::try_from(config.distance_metric.unwrap_or(0)).unwrap_or_default()),
             indexing_algorithm: "hnsw".to_string(),
             timestamp: collection.created_at as u32,
             version: Some(1),
@@ -245,8 +244,8 @@ mod tests {
                     config: Some(proximadb_v1::CollectionConfig {
                         name: versioned.name.clone(),
                         dimension: versioned.dimension as u32,
-                        distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
-                        storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                        distance_metric: Some(proximadb_v1::DistanceMetric::Cosine as i32),
+                        storage_engine: Some(proximadb_v1::StorageEngine::Sst as i32),
                         tags: versioned.tags.clone(),
                         description: versioned.description.clone(),
                         filterable_columns: vec![],
@@ -263,8 +262,8 @@ mod tests {
                         index_size_bytes: 0,
                         data_size_bytes: versioned.total_size_bytes as i64,
                     }),
-                    created_at: versioned.timestamp.unwrap_or(0) as i64,
-                    updated_at: versioned.timestamp.unwrap_or(0) as i64,
+                    created_at: versioned.timestamp as i64,
+                    updated_at: versioned.timestamp as i64,
                     storage_assignment: None,
                 };
                 Ok(Some(collection))
@@ -300,8 +299,8 @@ mod tests {
                     config: Some(proximadb_v1::CollectionConfig {
                         name: versioned.name.clone(),
                         dimension: versioned.dimension as u32,
-                        distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
-                        storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                        distance_metric: Some(proximadb_v1::DistanceMetric::Cosine as i32),
+                        storage_engine: Some(proximadb_v1::StorageEngine::Sst as i32),
                         tags: versioned.tags.clone(),
                         description: versioned.description.clone(),
                         filterable_columns: vec![],
@@ -318,8 +317,8 @@ mod tests {
                         index_size_bytes: 0,
                         data_size_bytes: versioned.total_size_bytes as i64,
                     }),
-                    created_at: versioned.timestamp.unwrap_or(0) as i64,
-                    updated_at: versioned.timestamp.unwrap_or(0) as i64,
+                    created_at: versioned.timestamp as i64,
+                    updated_at: versioned.timestamp as i64,
                     storage_assignment: None,
                 }
             }).collect();
