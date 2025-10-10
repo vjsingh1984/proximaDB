@@ -23,10 +23,20 @@ def test_grpc_metadata_overrides(monkeypatch):
     # Patch the stub class used inside client
     # Patch the module-level graph stubs used by client
     monkeypatch.setattr(grpc_mod, "v1_graph_pb2_grpc", types.SimpleNamespace(GraphServiceStub=FakeStub), raising=False)
-    monkeypatch.setattr(grpc_mod, "v1_graph_pb2", types.SimpleNamespace(ShortestPathAlgorithm=types.SimpleNamespace(
-        SHORTEST_PATH_ALGORITHM_DIJKSTRA=1,
-        SHORTEST_PATH_ALGORITHM_ASTAR=2,
-    )), raising=False)
+
+    # Create a fake request class
+    class FakeShortestPathRequest:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    monkeypatch.setattr(grpc_mod, "v1_graph_pb2", types.SimpleNamespace(
+        ShortestPathRequest=FakeShortestPathRequest,
+        ShortestPathAlgorithm=types.SimpleNamespace(
+            SHORTEST_PATH_ALGORITHM_DIJKSTRA=1,
+            SHORTEST_PATH_ALGORITHM_ASTAR=2,
+        )
+    ), raising=False)
 
     # Patch connection pool to bypass real channels
     from proximadb.protocols.connection_pools import GrpcConnectionPool, GrpcChannelContext
