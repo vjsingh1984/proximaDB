@@ -148,6 +148,7 @@ class TestSimulatedEmbeddingProvider:
         assert embeddings.shape == (100, 384)
 
 
+@pytest.mark.skip(reason="Integration test - requires real server. Move to tests/integration/")
 class TestBERTEmbeddingProvider(BaseProximaDBTest):
     """Test BERT embedding provider with real BERT service"""
     
@@ -403,6 +404,7 @@ class TestConvenienceFunctions:
         assert provider.is_available() == True
 
 
+@pytest.mark.skip(reason="Integration test - requires real server. Move to tests/integration/")
 class TestEmbeddingProviderIntegration(BaseProximaDBTest):
     """Test integration with semantic chunking and vector storage"""
     

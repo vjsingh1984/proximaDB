@@ -372,28 +372,41 @@ def create_embedding_provider(
 ) -> EmbeddingProvider:
     """
     Create embedding provider with simple configuration
-    
+
     Args:
         provider_type: Provider type (bert, cohere, simulated)
         model_name: Model name override
         dimension: Embedding dimension override
-        **kwargs: Additional config parameters
-        
+        **kwargs: Additional config parameters (batch_size, normalize, etc.)
+
     Returns:
         Configured EmbeddingProvider instance
     """
-    config_params = {}
-    
-    if model_name:
-        config_params["model_name"] = model_name
-    if dimension:
-        config_params["dimension"] = dimension
-    
-    config_params.update(kwargs)
-    
-    # Create config if parameters provided
-    config = EmbeddingConfig(**config_params) if config_params else None
-    
+    config = None
+
+    # If we have kwargs but not model_name/dimension, we need to use provider defaults
+    if kwargs and not (model_name and dimension):
+        # Get default config for the provider type
+        provider_defaults = {
+            "bert": {"model_name": "all-MiniLM-L6-v2", "dimension": 384},
+            "simulated": {"model_name": "simulated", "dimension": 384},
+            "cohere": {"model_name": "embed-english-v2.0", "dimension": 4096},
+        }
+
+        defaults = provider_defaults.get(provider_type.lower(), {"model_name": "default", "dimension": 384})
+
+        config_params = {
+            "model_name": model_name or defaults["model_name"],
+            "dimension": dimension or defaults["dimension"]
+        }
+        config_params.update(kwargs)
+        config = EmbeddingConfig(**config_params)
+    elif model_name and dimension:
+        # Full explicit config
+        config_params = {"model_name": model_name, "dimension": dimension}
+        config_params.update(kwargs)
+        config = EmbeddingConfig(**config_params)
+
     return EmbeddingProviderFactory.create_provider(provider_type, config)
 
 
