@@ -1766,43 +1766,73 @@ class ProximaDBClient:
         Args:
             operation: BatchOperationType (e.g., INSERT_VECTORS, UPSERT_VECTORS, DELETE_VECTORS)
             collection_id: Collection ID
-            batch_data: List of data items to process
+            batch_data: List of request data. Each item is a list of vector dicts or a list of IDs.
+                        For INSERT/UPSERT: [[{id, vector, metadata}, ...], [{id, vector, metadata}, ...], ...]
+                        For DELETE: [[id1, id2, ...], [id3, ...], ...]
 
         Returns:
-            List of results for each item
+            List of results for each item (or single result for the entire batch)
         """
         from proximadb.batching_unified import BatchOperationType
-        results = []
 
-        # Route to appropriate method based on operation
-        if operation == BatchOperationType.INSERT_VECTORS:
-            # batch_data is already a list of vector items
-            for item in batch_data:
-                try:
-                    result = self.insert_vectors(collection_id, [item])
-                    results.append(result)
-                except Exception as e:
-                    results.append({'success': False, 'error': str(e)})
+        try:
+            # Route to appropriate method based on operation
+            if operation == BatchOperationType.INSERT_VECTORS:
+                # Flatten batch_data: it's a list of lists of dicts
+                # [[{dict1}, {dict2}], [{dict3}], ...] -> [{dict1}, {dict2}, {dict3}, ...]
+                all_vectors = []
+                for item_list in batch_data:
+                    if isinstance(item_list, list):
+                        all_vectors.extend(item_list)
+                    else:
+                        all_vectors.append(item_list)
 
-        elif operation == BatchOperationType.UPSERT_VECTORS:
-            for item in batch_data:
-                try:
-                    result = self.upsert_vectors(collection_id, [item])
-                    results.append(result)
-                except Exception as e:
-                    results.append({'success': False, 'error': str(e)})
+                # Extract vectors, ids, and metadata from all collected items
+                vectors = [item['vector'] for item in all_vectors]
+                ids = [item['id'] for item in all_vectors]
+                metadata = [item.get('metadata', {}) for item in all_vectors]
 
-        elif operation == BatchOperationType.DELETE_VECTORS:
-            # batch_data is a list of IDs
-            try:
-                result = self.delete_vectors(collection_id, batch_data)
-                results.append(result)
-            except Exception as e:
-                results.append({'success': False, 'error': str(e)})
-        else:
-            results.append({'success': False, 'error': f'Unknown operation: {operation}'})
+                # Call insert_vectors once for the entire batch
+                result = self.insert_vectors(collection_id, vectors=vectors, ids=ids, metadata=metadata)
+                return [{'success': True, 'result': result}]
 
-        return results
+            elif operation == BatchOperationType.UPSERT_VECTORS:
+                # Flatten batch_data
+                all_vectors = []
+                for item_list in batch_data:
+                    if isinstance(item_list, list):
+                        all_vectors.extend(item_list)
+                    else:
+                        all_vectors.append(item_list)
+
+                # Extract vectors, ids, and metadata
+                vectors = [item['vector'] for item in all_vectors]
+                ids = [item['id'] for item in all_vectors]
+                metadata = [item.get('metadata', {}) for item in all_vectors]
+
+                # Call upsert_vectors once for the entire batch
+                result = self.upsert_vectors(collection_id, vectors=vectors, ids=ids, metadata=metadata)
+                return [{'success': True, 'result': result}]
+
+            elif operation == BatchOperationType.DELETE_VECTORS:
+                # Flatten batch_data: it's a list of lists of IDs
+                # [[id1, id2], [id3], ...] -> [id1, id2, id3, ...]
+                all_ids = []
+                for id_list in batch_data:
+                    if isinstance(id_list, list):
+                        all_ids.extend(id_list)
+                    else:
+                        all_ids.append(id_list)
+
+                # Call delete_vectors once for the entire batch
+                result = self.delete_vectors(collection_id, ids=all_ids)
+                return [{'success': True, 'result': result}]
+
+            else:
+                return [{'success': False, 'error': f'Unknown operation: {operation}'}]
+
+        except Exception as e:
+            return [{'success': False, 'error': str(e)}]
 
     # Helper methods for cache-aware operations
     def _cached_get(self, operation: str, collection_id: str, params: Dict[str, Any], fetch_func: callable, ttl_seconds: Optional[float] = None) -> Any:
