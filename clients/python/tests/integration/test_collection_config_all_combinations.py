@@ -2,11 +2,10 @@
 """
 Test all possible collection configuration combinations.
 This test verifies what configurations are actually supported by the server.
+
+NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
+requiring REST/gRPC client connections to a running server.
 """
-
-import pytest
-
-pytest.skip("Tests require REST/gRPC client connections to server - actually integration tests, should be in tests/integration/", allow_module_level=True)
 
 import pytest
 import time

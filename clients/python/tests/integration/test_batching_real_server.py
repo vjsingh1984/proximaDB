@@ -3,11 +3,12 @@ Tests for ProximaDB batching functionality with real server
 
 Uses real ProximaDB server connections to test request batching,
 dynamic batch sizing, and performance optimizations.
+
+NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
+requiring a running ProximaDB server.
 """
 
 import pytest
-
-pytest.skip("Integration tests requiring real server - should be in tests/integration/", allow_module_level=True)
 import time
 import numpy as np
 from pathlib import Path

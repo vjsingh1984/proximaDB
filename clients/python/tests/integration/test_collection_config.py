@@ -3,11 +3,10 @@
 Comprehensive test suite for collection configuration combinations.
 Tests all possible combinations of collection configurations to ensure
 proper handling by the Python SDK.
+
+NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
+requiring REST/gRPC client connections to a running server.
 """
-
-import pytest
-
-pytest.skip("Tests require REST/gRPC client connections to server - actually integration tests, should be in tests/integration/", allow_module_level=True)
 
 import pytest
 import itertools
