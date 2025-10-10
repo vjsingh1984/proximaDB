@@ -216,7 +216,8 @@ class TestChunkingIntegration:
                 assert len(record.vector) == 384
                 assert record.metadata["topic"] == "vector_database"
                 assert record.metadata["category"] == "technology"
-                assert "text" in record.metadata
+                # Text is stored in source field, not metadata
+                assert record.source is not None and len(record.source) > 0
             
             # Step 6: Insert via gRPC
             grpc_insert_result = grpc_client.insert_vectors(collection_name, records)
@@ -288,13 +289,15 @@ class TestChunkingIntegration:
                 assert len(rest_get_result["vector"]) == 384
                 assert rest_get_result["metadata"]["topic"] == "vector_database"
                 assert rest_get_result["metadata"]["category"] == "technology"
-                assert "text" in rest_get_result["metadata"]
+                # Text is stored in source field, not metadata
+                assert rest_get_result.get("source") is not None
             else:
                 assert rest_get_result.id == first_vector_id
                 assert len(rest_get_result.vector) == 384
                 assert rest_get_result.metadata["topic"] == "vector_database"
                 assert rest_get_result.metadata["category"] == "technology"
-                assert "text" in rest_get_result.metadata
+                # Text is stored in source field, not metadata
+                assert hasattr(rest_get_result, 'source') and rest_get_result.source is not None
             
             # Step 10: Get vector via gRPC
             grpc_get_result = grpc_client.get_vector(
