@@ -6,7 +6,10 @@ import pytest
 import time
 from typing import List, Dict, Any
 
-from proximadb.chunking import TextChunker, ChunkingConfig, ChunkingStrategy, TextChunk
+from proximadb.chunking import (
+    TextChunker, ChunkingConfig, ChunkingStrategy, TextChunk,
+    create_enhanced_semantic_chunker  # Alias for semantic chunker
+)
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
 # This test needs to be updated for the new architecture
 from proximadb.chunking_strategies import SemanticStrategy

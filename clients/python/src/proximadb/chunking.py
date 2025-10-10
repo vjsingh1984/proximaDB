@@ -459,6 +459,24 @@ def create_chunker(strategy: Union[str, ChunkingStrategy, ChunkingConfig] = None
         return TextChunker(config)
 
 
+def create_enhanced_semantic_chunker(enable_caching: bool = True, **kwargs) -> TextChunker:
+    """Create an enhanced semantic chunker (alias for create_chunker with semantic strategy)
+
+    Args:
+        enable_caching: Whether to enable embedding caching (default: True)
+        **kwargs: Additional configuration parameters
+
+    Returns:
+        TextChunker instance configured for semantic chunking
+    """
+    # Add enable_caching to kwargs if not already present
+    if 'enable_caching' not in kwargs:
+        kwargs['enable_caching'] = enable_caching
+
+    # Create chunker with semantic strategy
+    return create_chunker(ChunkingStrategy.SEMANTIC, **kwargs)
+
+
 def chunk_by_sentences(
     text: str,
     chunk_size: int = 512,
