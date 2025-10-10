@@ -88,7 +88,7 @@ impl MockCollectionService {
                             crate::proto::proximadb_v1::SchemaField {
                                 name: "embedding".to_string(),
                                 data_type: "vector".to_string(),
-                                dimension: Some(1536),
+                                dimension: 1536,
                             },
                         ],
                     }),*/

@@ -32,6 +32,7 @@ mod tests {
         use crate::storage::persistence::write_ahead_log::config::MemTableType;
         use crate::storage::persistence::write_ahead_log::{
             WALConfig, config::WriteBufferStrategyType,
+            global_manifest_url: None,
         };
 
         let mut base_config = WALConfig::default();
@@ -50,6 +51,7 @@ mod tests {
             metadata_flush_threshold: 1000,
             enable_metadata_cache: true,
             cache_ttl_seconds: 300,
+            global_manifest_url: None,
         }
     }
 

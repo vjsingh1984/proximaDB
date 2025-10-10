@@ -23,7 +23,7 @@ impl MockCollectionService {
                 id: "uuid-products".to_string(),
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
                     name: "products".to_string(),
-                    dimension: Some(1536),
+                    dimension: 1536,
                     distance_metric: Some(0), // Cosine metric
                     storage_engine: Some(0), // Default storage engine
                     tags: vec![],
@@ -88,7 +88,7 @@ impl MockCollectionService {
                             crate::proto::proximadb_v1::SchemaField {
                                 name: "embedding".to_string(),
                                 data_type: "vector".to_string(),
-                                dimension: Some(1536),
+                                dimension: 1536,
                             },
                         ],
                     }),*/
@@ -111,7 +111,7 @@ impl MockCollectionService {
                 id: "uuid-users".to_string(),
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
                     name: "users".to_string(),
-                    dimension: Some(0),
+                    dimension: 0,
                     distance_metric: Some(0), // Changed from string to enum
                     storage_engine: Some(0), // Default storage engine
                     tags: vec![],

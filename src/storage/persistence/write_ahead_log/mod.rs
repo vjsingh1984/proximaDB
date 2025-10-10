@@ -1230,6 +1230,7 @@ impl WriteAheadLogManager {
     /// Get WAL configuration (read-only access)
     pub fn get_config(&self) -> &WALConfig {
         &self.config
+            global_manifest_url: None,
     }
 
     /// Insert single vector record (converted to batch of 1 via WALVectorBatch)

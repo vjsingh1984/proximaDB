@@ -741,9 +741,9 @@ mod inline_tests {
     fn test_create_columnar_schema() {
         // Test with quantization enabled
         let mut config = QuantizationConfig::default();
-        config.enable_binary = true;
-        config.enable_int8 = true;
-        config.enable_pq = true;
+        config.enable_binary = Some(true);
+        config.enable_int8 = Some(true);
+        config.enable_pq = Some(true);
 
         let filterable = vec!["category".to_string(), "price".to_string()];
 

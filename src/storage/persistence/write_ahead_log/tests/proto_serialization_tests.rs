@@ -27,6 +27,7 @@ fn create_test_config() -> WALConfig {
             global_memory_limit: 10 * 1024 * 1024, // 10MB
             mvcc_versions_retained: 5,
             enable_concurrency: true,
+            global_manifest_url: None,
         },
         multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
             data_directories: vec!["/tmp/proximadb-proto-test".to_string()],

@@ -180,6 +180,7 @@ mod tests {
             sync_mode: "PerBatch".to_string(),
             write_buffer_directory: "./test_wal".to_string(),
             enable_wal: true,
+            global_manifest_url: None,
         };
 
         // Verify the values are set correctly

@@ -685,7 +685,7 @@ async fn create_sst_files_with_engine(
         id: collection_id.to_string(),
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: collection_id.to_string(),
-            dimension: Some(3),
+            dimension: 3,
             distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
             storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
             ..Default::default()

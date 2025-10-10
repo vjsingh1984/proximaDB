@@ -20,7 +20,7 @@ mod tests {
 
         CollectionConfig {
             name: name.to_string(),
-            dimension: Some(128),
+            dimension: 128,
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
             filterable_columns: vec![],
@@ -269,7 +269,7 @@ mod tests {
 
         let mut config = CollectionConfig {
             name: "test".to_string(),
-            dimension: Some(256),
+            dimension: 256,
             distance_metric: Some(DistanceMetric::Euclidean as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
             filterable_columns: vec![],
@@ -357,7 +357,7 @@ mod tests {
 
         let config = CollectionConfig {
             name: "metadata_test".to_string(),
-            dimension: Some(100),
+            dimension: 100,
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
             filterable_columns: vec![],

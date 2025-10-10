@@ -50,6 +50,7 @@ mod tests {
             sync_mode: "Periodic".to_string(),
             write_buffer_directory: "/custom/path".to_string(),
             enable_wal: false,
+            global_manifest_url: None,
         };
 
         assert_eq!(config.write_buffer_size_mb, 16384);
@@ -71,6 +72,7 @@ mod tests {
             sync_mode: "perbatch".to_string(),
             write_buffer_directory: "./test_data/write_buffer".to_string(),
             enable_wal: true,
+            global_manifest_url: None,
         };
 
         // Verify values are as expected

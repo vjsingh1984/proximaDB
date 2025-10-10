@@ -863,11 +863,11 @@ mod tests {
             strategy: Some(crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults as i32),
             custom_levels: vec![
                 crate::proto::proximadb_v1::QuantizationLevel {
-                    level_id: Some("binary".to_string()),
-                    r#type: Some(crate::proto::proximadb_v1::quantization_level::QuantizationType::Binary as i32),
-                    bits: Some(1),
-                    threshold: Some(0.0),
-                    sign_based: true,
+                    level_id: "binary".to_string(),
+                    r#type: crate::proto::proximadb_v1::quantization_level::QuantizationType::Binary as i32,
+                    bits: 1,
+                    threshold: 0.0,
+                    sign_based: Some(true),
                     ..Default::default()
                 },
             ],

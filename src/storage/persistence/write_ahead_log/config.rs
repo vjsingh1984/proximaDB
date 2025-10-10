@@ -281,6 +281,7 @@ pub struct WALConfig {
     pub multi_disk: MultiDiskConfig,
 
     /// Global manifest location (explicit configuration)
+            global_manifest_url: None,
     /// If None, defaults to {first_data_directory}/wal
     /// Examples:
     /// - "file:///data/wal-metadata" (dedicated fast SSD)
@@ -371,6 +372,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
         wal_config.multi_disk.distribution_strategy = match core_config.distribution_strategy {
             crate::core::config::WalDistributionStrategy::RoundRobin => {
                 DiskDistributionStrategy::RoundRobin
+            global_manifest_url: None,
             }
             crate::core::config::WalDistributionStrategy::Hash => DiskDistributionStrategy::Hash,
             crate::core::config::WalDistributionStrategy::LoadBalanced => {
@@ -452,6 +454,7 @@ impl WALConfig {
         config.performance.batch_threshold = 500; // Larger batches
         config.performance.sync_mode = SyncMode::PerBatch; // Less frequent syncing
         config
+            global_manifest_url: None,
     }
 
     /// Create configuration optimized for low-latency reads

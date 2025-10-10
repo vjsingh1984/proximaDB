@@ -29,6 +29,7 @@ mod tests {
         let mut config = WALConfig::default();
         config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string()];
         config
+            global_manifest_url: None,
     }
 
     #[tokio::test]

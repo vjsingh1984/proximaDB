@@ -703,6 +703,7 @@ pub struct WriteBufferUserConfig {
     pub enable_wal: bool,
     /// Global manifest location (optional)
     pub global_manifest_url: Option<String>,
+            global_manifest_url: None,
 }
 
 impl Default for WriteBufferUserConfig {
@@ -716,6 +717,7 @@ impl Default for WriteBufferUserConfig {
             write_buffer_directory: "./data/write_buffer".to_string(),
             enable_wal: true,
             global_manifest_url: None,
+            global_manifest_url: None,
         }
     }
 }
@@ -725,6 +727,8 @@ impl WriteBufferUserConfig {
     pub fn to_engine_config(&self) -> crate::storage::persistence::write_ahead_log::WALConfig {
         use crate::storage::persistence::write_ahead_log::{
             WALConfig, WriteBufferStrategyType,
+            global_manifest_url: None,
+            global_manifest_url: None,
             config::{CompressionConfig, MemTableConfig, MultiDiskConfig, PerformanceConfig},
         };
 
@@ -744,6 +748,7 @@ impl WriteBufferUserConfig {
             optimized_writer_batch_timeout_ms: None,
             optimized_writer_threads: None,
             optimized_writer_enable_combining: None,
+            global_manifest_url: None,
         }
     }
 }

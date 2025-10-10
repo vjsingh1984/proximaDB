@@ -77,6 +77,7 @@ mod tests {
                 data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
                 distribution_strategy: DiskDistributionStrategy::Hash,
                 collection_affinity: true,
+            global_manifest_url: None,
             },
             memtable: MemTableConfig {
                 memtable_type: MemTableType::SkipList,
@@ -140,6 +141,7 @@ mod tests {
                 data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
                 distribution_strategy: DiskDistributionStrategy::LoadBalanced,
                 collection_affinity: true,
+            global_manifest_url: None,
             },
             memtable: MemTableConfig {
                 memtable_type: MemTableType::Art,
