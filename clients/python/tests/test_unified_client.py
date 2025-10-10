@@ -48,24 +48,22 @@ def test_protocol_selection():
 
 def test_pydantic_model_creation():
     """Test that Pydantic models can be created properly"""
-    
+
     # Test CollectionConfig creation
     config = CollectionConfig(
         name="test_collection",
         dimension=128,
         distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
-        primary_indexing_algorithm=IndexingAlgorithm.HNSW,
         description="Test collection",
         tags=["test", "example"],
         owner="unittest"
     )
-    
+
     assert config.name == "test_collection"
     assert config.dimension == 128
     assert config.distance_metric == "cosine"
     assert config.storage_engine == StorageEngine.VIPER
-    assert config.primary_indexing_algorithm == IndexingAlgorithm.HNSW
     assert config.description == "Test collection"
     assert config.tags == ["test", "example"]
     assert config.owner == "unittest"
@@ -73,7 +71,7 @@ def test_pydantic_model_creation():
 
 def test_vector_record_creation():
     """Test that VectorRecord can be created properly"""
-    
+
     # Test VectorRecord with all fields
     record = VectorRecord(
         id="vec_001",
@@ -84,17 +82,17 @@ def test_vector_record_creation():
             "active": True,
             "tags": ["important", "verified"]
         },
-        timestamp=1640995200000000,  # 2022-01-01 00:00:00 UTC in microseconds
+        timestamp_ms=1640995200000,  # 2022-01-01 00:00:00 UTC in milliseconds
         version=1
     )
-    
+
     assert record.id == "vec_001"
     assert record.vector == [0.1, 0.2, 0.3, 0.4]
     assert record.metadata["category"] == "test"
     assert record.metadata["score"] == 0.95
     assert record.metadata["active"] is True
     assert record.metadata["tags"] == ["important", "verified"]
-    assert record.timestamp == 1640995200000000
+    assert record.timestamp_ms == 1640995200000
     assert record.version == 1
     
     # Test VectorRecord with minimal fields
@@ -120,7 +118,7 @@ def test_type_conversion_helpers():
     # Test storage engine conversion
     assert client._proto_to_pydantic_storage_engine(1) == StorageEngine.VIPER
     assert client._proto_to_pydantic_storage_engine(2) == StorageEngine.SST
-    assert client._proto_to_pydantic_storage_engine(3) == StorageEngine.MMAP
+    assert client._proto_to_pydantic_storage_engine(3) == StorageEngine.NOVA
     
     # Test indexing algorithm conversion
     assert client._proto_to_pydantic_indexing_algorithm(1) == IndexingAlgorithm.HNSW

@@ -141,9 +141,11 @@ def build_search_params_grpc(
     streaming_concurrent_search: Optional[bool] = None,
     streaming_max_concurrent_tasks: Optional[int] = None,
     streaming_batch_size: Optional[int] = None
-) -> "pb2.SearchParams":  # type: ignore
-    """Build SearchParams proto message for gRPC API.
-    
+) -> Any:
+    """Build search params for gRPC API (v1 proto).
+
+    Returns proximadb.v1.vector_types_pb2.SearchParams instance.
+
     Args:
         top_k: Number of results to return
         filters: Metadata filters to apply
@@ -155,131 +157,126 @@ def build_search_params_grpc(
         enable_clustering_hint: Enable clustering optimization
         enable_metadata_filtering_hint: Enable metadata filtering optimization
         custom_hints: Custom optimization hints
-        
+        distance_metric: Distance metric override
+        requires_ordering: Require ordered results
+        candidate_multiplier: Candidate multiplier for search
+        streaming_buffer_size: Streaming buffer size
+        streaming_concurrent_search: Enable concurrent streaming search
+        streaming_max_concurrent_tasks: Max concurrent streaming tasks
+        streaming_batch_size: Streaming batch size
+
     Returns:
-        SearchParams proto message
+        proximadb.v1.vector_types_pb2.SearchParams instance
+
+    Raises:
+        ImportError: If gRPC proto modules are not available
     """
     try:
-        from . import proximadb_pb2 as pb2
-        from google.protobuf import struct_pb2
-    except ImportError:
-        logger.error("Failed to import proto definitions")
-        raise
-        
-    params = pb2.SearchParams()
-    
+        from proximadb.v1 import vector_types_pb2, types_pb2
+    except ImportError as e:
+        raise ImportError(
+            "Proto modules not available. Install with: pip install proximadb[grpc]"
+        ) from e
+
+    # Create SearchParams proto
+    search_params = vector_types_pb2.SearchParams()
+
+    # Set scalar optional fields
     if top_k is not None:
-        params.top_k = top_k
-        
-    if filters:
-        for key, value in filters.items():
-            struct_val = struct_pb2.Value()
-            if isinstance(value, str):
-                struct_val.string_value = value
-            elif isinstance(value, bool):
-                struct_val.bool_value = value
-            elif isinstance(value, (int, float)):
-                struct_val.number_value = float(value)
-            elif isinstance(value, list):
-                list_val = struct_val.list_value
-                for item in value:
-                    item_val = list_val.values.add()
-                    if isinstance(item, str):
-                        item_val.string_value = item
-                    elif isinstance(item, bool):
-                        item_val.bool_value = item
-                    elif isinstance(item, (int, float)):
-                        item_val.number_value = float(item)
-            params.filters[key].CopyFrom(struct_val)
-            
+        search_params.top_k = top_k
     if accuracy_threshold is not None:
-        params.accuracy_threshold = accuracy_threshold
-        
+        search_params.accuracy_threshold = accuracy_threshold
     if include_expired is not None:
-        params.include_expired = include_expired
-        
+        search_params.include_expired = include_expired
     if timeout_ms is not None:
-        params.timeout_ms = timeout_ms
-        
+        search_params.timeout_ms = timeout_ms
     if enable_two_stage is not None:
-        params.enable_two_stage = enable_two_stage
-        
-    # Handle quantization hint
-    if quantization_hint is not None:
-        if isinstance(quantization_hint, str):
-            # Simple string hints
-            hint_lower = quantization_hint.lower()
-            if hint_lower in ["none", "no", "fp32", "float32"]:
-                params.no_quantization = True
-            elif hint_lower in ["binary", "bin"]:
-                params.binary.CopyFrom(pb2.BinaryQuantizationParams())
-            elif hint_lower in ["scalar", "int8"]:
-                params.scalar.bits = 8
-            elif hint_lower == "int16":
-                params.scalar.bits = 16
-            elif hint_lower.startswith("pq"):
-                # Product quantization, e.g., "pq8", "pq4"
-                try:
-                    bits = int(hint_lower[2:]) if len(hint_lower) > 2 else 8
-                    params.product.num_subvectors = 8  # Default
-                    params.product.bits_per_code = bits
-                except ValueError:
-                    params.product.num_subvectors = 8
-                    params.product.bits_per_code = 8
-        elif isinstance(quantization_hint, dict):
-            # Detailed quantization config
-            hint_type = quantization_hint.get("type", "").lower()
-            if hint_type == "binary":
-                params.binary.CopyFrom(pb2.BinaryQuantizationParams())
-            elif hint_type == "scalar":
-                params.scalar.bits = quantization_hint.get("bits", 8)
-            elif hint_type == "product" or hint_type == "pq":
-                params.product.num_subvectors = quantization_hint.get("num_subvectors", 8)
-                params.product.bits_per_code = quantization_hint.get("bits_per_code", 8)
-            elif hint_type == "uniform":
-                params.uniform.scale = quantization_hint.get("scale", 1.0)
-                params.uniform.offset = quantization_hint.get("offset", 0.0)
-                
+        search_params.enable_two_stage = enable_two_stage
     if enable_clustering_hint is not None:
-        params.enable_clustering_hint = enable_clustering_hint
-        
+        search_params.enable_clustering_hint = enable_clustering_hint
     if enable_metadata_filtering_hint is not None:
-        params.enable_metadata_filtering_hint = enable_metadata_filtering_hint
-        
+        search_params.enable_metadata_filtering_hint = enable_metadata_filtering_hint
+
+    # Build custom_hints map (map<string, SqlValue>)
+    hints_dict = {}
+
+    # Add custom hints if provided
     if custom_hints:
         for key, value in custom_hints.items():
-            struct_val = struct_pb2.Value()
-            if isinstance(value, str):
-                struct_val.string_value = value
-            elif isinstance(value, bool):
-                struct_val.bool_value = value
-            elif isinstance(value, (int, float)):
-                struct_val.number_value = float(value)
-            params.custom_hints[key].CopyFrom(struct_val)
-            
-    # Additional parameters stored in custom hints
-    extra_hints = {}
+            hints_dict[key] = value
+
+    # Add additional parameters as custom hints
     if distance_metric:
-        extra_hints["distance_metric"] = distance_metric
+        hints_dict["distance_metric"] = distance_metric
     if requires_ordering is not None:
-        extra_hints["requires_ordering"] = str(requires_ordering).lower()
+        hints_dict["requires_ordering"] = requires_ordering
     if candidate_multiplier is not None:
-        extra_hints["candidate_multiplier"] = str(candidate_multiplier)
+        hints_dict["candidate_multiplier"] = candidate_multiplier
+
+    # Add streaming config to custom hints
     if streaming_buffer_size is not None:
-        extra_hints["streaming_buffer_size"] = str(streaming_buffer_size)
+        hints_dict["streaming_buffer_size"] = streaming_buffer_size
     if streaming_concurrent_search is not None:
-        extra_hints["streaming_concurrent_search"] = str(streaming_concurrent_search).lower()
+        hints_dict["streaming_concurrent_search"] = streaming_concurrent_search
     if streaming_max_concurrent_tasks is not None:
-        extra_hints["streaming_max_concurrent_tasks"] = str(streaming_max_concurrent_tasks)
+        hints_dict["streaming_max_concurrent_tasks"] = streaming_max_concurrent_tasks
     if streaming_batch_size is not None:
-        extra_hints["streaming_batch_size"] = str(streaming_batch_size)
-        
-    for key, value in extra_hints.items():
-        struct_val = struct_pb2.Value()
-        struct_val.string_value = value
-        params.custom_hints[key].CopyFrom(struct_val)
-            
-    return params
+        hints_dict["streaming_batch_size"] = streaming_batch_size
+
+    # Convert hints_dict to map<string, SqlValue>
+    if hints_dict:
+        for key, value in hints_dict.items():
+            sql_value = _python_value_to_sql_value(value, types_pb2)
+            search_params.custom_hints[key].CopyFrom(sql_value)
+
+    return search_params
+
+
+def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
+    """Convert Python value to SqlValue proto.
+
+    Args:
+        value: Python value
+        types_pb2: proximadb.v1.types_pb2 module
+
+    Returns:
+        SqlValue instance
+    """
+    sql_value = types_pb2.SqlValue()
+
+    if isinstance(value, bool):
+        sql_value.bool_value = value
+    elif isinstance(value, int):
+        sql_value.int64_value = value
+    elif isinstance(value, float):
+        sql_value.number_value = value
+    elif isinstance(value, str):
+        sql_value.string_value = value
+    elif isinstance(value, bytes):
+        sql_value.bytes_value = value
+    elif value is None:
+        # For None, use NullValue from google.protobuf
+        from google.protobuf import struct_pb2
+        sql_value.null_value = struct_pb2.NULL_VALUE
+    elif isinstance(value, list):
+        # Convert to SqlArray
+        array_value = types_pb2.SqlArray()
+        for item in value:
+            item_value = _python_value_to_sql_value(item, types_pb2)
+            array_value.values.append(item_value)
+        sql_value.array_value.CopyFrom(array_value)
+    elif isinstance(value, dict):
+        # Convert to SqlObject
+        object_value = types_pb2.SqlObject()
+        for k, v in value.items():
+            item_value = _python_value_to_sql_value(v, types_pb2)
+            object_value.fields[k].CopyFrom(item_value)
+        sql_value.object_value.CopyFrom(object_value)
+    else:
+        # Fallback to string representation
+        sql_value.string_value = str(value)
+
+    return sql_value
 
 
 def build_search_hints(

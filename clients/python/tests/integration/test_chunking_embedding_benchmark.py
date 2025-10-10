@@ -135,15 +135,17 @@ def calculate_search_accuracy(results: List[Dict], query_terms: List[str]) -> fl
 class TestChunkingEmbeddingBenchmark:
     """Benchmark different configurations"""
     
-    def test_benchmark_configurations(self):
-        """Run benchmark on different configurations"""
-        
+    @pytest.mark.slow
+    @pytest.mark.benchmark
+    def test_benchmark_configurations(self, rest_client):
+        """Run benchmark on different configurations (marked as slow - run with -m benchmark)"""
+
         # Load document
         document = load_test_document()
         print(f"\nDocument size: {len(document)} characters")
-        
-        # Initialize client
-        client = ProximaDBClient()
+
+        # Use fixture client
+        client = rest_client
         
         # Test queries
         test_queries = [

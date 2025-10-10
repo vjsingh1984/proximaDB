@@ -27,7 +27,7 @@ def test_rest_get_and_delete_batch_sks_or_legacy():
     try:
         # Create collection
         cfg = CollectionConfig(name=coll, dimension=4)
-        client.create_collection(config=cfg)
+        client.create_collection(name=coll, config=cfg)
 
         # Insert 2 vectors
         vectors = np.array([[0.2, 0.1, 0.0, 0.3], [0.25, 0.05, 0.02, 0.29]], dtype=np.float32)

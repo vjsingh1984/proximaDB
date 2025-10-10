@@ -326,7 +326,7 @@ async fn test_recovery_skips_corrupted_checksum() {
     }
 
     let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));
-    let mut rm = RecoveryManager::new(Default::default(), wal_behavior, fs_factory.clone());
+    let mut rm = RecoveryManager::new(Default::default(), wal_behavior, fs_factory.clone(), Arc::new(tokio::sync::RwLock::new(None)));
     let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(MockEngine{ cnt: Arc::new(tokio::sync::Mutex::new(0)) });
     rm.register_storage_engine(cid, engine.clone()).await.unwrap();
 

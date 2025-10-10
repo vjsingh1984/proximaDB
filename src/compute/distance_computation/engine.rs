@@ -406,41 +406,53 @@ impl BatchDistanceResults {
 
 impl SimilarityResult {
     /// Create a new similarity result with normalization
+    /// IMPORTANT: normalize_distance now returns normalized_similarity directly (0-1, higher = better)
+    /// No need for double inversion!
     pub fn new(raw_value: f32, metric: DistanceMetric) -> Self {
-        let (distance, similarity_score) = Self::normalize_distance(raw_value, &metric);
-        let normalized_score = 1.0 - similarity_score; // Invert for compatibility
+        let (distance, normalized_similarity) = Self::normalize_distance(raw_value, &metric);
         Self {
             distance,
             raw_value,
             metric,
-            similarity_score,
-            normalized_score,
-            rank_value: distance, // Same as distance for ranking
+            similarity_score: normalized_similarity,  // Now this IS the normalized similarity
+            normalized_score: normalized_similarity,   // Same value, for compatibility
+            rank_value: distance, // Raw distance for ranking (lower = better)
         }
     }
 
     /// Normalize distance based on metric type
+    /// Returns (distance, normalized_similarity) where normalized_similarity is [0,1], higher = more similar
     fn normalize_distance(value: f32, metric: &DistanceMetric) -> (f32, f32) {
         match metric {
             DistanceMetric::DotProduct => {
-                // Dot product: higher = more similar, so invert
-                let distance = -value; // Invert so lower = more similar
-                let similarity = if value > 0.0 {
-                    1.0 / (1.0 + value)
-                } else {
-                    1.0
-                };
-                (distance, 1.0 - similarity)
+                // Dot product: higher = more similar, so normalize to [0,1] range
+                let normalized_similarity = ((value + 1.0) / 2.0).min(1.0).max(0.0);
+                (value, normalized_similarity)
             }
             DistanceMetric::Cosine => {
-                // Cosine distance: already normalized [0, 2], lower = more similar
-                let similarity = (2.0 - value) / 2.0; // Convert to [0, 1]
-                (value, 1.0 - similarity)
+                // Cosine distance: [0, 2] range, lower = more similar
+                // Convert to normalized similarity [0,1] where higher = more similar
+                let normalized_similarity = if value.is_infinite() {
+                    0.0
+                } else {
+                    1.0 - (value / 2.0).min(1.0).max(0.0)
+                };
+                (value, normalized_similarity)
+            }
+            DistanceMetric::Euclidean => {
+                // Euclidean: lower = more similar, convert to similarity [0,1]
+                let normalized_similarity = 1.0 / (1.0 + value);
+                (value, normalized_similarity)
+            }
+            DistanceMetric::Manhattan => {
+                // Manhattan: lower = more similar, use exponential decay
+                let normalized_similarity = (-value / 10.0).exp();
+                (value, normalized_similarity)
             }
             _ => {
-                // For other metrics (Euclidean, Manhattan, etc.), lower = more similar
-                let similarity = 1.0 / (1.0 + value);
-                (value, 1.0 - similarity)
+                // Default: use Euclidean-style conversion
+                let normalized_similarity = 1.0 / (1.0 + value);
+                (value, normalized_similarity)
             }
         }
     }

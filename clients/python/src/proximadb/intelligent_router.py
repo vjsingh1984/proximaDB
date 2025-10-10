@@ -290,7 +290,7 @@ class IntelligentRouter:
         
         # Client management
         self._client_factories: Dict[Protocol, Callable] = {}
-        self._clients: Dict[Protocol, Any] = weakref.WeakValueDictionary()
+        self._clients: Dict[Protocol, Any] = {}  # Regular dict to properly cache clients
         
         # Background monitoring
         self._monitoring_thread: Optional[threading.Thread] = None

@@ -4,29 +4,38 @@ Handles conversion between Python dict and typed proto MetadataItem.
 """
 
 from typing import Dict, List, Any, Union
-from . import proximadb_pb2 as pb2
+
+try:
+    from proximadb.v1 import types_pb2 as v1_types_pb2
+    GRPC_AVAILABLE = True
+except ImportError:
+    GRPC_AVAILABLE = False
+    v1_types_pb2 = None
 
 
-def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List[pb2.MetadataItem]:
+def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List:
     """
-    Convert a Python dict to a list of typed MetadataItem protos.
-    
+    Convert a Python dict to a list of typed MetadataValue protos (v1 API).
+
     Args:
         metadata: Dictionary of metadata key-value pairs
-        
+
     Returns:
-        List of MetadataItem proto messages with typed values
+        List of MetadataValue proto messages with typed values (v1 API)
     """
+    if not GRPC_AVAILABLE or v1_types_pb2 is None:
+        raise ImportError("gRPC proto modules not available. Install grpcio and regenerate protos.")
+
     items = []
     for key, value in metadata.items():
-        item = pb2.MetadataItem()
+        item = v1_types_pb2.MetadataValue()
         item.key = key
-        
+
         # Set the appropriate typed value
         if isinstance(value, bool):
             item.bool_value = value
         elif isinstance(value, (int, float)):
-            item.number_value = float(value)
+            item.double_value = float(value)
         elif isinstance(value, str):
             item.string_value = value
         elif value is None:
@@ -35,18 +44,18 @@ def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List[pb2.MetadataItem]:
         else:
             # Convert other types to string
             item.string_value = str(value)
-            
+
         items.append(item)
     return items
 
 
-def proto_metadata_to_dict(metadata_items: List[pb2.MetadataItem]) -> Dict[str, Any]:
+def proto_metadata_to_dict(metadata_items: List) -> Dict[str, Any]:
     """
-    Convert a list of typed MetadataItem protos to a Python dict.
-    
+    Convert a list of typed MetadataValue protos (v1 API) to a Python dict.
+
     Args:
-        metadata_items: List of MetadataItem proto messages
-        
+        metadata_items: List of MetadataValue proto messages (v1 API)
+
     Returns:
         Dictionary of metadata key-value pairs
     """
@@ -55,8 +64,10 @@ def proto_metadata_to_dict(metadata_items: List[pb2.MetadataItem]) -> Dict[str, 
         # Check which field is set using HasField
         if item.HasField('string_value'):
             result[item.key] = item.string_value
-        elif item.HasField('number_value'):
-            result[item.key] = item.number_value
+        elif item.HasField('double_value'):
+            result[item.key] = item.double_value
+        elif item.HasField('int64_value'):
+            result[item.key] = item.int64_value
         elif item.HasField('bool_value'):
             result[item.key] = item.bool_value
         else:

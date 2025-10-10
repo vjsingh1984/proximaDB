@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
-from proximadb import proximadb_pb2 as pb2
+from proximadb.v1 import collection_types_pb2 as v1_collection_types_pb2
+from proximadb.models import IndexType, DistanceMetricType, StorageEngineType
 
 
 def grpc_available(addr: str) -> bool:
@@ -29,15 +30,19 @@ def test_grpc_end_to_end_basic():
     coll = f"py_sdk_grpc_{uuid.uuid4().hex[:8]}"
     try:
         # Create collection with HNSW primary
-        ic = pb2.IndexConfig(index_name=f"{coll}_primary", algorithm=pb2.IndexingAlgorithm.HNSW, is_primary=True)
-        qcfg = pb2.QuantizationConfig(enabled=False)
+        # Use readable enum constants from models.py to avoid magic numbers
+        ic = v1_collection_types_pb2.IndexConfig(
+            index_name=f"{coll}_primary",
+            algorithm=IndexType.HNSW,
+            is_primary=True
+        )
+        # Quantization is optional, omit it for simplicity
         client.create_collection(
             name=coll,
             dimension=4,
-            distance_metric=pb2.DistanceMetric.COSINE,
-            storage_engine=pb2.StorageEngine.VIPER,
+            distance_metric=DistanceMetricType.COSINE,
+            storage_engine=StorageEngineType.VIPER,
             index_configs=[ic],
-            quantization_config=qcfg,
         )
 
         # Insert vectors via gRPC wrapper (VectorBatch)

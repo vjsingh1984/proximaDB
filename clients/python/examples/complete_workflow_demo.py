@@ -18,6 +18,8 @@ import requests
 # Add SDK to path
 sys.path.insert(0, 'clients/python/src')
 
+from proximadb.models import DistanceMetricType, StorageEngineType
+
 from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
 
@@ -57,12 +59,12 @@ def main():
         result = client.create_collection(
             name=collection_name,
             dimension=dimension,
-            distance_metric=1,  # 1 = cosine
-            storage_engine=0    # 0 = auto
+            distance_metric=DistanceMetricType.COSINE,
+            storage_engine=StorageEngineType.UNSPECIFIED  # Auto-select best engine
         )
         print(f"   ✅ Collection created: {collection_name}")
         print(f"      - Dimension: {dimension}")
-        print(f"      - Distance Metric: cosine (1)")
+        print(f"      - Distance Metric: COSINE")
     except Exception as e:
         print(f"   ❌ Failed to create collection: {e}")
         return 1

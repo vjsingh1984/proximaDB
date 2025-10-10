@@ -2331,16 +2331,16 @@ impl UnifiedStorageEngine for ViperEngine {
                     warn!("⚠️ VIPER: Record {} has empty vector, skipping", record.id);
                     continue;
                 }
-                // Compute distance
-                let distance = distance_compute.distance(query_vector, vector);
+                // Use UnifiedDistanceCompute.calculate_distance() to get SimilarityResult
+                // This already includes normalized_score, no need to convert again!
+                let similarity_result = distance_compute.calculate_distance(query_vector, vector, &distance_metric);
 
-                // Convert distance to score (higher is better)
-                let score = 1.0 / (1.0 + distance);
-
-                // Create record with score and insert into bounded queue
+                // IMPORTANT: All engines use normalized_score from UnifiedDistanceCompute consistently
+                // score field = normalized similarity (0-1, higher = better) for sorting and display
+                // Future options: .with_distance(rank_value) and .with_raw_distance(distance) as commented fields
                 let mut search_record = record;
-                search_record.score = score;
-                search_record.similarity = Some(distance);
+                search_record.score = similarity_result.normalized_score;
+                search_record.similarity = Some(similarity_result.normalized_score);  // Currently redundant, maintains API compatibility
 
                 // Debug: check metadata before inserting
                 if priority_queue.len() < 3 {

@@ -216,6 +216,93 @@ impl QueryLowering {
                     right: right_expr,
                 })
             }
+            SqlExpr::Between {
+                expr,
+                negated,
+                low,
+                high,
+            } => {
+                // Convert BETWEEN to: expr >= low AND expr <= high
+                // Or NOT BETWEEN to: expr < low OR expr > high
+                let expr_ast = Box::new(self.lower_expr(expr).await?);
+                let low_ast = Box::new(self.lower_expr(low).await?);
+                let high_ast = Box::new(self.lower_expr(high).await?);
+
+                if *negated {
+                    // expr NOT BETWEEN low AND high → expr < low OR expr > high
+                    let lt_expr = Expr::Binary {
+                        left: expr_ast.clone(),
+                        op: BinaryOp::Lt,
+                        right: low_ast,
+                    };
+                    let gt_expr = Expr::Binary {
+                        left: expr_ast,
+                        op: BinaryOp::Gt,
+                        right: high_ast,
+                    };
+                    Ok(Expr::Binary {
+                        left: Box::new(lt_expr),
+                        op: BinaryOp::Or,
+                        right: Box::new(gt_expr),
+                    })
+                } else {
+                    // expr BETWEEN low AND high → expr >= low AND expr <= high
+                    let ge_expr = Expr::Binary {
+                        left: expr_ast.clone(),
+                        op: BinaryOp::Ge,
+                        right: low_ast,
+                    };
+                    let le_expr = Expr::Binary {
+                        left: expr_ast,
+                        op: BinaryOp::Le,
+                        right: high_ast,
+                    };
+                    Ok(Expr::Binary {
+                        left: Box::new(ge_expr),
+                        op: BinaryOp::And,
+                        right: Box::new(le_expr),
+                    })
+                }
+            }
+            SqlExpr::InList {
+                expr,
+                list,
+                negated,
+            } => {
+                // Convert IN to: expr = val1 OR expr = val2 OR ...
+                // Or NOT IN to: expr != val1 AND expr != val2 AND ...
+                let expr_ast = Box::new(self.lower_expr(expr).await?);
+
+                if list.is_empty() {
+                    // Empty IN list should return FALSE (no matches)
+                    // Empty NOT IN list should return TRUE (matches everything)
+                    return Ok(Expr::Literal(Literal::Bool(!negated)));
+                }
+
+                let mut comparisons: Vec<Expr> = Vec::new();
+                for val in list {
+                    let val_ast = Box::new(self.lower_expr(val).await?);
+                    let comparison = Expr::Binary {
+                        left: expr_ast.clone(),
+                        op: if *negated { BinaryOp::Ne } else { BinaryOp::Eq },
+                        right: val_ast,
+                    };
+                    comparisons.push(comparison);
+                }
+
+                // Chain with OR (for IN) or AND (for NOT IN)
+                let op = if *negated { BinaryOp::And } else { BinaryOp::Or };
+                let mut result = comparisons[0].clone();
+                for comparison in comparisons.into_iter().skip(1) {
+                    result = Expr::Binary {
+                        left: Box::new(result),
+                        op: op.clone(),
+                        right: Box::new(comparison),
+                    };
+                }
+
+                Ok(result)
+            }
             SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
             SqlExpr::Value(value) => Ok(Expr::Literal(self.convert_value(value)?)),
             SqlExpr::Function(func) => {
@@ -359,6 +446,118 @@ impl QueryLowering {
                 let lowered_subquery = self.lower_query(subquery).await?;
                 Ok(Expr::Subquery(Box::new(lowered_subquery)))
             },
+            SqlExpr::CompoundIdentifier(idents) => {
+                // Handle metadata.field access patterns for HashMap optimization
+                let combined = idents
+                    .iter()
+                    .map(|i| i.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                Ok(Expr::Identifier(combined))
+            },
+            SqlExpr::Nested(inner_expr) => {
+                // Handle parenthesized expressions - just lower the inner expression
+                self.lower_expr(inner_expr).await
+            },
+            SqlExpr::Array(array_expr) => {
+                // Handle array literals for vector queries
+                let mut elements = Vec::new();
+                for elem_expr in &array_expr.elem {
+                    let lowered = self.lower_expr(elem_expr).await?;
+                    elements.push(lowered);
+                }
+                Ok(Expr::Array {
+                    elem: elements,
+                    named: array_expr.named,
+                })
+            },
+            SqlExpr::Between {
+                expr,
+                negated,
+                low,
+                high,
+            } => {
+                // Convert BETWEEN to: expr >= low AND expr <= high
+                // Or NOT BETWEEN to: expr < low OR expr > high
+                let expr_ast = Box::new(self.lower_expr(expr).await?);
+                let low_ast = Box::new(self.lower_expr(low).await?);
+                let high_ast = Box::new(self.lower_expr(high).await?);
+
+                if *negated {
+                    // expr NOT BETWEEN low AND high → expr < low OR expr > high
+                    let lt_expr = Expr::Binary {
+                        left: expr_ast.clone(),
+                        op: BinaryOp::Lt,
+                        right: low_ast,
+                    };
+                    let gt_expr = Expr::Binary {
+                        left: expr_ast,
+                        op: BinaryOp::Gt,
+                        right: high_ast,
+                    };
+                    Ok(Expr::Binary {
+                        left: Box::new(lt_expr),
+                        op: BinaryOp::Or,
+                        right: Box::new(gt_expr),
+                    })
+                } else {
+                    // expr BETWEEN low AND high → expr >= low AND expr <= high
+                    let ge_expr = Expr::Binary {
+                        left: expr_ast.clone(),
+                        op: BinaryOp::Ge,
+                        right: low_ast,
+                    };
+                    let le_expr = Expr::Binary {
+                        left: expr_ast,
+                        op: BinaryOp::Le,
+                        right: high_ast,
+                    };
+                    Ok(Expr::Binary {
+                        left: Box::new(ge_expr),
+                        op: BinaryOp::And,
+                        right: Box::new(le_expr),
+                    })
+                }
+            }
+            SqlExpr::InList {
+                expr,
+                list,
+                negated,
+            } => {
+                // Convert IN to: expr = val1 OR expr = val2 OR ...
+                // Or NOT IN to: expr != val1 AND expr != val2 AND ...
+                let expr_ast = Box::new(self.lower_expr(expr).await?);
+
+                if list.is_empty() {
+                    // Empty IN list should return FALSE (no matches)
+                    // Empty NOT IN list should return TRUE (matches everything)
+                    return Ok(Expr::Literal(Literal::Bool(!negated)));
+                }
+
+                let mut comparisons: Vec<Expr> = Vec::new();
+                for val in list {
+                    let val_ast = Box::new(self.lower_expr(val).await?);
+                    let comparison = Expr::Binary {
+                        left: expr_ast.clone(),
+                        op: if *negated { BinaryOp::Ne } else { BinaryOp::Eq },
+                        right: val_ast,
+                    };
+                    comparisons.push(comparison);
+                }
+
+                // Chain with OR (for IN) or AND (for NOT IN)
+                let op = if *negated { BinaryOp::And } else { BinaryOp::Or };
+                let mut result = comparisons[0].clone();
+                for comparison in comparisons.into_iter().skip(1) {
+                    result = Expr::Binary {
+                        left: Box::new(result),
+                        op: op.clone(),
+                        right: Box::new(comparison),
+                    };
+                }
+
+                Ok(result)
+            }
             _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
         }
         })

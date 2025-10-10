@@ -689,6 +689,7 @@ impl QueryExecutor {
         // Execute with VOS - this will use HashMap metadata filtering internally
         let vos_results = if let Some(vector) = query_vector {
             if let Some(vs) = &self.vector_service {
+                tracing::debug!("🔍 Executor calling VOS with filter: {:?}", filters);
                 vs.unified_search_v1(
                     collection_id,
                     vector.clone(),
@@ -769,11 +770,56 @@ impl QueryExecutor {
         let rows = vos_results
             .into_iter()
             .flat_map(|search_result| {
-                search_result.results.into_iter().map(|record| QueryRow {
-                    fields: self.convert_metadata_to_fields(&record.metadata),
-                    similarity_score: Some(record.score),
-                    graph_distance: None,
-                    provenance: None,
+                search_result.results.into_iter().map(|record| {
+                    let mut fields = std::collections::HashMap::new();
+
+                    // Add the id field to the result
+                    fields.insert("id".to_string(), serde_json::Value::String(record.id.clone()));
+
+                    // Add metadata fields with "metadata." prefix
+                    for (key, sql_value) in &record.metadata {
+                        let json_value = match &sql_value.value {
+                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                serde_json::Value::String(s.clone())
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                                serde_json::json!(n)
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                serde_json::Value::Bool(*b)
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                                serde_json::Value::Number(serde_json::Number::from(*i))
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
+                                serde_json::Value::String(crate::utils::encoding::base64_encode(b))
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                                serde_json::Value::Null
+                            }
+                            _ => serde_json::Value::Null,
+                        };
+                        // Prefix with "metadata." for SQL projection compatibility
+                        fields.insert(format!("metadata.{}", key), json_value);
+                    }
+
+                    // Add the vector field if available
+                    if !record.vector.is_empty() {
+                        fields.insert("vector".to_string(), serde_json::json!(record.vector));
+                    }
+
+                    // Add normalized similarity score as a field for display (0-1, higher = more similar)
+                    // Use record.similarity which is set by UnifiedDistanceCompute.normalized_score
+                    // All engines should populate this field consistently via .with_similarity()
+                    let display_score = record.similarity.unwrap_or(0.0) as f64;
+                    fields.insert("_similarity_score".to_string(), serde_json::json!(display_score));
+
+                    QueryRow {
+                        fields,
+                        similarity_score: Some(display_score),
+                        graph_distance: None,
+                        provenance: None,
+                    }
                 })
             })
             .collect();
@@ -1379,7 +1425,29 @@ impl QueryExecutor {
         transformations: &[crate::query::execution::ProjectionTransform],
     ) {
         for row in rows.iter_mut() {
-            // Filter to requested columns only
+            // If "metadata" is requested (not metadata.field), create a nested object BEFORE filtering
+            if !columns.is_empty() && columns.contains(&"metadata".to_string()) && !columns.contains(&"*".to_string()) {
+                let mut metadata_obj = serde_json::Map::new();
+                let metadata_fields: Vec<String> = row.fields.keys()
+                    .filter(|k| k.starts_with("metadata."))
+                    .cloned()
+                    .collect();
+
+                for field_name in metadata_fields {
+                    if let Some(value) = row.fields.remove(&field_name) {
+                        // Strip "metadata." prefix for nested object
+                        let key = field_name.strip_prefix("metadata.").unwrap_or(&field_name);
+                        metadata_obj.insert(key.to_string(), value);
+                    }
+                }
+
+                // Add the nested metadata object
+                if !metadata_obj.is_empty() {
+                    row.fields.insert("metadata".to_string(), serde_json::Value::Object(metadata_obj));
+                }
+            }
+
+            // Filter to requested columns only (after creating nested metadata if needed)
             if !columns.is_empty() && !columns.contains(&"*".to_string()) {
                 row.fields.retain(|k, _| columns.contains(k));
             }

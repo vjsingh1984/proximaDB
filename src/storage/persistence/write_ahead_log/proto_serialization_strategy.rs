@@ -106,6 +106,7 @@ impl ProtoSerializationStrategy {
             config.clone(),
             wal_behavior.clone(),
             filesystem_factory.clone(),
+            Arc::new(tokio::sync::RwLock::new(None)),  // Metadata provider will be set later if needed
         ));
 
         Ok(Self {

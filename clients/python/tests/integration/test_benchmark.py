@@ -27,10 +27,8 @@ from proximadb.chunking import (
     ChunkingStrategy,
     chunk_and_embed_text
 )
-from proximadb.embedding_providers import (
-    get_embedding_provider,
-    EmbeddingProvider
-)
+from proximadb.embedding_providers import get_provider
+from proximadb.embedding_providers.core import BaseEmbeddingProvider as EmbeddingProvider
 from proximadb.models import (
     CollectionConfig,
     DistanceMetric,
@@ -185,12 +183,10 @@ class TestComprehensiveBenchmark:
     def proximadb_client(self):
         """Get ProximaDB client instance"""
         # Ensure ProximaDB server is running
-        rest_url = os.getenv("PROXIMADB_URL", "http://localhost:5678")
-        grpc_url = os.getenv("PROXIMADB_GRPC_URL", "http://localhost:5679")
-        
+        url = os.getenv("PROXIMADB_URL", "http://localhost:5678")
+
         return ProximaDBClient(
-            rest_url=rest_url,
-            grpc_url=grpc_url
+            url=url
         )
     
     def get_available_embedding_providers(self) -> List[Tuple[str, EmbeddingProvider]]:
@@ -198,12 +194,12 @@ class TestComprehensiveBenchmark:
         providers = []
         
         # Always include simulated
-        providers.append(("simulated", get_embedding_provider("simulated", dimension=384)))
+        providers.append(("simulated", get_provider("simulated", dimension=384)))
         
         # Try other free providers
         for provider_name in ["sentence-transformer", "fastembed", "instructor"]:
             try:
-                provider = get_embedding_provider(provider_name)
+                provider = get_provider(provider_name)
                 if provider.is_available():
                     providers.append((provider_name, provider))
                     logger.info(f"✓ {provider_name} available")
@@ -407,13 +403,15 @@ class TestComprehensiveBenchmark:
         result.total_time = time.time() - start_total
         return result
     
+    @pytest.mark.slow
+    @pytest.mark.benchmark
     def test_comprehensive_benchmark(
         self,
         documentation_text,
         search_queries,
         proximadb_client
     ):
-        """Run comprehensive benchmark test"""
+        """Run comprehensive benchmark test (marked as slow - run with -m benchmark)"""
         
         # Get available providers
         embedding_providers = self.get_available_embedding_providers()

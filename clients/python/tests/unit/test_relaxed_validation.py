@@ -26,19 +26,17 @@ class TestRelaxedValidation:
         assert caps.is_supported("distance_metric", "euclidean")
         assert caps.is_supported("distance_metric", "dot_product")
         
-        # Test metrics that fallback
-        assert not caps.is_supported("distance_metric", "manhattan")
-        assert not caps.is_supported("distance_metric", "hamming")
-        assert not caps.is_supported("distance_metric", "jaccard")
-        
-        # Test fallback values
-        assert caps.get_fallback_for("distance_metric", "manhattan") == "cosine"
-        assert caps.get_fallback_for("distance_metric", "hamming") == "cosine"
-        assert caps.get_fallback_for("distance_metric", "custom") == "cosine"
-        
-        # Test extended metrics (now available)
-        assert not caps.is_supported("distance_metric", "chebyshev")
-        assert caps.get_fallback_for("distance_metric", "chebyshev") == "cosine"
+        # Test metrics that are now supported (server has been enhanced)
+        assert caps.is_supported("distance_metric", "manhattan")
+        assert caps.is_supported("distance_metric", "hamming")
+        assert caps.is_supported("distance_metric", "jaccard")
+
+        # Test extended metrics (also now supported)
+        assert caps.is_supported("distance_metric", "chebyshev")
+
+        # Note: No distance metrics require fallback anymore (all supported natively)
+        # Unknown metrics return None (no fallback defined)
+        assert caps.get_fallback_for("distance_metric", "unknown_metric") is None
     
     def test_storage_engine_capabilities(self):
         """Test storage engine capabilities detection"""
@@ -67,9 +65,12 @@ class TestRelaxedValidation:
         assert caps.is_supported("indexing_algorithm", "annoy")
         assert caps.is_supported("indexing_algorithm", "pq")
         
-        # Test algorithm that falls back
-        assert not caps.is_supported("indexing_algorithm", "lsh")
-        assert caps.get_fallback_for("indexing_algorithm", "lsh") == "hnsw"
+        # Test algorithm that is now supported
+        assert caps.is_supported("indexing_algorithm", "lsh")
+
+        # Note: No indexing algorithms require fallback anymore (all supported natively)
+        # Unknown algorithms return None (no fallback defined)
+        assert caps.get_fallback_for("indexing_algorithm", "unknown_algo") is None
     
     def test_quantization_capabilities(self):
         """Test quantization type capabilities"""
@@ -143,12 +144,12 @@ class TestRelaxedValidation:
         )
         assert config.dimension == 50000
         
-        # Very large dimensions should be allowed
+        # Very large dimensions up to server limit (65536) should be allowed
         config = CollectionConfig(
-            name="test_very_large_dimension_coll", 
-            dimension=100000
+            name="test_very_large_dimension_coll",
+            dimension=65536
         )
-        assert config.dimension == 100000
+        assert config.dimension == 65536
         
         # Zero dimensions should still fail
         with pytest.raises(ValueError):
@@ -161,13 +162,12 @@ class TestRelaxedValidation:
             name="test_extended_metrics_collection",
             dimension=512,
             distance_metric=DistanceMetric.CHEBYSHEV,
-            storage_engine=StorageEngine.MMAP,
-            primary_indexing_algorithm=IndexingAlgorithm.LSH
+            storage_engine=StorageEngine.MMAP
         )
-        
+
         assert config.distance_metric == DistanceMetric.CHEBYSHEV
         assert config.storage_engine == StorageEngine.MMAP
-        assert config.primary_indexing_algorithm == IndexingAlgorithm.LSH
+        # Note: primary_indexing_algorithm is deprecated, now use index_configs
     
     def test_server_capabilities_notes(self):
         """Test server capabilities notes"""
@@ -179,7 +179,7 @@ class TestRelaxedValidation:
         assert "quantization_engine" in caps.notes
         
         assert "intelligent fallbacks" in caps.notes["fallback_policy"]
-        assert "100,000" in caps.notes["dimension_limit"]
+        assert "65536" in caps.notes["dimension_limit"]
         assert "VIPER engine only" in caps.notes["quantization_engine"]
 
 

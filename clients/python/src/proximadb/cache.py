@@ -264,18 +264,20 @@ class MemoryCacheBackend(CacheBackend):
 
 class ResponseCache:
     """High-level response caching with collection awareness"""
-    
+
     def __init__(
         self,
         backend: Optional[CacheBackend] = None,
         default_ttl: float = 300,  # 5 minutes
         enable_compression: bool = True,
-        collection_aware: bool = True
+        collection_aware: bool = True,
+        config: Optional[Dict[str, Any]] = None
     ):
         self.backend = backend or MemoryCacheBackend()
         self.default_ttl = default_ttl
         self.enable_compression = enable_compression
         self.collection_aware = collection_aware
+        self.config = config or {}  # Store config for test introspection
         self._collection_keys: Dict[str, Set[str]] = defaultdict(set)
         self._key_collections: Dict[str, str] = {}
         self._lock = threading.RLock()
@@ -361,7 +363,16 @@ class ResponseCache:
             count = self.backend.clear()
         
         return count
-    
+
+    def close(self):
+        """Cleanup resources"""
+        # Clear any cached data
+        if hasattr(self.backend, 'clear'):
+            self.backend.clear()
+        # Clean up tracking structures
+        self._collection_keys.clear()
+        self._key_collections.clear()
+
     def get_metrics(self) -> CacheMetrics:
         """Get cache performance metrics"""
         if hasattr(self.backend, 'metrics'):

@@ -92,8 +92,31 @@ impl Analyzer {
             let collection = self.collection_service.collection(table_name).await?;
             if let Some(collection) = collection {
                 let mut columns = HashMap::new();
+
+                // Add standard VectorRecord fields that always exist
+                columns.insert("id".to_string(), Column {
+                    name: "id".to_string(),
+                    data_type: DataType::String,
+                });
+                columns.insert("timestamp".to_string(), Column {
+                    name: "timestamp".to_string(),
+                    data_type: DataType::Int64,
+                });
+
                 if let Some(config) = collection.config {
-                    // Use filterable_columns instead of schema which doesn't exist
+                    // Add vector field (supports both "vector" and "embedding" names)
+                    if config.dimension > 0 {
+                        columns.insert("vector".to_string(), Column {
+                            name: "vector".to_string(),
+                            data_type: DataType::Vector(config.dimension as usize),
+                        });
+                        columns.insert("embedding".to_string(), Column {
+                            name: "embedding".to_string(),
+                            data_type: DataType::Vector(config.dimension as usize),
+                        });
+                    }
+
+                    // Use filterable_columns for user-defined metadata fields
                     for field in config.filterable_columns {
                         let data_type = match crate::proto::proximadb_v1::FilterableDataType::try_from(field.data_type) {
                             Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableString) => DataType::String,
@@ -102,15 +125,9 @@ impl Analyzer {
                             Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean) => DataType::Boolean,
                             _ => DataType::Unknown,
                         };
-                        columns.insert(field.name.clone(), Column { name: field.name.clone(), data_type });
-                    }
-
-                    // Add implicit "embedding" field for vector collections
-                    if config.dimension > 0 {
-                        columns.insert("embedding".to_string(), Column {
-                            name: "embedding".to_string(),
-                            data_type: DataType::Vector(config.dimension as usize),
-                        });
+                        // Prepend "metadata." to filterable column names for proper scoping
+                        let field_name = format!("metadata.{}", field.name);
+                        columns.insert(field_name.clone(), Column { name: field_name, data_type });
                     }
                 }
                 // Use alias if provided, otherwise use table name
@@ -149,25 +166,73 @@ impl Analyzer {
         Box::pin(async move {
         match expr {
             Expr::Identifier(ident) => {
-                // Handle qualified identifiers (e.g., table.column)
+                // Handle wildcard SELECT *
+                if ident == "*" {
+                    // Wildcard is valid in projection context, return Unknown type
+                    // The actual expansion happens in the lowering phase
+                    return Ok(DataType::Unknown);
+                }
+
+                // Handle qualified identifiers (e.g., table.column or metadata.field)
+                // Use fallback strategy: try table.column first, then compound identifier
                 let parts: Vec<&str> = ident.split('.').collect();
                 if parts.len() == 2 {
                     let table_name = parts[0];
                     let column_name = parts[1];
-                    // Clone the column data to avoid borrowing conflicts
+
+                    // Special handling for wildcard table.* (e.g., metadata.*)
+                    if column_name == "*" {
+                        // table.* is valid, return Unknown type
+                        // The actual expansion happens in the lowering phase
+                        return Ok(DataType::Unknown);
+                    }
+
+                    // Strategy: Try multiple interpretations before failing
+                    // 1. Try as table.column (standard SQL)
                     if let Some(Symbol::Table { columns, .. }) = scope.lookup(table_name) {
+                        // First try full qualified name (for compound identifiers like metadata.field)
+                        if let Some(column) = columns.get(ident) {
+                            let column_clone = column.clone();
+                            scope.insert(ident, Symbol::Column(column_clone.clone()));
+                            return Ok(column_clone.data_type);
+                        }
+                        // Then try unqualified column name (standard table.column)
                         if let Some(column) = columns.get(column_name) {
                             let column_clone = column.clone();
                             scope.insert(ident, Symbol::Column(column_clone.clone()));
-                            Ok(column_clone.data_type)
-                        } else {
-                            Err(anyhow!("Column '{}' not found in table '{}'", column_name, table_name))
+                            return Ok(column_clone.data_type);
                         }
-                    } else {
-                        Err(anyhow!("Table '{}' not found in scope", table_name))
                     }
+
+                    // 2. Try as compound identifier (JSON field access like metadata.field)
+                    // Look for the full qualified name in ANY table's columns
+                    let (found_column, _, _) = scope.find_column_in_tables(ident);
+                    if let Some(column) = found_column {
+                        let column_clone = column.clone();
+                        scope.insert(ident, Symbol::Column(column_clone.clone()));
+                        return Ok(column_clone.data_type);
+                    }
+
+                    // 3. If table_name is "metadata", allow dynamic field access with Unknown type
+                    // This supports metadata fields that weren't declared in filterable_columns
+                    if table_name == "metadata" {
+                        let inferred_column = Column {
+                            name: ident.to_string(),
+                            data_type: DataType::Unknown, // Changed from String to Unknown for flexibility
+                        };
+                        scope.insert(ident, Symbol::Column(inferred_column.clone()));
+                        return Ok(DataType::Unknown);
+                    }
+
+                    // 4. All strategies failed - report error
+                    Err(anyhow!("Identifier '{}' not found. Tried as table.column and as compound identifier.", ident))
                 } else if parts.len() == 1 {
                     // Unqualified identifier (e.g., column)
+                    // Special handling for "metadata" - treat as reserved identifier for the entire metadata object
+                    if ident == "metadata" {
+                        return Ok(DataType::Unknown); // JSON object type
+                    }
+
                     if let Some(symbol) = scope.lookup(ident) {
                         match symbol {
                             Symbol::Column(column) => Ok(column.data_type.clone()),
@@ -383,9 +448,14 @@ impl Analyzer {
                 }
             }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                // Comparison operators require numeric types
-                if (left == DataType::Int64 || left == DataType::Float64) && 
-                   (right == DataType::Int64 || right == DataType::Float64) {
+                // Comparison operators require numeric types, but allow Unknown/String for metadata fields
+                // that might not have explicit type information at query planning time
+                let left_numeric = left == DataType::Int64 || left == DataType::Float64 ||
+                                   left == DataType::Unknown || left == DataType::String;
+                let right_numeric = right == DataType::Int64 || right == DataType::Float64 ||
+                                    right == DataType::Unknown || right == DataType::String;
+
+                if left_numeric && right_numeric {
                     Ok(DataType::Boolean)
                 } else {
                     Err(anyhow!("Comparison operations require numeric operands: {:?} vs {:?}", left, right))
@@ -455,8 +525,10 @@ impl Analyzer {
         // This is a placeholder for a proper function registry.
         match name.to_lowercase().as_str() {
             "cosine_distance" | "vector_similarity" | "similar" => {
-                if args.len() == 2 {
+                // Accept 2 args (vector, query) or 3 args (vector, query, metric)
+                if args.len() == 2 || args.len() == 3 {
                     // For SIMILAR function, first arg should be a column (can be vector), second should be vector
+                    // Third arg (if present) is distance metric (string)
                     match (&args[0], &args[1]) {
                         (DataType::Vector(_), DataType::Vector(_)) => Ok(DataType::Float64),
                         (DataType::Float64, DataType::Vector(_)) => Ok(DataType::Float64), // embedding column + vector
@@ -464,10 +536,18 @@ impl Analyzer {
                             // String field name referring to vector column
                             Ok(DataType::Float64)
                         }
+                        (DataType::Unknown, DataType::Vector(_)) => {
+                            // Unknown type (e.g., identifier not yet resolved) + vector
+                            Ok(DataType::Float64)
+                        }
+                        (DataType::Vector(_), DataType::Unknown) => {
+                            // Vector + unknown query (e.g., subquery or complex expr)
+                            Ok(DataType::Float64)
+                        }
                         _ => Err(anyhow!("Invalid arguments for vector similarity function. Expected (Vector/Field, Vector)")),
                     }
                 } else {
-                    Err(anyhow!("Invalid arguments for vector similarity function. Expected 2 arguments"))
+                    Err(anyhow!("Invalid arguments for vector similarity function. Expected 2 or 3 arguments"))
                 }
             }
             "follow" => {

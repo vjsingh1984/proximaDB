@@ -604,13 +604,10 @@ pub async fn search_helix_sstable(
             // Convert metadata format (assuming we need HashMap<String, String>)
             let metadata = HashMap::new(); // TODO: Convert record.metadata properly
 
-            // Use simple euclidean distance for now (TODO: use UnifiedDistanceCompute)
-            let distance = query_vector
-                .iter()
-                .zip(record.vector.iter())
-                .map(|(a, b)| (a - b).powi(2))
-                .sum::<f32>()
-                .sqrt();
+            // Use UnifiedDistanceCompute for correct metric-specific distance calculation
+            let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(distance_metric.clone());
+            let distance = distance_compute.distance(query_vector, &record.vector);
+
             results.push((record.id.clone(), distance, metadata));
         }
     }

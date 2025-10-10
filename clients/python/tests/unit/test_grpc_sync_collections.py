@@ -1,5 +1,6 @@
 import types
 from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+from proximadb.models import DistanceMetricType, StorageEngineType
 import proximadb.protocols.grpc_sync as grpc_mod
 
 
@@ -11,7 +12,7 @@ class FakeCollectionStub:
         return types.SimpleNamespace(id="col-xyz")
 
     def GetCollection(self, req, timeout=None):
-        return types.SimpleNamespace(id="col-xyz", name="docs")
+        return types.SimpleNamespace(id="col-xyz", name="test_docs")
 
     def ListCollections(self, req, timeout=None):
         return types.SimpleNamespace(collections=[types.SimpleNamespace(id="c1"), types.SimpleNamespace(id="c2")])
@@ -43,8 +44,13 @@ def test_grpc_sync_collection_ops(monkeypatch):
     monkeypatch.setattr("proximadb.protocols.connection_pools.GrpcChannelContext", FakeCtx)
 
     client = ProximaDBSyncGrpcClient("localhost:5679")
-    client.create_collection_v1(name="docs", dimension=128, distance_metric=1, storage_engine=1)
-    client.get_collection_v1("docs")
+    client.create_collection_v1(
+        name="test_docs",  # Must be >8 chars
+        dimension=128,
+        distance_metric=DistanceMetricType.COSINE,
+        storage_engine=StorageEngineType.VIPER
+    )
+    client.get_collection_v1("test_docs")
     client.list_collections_v1()
-    client.delete_collection_v1("docs")
+    client.delete_collection_v1("test_docs")
 

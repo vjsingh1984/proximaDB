@@ -9,17 +9,19 @@ message CollectionConfig {
   uint32 dimension = 2;
   optional DistanceMetric distance_metric = 3; // Default: COSINE
   optional StorageEngine storage_engine = 4; // Default: SST (primary production engine)
-  repeated string tags = 5;
+  // NOTE: In proto3, repeated fields cannot be marked as optional, but they default to empty arrays
+  // Client implementations should treat missing fields as empty arrays
+  repeated string tags = 5; // Defaults to empty array if not provided
   optional string description = 6;
   // Additional fields needed by collection manager
-  repeated FilterableColumnSpec filterable_columns = 7;
-  repeated IndexConfig index_configs = 8;
+  repeated FilterableColumnSpec filterable_columns = 7; // Defaults to empty array if not provided
+  repeated IndexConfig index_configs = 8; // Defaults to empty array if not provided
   optional QuantizationConfig quantization = 9;
   optional StorageConfig storage_config = 10;
   optional string primary_index = 11; // Default: "" (no primary index)
   optional bool auto_index_selection = 12; // Default: true
   optional string owner = 13;
-  repeated string embedding_models = 14;
+  repeated string embedding_models = 14; // Defaults to empty array if not provided
 }
 
 message CollectionStats {

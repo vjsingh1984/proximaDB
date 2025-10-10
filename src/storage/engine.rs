@@ -161,6 +161,12 @@ impl StorageEngine {
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?,
         );
 
+        // Attach metadata provider to WAL manager for recovery
+        if let Some(provider) = metadata_provider.as_ref() {
+            write_ahead_log_manager.set_metadata_provider(provider.clone()).await;
+            tracing::info!("📋 Metadata provider attached to WAL manager for collection config access during recovery");
+        }
+
         // StorageEngine focuses on pure storage operations (LSM, WAL, MMAP)
         tracing::info!("📂 StorageEngine: Metadata operations delegated to SharedServices");
 
@@ -272,6 +278,97 @@ impl StorageEngine {
     /// Get WAL manager for sharing between services
     pub fn write_ahead_log_manager(&self) -> Arc<WriteAheadLogManager> {
         self.write_ahead_log_manager.clone()
+    }
+
+    /// Register storage engines for all existing collections with the recovery manager
+    /// This should be called before WAL recovery to ensure proper engine registration
+    pub async fn register_collections_for_recovery(&self) -> crate::storage::Result<()> {
+        info!("🔧 STORAGE_ENGINE: Registering collections with recovery manager");
+
+        // Get all collections from metadata provider
+        let collections = if let Some(provider) = self.get_metadata_provider().await {
+            match provider.list_collections().await {
+                Ok(collections) => {
+                    info!("📋 Found {} collections to register", collections.len());
+                    collections
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to list collections: {}", e);
+                    return Ok(()); // Continue even if we can't list collections
+                }
+            }
+        } else {
+            info!("📋 No metadata provider available, skipping registration");
+            return Ok(());
+        };
+
+        // Get recovery manager from WAL
+        let recovery_manager = match self.write_ahead_log_manager.get_recovery_manager().await {
+            Ok(rm) => rm,
+            Err(e) => {
+                warn!("⚠️ Failed to get recovery manager: {}", e);
+                return Ok(()); // Continue even if we can't get recovery manager
+            }
+        };
+
+        // Store collection count before iterating
+        let collection_count = collections.len();
+
+        // Register each collection's storage engine
+        for collection in &collections {
+            // Get engine type from storage_assignment (actual assigned engine)
+            // If no storage_assignment, fall back to config.storage_engine (desired engine)
+            let engine_type = if let Some(assignment) = &collection.storage_assignment {
+                assignment.engine
+            } else if let Some(config) = &collection.config {
+                config.storage_engine.unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32)
+            } else {
+                crate::proto::proximadb_v1::StorageEngine::Sst as i32
+            };
+
+            let proto_engine = crate::proto::proximadb_v1::StorageEngine::try_from(engine_type)
+                .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst);
+
+            // Create storage engine for this collection
+            // Note: Engines are stateless - collection-specific config is passed during operations
+            match crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(
+                proto_engine,
+            )
+            .await
+            {
+                Ok(engine) => {
+                    // Register with recovery manager
+                    if let Err(e) = recovery_manager
+                        .register_storage_engine(&collection.id, engine)
+                        .await
+                    {
+                        warn!(
+                            "⚠️ Failed to register engine for collection {}: {}",
+                            collection.id, e
+                        );
+                    } else {
+                        info!(
+                            "✅ Registered {} engine for collection {} (from {})",
+                            proto_engine.as_str_name(),
+                            collection.id,
+                            if collection.storage_assignment.is_some() { "storage_assignment" } else { "config" }
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ Failed to create engine for collection {}: {}",
+                        collection.id, e
+                    );
+                }
+            }
+        }
+
+        info!(
+            "✅ STORAGE_ENGINE: Completed registration for {} collections",
+            collection_count
+        );
+        Ok(())
     }
 
     /// Write a vector to storage through WAL → memtable → flush pipeline
@@ -654,7 +751,17 @@ impl StorageEngine {
             Vec::new()
         };
 
-        // Use the new WAL interface to recover
+        // STEP 1: Register storage engines for recovery BEFORE calling recover()
+        tracing::info!("🔧 STORAGE_ENGINE: Registering storage engines for recovery");
+        if let Err(e) = self.register_collections_for_recovery().await {
+            tracing::warn!(
+                "⚠️ STORAGE_ENGINE: Failed to register collections for recovery: {}",
+                e
+            );
+            // Continue even if registration fails - graceful skip will handle it
+        }
+
+        // STEP 2: Now call recover() with engines registered
         tracing::info!("📊 STORAGE_ENGINE: About to call write_ahead_log_manager.recover()");
         match self.write_ahead_log_manager.recover().await {
             Ok(recovered_entries) => {

@@ -12,7 +12,7 @@ from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
 from proximadb import (
     CollectionConfig, IndexConfiguration,
     DistanceMetric, StorageEngine, IndexType,
-    Collection, CollectionStats, StorageConfig, CompressionType,
+    Collection, CollectionStats, StorageConfig, CompressionType, CompressionConfig,
     FlushConfig
 )
 # IndexConfig alias not needed - using IndexConfiguration directly
@@ -189,32 +189,24 @@ class TestCollectionConfiguration:
             algorithm=IndexType.HNSW,
             # parameters={"m": 16, "ef_construction": 200}  # Not a field anymore
         )
-        
-        storage_config = StorageConfig(
-            compression=CompressionType.LZ4,
-            replication_factor=1,
-            enable_tiering=True
-        )
-        
-        flush_config = FlushConfig(max_wal_size_mb=64.0)
-        
+
         config = CollectionConfig(
             name="test_collection",
             dimension=384,
             distance_metric="euclidean",
-            index_configs=[index_config],  # Use plural form
-            # storage_config=storage_config,  # This field doesn't exist in the model
+            index_configs=[index_config],
             storage_engine=StorageEngine.VIPER,
             description="Advanced test collection",
-            filterable_metadata_fields=["category", "timestamp"]
-            # flush_config=flush_config  # This field doesn't exist in the model
+            filterable_metadata_fields=["category", "timestamp"],
+            # Use compression dict to avoid Pydantic validation issues
+            compression={"algorithm": CompressionType.LZ4}
         )
-        
+
         assert config.dimension == 384
         assert config.distance_metric == "euclidean"
         # The model has index_configs (plural) but we added a backward compatibility property
         assert config.index_config.algorithm == IndexType.HNSW
-        assert config.storage_config.compression == CompressionType.LZ4
+        assert config.compression.algorithm == CompressionType.LZ4
     
     def test_distance_metrics(self):
         """Test all distance metric options"""
@@ -242,10 +234,20 @@ class TestCollectionConfiguration:
             IndexType.FLAT,
             IndexType.ANNOY
         ]
-        
+
         for algo in algorithms:
-            config = CollectionConfig(name="test_algo_config", dimension=128, primary_indexing_algorithm=algo)
-            assert config.primary_indexing_algorithm == algo
+            # Use index_configs to specify algorithm
+            index_config = IndexConfiguration(
+                index_name=f"test_{algo.value}_index",
+                algorithm=algo
+            )
+            config = CollectionConfig(
+                name="test_algo_config",
+                dimension=128,
+                index_configs=[index_config]
+            )
+            # Verify via the backward compatibility property
+            assert config.index_config.algorithm == algo
     
     def test_storage_engines(self):
         """Test storage engine options"""
@@ -329,7 +331,7 @@ class TestCollectionValidation:
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
                 name="test_collection",
-                dimension=10001,  # Too large
+                dimension=70000,  # Too large (max is 65536)
                 distance_metric="cosine")
     
     def test_collection_not_found_error(self):

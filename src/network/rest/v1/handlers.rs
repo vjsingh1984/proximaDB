@@ -49,11 +49,24 @@ pub async fn vector_search(
 
     match state
         .unified_handlers
-        .handle_vector_search_v1(request)
+        .handle_vector_search_v1(request.clone())
         .await
     {
         Ok(response) => Ok(JsonResponse(response)),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
+        Err(e) => {
+            error!(
+                "❌ Vector search failed for collection '{}': {:?}",
+                request.collection_id, e
+            );
+            error!("Search request details: num_queries={}, top_k={}, has_filters={}, has_advanced_filter={}, has_search_params={}",
+                request.queries.len(),
+                request.top_k,
+                request.queries.first().map(|q| !q.filters.is_empty()).unwrap_or(false),
+                request.queries.first().and_then(|q| q.advanced_filter.as_ref()).is_some(),
+                request.search_params.is_some()
+            );
+            Err(ApiError::Internal(format!("Search failed: {}", e)))
+        }
     }
 }
 
@@ -93,6 +106,103 @@ pub async fn vector_batch(
             Err(ApiError::Internal(e.to_string()))
         }
     }
+}
+
+/// Get a single vector by ID
+pub async fn get_vector(
+    State(state): State<AppState>,
+    Path((collection_id, vector_id)): Path<(String, String)>,
+    Query(params): Query<GetVectorParams>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    info!(
+        "Get vector: collection={}, id={}, include_vector={}, include_metadata={}",
+        collection_id,
+        vector_id,
+        params.include_vector.unwrap_or(true),
+        params.include_metadata.unwrap_or(true)
+    );
+
+    // Validate parameters
+    if collection_id.is_empty() || vector_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "collection_id and vector_id are required".to_string(),
+        ));
+    }
+
+    let include_vector = params.include_vector.unwrap_or(true);
+    let include_metadata = params.include_metadata.unwrap_or(true);
+
+    // Delegate to UnifiedHandlers
+    match state
+        .unified_handlers
+        .handle_vector_v1(&collection_id, &vector_id, include_vector, include_metadata)
+        .await
+    {
+        Ok(response) => Ok(JsonResponse(response)),
+        Err(e) => {
+            error!("Failed to get vector {}/{}: {}", collection_id, vector_id, e);
+            Err(ApiError::Internal(e.to_string()))
+        }
+    }
+}
+
+/// Delete a single vector by ID
+pub async fn delete_vector(
+    State(state): State<AppState>,
+    Path((collection_id, vector_id)): Path<(String, String)>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    info!(
+        "Delete vector: collection={}, id={}",
+        collection_id, vector_id
+    );
+
+    // Validate parameters
+    if collection_id.is_empty() || vector_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "collection_id and vector_id are required".to_string(),
+        ));
+    }
+
+    // Create a batch request with vector marked for deletion via expires_at
+    let delete_request = proximadb_v1::VectorBatchRequest {
+        collection_id: collection_id.clone(),
+        vectors: vec![proximadb_v1::VectorRecord {
+            id: vector_id.clone(),
+            vector: vec![], // Empty vector (tombstone)
+            metadata: std::collections::HashMap::new(),
+            version: None,
+            timestamp: None,
+            source: None,
+            updated_at: None,
+            expires_at: Some(0), // Set to 0 (past time) to mark for immediate deletion
+        }],
+    };
+
+    // Delegate to vector batch handler (which supports deletions)
+    match state
+        .unified_handlers
+        .handle_vector_batch_v1(delete_request)
+        .await
+    {
+        Ok(response) => {
+            // Return the batch response (operation is already VsBatch)
+            Ok(JsonResponse(response))
+        }
+        Err(e) => {
+            error!(
+                "Failed to delete vector {}/{}: {}",
+                collection_id, vector_id, e
+            );
+            Err(ApiError::Internal(e.to_string()))
+        }
+    }
+}
+
+/// Query parameters for get_vector endpoint
+#[derive(Debug, Deserialize)]
+pub struct GetVectorParams {
+    pub include_vector: Option<bool>,
+    pub include_metadata: Option<bool>,
 }
 
 /// Aligned collection operation handler
@@ -388,15 +498,19 @@ pub async fn execute_sql(
             // TODO: Create proper JsonExecuteSqlResponse wrapper if needed
             let json_data = serde_json::json!({
                 "rows": v1_resp.rows.iter().map(|row| {
-                    row.fields.iter().map(|field| {
+                    // Convert fields to a JSON object instead of list of key/value pairs
+                    let mut obj = serde_json::Map::new();
+                    for field in &row.fields {
                         let value = field.value.as_ref().map(sql_value_to_json).unwrap_or(serde_json::Value::Null);
-                        serde_json::json!({"key": field.key, "value": value})
-                    }).collect::<Vec<_>>()
+                        obj.insert(field.key.clone(), value);
+                    }
+                    serde_json::Value::Object(obj)
                 }).collect::<Vec<_>>(),
                 "columns": v1_resp.columns,
                 "column_types": v1_resp.column_types,
                 "execution_time_ms": execution_time_ms,
                 "rows_returned": v1_resp.rows_returned,
+                "row_count": v1_resp.rows_returned,  // Add row_count alias for compatibility
                 "rows_scanned": v1_resp.rows_scanned,
                 "request_id": request_id
             });
@@ -556,6 +670,10 @@ pub fn create_router(state: AppState) -> axum::Router {
         // Vector operations
         .route("/api/v1/search", post(vector_search))
         .route("/api/v1/vectors/batch", post(vector_batch))
+        .route(
+            "/api/v1/vectors/:collection_id/:vector_id",
+            get(get_vector).delete(delete_vector),
+        )
         .route(
             "/api/v1/progressive/search/:collection_id",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),

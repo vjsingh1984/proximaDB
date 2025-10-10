@@ -85,11 +85,13 @@ response = requests.get(f"{base_url}/api/v1/collections")
 if response.status_code == 200:
     collections = response.json()
     for col in collections['collections']:
-        if col['vector_count'] > 0:
-            print(f"   ✓ Collection '{col['name']}' has {col['vector_count']} vectors")
-            
+        col_name = col.get('name', col.get('id', 'unknown'))
+        vector_count = col.get('vector_count', col.get('count', 0))
+        if vector_count > 0:
+            print(f"   ✓ Collection '{col_name}' has {vector_count} vectors")
+
             # Try to search this collection
-            search_response = requests.post(f"{base_url}/api/v1/search/{col['name']}", json=search_data)
+            search_response = requests.post(f"{base_url}/api/v1/search/{col_name}", json=search_data)
             if search_response.status_code == 200:
                 results = search_response.json()
                 print(f"     - Search returned results: {len(results.get('results', []))} items")

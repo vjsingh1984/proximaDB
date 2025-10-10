@@ -12,13 +12,14 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::storage::persistence::write_ahead_log::{
     WALFlushCoordinator, WriteAheadLogDiskManager, WalFileInfo,
     recovery_thread_pool::get_recovery_thread_pool, serialization::SerializerFactory, serialization::SerializationFormat,
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::{UnifiedStorageEngine, InternalCollectionProvider};
 use crate::storage::BatchId;
 
 /// Recovery destination configuration
@@ -42,6 +43,8 @@ pub struct RecoveryManager {
     recovery_mode: RecoveryMode,
     /// Statistics
     stats: Arc<tokio::sync::RwLock<RecoveryStats>>,
+    /// Metadata provider for getting real collection configs
+    metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
 }
 
 /// Statistics for recovery operations
@@ -67,14 +70,28 @@ pub struct RecoveryProgress {
     pub bytes_processed: u64,
 }
 
+impl Clone for RecoveryManager {
+    fn clone(&self) -> Self {
+        Self {
+            disk_manager: self.disk_manager.clone(),
+            storage_engines: self.storage_engines.clone(),
+            flush_coordinator: self.flush_coordinator.clone(),
+            recovery_mode: self.recovery_mode,
+            stats: self.stats.clone(),
+            metadata_provider: self.metadata_provider.clone(),
+        }
+    }
+}
+
 impl RecoveryManager {
     /// Create a new recovery manager with direct-to-storage recovery
     pub fn new(
         config: crate::storage::persistence::write_ahead_log::config::WALConfig,
         wal_behavior: Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Self {
-        info!("🎯 Creating RecoveryManager with direct-to-storage recovery");
+        info!("🎯 Creating RecoveryManager with direct-to-storage recovery and metadata provider");
 
         // Create disk manager
         let disk_manager = Arc::new(WriteAheadLogDiskManager::new(
@@ -94,6 +111,7 @@ impl RecoveryManager {
             flush_coordinator: Arc::new(WALFlushCoordinator::new()), // Flush coordinator is internal to recovery
             recovery_mode: RecoveryMode::DirectToStorage,
             stats: Arc::new(tokio::sync::RwLock::new(RecoveryStats::default())),
+            metadata_provider,
         }
     }
 
@@ -185,6 +203,7 @@ impl RecoveryManager {
             let storage_engines = self.storage_engines.clone();
             let flush_coordinator = self.flush_coordinator.clone();
             let recovery_mode = self.recovery_mode;
+            let metadata_provider = self.metadata_provider.clone();
 
             // Execute recovery task through thread pool
             let task = thread_pool.execute_recovery_task("recover_collection", async move {
@@ -200,6 +219,7 @@ impl RecoveryManager {
                     flush_coordinator,
                     recovery_mode,
                     None,
+                    metadata_provider,
                 )
                 .await;
 
@@ -308,6 +328,7 @@ impl RecoveryManager {
             self.flush_coordinator.clone(),
             self.recovery_mode,
             progress_callback,
+            self.metadata_provider.clone(),
         )
         .await?;
 
@@ -330,16 +351,20 @@ impl RecoveryManager {
         _flush_coordinator: Arc<WALFlushCoordinator>,
         recovery_mode: RecoveryMode,
         progress_callback: Option<RecoveryProgressCallback>,
+        metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Result<(u64, u64)> {
         info!("🔄 Recovering collection: {} (mode: {:?})", collection_id, recovery_mode);
 
         if recovery_mode == RecoveryMode::DirectToStorage {
             let engines = storage_engines.read().await;
             if !engines.contains_key(collection_id) {
-                return Err(anyhow::anyhow!(
-                    "No storage engine registered for collection {}. Register with register_storage_engine() first.",
+                warn!(
+                    "⏭️ Skipping recovery for collection {}: No storage engine registered. \
+                    Collection will be initialized fresh if accessed.",
                     collection_id
-                ));
+                );
+                // Return 0 vectors recovered instead of error - allows graceful degradation
+                return Ok((0, 0));
             }
         }
 
@@ -363,27 +388,70 @@ impl RecoveryManager {
             debug!("🔄 Recovering WAL batch {} from {} (LSN: {}, {} bytes)",
                    e.batch_id, file_url, e.global_lsn, e.size_bytes);
 
-            if let Ok(data) = disk_manager.read_batch(&file_info).await {
-                let checksum = crate::utils::checksum::Crc32::checksum(&data);
-                if checksum != e.checksum_crc32 { warn!("Checksum mismatch for {}, skipping", file_info.file_url); continue; }
-                let serializer = SerializerFactory::create(file_info.format);
-                let vectors = serializer.deserialize_batch(&data).context("Failed to deserialize WAL data")?;
-                let count = vectors.len() as u64;
-                let result = Self::flush_recovered_vectors(&file_info, vectors, &disk_manager, &storage_engines, recovery_mode).await?;
-                if result.success {
-                    files_recovered += 1;
-                    vectors_recovered += count;
+            match disk_manager.read_batch(&file_info).await {
+                Ok(data) => {
+                    let checksum = crate::utils::checksum::Crc32::checksum(&data);
+                    if checksum != e.checksum_crc32 {
+                        warn!("Checksum mismatch for {}, skipping", file_info.file_url);
+                        continue;
+                    }
+                    let serializer = SerializerFactory::create(file_info.format);
+                    let vectors = serializer.deserialize_batch(&data).context("Failed to deserialize WAL data")?;
+                    let count = vectors.len() as u64;
+                    let result = Self::flush_recovered_vectors(&file_info, vectors, &disk_manager, &storage_engines, recovery_mode, &e.storage_url, &metadata_provider).await?;
+                    if result.success {
+                        files_recovered += 1;
+                        vectors_recovered += count;
 
-                    // Delete WAL file (idempotent - safe if already deleted)
-                    let _ = disk_manager.delete_wal_file_url(&file_info.file_url).await;
+                        // CRITICAL: Mark as flushed BEFORE deleting WAL file
+                        // This ensures manifest is updated even if deletion fails
+                        match crate::storage::persistence::write_ahead_log::manifest::mark_flushed(&[e.batch_id.clone()]).await {
+                            Ok(_) => {
+                                debug!("✅ Marked batch {} as Flushed in manifest", e.batch_id);
 
-                    // Mark as flushed in global manifest (prevents duplicate recovery)
-                    crate::storage::persistence::write_ahead_log::manifest::mark_flushed(&[e.batch_id.clone()]).await?;
+                                // Only delete WAL file after successful manifest update
+                                if let Err(e) = disk_manager.delete_wal_file_url(&file_info.file_url).await {
+                                    warn!("Failed to delete WAL file {} after successful recovery: {}", file_info.file_url, e);
+                                    // Continue - data is safely recovered and manifest is updated
+                                } else {
+                                    debug!("🗑️ Deleted WAL file {}", file_info.file_url);
+                                }
 
-                    info!("✅ Recovered and flushed batch {} (LSN: {}, {} vectors) - marked as Flushed",
-                          e.batch_id, e.global_lsn, count);
+                                info!("✅ Recovered and flushed batch {} (LSN: {}, {} vectors) - marked as Flushed",
+                                      e.batch_id, e.global_lsn, count);
+                            }
+                            Err(err) => {
+                                // CRITICAL: If manifest update fails, DO NOT delete WAL file
+                                // File will be recovered again on next restart
+                                warn!("❌ Failed to mark batch {} as Flushed in manifest: {}. Keeping WAL file for retry.",
+                                      e.batch_id, err);
+                                warn!("⚠️  WAL file {} will be recovered again on next server restart", file_info.file_url);
+                            }
+                        }
+                    }
+                    if let Some(cb) = &progress_callback {
+                        cb(RecoveryProgress {
+                            current_file: idx + 1,
+                            total_files: entries.len(),
+                            current_collection: collection_id.to_string(),
+                            vectors_recovered,
+                            bytes_processed: e.size_bytes
+                        });
+                    }
                 }
-                if let Some(cb) = &progress_callback { cb(RecoveryProgress { current_file: idx + 1, total_files: entries.len(), current_collection: collection_id.to_string(), vectors_recovered, bytes_processed: e.size_bytes }); }
+                Err(read_err) => {
+                    // WAL file doesn't exist or can't be read
+                    warn!("⚠️  Failed to read WAL file {} for collection {}: {}. \
+                          This may indicate the file was already deleted or flushed in a previous recovery.",
+                          file_info.file_url, collection_id, read_err);
+
+                    // Check if this entry is already marked as Flushed in manifest
+                    // If so, this is expected. If not, this is a problem.
+                    if e.status == crate::storage::persistence::write_ahead_log::manifest::WalEntryStatus::Active {
+                        warn!("⚠️  WARNING: WAL file missing but manifest shows status=Active. \
+                              Data may have been lost if storage engine flush didn't complete.");
+                    }
+                }
             }
         }
 
@@ -441,14 +509,27 @@ impl RecoveryManager {
 
         let vector_count = vectors.len() as u64;
 
+        // Extract storage URL from file path
+        // WAL files are at: {base_location}/{collection_id}/wal/{filename}
+        // So we extract everything before /{collection_id}/wal/
+        let storage_url = file_info.file_url
+            .split(&format!("/{}/wal/", file_info.collection_id))
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Could not extract storage URL from WAL file path: {}", file_info.file_url))?
+            .to_string();
+
         // Pass recovered vectors to flush coordinator
         // It will use the storage engine's do_flush method properly
+        // Note: metadata_provider needs to be passed from caller context
+        let metadata_provider = Arc::new(RwLock::new(None::<Arc<dyn InternalCollectionProvider>>));
         let flush_result = Self::flush_recovered_vectors(
             file_info,
             vectors,
             disk_manager,
             storage_engines,
             recovery_mode,
+            &storage_url,
+            &metadata_provider,
         )
         .await
         .context("Failed to flush recovered vectors")?;
@@ -483,6 +564,8 @@ impl RecoveryManager {
         _disk_manager: &Arc<WriteAheadLogDiskManager>,
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         _recovery_mode: RecoveryMode,
+        storage_url: &str,
+        metadata_provider: &Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Result<crate::storage::traits::FlushResult> {
         // Get the storage engine for this collection
         let engines = storage_engines.read().await;
@@ -493,9 +576,31 @@ impl RecoveryManager {
             )
         })?;
 
-        // Create flush parameters
+        // Try to get REAL collection config from metadata provider
+        let collection_config = if let Some(provider) = metadata_provider.read().await.as_ref() {
+            match provider.get_collection(&file_info.collection_id).await {
+                Ok(Some(collection)) => {
+                    info!("✅ Using REAL collection config from metadata for {}", file_info.collection_id);
+                    Some(collection)
+                }
+                Ok(None) => {
+                    warn!("⚠️ Collection {} not found in metadata, using minimal config", file_info.collection_id);
+                    Self::create_minimal_collection_config(&file_info.collection_id, storage_url)
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to get collection config: {}, using minimal config", e);
+                    Self::create_minimal_collection_config(&file_info.collection_id, storage_url)
+                }
+            }
+        } else {
+            warn!("⚠️ No metadata provider available, using minimal config");
+            Self::create_minimal_collection_config(&file_info.collection_id, storage_url)
+        };
+
+        // Create flush parameters with REAL collection config
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some(file_info.collection_id.clone()),
+            collection_config,
             force: true,
             synchronous: true,
             vector_records: vectors,
@@ -507,6 +612,22 @@ impl RecoveryManager {
         let result = engine.do_flush(&flush_params).await?;
 
         Ok(result)
+    }
+
+    /// Create minimal collection config as fallback
+    fn create_minimal_collection_config(collection_id: &str, storage_url: &str) -> Option<crate::proto::proximadb_v1::Collection> {
+        Some(crate::proto::proximadb_v1::Collection {
+            id: collection_id.to_string(),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: storage_url.to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: storage_url.to_string(),
+                assigned_at: chrono::Utc::now().timestamp_millis(),
+            }),
+            ..Default::default()
+        })
     }
 
     /// Discover all collections by scanning the filesystem
@@ -585,6 +706,7 @@ impl ParallelRecoveryManager {
             config,
             wal_behavior,
             filesystem_factory,
+            Arc::new(tokio::sync::RwLock::new(None)),  // Metadata provider for test
         ));
         let num_workers = num_workers.unwrap_or_else(|| num_cpus::get().min(8));
 
@@ -775,7 +897,7 @@ mod tests {
         config.multi_disk.data_directories = vec![temp_dir.path().to_str().unwrap().to_string()];
         let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));
         let recovery_manager =
-            RecoveryManager::new(config, wal_behavior, filesystem_factory.clone());
+            RecoveryManager::new(config, wal_behavior, filesystem_factory.clone(), Arc::new(tokio::sync::RwLock::new(None)));
 
         (disk_manager, flush_coordinator, recovery_manager, temp_dir)
     }

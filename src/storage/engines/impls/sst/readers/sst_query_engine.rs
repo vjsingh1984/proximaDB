@@ -564,10 +564,12 @@ impl ModularBlockReader {
             // Create results from batch distances
             for (i, distance) in distances.into_iter().enumerate() {
                 if let Some((block_idx, record_idx)) = indices_map.get(i) {
+                    // Use normalized_score for consistency across all engines
+                    // Higher similarity = better match, VOS sorts descending
                     results.push(
                         OptimizedSearchRecord::new(
                             format!("block_{}_record_{}", block_idx, record_idx),
-                            distance.distance,
+                            distance.normalized_score,
                         )
                         .with_similarity(distance.normalized_score)
                         .add_vector(loaded_vectors[i].clone())
@@ -647,7 +649,9 @@ impl ModularBlockReader {
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
                         .calculate_distance(query_vector, &record.vector, distance_metric);
 
-                let search_record = OptimizedSearchRecord::new(record.id.clone(), distance.rank_value)
+                // Use normalized_score for both fields - consistency across all engines
+                // Higher similarity = better match, VOS sorts descending
+                let search_record = OptimizedSearchRecord::new(record.id.clone(), distance.normalized_score)
                     .with_similarity(distance.normalized_score)
                     .add_vector(record.vector.clone())
                     .with_metadata(HashMap::new());
@@ -1551,9 +1555,11 @@ impl UnifiedSstableReader {
                 );
 
                 // Create result
+                // Use normalized_score for consistency across all engines
+                // Higher similarity = better match, VOS sorts descending
                 let result = crate::core::search::results::OptimizedSearchRecord::new(
                     record.id.clone(),
-                    distance.rank_value,
+                    distance.normalized_score,
                 )
                 .with_similarity(distance.normalized_score)
                 .add_vector(record.vector.clone())
@@ -2479,7 +2485,9 @@ impl UnifiedSstableReader {
                     }
                 }
 
-                let search_record = OptimizedSearchRecord::new(record.id.clone(), similarity.rank_value)
+                // Use normalized_score for consistency across all engines
+                // Higher similarity = better match, VOS sorts descending
+                let search_record = OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
                     .with_similarity(similarity.normalized_score)
                     .add_vector(record.vector.clone())
                     .with_metadata(record.metadata.clone())

@@ -26,7 +26,7 @@ Usage:
 
 import time
 import threading
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Callable
 from collections import defaultdict
 
 # Import from chunking strategies for clean separation
@@ -220,23 +220,27 @@ class TextChunker:
     def chunk_text(
         self,
         text: str,
-        source_id: str,
+        source_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> List[TextChunk]:
         """
         Chunk text using the configured strategy
-        
+
         Args:
             text: Text to chunk
-            source_id: Identifier for the source document
+            source_id: Optional identifier for the source document (defaults to "doc")
             metadata: Optional metadata to include with all chunks
-            
+
         Returns:
             List of TextChunk objects
         """
         if not self._strategy:
             self._initialize_strategy()
-        
+
+        # Default source_id if not provided
+        if source_id is None:
+            source_id = "doc"
+
         return self._strategy.chunk(text, source_id, metadata)
     
     def add_context_to_chunks(
@@ -284,7 +288,9 @@ def create_vector_records(
     collection_metadata: Optional[Dict[str, Any]] = None,
     filterable_fields: Optional[List[str]] = None,
     model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None
+    processing_config: Optional[Dict[str, Any]] = None,
+    source_type: Optional[str] = None,
+    source_metadata: Optional[Dict[str, Any]] = None
 ) -> List[VectorRecord]:
     """
     Create VectorRecord objects from chunks and embeddings with ultra-efficient enum packing
@@ -333,6 +339,12 @@ def create_vector_records(
             "text_preview": chunk.text[:100] + "..." if len(chunk.text) > 100 else chunk.text,
             "embedding_dimension": len(embedding),
         }
+
+        # Add source_type and source_metadata if provided
+        if source_type:
+            metadata["source_type"] = source_type
+        if source_metadata:
+            metadata.update(source_metadata)
         
         # Separate filterable and non-filterable metadata
         filterable_metadata = {
@@ -345,55 +357,15 @@ def create_vector_records(
             if k not in filterable_fields
         }
         
-        # Create ultra-efficient source content using enum packing (75% storage savings)
-        from .enum_packing import (
-            create_processing_info, create_source_content, create_text_content,
-            ExtractionMethod, ProcessingStatus, QualityLevel, DataSource,
-            ContentCategory, LanguageCode
-        )
-        
-        # Create processing info with packed enums
-        processing_info = create_processing_info(
-            model_id=model_id or processing_config.get('model_id') if processing_config else None,
-            extraction=ExtractionMethod.DIRECT_TEXT,
-            status=ProcessingStatus.PROCESSED,
-            quality=QualityLevel.HIGH if len(chunk.text) > 50 else QualityLevel.MEDIUM,
-            source=DataSource.API_INGESTION,
-            processing_time_ms=processing_config.get('processing_time_ms') if processing_config else None
-        )
-        
-        # Create text content with language packing
-        text_content = create_text_content(
-            content=chunk.text,
-            language=LanguageCode.ENGLISH,  # Could be detected automatically
-            chunk_context={
-                'chunk_index': chunk.metadata.get('chunk_index', 0),
-                'total_chunks': chunk.metadata.get('total_chunks', 1),
-                'strategy': chunk.metadata.get('chunking_strategy', 'unknown'),
-                'start_position': chunk.start,
-                'end_position': chunk.end,
-            }
-        )
-        
-        # Create source content with packed attributes
-        source_content = create_source_content(
-            data_oneof={'text': text_content},
-            category=ContentCategory.DOCUMENT,
-            quality=QualityLevel.HIGH if len(chunk.text) > 50 else QualityLevel.MEDIUM,
-            mime_type='text/plain',
-            size_bytes=len(chunk.text.encode('utf-8')),
-            processing_info=processing_info
-        )
-        
         # Create vector record with optimized structure
+        # Merge filterable and non-filterable metadata (no nesting allowed)
+        all_metadata = {**filterable_metadata, **non_filterable_metadata}
+
         record = VectorRecord(
             id=chunk.chunk_id,
             vector=embedding,
-            metadata={
-                **filterable_metadata,
-                "additional_metadata": non_filterable_metadata
-            },
-            source=source_content  # NEW: Ultra-efficient source content storage
+            metadata=all_metadata,
+            source=chunk.text  # Store original chunk text in source field for RAG
         )
         
         records.append(record)
@@ -487,36 +459,266 @@ def create_chunker(strategy: Union[str, ChunkingStrategy, ChunkingConfig] = None
         return TextChunker(config)
 
 
-def chunk_by_sentences(text: str, source_id: str = "doc", metadata: Dict[str, Any] = None) -> List[TextChunk]:
-    """Chunk text by sentences (backward compatibility)"""
-    config = ChunkingConfig(strategy=ChunkingStrategy.SENTENCE)
-    with PooledChunkerContext(config) as chunker:
-        return chunker.chunk_text(text, source_id, metadata)
+def chunk_by_sentences(
+    text: str,
+    chunk_size: int = 512,
+    document_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> List[TextChunk]:
+    """
+    Chunk text by sentences.
+
+    Args:
+        text: Text to chunk
+        chunk_size: Maximum chunk size in characters
+        document_id: Optional document ID (defaults to "doc")
+        metadata: Optional metadata to attach to chunks
+
+    Returns:
+        List of TextChunk objects
+    """
+    config = ChunkingConfig(
+        strategy=ChunkingStrategy.SENTENCE,
+        chunk_size=chunk_size
+    )
+    chunker = TextChunker(config)
+    source_id = document_id or "doc"
+    return chunker.chunk_text(text, source_id, metadata)
 
 
-def chunk_by_paragraphs(text: str, source_id: str = "doc", metadata: Dict[str, Any] = None) -> List[TextChunk]:
-    """Chunk text by paragraphs (backward compatibility)"""
-    config = ChunkingConfig(strategy=ChunkingStrategy.PARAGRAPH)
-    with PooledChunkerContext(config) as chunker:
-        return chunker.chunk_text(text, source_id, metadata)
+def chunk_by_paragraphs(
+    text: str,
+    max_size: int = 1000,
+    document_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> List[TextChunk]:
+    """
+    Chunk text by paragraphs.
+
+    Args:
+        text: Text to chunk
+        max_size: Maximum chunk size in characters
+        document_id: Optional document ID (defaults to "doc")
+        metadata: Optional metadata to attach to chunks
+
+    Returns:
+        List of TextChunk objects
+    """
+    config = ChunkingConfig(
+        strategy=ChunkingStrategy.PARAGRAPH,
+        chunk_size=max_size
+    )
+    chunker = TextChunker(config)
+    source_id = document_id or "doc"
+    return chunker.chunk_text(text, source_id, metadata)
 
 
-def chunk_sliding_window(text: str, source_id: str = "doc", chunk_size: int = 512, 
-                        overlap: int = 128, metadata: Dict[str, Any] = None) -> List[TextChunk]:
-    """Chunk text using sliding window (backward compatibility)"""
+def chunk_sliding_window(
+    text: str,
+    window_size: int = 512,
+    overlap: int = 128,
+    document_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> List[TextChunk]:
+    """
+    Chunk text using sliding window.
+
+    Args:
+        text: Text to chunk
+        window_size: Size of sliding window in characters
+        overlap: Overlap between chunks in characters
+        document_id: Optional document ID (defaults to "doc")
+        metadata: Optional metadata to attach to chunks
+
+    Returns:
+        List of TextChunk objects
+    """
     config = ChunkingConfig(
         strategy=ChunkingStrategy.SLIDING_WINDOW,
-        chunk_size=chunk_size,
+        chunk_size=window_size,
         chunk_overlap=overlap
     )
-    with PooledChunkerContext(config) as chunker:
-        return chunker.chunk_text(text, source_id, metadata)
+    chunker = TextChunker(config)
+    source_id = document_id or "doc"
+    return chunker.chunk_text(text, source_id, metadata)
 
 
-def prepare_vector_records(chunks: List[TextChunk], embeddings: List[List[float]], 
-                         metadata: Dict[str, Any] = None) -> List[VectorRecord]:
-    """Prepare vector records from chunks and embeddings (backward compatibility)"""
-    return create_vector_records(chunks, embeddings, metadata)
+def prepare_vector_records(
+    response: Dict[str, Any],
+    source_id: str,
+    source_type: Optional[str] = None,
+    source_metadata: Optional[Dict[str, Any]] = None,
+    filterable_fields: Optional[List[str]] = None,
+    chunk_metadata_fn: Optional[Callable[[Dict[str, Any], int], Dict[str, Any]]] = None,
+    preserve_embedding_metadata: bool = False
+) -> List[VectorRecord]:
+    """
+    Prepare vector records from embedding service response with flexible metadata handling.
+
+    This function processes chunks from an embedding service response and creates VectorRecord
+    objects with sophisticated metadata management:
+    - Filterable fields go into metadata at top level
+    - Non-filterable fields get namespaced with prefixes (source_, chunk_, custom_, etc.)
+    - Custom metadata functions can enrich chunks
+    - Preserves or filters embedding service metadata
+
+    Args:
+        response: Embedding service response with 'chunks' array. Each chunk should have:
+                  - id: Chunk identifier
+                  - text: Chunk text content
+                  - embedding: Vector embedding (list of floats)
+                  - Optional: start_pos, end_pos, token_count, confidence, language, etc.
+        source_id: Source document identifier (stored in metadata)
+        source_type: Source document type (optional, e.g., "product", "documentation")
+        source_metadata: Additional source-level metadata. Fields in filterable_fields go to
+                        top level, others get "source_" prefix
+        filterable_fields: List of metadata field names that should be at top level for filtering.
+                          Includes fields from source_metadata, chunk_metadata_fn, and special
+                          fields like "category", "author", "tags", "price", etc.
+        chunk_metadata_fn: Optional function (chunk_dict, index) -> metadata_dict to enrich
+                          each chunk with custom metadata. Returned fields get "custom_" prefix
+                          unless they're in filterable_fields
+        preserve_embedding_metadata: If True, preserve extra chunk fields from embedding service
+                                    (e.g., confidence, language, token_count). These get "chunk_"
+                                    prefix unless in filterable_fields
+
+    Returns:
+        List of VectorRecord objects with properly structured metadata
+
+    Raises:
+        ValueError: If response has no chunks or chunks missing embeddings
+
+    Examples:
+        >>> # Basic usage
+        >>> response = {
+        ...     "chunks": [
+        ...         {"id": "c1", "text": "Hello", "embedding": [0.1, 0.2]},
+        ...         {"id": "c2", "text": "World", "embedding": [0.3, 0.4]}
+        ...     ],
+        ...     "model": "all-mpnet-base-v2"
+        ... }
+        >>> records = prepare_vector_records(response, source_id="doc1", source_type="test")
+
+        >>> # With filterable metadata
+        >>> response = {"chunks": [{"id": "c1", "text": "Product", "embedding": [0.1]}]}
+        >>> records = prepare_vector_records(
+        ...     response,
+        ...     source_id="PROD-123",
+        ...     source_metadata={"category": "Electronics", "price": 99.99, "internal_note": "Check"},
+        ...     filterable_fields=["category", "price"]  # internal_note gets source_ prefix
+        ... )
+
+        >>> # With custom enrichment
+        >>> def enrich(chunk, idx):
+        ...     return {"section": f"part_{idx}", "has_numbers": any(c.isdigit() for c in chunk["text"])}
+        >>> records = prepare_vector_records(
+        ...     response,
+        ...     source_id="doc",
+        ...     chunk_metadata_fn=enrich,
+        ...     filterable_fields=["section", "has_numbers"]
+        ... )
+    """
+    import time
+    from datetime import datetime, timezone
+
+    # Extract chunks from response
+    chunks = response.get("chunks", [])
+    if not chunks:
+        raise ValueError("No chunks found in response")
+
+    # Default filterable fields include common high-cardinality fields
+    filterable_fields = filterable_fields or []
+    filterable_set = set(filterable_fields)
+
+    # Always filterable: common high-value fields
+    always_filterable = {
+        "text", "chunk_index", "source_type",
+        "category", "author", "tags", "brand", "sku", "product_id"
+    }
+    filterable_set.update(always_filterable)
+
+    records = []
+
+    for idx, chunk in enumerate(chunks):
+        # Validate chunk has required fields
+        if "embedding" not in chunk:
+            raise ValueError(f"Chunk {idx} missing embedding")
+
+        chunk_id = chunk.get("id", f"chunk_{idx}")
+        text = chunk.get("text", "")
+        embedding = chunk["embedding"]
+
+        # Start building metadata
+        metadata = {}
+
+        # 1. Core chunk fields (always filterable)
+        metadata["text"] = text
+        metadata["chunk_index"] = idx
+        if source_type:
+            metadata["source_type"] = source_type
+
+        # 2. Source metadata (filterable fields at top level, others with source_ prefix)
+        if source_metadata:
+            for key, value in source_metadata.items():
+                if key in filterable_set:
+                    metadata[key] = value
+                else:
+                    metadata[f"source_{key}"] = value
+
+        # 3. Custom chunk metadata function
+        if chunk_metadata_fn:
+            try:
+                custom_meta = chunk_metadata_fn(chunk, idx)
+                if custom_meta:
+                    for key, value in custom_meta.items():
+                        if key in filterable_set:
+                            metadata[key] = value
+                        else:
+                            metadata[f"custom_{key}"] = value
+            except Exception as e:
+                # Log warning but don't break processing
+                logger = __import__('logging').getLogger(__name__)
+                logger.warning(f"Custom metadata function failed for chunk {idx}: {e}")
+
+        # 4. Embedding service metadata (if preserving)
+        if preserve_embedding_metadata:
+            # Fields to exclude (already handled)
+            exclude_fields = {"id", "text", "embedding"}
+            for key, value in chunk.items():
+                if key not in exclude_fields:
+                    if key in filterable_set:
+                        metadata[key] = value
+                    else:
+                        metadata[f"chunk_{key}"] = value
+
+        # 5. Response-level metadata (chunking/embedding info - always extra with prefixes)
+        # These are low-cardinality so they go to extra metadata
+        if "model" in response:
+            metadata["embedding_model"] = response["model"]
+        if "chunking_strategy" in response:
+            metadata["chunk_strategy"] = response["chunking_strategy"]
+        if "chunk_size" in response:
+            metadata["chunk_size"] = response["chunk_size"]
+        if "overlap" in response:
+            metadata["chunk_overlap"] = response["overlap"]
+        if "dimension" in response:
+            metadata["embedding_dimension"] = response["dimension"]
+
+        # 6. System metadata (extra)
+        metadata["source_id"] = source_id
+        metadata["created_at"] = datetime.now(timezone.utc).isoformat()
+        metadata["indexed_at"] = datetime.now(timezone.utc).isoformat()
+
+        # Create VectorRecord
+        record = VectorRecord(
+            id=chunk_id,
+            vector=embedding,
+            metadata=metadata
+        )
+
+        records.append(record)
+
+    return records
 
 
 def get_chunker_pool_stats() -> Dict[str, Any]:

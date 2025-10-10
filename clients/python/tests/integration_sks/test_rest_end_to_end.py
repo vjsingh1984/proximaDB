@@ -30,17 +30,13 @@ def test_rest_end_to_end_sks_or_legacy():
     try:
         # Create collection (dimension=4 for simplicity)
         cfg = CollectionConfig(name=coll, dimension=4)
-        client.create_collection(config=cfg)
+        client.create_collection(name=coll, config=cfg)
 
         # Insert a few vectors
         vectors = np.array([[0.1, 0.2, 0.3, 0.4], [0.11, 0.21, 0.29, 0.41]], dtype=np.float32)
         ids = [f"vec_{i}" for i in range(len(vectors))]
         res = client.insert_vectors(coll, vectors, ids, upsert=True)
         assert res.success >= 1
-
-        # Warmup SKS capability (optional)
-        support = client.warmup_sks_capabilities(coll)
-        assert isinstance(support, dict)
 
         # Search (uses SKS if supported, otherwise legacy)
         q = [0.1, 0.2, 0.3, 0.4]

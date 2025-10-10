@@ -1129,12 +1129,19 @@ impl VectorOperationsService {
         top_k: usize,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        tracing::debug!("🔍 execute_unified_plan received filter: {:?}", filter.as_ref().map(|f| format!("{:?}", f)));
         let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
         let mut intermediate_results: Option<
             Vec<crate::core::search::results::OptimizedSearchRecord>,
         > = None;
 
         for step in plan.execution_steps {
+            match &step {
+                ExecutionStep::CombinedFilterSearch { .. } => tracing::debug!("🔍 Executing step: CombinedFilterSearch"),
+                ExecutionStep::MetadataFilter { .. } => tracing::debug!("🔍 Executing step: MetadataFilter"),
+                ExecutionStep::VectorSearch { .. } => tracing::debug!("🔍 Executing step: VectorSearch"),
+                _ => tracing::debug!("🔍 Executing step: Other"),
+            }
             match step {
                 // NEW: Combined filter+search execution (not possible before consolidation!)
                 ExecutionStep::CombinedFilterSearch {
@@ -1151,6 +1158,7 @@ impl VectorOperationsService {
                     }
 
                     // Execute search with filter-aware optimization using unified two-stage search
+                    tracing::debug!("🔍 About to call execute_two_stage_search with filter: {:?}", filter.as_ref().map(|f| format!("{:?}", f)));
                     results = self
                         .execute_two_stage_search(
                             collection_id,
@@ -1193,7 +1201,7 @@ impl VectorOperationsService {
                     quantization_strategy,
                     candidates,
                 } => {
-                    debug!("🎯 Executing vector search (candidates: {})", candidates);
+                    debug!("🎯 Executing vector search (candidates: {}, filter: {})", candidates, filter.is_some());
 
                     let search_results = self
                         .execute_two_stage_search(
@@ -1202,7 +1210,7 @@ impl VectorOperationsService {
                             quantization_strategy,
                             candidates,
                             query_vector.clone(),
-                            None, // No filter for simple vector search
+                            filter.clone(), // Pass the filter from execute_unified_plan parameter
                         )
                         .await?;
 
@@ -1247,16 +1255,20 @@ impl VectorOperationsService {
         }
 
         // Return final results or intermediate if no final step produced results
-        if results.is_empty() {
+        let mut final_results = if results.is_empty() {
             // Return intermediate results directly
-            if let Some(intermediate) = intermediate_results {
-                Ok(intermediate)
-            } else {
-                Ok(Vec::new())
-            }
+            intermediate_results.unwrap_or_else(Vec::new)
         } else {
-            Ok(results)
-        }
+            results
+        };
+
+        // CRITICAL FIX: Apply final top_k truncation
+        // The query optimizer may request more candidates for re-ranking (e.g., top_k * 10),
+        // but we must return only the requested top_k results to honor the API contract.
+        // Without this truncation, clients receive 10x more results than requested.
+        final_results.truncate(top_k);
+
+        Ok(final_results)
     }
 
     /// Apply filter pushdown to storage layer - NEW optimization!
@@ -1429,8 +1441,10 @@ impl VectorOperationsService {
         all_results.extend(wal_optimized_results);
         all_results.extend(storage_results);
 
-        // Sort by similarity score in descending order (higher = more similar)
-        // OptimizedSearchRecord uses the same score field as InternalSearchResult
+        // Sort by similarity score in DESCENDING order (higher = more similar)
+        // IMPORTANT: All engines now put normalized similarity (0-1) in the score field
+        // Higher similarity score = more similar, so we sort descending (b.score > a.score comes first)
+        // This ensures cross-engine and cross-protocol consistency (REST, gRPC, SQL)
         all_results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -2297,6 +2311,10 @@ impl VectorOperationsService {
         // OptimizedSearchRecord already has SqlValue metadata, just clone it
         let metadata_map = result.metadata.clone();
 
+        // Use normalized similarity score for user-facing display (0-1 range, higher = better)
+        // Internal sorting uses result.score (raw distance), but users should see normalized values
+        let display_score = result.similarity.unwrap_or(0.0) as f64;
+
         SearchVectorRecord {
             id: result.id.clone(),
             vector: if include_vector {
@@ -2309,7 +2327,7 @@ impl VectorOperationsService {
                 vec![]
             },
             metadata: metadata_map,
-            score: result.score as f64,
+            score: display_score,  // Use normalized similarity instead of raw distance
             similarity: result.similarity,
             version: result.version,
             timestamp: result.timestamp,
@@ -2356,6 +2374,16 @@ impl VectorOperationsService {
         // OptimizedSearchRecord already has SqlValue metadata, just clone it
         let metadata = result.metadata.clone();
 
+        // Use normalized similarity score for user-facing display (0-1 range, higher = better)
+        // Internal sorting uses result.score (raw distance), but users should see normalized values
+        let display_score = result.similarity.unwrap_or(0.0) as f64;
+
+        // DEBUG: Log the values to understand what's happening
+        tracing::debug!(
+            "optimized_to_proto_v1: id={}, score={}, similarity={:?}, display_score={}",
+            result.id, result.score, result.similarity, display_score
+        );
+
         crate::proto::proximadb_v1::SearchVectorRecord {
             id: result.id.clone(),
             vector: if include_vector {
@@ -2368,7 +2396,7 @@ impl VectorOperationsService {
                 vec![]
             },
             metadata,
-            score: result.score as f64,
+            score: display_score,  // Use normalized similarity instead of raw distance
             version: result.version,
             similarity: result.similarity,
             timestamp: result.timestamp.map(|t| t as i64),

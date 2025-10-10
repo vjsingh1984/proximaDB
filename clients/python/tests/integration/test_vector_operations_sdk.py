@@ -536,7 +536,7 @@ class TestVectorOperationsSDK:
             chunks = chunker.chunk_text(
                 test_document,
                 source_id="guide_001",
-                base_metadata={
+                metadata={
                     "document_type": "technical_guide",
                     "version": "2.0",
                     "author": "ProximaDB Team"

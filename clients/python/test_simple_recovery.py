@@ -15,8 +15,11 @@ if response.status_code == 200:
     collections = response.json()
     print(f"   ✓ Found {len(collections['collections'])} collections")
     for col in collections['collections']:
-        print(f"     - {col['name']} (id: {col['id']}, vectors: {col['vector_count']})")
-        if col['name'] == 'recovery_test_collection':
+        col_name = col.get('name', col.get('id', 'unknown'))
+        col_id = col.get('id', 'unknown')
+        vector_count = col.get('vector_count', col.get('count', 0))
+        print(f"     - {col_name} (id: {col_id}, vectors: {vector_count})")
+        if col_name == 'recovery_test_collection':
             print(f"       ^ RECOVERY TEST COLLECTION FOUND! ✓")
 else:
     print(f"   ✗ Error: {response.status_code}")

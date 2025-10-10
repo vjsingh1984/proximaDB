@@ -793,14 +793,14 @@ class ProximaDBClient:
     def _pydantic_to_proto_indexing_algorithm(self, algo: IndexingAlgorithm) -> int:
         """Convert Pydantic IndexingAlgorithm to proto IndexingAlgorithm"""
         mapping = {
-            IndexingAlgorithm.HNSW: pb2.IndexingAlgorithm.HNSW,
-            IndexingAlgorithm.IVF: pb2.IndexingAlgorithm.IVF,
-            IndexingAlgorithm.PQ: pb2.IndexingAlgorithm.PQ,
-            IndexingAlgorithm.FLAT: pb2.IndexingAlgorithm.FLAT,
-            IndexingAlgorithm.ANNOY: pb2.IndexingAlgorithm.ANNOY,
-            IndexingAlgorithm.LSH: pb2.IndexingAlgorithm.LSH,
+            IndexingAlgorithm.HNSW: 1,
+            IndexingAlgorithm.IVF: 2,
+            IndexingAlgorithm.PQ: 3,
+            IndexingAlgorithm.FLAT: 4,
+            IndexingAlgorithm.ANNOY: 5,
+            IndexingAlgorithm.LSH: 6,
         }
-        return mapping.get(algo, pb2.IndexingAlgorithm.HNSW)
+        return mapping.get(algo, 1)  # Default to HNSW
     
     def _pydantic_to_proto_quantization_config(self, config: QuantizationConfig) -> 'pb2.QuantizationConfig':
         """Convert Pydantic QuantizationConfig to proto QuantizationConfig"""
@@ -1611,11 +1611,8 @@ class ProximaDBClient:
             ...     print(row['id'], row['metadata'])
         """
         if self._active_protocol == Protocol.GRPC:
-            # gRPC doesn't support SQL yet, fall back to REST
-            if hasattr(self._client, '_rest_url'):
-                return self._execute_sql_rest(query, parameters, collection)
-            else:
-                raise ProximaDBError("SQL queries are only supported via REST API")
+            # Use gRPC SQL service
+            return self._client.execute_sql(query, parameters, collection)
         else:
             # REST client
             return self._execute_sql_rest(query, parameters, collection)

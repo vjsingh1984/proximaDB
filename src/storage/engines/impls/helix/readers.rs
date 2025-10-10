@@ -106,8 +106,12 @@ pub async fn search_sstable(
             }
         }
 
-        // Convert to OptimizedSearchRecord
-        let score = 1.0 / (1.0 + distance);
+        // Use standardized distance-to-similarity conversion for consistency across all engines
+        // This ensures all engines return the same similarity score for the same distance
+        let similarity = crate::core::search::results::OptimizedSearchRecord::standardized_distance_to_similarity(
+            distance,
+            distance_metric,
+        );
 
         // Convert metadata from HashMap<String, String> to HashMap<String, SqlValue>
         let sql_metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = metadata_map
@@ -119,8 +123,11 @@ pub async fn search_sstable(
             })
             .collect();
 
-        let record = OptimizedSearchRecord::new(id, score)
-            .with_similarity(distance)
+        // IMPORTANT: score field contains normalized similarity (0-1, higher = better)
+        // This is used for sorting in VOS and display to users
+        // Future options: Could expose .with_distance(distance) and .with_rank(rank_value) for advanced use cases
+        let record = OptimizedSearchRecord::new(id, similarity)
+            .with_similarity(similarity)  // Currently redundant, but maintains API compatibility
             .with_metadata(sql_metadata);
 
         results.push(record);

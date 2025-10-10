@@ -364,6 +364,10 @@ pub struct WriteAheadLogManager {
     shared_wal_behavior: &'static GlobalWriteBufferBehaviorSingleton,
     /// Strategy type for routing and serialization decisions
     strategy_type: config::WriteBufferStrategyType,
+    /// Cached RecoveryManager instance - shared across registration and recovery
+    recovery_manager_cache: Arc<tokio::sync::RwLock<Option<RecoveryManager>>>,
+    /// Metadata provider for accessing collection configurations during recovery
+    metadata_provider: Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>,
 }
 
 /// Adaptive WriteAheadLogManager Registry with Pool-based Collection Assignment
@@ -1119,6 +1123,8 @@ impl WriteAheadLogManager {
             assigned_collections: Arc::new(tokio::sync::RwLock::new(assigned_collections)),
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
+            recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            metadata_provider: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -1178,6 +1184,8 @@ impl WriteAheadLogManager {
             assigned_collections: Arc::new(tokio::sync::RwLock::new(assigned_collections)),
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
+            recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            metadata_provider: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -1210,6 +1218,13 @@ impl WriteAheadLogManager {
     pub fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
         // Storage engine setting moved to config level
         tracing::info!("🏗️ Storage engine attached to WAL manager for delegated operations");
+    }
+
+    /// Set metadata provider for collection configuration access during recovery
+    pub async fn set_metadata_provider(&self, provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>) {
+        let mut metadata_provider = self.metadata_provider.write().await;
+        *metadata_provider = Some(provider);
+        tracing::info!("📋 Metadata provider attached to WAL manager for recovery");
     }
 
     /// Get WAL configuration (read-only access)
@@ -1996,11 +2011,13 @@ impl WriteAheadLogManager {
                 );
 
                 // Create optimized search result with SqlValue metadata
+                // IMPORTANT: Use normalized_score for consistency across all engines
+                // Higher similarity = better match, VOS sorts descending
                 let search_result = crate::core::search::results::OptimizedSearchRecord {
                     id: vector_record.id.clone(),
                     vector_id: Some(vector_record.id.clone()),
-                    score: similarity_result.distance,
-                    similarity: Some(similarity_result.raw_value),
+                    score: similarity_result.normalized_score,
+                    similarity: Some(similarity_result.normalized_score),
                     vector: if include_vectors {
                         Some(Arc::new(vector_record.vector.clone()))
                     } else {
@@ -2608,6 +2625,50 @@ impl WriteAheadLogManager {
             .cloned()
     }
 
+    /// Get or create the RecoveryManager for this WAL instance
+    /// This allows external code to register storage engines before recovery
+    /// IMPORTANT: Returns cached instance to ensure engine registration persists
+    pub async fn get_recovery_manager(&self) -> Result<RecoveryManager> {
+        // Check if we already have a cached instance
+        {
+            let cache = self.recovery_manager_cache.read().await;
+            if let Some(ref manager) = *cache {
+                debug!("♻️ Returning cached RecoveryManager instance");
+                return Ok(manager.clone());
+            }
+        }
+
+        // Create new instance if not cached
+        debug!("🆕 Creating new RecoveryManager instance with metadata provider");
+
+        // Create filesystem factory for recovery
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
+                .await?,
+        );
+
+        // Create RecoveryManager instance with metadata provider
+        let recovery_manager = RecoveryManager::new(
+            self.config.clone(),
+            self.shared_wal_behavior
+                .get_or_init(&crate::storage::memtable::core::MemtableConfig::default())
+                .clone(),
+            filesystem,
+            self.metadata_provider.clone(),
+        );
+
+        // Cache for future use
+        {
+            let mut cache = self.recovery_manager_cache.write().await;
+            *cache = Some(recovery_manager.clone());
+            debug!("💾 Cached RecoveryManager instance for reuse");
+        }
+
+        Ok(recovery_manager)
+    }
+
     /// Recovery method using parallel recovery system if available
     pub async fn recover(&self) -> Result<u64> {
         info!(
@@ -2621,22 +2682,8 @@ impl WriteAheadLogManager {
         let recovery_result = tokio::time::timeout(recovery_timeout, async {
             info!("📊 WAL_MANAGER: About to call RecoveryManager.recover()");
 
-            // Create filesystem factory for recovery
-            let filesystem_config =
-                crate::storage::persistence::filesystem::FilesystemConfig::default();
-            let filesystem = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
-                    .await?,
-            );
-
-            // Create RecoveryManager instance
-            let recovery_manager = RecoveryManager::new(
-                self.config.clone(),
-                self.shared_wal_behavior
-                    .get_or_init(&crate::storage::memtable::core::MemtableConfig::default())
-                    .clone(),
-                filesystem,
-            );
+            // Get RecoveryManager
+            let recovery_manager = self.get_recovery_manager().await?;
 
             let recovery_stats = recovery_manager.recover_all().await?;
             let recovered_count = recovery_stats.total_vectors_recovered;

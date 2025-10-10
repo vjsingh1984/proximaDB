@@ -220,101 +220,151 @@ class FilterBuilder:
         return self._root.to_dict()
     
     def to_proto_filter(self) -> Any:
-        """Convert to ProximaDB proto MetadataFilter"""
-        from . import proximadb_pb2 as pb2
+        """Convert to ProximaDB proto MetadataFilter (v1 proto structure)
+
+        Returns:
+            proximadb.v1.entity_pb2.MetadataFilter instance
+
+        Raises:
+            ImportError: If gRPC proto modules are not available
+            ValueError: If filter contains unsupported operations
+        """
+        try:
+            from proximadb.v1 import entity_pb2
+        except ImportError as e:
+            raise ImportError(
+                "Proto modules not available. Install with: pip install proximadb[grpc]"
+            ) from e
+
         return self._build_proto_filter(self._root)
-    
+
     def _build_proto_filter(self, group: FilterGroup) -> Any:
-        """Recursively build proto filter from filter group"""
-        from . import proximadb_pb2 as pb2
-        
-        # Map operators
-        op_map = {
-            LogicalOp.AND: pb2.FilterOperator.AND,
-            LogicalOp.OR: pb2.FilterOperator.OR,
-            LogicalOp.NOT: pb2.FilterOperator.NOT,
+        """Recursively build proto filter from filter group (v1 proto)
+
+        Args:
+            group: FilterGroup to convert
+
+        Returns:
+            proximadb.v1.entity_pb2.MetadataFilter instance
+
+        Raises:
+            ValueError: If filter contains unsupported operations
+        """
+        from proximadb.v1 import entity_pb2
+
+        # Map logical operators to v1 proto enums
+        # From entity.proto: enum LogicalOp { AND = 0; OR = 1; NOT = 2; }
+        logical_op_map = {
+            LogicalOp.AND: entity_pb2.AND,
+            LogicalOp.OR: entity_pb2.OR,
+            LogicalOp.NOT: entity_pb2.NOT,
         }
-        
-        # Map filter operations (only those available in proto)
-        filter_op_map = {
-            FilterOp.EQUALS: pb2.FilterOperation.EQUALS,
-            FilterOp.NOT_EQUALS: pb2.FilterOperation.NOT_EQUALS,
-            FilterOp.GREATER_THAN: pb2.FilterOperation.GREATER_THAN,
-            FilterOp.GREATER_THAN_OR_EQUAL: pb2.FilterOperation.GREATER_THAN_OR_EQUAL,
-            FilterOp.LESS_THAN: pb2.FilterOperation.LESS_THAN,
-            FilterOp.LESS_THAN_OR_EQUAL: pb2.FilterOperation.LESS_THAN_OR_EQUAL,
-            FilterOp.IN: pb2.FilterOperation.IN,
-            FilterOp.NOT_IN: pb2.FilterOperation.NOT_IN,
-            FilterOp.CONTAINS: pb2.FilterOperation.CONTAINS,
-            # These don't exist in proto yet:
-            # FilterOp.NOT_CONTAINS: pb2.FilterOperation.NOT_CONTAINS,
-            # FilterOp.EXISTS: pb2.FilterOperation.EXISTS,
-            # FilterOp.NOT_EXISTS: pb2.FilterOperation.NOT_EXISTS,
+
+        # Map comparison operators to v1 proto enums
+        # From entity.proto: enum ComparisonOp { EQ = 0; NE = 1; GT = 2; GTE = 3; LT = 4; LTE = 5; IN = 6; NOT_IN = 7; CONTAINS = 8; }
+        comparison_op_map = {
+            FilterOp.EQUALS: entity_pb2.EQ,
+            FilterOp.NOT_EQUALS: entity_pb2.NE,
+            FilterOp.GREATER_THAN: entity_pb2.GT,
+            FilterOp.GREATER_THAN_OR_EQUAL: entity_pb2.GTE,
+            FilterOp.LESS_THAN: entity_pb2.LT,
+            FilterOp.LESS_THAN_OR_EQUAL: entity_pb2.LTE,
+            FilterOp.IN: entity_pb2.IN,
+            FilterOp.NOT_IN: entity_pb2.NOT_IN,
+            FilterOp.CONTAINS: entity_pb2.CONTAINS,
+            # These operations are not supported in v1 proto ComparisonOp:
+            # FilterOp.NOT_CONTAINS
+            # FilterOp.EXISTS
+            # FilterOp.NOT_EXISTS
         }
-        
-        meta_filter = pb2.MetadataFilter(
-            operator=op_map.get(group.operator, pb2.FilterOperator.AND)
+
+        # Create MetadataFilter with logical operator
+        meta_filter = entity_pb2.MetadataFilter(
+            op=logical_op_map.get(group.operator, entity_pb2.AND)
         )
-        
+
+        # Add all conditions
         for condition in group.conditions:
             if isinstance(condition, FilterCondition):
-                # Convert condition to proto
-                proto_op = filter_op_map.get(condition.operation)
+                # Convert condition to proto FilterClause
+                proto_op = comparison_op_map.get(condition.operation)
                 if proto_op is None:
-                    # Skip unsupported operations with a warning
+                    # Unsupported operation - raise error
                     import warnings
-                    warnings.warn(f"Filter operation {condition.operation} not supported in proto, skipping")
+                    warnings.warn(
+                        f"Filter operation {condition.operation} not supported in v1 proto, skipping. "
+                        f"Supported operations: {list(comparison_op_map.keys())}"
+                    )
                     continue
-                    
-                filter_cond = pb2.FilterCondition(
-                    field_name=condition.field,
-                    operation=proto_op
+
+                # Create FilterClause
+                filter_clause = entity_pb2.FilterClause(
+                    field=condition.field,
+                    op=proto_op
                 )
-                
-                # Set value if present
+
+                # Set value using oneof based on type
                 if condition.value is not None:
-                    filter_cond.value.CopyFrom(self._value_to_metadata_value(condition.value))
-                
-                meta_filter.conditions.append(filter_cond)
+                    self._set_filter_clause_value(filter_clause, condition.value)
+
+                meta_filter.clauses.append(filter_clause)
+
             elif isinstance(condition, FilterGroup):
-                # Nested group - we need to handle this differently
-                # Proto doesn't support nested MetadataFilter, so we flatten with appropriate logic
-                # This is a limitation we'll need to work around
+                # v1 proto doesn't support nested MetadataFilter directly
+                # We flatten nested groups by adding their clauses with appropriate logic
+                # This is a limitation - deeply nested filters may lose some structure
                 nested_filter = self._build_proto_filter(condition)
-                # For now, just add all conditions from nested group
-                meta_filter.conditions.extend(nested_filter.conditions)
-        
+
+                # If nested filter has the same operator as parent, flatten completely
+                if nested_filter.op == meta_filter.op:
+                    meta_filter.clauses.extend(nested_filter.clauses)
+                else:
+                    # Different operator - we lose nesting structure
+                    # Add all clauses but with a warning
+                    import warnings
+                    warnings.warn(
+                        f"Nested filter groups with different operators may lose structure when converted to proto. "
+                        f"Parent operator: {group.operator}, Nested operator: {condition.operator}"
+                    )
+                    meta_filter.clauses.extend(nested_filter.clauses)
+
         return meta_filter
     
-    def _value_to_metadata_value(self, value: Any) -> Any:
-        """Convert Python value to MetadataValue proto"""
-        from . import proximadb_pb2 as pb2
-        
-        meta_value = pb2.MetadataValue()
-        
-        if isinstance(value, str):
-            meta_value.string_value = value
-        elif isinstance(value, bool):
-            meta_value.bool_value = value
+    def _set_filter_clause_value(self, filter_clause: Any, value: Any) -> None:
+        """Set value in FilterClause using oneof (v1 proto)
+
+        Args:
+            filter_clause: proximadb.v1.entity_pb2.FilterClause instance
+            value: Python value to set
+
+        Notes:
+            FilterClause oneof value: string_value, int_value, double_value, bool_value
+            Lists are not directly supported - for IN/NOT_IN operations, we use string representation
+        """
+        # Set value based on type using oneof
+        if isinstance(value, bool):
+            # Check bool before int (bool is subclass of int in Python)
+            filter_clause.bool_value = value
         elif isinstance(value, int):
-            meta_value.int_value = value
+            filter_clause.int_value = value
         elif isinstance(value, float):
-            meta_value.double_value = value
+            filter_clause.double_value = value
+        elif isinstance(value, str):
+            filter_clause.string_value = value
         elif isinstance(value, list):
+            # For lists (IN/NOT_IN operations), convert to comma-separated string
+            # This is a limitation of the v1 proto FilterClause structure
+            # The server should handle parsing this back to a list
             if all(isinstance(v, str) for v in value):
-                meta_value.string_array.values.extend(value)
-            elif all(isinstance(v, int) for v in value):
-                meta_value.int_array.values.extend(value)
+                filter_clause.string_value = ",".join(value)
             elif all(isinstance(v, (int, float)) for v in value):
-                meta_value.double_array.values.extend([float(v) for v in value])
+                filter_clause.string_value = ",".join(str(v) for v in value)
             else:
-                # Convert to string array as fallback
-                meta_value.string_array.values.extend([str(v) for v in value])
+                # Mixed types - convert all to strings
+                filter_clause.string_value = ",".join(str(v) for v in value)
         else:
             # Fallback to string representation
-            meta_value.string_value = str(value)
-        
-        return meta_value
+            filter_clause.string_value = str(value)
 
 
 # Convenience functions

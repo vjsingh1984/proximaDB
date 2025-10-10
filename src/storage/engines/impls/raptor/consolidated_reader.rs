@@ -439,14 +439,11 @@ impl RaptorReader {
                 .distance_compute
                 .calculate_distance(query, &vector, &metric);
 
-            // DIRECT use of standardized similarity scoring
-            let similarity_score = OptimizedSearchRecord::standardized_distance_to_similarity(
-                similarity_result.raw_value,
-                &metric,
-            );
+            // Use normalized_score directly from UnifiedDistanceCompute - already calculated!
+            // No need to call standardized_distance_to_similarity - that would be redundant
             results.push(
-                OptimizedSearchRecord::new(id, similarity_score)
-                    .with_similarity(similarity_score)
+                OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                    .with_similarity(similarity_result.normalized_score)
                     .add_vector(vector)
                     .with_metadata(std::collections::HashMap::new()),
             );

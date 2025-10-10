@@ -1109,48 +1109,38 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             // Use filesystem API for efficient range reads
             let batch = self.read_rowgroup_with_range(rg_id).await?;
 
-            // Compute distances using optimized batch methods
-            let distances = if self.config.enable_simd {
+            // Compute distances using UnifiedDistanceCompute batch methods
+            // IMPORTANT: Keep full SimilarityResult objects - they already have normalized_score!
+            let similarity_results = if self.config.enable_simd {
                 // Use optimized batch distance with memory pool
                 let vectors = self.extract_vectors_from_batch(&batch)?;
                 let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
                 let compute = UnifiedDistanceCompute::default();
 
-                // Use pooled SIMD batch method for maximum performance
-                let results = compute.batch_distance_pooled_simd(
+                // Use pooled SIMD batch method - returns SimilarityResult with normalized_score
+                compute.batch_distance_pooled_simd(
                     query,
                     &vector_refs,
                     distance_metric,
-                );
-
-                // Extract raw distances
-                results.into_iter().map(|r| r.distance).collect::<Vec<_>>()
+                )
             } else {
-                self.compute_distances_scalar(query, &batch)?
+                // Scalar path - compute SimilarityResult objects
+                let distances = self.compute_distances_scalar(query, &batch)?;
+                distances.into_iter()
+                    .map(|d| crate::compute::distance_computation::engine::SimilarityResult::new(d, distance_metric.clone()))
+                    .collect()
             };
 
-            // Collect results using standardized similarity scoring
-            for (i, distance) in distances.iter().enumerate() {
+            // Use normalized_score directly from UnifiedDistanceCompute - no conversion needed!
+            for (i, sim_result) in similarity_results.iter().enumerate() {
                 let id = self.get_id_from_batch(&batch, i)?;
 
-                // Convert distance to similarity score for consistent ranking
-                // Note: This logic should match the standardized conversion
-                let similarity_score = match distance_metric {
-                    DistanceMetric::Cosine => {
-                        if distance.is_infinite() {
-                            0.0
-                        } else {
-                            1.0 - (distance / 2.0).min(1.0).max(0.0)
-                        }
-                    }
-                    DistanceMetric::Euclidean => 1.0 / (1.0 + distance),
-                    _ => 1.0 / (1.0 + distance), // Default conversion
-                };
-                let search_result = OptimizedSearchRecord::new(id, similarity_score)
-                    .with_similarity(similarity_score)
+                // IMPORTANT: normalized_score already computed by UnifiedDistanceCompute
+                // All engines use this same value - ensures cross-engine consistency
+                let search_result = OptimizedSearchRecord::new(id, sim_result.normalized_score)
+                    .with_similarity(sim_result.normalized_score)
                     .with_metadata(HashMap::new());
 
-                // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_result);
             }
         }
@@ -1681,48 +1671,38 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 batch
             };
 
-            // Compute distances using optimized batch methods
-            let distances = if self.config.enable_simd {
+            // Compute distances using UnifiedDistanceCompute batch methods
+            // IMPORTANT: Keep full SimilarityResult objects - they already have normalized_score!
+            let similarity_results = if self.config.enable_simd {
                 // Use optimized batch distance with memory pool
                 let vectors = self.extract_vectors_from_batch(&batch)?;
                 let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
                 let compute = UnifiedDistanceCompute::default();
 
-                // Use pooled SIMD batch method for maximum performance
-                let results = compute.batch_distance_pooled_simd(
+                // Use pooled SIMD batch method - returns SimilarityResult with normalized_score
+                compute.batch_distance_pooled_simd(
                     query,
                     &vector_refs,
                     distance_metric,
-                );
-
-                // Extract raw distances
-                results.into_iter().map(|r| r.distance).collect::<Vec<_>>()
+                )
             } else {
-                self.compute_distances_scalar(query, &batch)?
+                // Scalar path - compute SimilarityResult objects
+                let distances = self.compute_distances_scalar(query, &batch)?;
+                distances.into_iter()
+                    .map(|d| crate::compute::distance_computation::engine::SimilarityResult::new(d, distance_metric.clone()))
+                    .collect()
             };
 
-            // Collect results using standardized similarity scoring
-            for (i, distance) in distances.iter().enumerate() {
+            // Use normalized_score directly from UnifiedDistanceCompute - no conversion needed!
+            for (i, sim_result) in similarity_results.iter().enumerate() {
                 let id = self.get_id_from_batch(&batch, i)?;
 
-                // Convert distance to similarity score for consistent ranking
-                // Note: This logic should match the standardized conversion
-                let similarity_score = match distance_metric {
-                    DistanceMetric::Cosine => {
-                        if distance.is_infinite() {
-                            0.0
-                        } else {
-                            1.0 - (distance / 2.0).min(1.0).max(0.0)
-                        }
-                    }
-                    DistanceMetric::Euclidean => 1.0 / (1.0 + distance),
-                    _ => 1.0 / (1.0 + distance), // Default conversion
-                };
-                let search_result = OptimizedSearchRecord::new(id, similarity_score)
-                    .with_similarity(similarity_score)
+                // IMPORTANT: normalized_score already computed by UnifiedDistanceCompute
+                // All engines use this same value - ensures cross-engine consistency
+                let search_result = OptimizedSearchRecord::new(id, sim_result.normalized_score)
+                    .with_similarity(sim_result.normalized_score)
                     .with_metadata(HashMap::new());
 
-                // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_result);
             }
         }

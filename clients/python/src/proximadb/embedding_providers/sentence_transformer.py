@@ -17,17 +17,17 @@ logger = logging.getLogger(__name__)
 class SentenceTransformerProvider(EmbeddingProvider):
     """
     Embedding provider using sentence-transformers library
-    
+
     This provider supports hundreds of free models from HuggingFace,
     including various BERT models, MiniLM, MPNet, and more.
-    
+
     Popular models:
     - all-MiniLM-L6-v2: Fast and good quality (384 dims)
     - all-mpnet-base-v2: Best quality (768 dims)
     - paraphrase-MiniLM-L6-v2: Good for paraphrase (384 dims)
     - multi-qa-MiniLM-L6-cos-v1: Optimized for Q&A (384 dims)
     """
-    
+
     # Model dimension mapping for popular models
     MODEL_DIMENSIONS = {
         "all-MiniLM-L6-v2": 384,
@@ -40,7 +40,14 @@ class SentenceTransformerProvider(EmbeddingProvider):
         "distilbert-base-nli-mean-tokens": 768,
         "bert-base-nli-mean-tokens": 768,
     }
-    
+
+    def __init__(self, config: Optional[EmbeddingConfig] = None):
+        """Initialize the provider with optional config"""
+        self.config = config if config is not None else self._get_default_config()
+        self._available = None
+        self.model = None
+        self._initialize()
+
     def _get_default_config(self) -> EmbeddingConfig:
         """Get default configuration"""
         return EmbeddingConfig(
@@ -83,23 +90,35 @@ class SentenceTransformerProvider(EmbeddingProvider):
             self._available = False
             logger.error(f"Failed to initialize SentenceTransformer: {e}")
     
+    def embed_text(self, text: str) -> np.ndarray:
+        """
+        Generate embedding for a single text
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector as numpy array
+        """
+        return self.embed_texts([text])[0]
+
     def embed_texts(self, texts: List[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
-        
+
         Args:
             texts: List of texts to embed
-            
+
         Returns:
             Array of embeddings with shape (len(texts), dimension)
         """
         if not self._available:
             raise RuntimeError("SentenceTransformer not available. "
                              "Install with: pip install sentence-transformers")
-        
+
         if not texts:
             return np.array([])
-        
+
         # Generate embeddings
         embeddings = self.model.encode(
             texts,
@@ -108,19 +127,37 @@ class SentenceTransformerProvider(EmbeddingProvider):
             normalize_embeddings=self.config.normalize,
             convert_to_numpy=True
         )
-        
+
         return embeddings
-    
-    @property
-    def dimension(self) -> int:
+
+    def embed_documents(self, documents: List[Dict[str, Any]], text_field: str = 'text') -> np.ndarray:
+        """
+        Generate embeddings for documents
+
+        Args:
+            documents: List of documents (dicts with text field)
+            text_field: Name of field containing text
+
+        Returns:
+            Array of embedding vectors
+        """
+        texts = [doc.get(text_field, '') for doc in documents]
+        return self.embed_texts(texts)
+
+    def get_dimension(self) -> int:
         """Get embedding dimension"""
         return self.config.dimension
-    
-    @property
-    def model_name(self) -> str:
-        """Get model name"""
-        return self.config.model_name
-    
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get model information"""
+        return {
+            "model_name": self.config.model_name,
+            "dimension": self.config.dimension,
+            "provider": "sentence-transformers",
+            "normalize": self.config.normalize,
+            "available": self._available
+        }
+
     def is_available(self) -> bool:
         """Check if provider is available"""
         if self._available is None:

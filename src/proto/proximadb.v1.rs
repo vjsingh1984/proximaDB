@@ -2168,8 +2168,10 @@ pub struct IncludeFields {
     #[prost(bool, tag = "4")]
     pub rank: bool,
     #[prost(bool, tag = "5")]
+    #[serde(default)]
     pub source: bool,
     #[prost(map = "string, bool", tag = "6")]
+    #[serde(default)]
     pub source_options: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         bool,
@@ -2204,6 +2206,7 @@ pub struct SearchQuery {
     pub vector: ::prost::alloc::vec::Vec<f32>,
     /// Simple equality filters using SqlValue (perfect for SQL WHERE clauses)
     #[prost(map = "string, message", tag = "2")]
+    #[serde(default)]
     pub filters: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
     /// Advanced structured filters for complex queries (reuses entity.proto schema)
     #[prost(message, optional, tag = "3")]
@@ -2273,6 +2276,7 @@ pub struct VectorRecord {
     #[prost(float, repeated, tag = "2")]
     pub vector: ::prost::alloc::vec::Vec<f32>,
     #[prost(map = "string, message", tag = "3")]
+    #[serde(default)]
     pub metadata: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
     /// Default: server-generated current time
     #[prost(int64, optional, tag = "4")]
@@ -6308,14 +6312,24 @@ pub struct CollectionConfig {
     /// Default: SST (primary production engine)
     #[prost(enumeration = "StorageEngine", optional, tag = "4")]
     pub storage_engine: ::core::option::Option<i32>,
+    /// NOTE: In proto3, repeated fields cannot be marked as optional, but they default to empty arrays
+    /// Client implementations should treat missing fields as empty arrays
+    ///
+    /// Defaults to empty array if not provided
     #[prost(string, repeated, tag = "5")]
+    #[serde(default)]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub description: ::core::option::Option<::prost::alloc::string::String>,
     /// Additional fields needed by collection manager
+    ///
+    /// Defaults to empty array if not provided
     #[prost(message, repeated, tag = "7")]
+    #[serde(default)]
     pub filterable_columns: ::prost::alloc::vec::Vec<FilterableColumnSpec>,
+    /// Defaults to empty array if not provided
     #[prost(message, repeated, tag = "8")]
+    #[serde(default)]
     pub index_configs: ::prost::alloc::vec::Vec<IndexConfig>,
     #[prost(message, optional, tag = "9")]
     pub quantization: ::core::option::Option<QuantizationConfig>,
@@ -6329,7 +6343,9 @@ pub struct CollectionConfig {
     pub auto_index_selection: ::core::option::Option<bool>,
     #[prost(string, optional, tag = "13")]
     pub owner: ::core::option::Option<::prost::alloc::string::String>,
+    /// Defaults to empty array if not provided
     #[prost(string, repeated, tag = "14")]
+    #[serde(default)]
     pub embedding_models: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -6516,13 +6532,16 @@ pub struct CollectionRequest {
     #[prost(message, optional, tag = "3")]
     pub collection_config: ::core::option::Option<CollectionConfig>,
     #[prost(map = "string, string", tag = "4")]
+    #[serde(default)]
     pub query_params: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
     #[prost(map = "string, bool", tag = "5")]
+    #[serde(default)]
     pub options: ::std::collections::HashMap<::prost::alloc::string::String, bool>,
     #[prost(map = "string, string", tag = "6")]
+    #[serde(default)]
     pub migration_config: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,

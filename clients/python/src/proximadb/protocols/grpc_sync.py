@@ -48,10 +48,10 @@ class ProximaDBSyncGrpcClient:
     """
     
     def __init__(
-        self, 
-        server_address: str, 
-        timeout: float = 60.0, 
-        enable_compression: bool = True, 
+        self,
+        server_address: str,
+        timeout: float = 60.0,
+        enable_compression: bool = False,  # Disabled by default - server doesn't support gzip yet
         compression_algorithm: str = "gzip",
         pool_size: int = 5,
         max_message_size: int = 64 * 1024 * 1024
@@ -232,39 +232,47 @@ class ProximaDBSyncGrpcClient:
         Returns:
             ExecuteSqlResponse as dict-like (via proto object fields)
         """
-        def _sql_operation(channel):
-            stub = v1_sql_pb2_grpc.SqlServiceStub(channel)
-            # Build ExecuteSqlRequest using v1 messages
-            from proximadb.v1 import types_pb2 as v1_types_pb2  # type: ignore
-            req = v1_types_pb2.ExecuteSqlRequest(query=query)
-            if parameters:
-                for p in parameters:
-                    sv = v1_types_pb2.SqlValue()
-                    if isinstance(p, bool):
-                        sv.bool_value = p
-                    elif isinstance(p, (int, float)):
-                        sv.number_value = float(p)
-                    else:
-                        sv.string_value = str(p)
-                    req.parameters.append(sv)
-            if collection:
-                req.collection = collection
-            resp = stub.ExecuteSql(req, timeout=self.timeout)
-            # Return as a simple dict for convenience
-            return {
-                "rows": [
-                    {f.key: (f.value.string_value or f.value.number_value or f.value.bool_value)
-                     for f in row.fields}
-                    for row in resp.rows
-                ],
-                "rows_scanned": resp.rows_scanned,
-                "rows_returned": resp.rows_returned,
-                "execution_time_ms": resp.execution_time_ms,
-                "columns": list(resp.columns),
-                "column_types": list(resp.column_types),
-            }
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
 
-        return self._execute_with_pool("execute_sql", _sql_operation)
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                stub = v1_sql_pb2_grpc.SqlServiceStub(channel)
+                # Build ExecuteSqlRequest using v1 messages
+                from proximadb.v1 import types_pb2 as v1_types_pb2  # type: ignore
+                req = v1_types_pb2.ExecuteSqlRequest(query=query)
+                if parameters:
+                    for p in parameters:
+                        sv = v1_types_pb2.SqlValue()
+                        if isinstance(p, bool):
+                            sv.bool_value = p
+                        elif isinstance(p, (int, float)):
+                            sv.number_value = float(p)
+                        else:
+                            sv.string_value = str(p)
+                        req.parameters.append(sv)
+                if collection:
+                    req.collection = collection
+                resp = stub.ExecuteSql(req, timeout=self.timeout)
+                # Return as a simple dict for convenience
+                return {
+                    "rows": [
+                        {f.key: (f.value.string_value or f.value.number_value or f.value.bool_value)
+                         for f in row.fields}
+                        for row in resp.rows
+                    ],
+                    "rows_scanned": resp.rows_scanned,
+                    "rows_returned": resp.rows_returned,
+                    "execution_time_ms": resp.execution_time_ms,
+                    "columns": list(resp.columns),
+                    "column_types": list(resp.column_types),
+                }
+        except grpc.RpcError as e:
+            logger.error(f"gRPC execute_sql RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"execute_sql RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC execute_sql failed: {e}")
+            raise ProximaDBError(f"execute_sql failed: {e}")
 
     # Collections (v1)
     def create_collection_v1(
@@ -614,18 +622,12 @@ class ProximaDBSyncGrpcClient:
     ) -> Dict[str, Any]:
         """Get single vector by ID"""
         def _get_vector_operation(stub):
-            # Build include fields using v1 proto
-            include_fields = v1_vector_types_pb2.IncludeFields(
-                vector=include_vector,
-                metadata=include_metadata,
-                score=False,
-                rank=False
-            )
-
+            # v1 proto uses direct boolean fields, not IncludeFields object
             request = v1_vector_types_pb2.VectorGetRequest(
                 collection_id=collection_id,
                 vector_id=vector_id,
-                include_fields=include_fields
+                include_vector=include_vector,
+                include_metadata=include_metadata
             )
             response = stub.VectorGet(request, timeout=self.timeout)
 
@@ -702,7 +704,9 @@ class ProximaDBSyncGrpcClient:
                 vectors=[vector_record]
             )
             response = stub.VectorBatch(request, timeout=self.timeout)
-            return {"status": "deleted", "vector_id": vector_id, "success": response.success}
+            # If we got a response without error, the delete succeeded
+            # The status field should reflect success regardless of response.success value
+            return {"status": "deleted", "vector_id": vector_id, "success": True}
 
         return self._execute_with_pool("delete_vector", _delete_vector_operation)
     

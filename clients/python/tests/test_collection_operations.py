@@ -14,6 +14,7 @@ from proximadb import (
     DistanceMetric, IndexType, StorageEngine,
     CompressionType, StorageConfig
 )
+from proximadb.models import CompressionConfig  # Import from models to avoid namespace conflict
 from proximadb import ProximaDBError, CollectionNotFoundError
 from proximadb import ClientConfig
 
@@ -172,14 +173,12 @@ class TestCollectionConfiguration:
             dimension=384,
             distance_metric="euclidean",
             storage_engine=StorageEngine.VIPER,
-            primary_indexing_algorithm=IndexType.HNSW,
             index_configs=[index_config],
             description="Advanced test collection"
         )
-        
+
         assert config.dimension == 384
         assert config.distance_metric == "euclidean"
-        assert config.primary_indexing_algorithm == IndexType.HNSW
         assert config.storage_engine == StorageEngine.VIPER
         assert len(config.index_configs) == 1
         assert config.index_configs[0].algorithm == IndexType.HNSW
@@ -228,8 +227,10 @@ class TestCollectionConfiguration:
         ]
         
         for compression in compression_types:
-            storage_config = StorageConfig(compression=compression)
-            assert storage_config.compression == compression
+            # Create CompressionConfig with the compression type
+            compression_config = CompressionConfig(algorithm=compression)
+            storage_config = StorageConfig(compression=compression_config)
+            assert storage_config.compression.algorithm == compression
     
     def test_collection_with_metadata_schema(self):
         """Test collection with metadata schema configuration"""
@@ -299,7 +300,7 @@ class TestCollectionValidation:
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
                 name="test_collection_toolarge",  # Minimum 8 characters
-                dimension=10001,  # Too large
+                dimension=65537,  # Too large - exceeds server maximum of 65536
                 distance_metric="cosine")
     
     def test_collection_not_found_error(self):

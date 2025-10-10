@@ -36,10 +36,12 @@ FilterDict = Dict[str, Any]
 # ============================================================================
 
 class DistanceMetric(str, Enum):
-    """Distance metrics for REST API
-    
+    """Distance metrics for REST API (string-based)
+
     Note: Server supports 13+ distance metrics. Unsupported metrics
     will fallback to COSINE (server behavior, not client validation).
+
+    For gRPC: Use DistanceMetricType enum with integer values instead.
     """
     COSINE = "cosine"
     EUCLIDEAN = "euclidean"
@@ -47,7 +49,7 @@ class DistanceMetric(str, Enum):
     MANHATTAN = "manhattan"  # Fallback: COSINE (server decides)
     HAMMING = "hamming"      # Fallback: COSINE (server decides)
     JACCARD = "jaccard"      # Fallback: COSINE (server decides)
-    
+
     # Extended metrics supported by server (ProximaDB v1.0+)
     CHEBYSHEV = "chebyshev"
     CANBERRA = "canberra"
@@ -56,6 +58,31 @@ class DistanceMetric(str, Enum):
     BRAY_CURTIS = "bray_curtis"
     HELLINGER = "hellinger"
     CUSTOM = "custom"
+
+
+class DistanceMetricType(int, Enum):
+    """Distance metric types for gRPC API (integer-based, matches v1 proto)
+
+    Maps to proximadb.v1.types_pb2.DistanceMetric enum.
+    Use these constants when working with gRPC to avoid magic numbers.
+
+    Example:
+        config = CollectionConfig(distance_metric=DistanceMetricType.COSINE, ...)
+    """
+    UNSPECIFIED = 0
+    COSINE = 1
+    EUCLIDEAN = 2
+    DOT_PRODUCT = 3
+    MANHATTAN = 4
+    HAMMING = 5
+    JACCARD = 6
+    CHEBYSHEV = 7
+    CANBERRA = 8
+    MINKOWSKI = 9
+    ANGULAR = 10
+    BRAY_CURTIS = 11
+    HELLINGER = 12
+    CUSTOM = 13
 
 
 class StorageEngine(str, Enum):
@@ -76,10 +103,12 @@ class StorageEngine(str, Enum):
 
 
 class IndexingAlgorithm(str, Enum):
-    """Indexing algorithms for REST API
-    
+    """Indexing algorithms for REST API (string-based)
+
     Note: All 6 indexing algorithms are fully supported by the server as of 2025-08.
     No fallbacks required - server handles all algorithms natively.
+
+    For gRPC: Use IndexType enum with integer values instead.
     """
     HNSW = "hnsw"   # Hierarchical Navigable Small World
     IVF = "ivf"     # Inverted File Index
@@ -89,6 +118,42 @@ class IndexingAlgorithm(str, Enum):
     LSH = "lsh"     # Locality Sensitive Hashing (fully supported)
 
 
+class IndexType(int, Enum):
+    """Index types for gRPC API (integer-based, matches v1 proto)
+
+    Maps to proximadb.v1.collection_types_pb2.IndexConfig.algorithm field.
+    Use these constants when working with gRPC to avoid magic numbers.
+
+    Example:
+        ic = IndexConfig(algorithm=IndexType.HNSW, index_name="primary")
+    """
+    UNSPECIFIED = 0
+    HNSW = 1   # Hierarchical Navigable Small World
+    IVF = 2    # Inverted File Index
+    PQ = 3     # Product Quantization
+    FLAT = 4   # Brute force / exhaustive search
+    ANNOY = 5  # Approximate Nearest Neighbors Oh Yeah
+    LSH = 6    # Locality Sensitive Hashing
+
+
+class StorageEngineType(int, Enum):
+    """Storage engine types for gRPC API (integer-based, matches v1 proto)
+
+    Maps to proximadb.v1.types_pb2.StorageEngine enum.
+    Use these constants when working with gRPC to avoid magic numbers.
+
+    ProximaDB supports 6 specialized storage engines that auto-optimize for different workloads.
+
+    Example:
+        config = CollectionConfig(storage_engine=StorageEngineType.VIPER, ...)
+    """
+    UNSPECIFIED = 0
+    VIPER = 1   # Columnar Parquet format with advanced quantization (DEFAULT)
+    SST = 2     # Row-based, write-optimized with three-stage filtering
+    NOVA = 3    # Progressive columnar storage with multi-level quantization
+    HELIX = 4   # Locality-optimized storage with Hilbert curve clustering
+    SWIFT = 5   # High-speed row-based with FastLanes encoding
+    RAPTOR = 6  # Adaptive row-group management with PxK optimization
 
 
 class IndexUpdateMode(str, Enum):
@@ -160,7 +225,7 @@ class ServerCapabilities(BaseModel):
     # Server behavior notes
     notes: Dict[str, str] = {
         "fallback_policy": "Server uses intelligent fallbacks instead of errors",
-        "dimension_limit": "Server supports up to 100,000 dimensions",
+        "dimension_limit": "Server default maximum is 65536 dimensions (configurable)",
         "name_validation": "Collection names must be 8+ characters to avoid collision with 7-char base62 IDs",
         "quantization_engine": "Quantization fully supported in VIPER engine only",
         "filterable_columns": "All FilterableDataType values supported"
@@ -664,7 +729,7 @@ class CollectionConfig(BaseModel):
     """Collection configuration aligned with proto CollectionConfig"""
     # CORE CONFIGURATION (Required)
     name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with 7-char base62 IDs
-    dimension: int = Field(ge=1, le=100000)  # Server supports up to 100k dimensions
+    dimension: int = Field(ge=1, le=65536)  # Server default maximum is 65536 (configurable)
     distance_metric: Optional[DistanceMetric] = DistanceMetric.COSINE  # Default to most common metric
     
     # STORAGE CONFIGURATION
@@ -858,6 +923,7 @@ class VectorRecord(BaseModel):
     updated_at_ms: Optional[int] = None  # Only set if different from timestamp_ms (saves bytes)
     expires_at_ms: Optional[int] = None  # TTL support (milliseconds since epoch, signed int64)
     version: Optional[int] = 0  # Optional to save bytes, use small positive values
+    source: Optional[str] = None  # Original content that generated this vector (e.g., chunk text for RAG)
 
     @field_validator('vector')
     def validate_vector(cls, v):

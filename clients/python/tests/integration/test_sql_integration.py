@@ -7,7 +7,7 @@ import numpy as np
 import time
 import json
 from proximadb import connect_rest, ProximaDBError
-from proximadb import CollectionConfig, StorageEngine, VectorRecord
+from proximadb import CollectionConfig, StorageEngine, VectorRecord, FilterableColumn, FilterableDataType
 
 
 @pytest.mark.integration
@@ -44,26 +44,47 @@ class TestSqlIntegration:
     def sql_test_collection(self, client):
         """Create collection with diverse test data"""
         collection_name = f"sql_test_{int(time.time())}"
-        
-        # Create collection
+
+        # Create collection with properly configured filterable_columns
         config = CollectionConfig(
             name=collection_name,
             dimension=384,  # Common embedding dimension
-            storage_engine=StorageEngine.SST
+            storage_engine=StorageEngine.SST,
+            filterable_columns=[
+                FilterableColumn(name="name", data_type=FilterableDataType.STRING),
+                FilterableColumn(name="category", data_type=FilterableDataType.STRING, indexed=True),
+                FilterableColumn(name="brand", data_type=FilterableDataType.STRING, indexed=True),
+                FilterableColumn(name="price", data_type=FilterableDataType.FLOAT, supports_range=True),
+                FilterableColumn(name="rating", data_type=FilterableDataType.FLOAT, supports_range=True),
+                FilterableColumn(name="in_stock", data_type=FilterableDataType.BOOLEAN),
+                FilterableColumn(name="created_at", data_type=FilterableDataType.STRING),
+            ]
         )
         collection = client.create_collection(collection_name, config)
         
-        # Insert diverse test data
+        # Insert diverse test data with deterministic vectors
         vectors = []
         categories = ["electronics", "books", "clothing", "food", "sports"]
         brands = ["BrandA", "BrandB", "BrandC", "BrandD", "BrandE"]
-        
+
         for i in range(10):
-            # Create somewhat clustered vectors based on category
-            base_vector = np.random.rand(384)
+            # Create deterministic clustered vectors based on category
             category_idx = i % len(categories)
-            # Add category-specific bias to create clusters
-            base_vector[category_idx * 70:(category_idx + 1) * 70] += 0.5
+
+            # Start with low baseline
+            base_vector = np.full(384, 0.1)
+
+            # Add strong category-specific signal to ensure clustering
+            # Each category gets a distinct region with high values
+            category_start = category_idx * 70
+            category_end = min((category_idx + 1) * 70, 384)
+            base_vector[category_start:category_end] = 0.9
+
+            # Add small deterministic noise unique to each item
+            # Use item index as seed so same item always gets same vector
+            rng = np.random.RandomState(1000 + i)
+            noise = rng.rand(384) * 0.05
+            base_vector = base_vector + noise
             
             vectors.append(VectorRecord(
                 id=f"item_{i:04d}",
@@ -99,9 +120,13 @@ class TestSqlIntegration:
     
     def test_basic_similarity_search(self, client, sql_test_collection):
         """Test basic vector similarity search"""
-        # Create a query vector similar to electronics category
-        query_vector = np.random.rand(384)
-        query_vector[0:70] += 0.5  # Electronics bias
+        # Create a deterministic query vector matching electronics category pattern
+        # This matches the pattern for item_0000 (electronics, i=0, seed=1000)
+        query_vector = np.full(384, 0.1)  # Low baseline
+        query_vector[0:70] = 0.9  # Strong electronics signal (category_idx=0)
+        # Add same noise pattern as item_0000 for perfect match
+        rng = np.random.RandomState(1000)
+        query_vector += rng.rand(384) * 0.05
         # Format vector as JSON array string
         query_str = json.dumps(query_vector.tolist())
         
@@ -114,16 +139,23 @@ class TestSqlIntegration:
         
         result = client.execute_sql(sql)
         actual_result = self._unwrap_result(result)
-            
+
         assert actual_result["row_count"] == 10
         assert len(actual_result["rows"]) == 10
-        
+
+        # Debug: Print top 5 results to see what we got
+        print("\n=== Top 5 Results ===")
+        for i, row in enumerate(actual_result["rows"][:5]):
+            print(f"Row {i}: {row}")
+
         # Should find mostly electronics items at the top
-        electronics_count = sum(1 for row in actual_result["rows"][:5] 
-                               if row.get("metadata.category") == "electronics" or 
-                               (isinstance(row.get("metadata"), dict) and 
+        # With deterministic vectors, electronics should always be in top 2
+        # (item_0000 and item_0005 both have electronics category)
+        electronics_count = sum(1 for row in actual_result["rows"][:5]
+                               if row.get("metadata.category") == "electronics" or
+                               (isinstance(row.get("metadata"), dict) and
                                 row["metadata"].get("category") == "electronics"))
-        assert electronics_count >= 2  # At least 2 out of top 5 should be electronics (more realistic for random data)
+        assert electronics_count >= 2  # At least 2 out of top 5 should be electronics
     
     def test_filtered_similarity_search(self, client, sql_test_collection):
         """Test similarity search with metadata filters"""

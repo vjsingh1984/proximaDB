@@ -65,7 +65,11 @@ for group_name, test_files in test_groups:
 print()
 print("=" * 50)
 print(f"OVERALL: {total_passed} passed, {total_failed} failed")
-print(f"Success Rate: {total_passed / (total_passed + total_failed) * 100:.1f}%")
+total_tests = total_passed + total_failed
+if total_tests > 0:
+    print(f"Success Rate: {total_passed / total_tests * 100:.1f}%")
+else:
+    print("Success Rate: N/A (no tests run)")
 
 if failed_tests:
     print(f"\nFailed test groups: {', '.join(set(failed_tests))}")

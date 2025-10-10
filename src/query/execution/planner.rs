@@ -420,7 +420,9 @@ impl ExecutionPlanner {
         where_clause: &Option<Expr>,
     ) -> Result<Option<FilterExpression>> {
         if let Some(expr) = where_clause {
-            self.expr_to_filter_expression(expr)
+            let filter = self.expr_to_filter_expression(expr)?;
+            tracing::debug!("Converted WHERE clause to filter: {:?}", filter);
+            Ok(filter)
         } else {
             Ok(None)
         }
@@ -533,7 +535,27 @@ impl ExecutionPlanner {
 
     /// Try to parse a query vector from an expression (best-effort)
     fn try_parse_query_vector(&self, expr: &Expr) -> Option<Vec<f32>> {
+        tracing::debug!("Trying to parse query vector from expression: {:?}", expr);
         match expr {
+            // [0.1, 0.2, 0.3] array literal
+            Expr::Array { elem, .. } => {
+                tracing::debug!("Found array expression with {} elements", elem.len());
+                let mut out = Vec::new();
+                for e in elem {
+                    if let Expr::Literal(crate::query::ast::Literal::Number(n)) = e {
+                        out.push(*n as f32);
+                    } else {
+                        tracing::warn!("Array element is not a number: {:?}", e);
+                        return None;
+                    }
+                }
+                if out.is_empty() {
+                    None
+                } else {
+                    tracing::info!("Successfully parsed vector from array, length: {}", out.len());
+                    Some(out)
+                }
+            }
             // VECTOR(0.1, 0.2, 0.3)
             Expr::FuncCall { name, args } if name.eq_ignore_ascii_case("VECTOR") => {
                 let mut out = Vec::new();
@@ -548,9 +570,13 @@ impl ExecutionPlanner {
             }
             // '[0.1,0.2,0.3]' string literal
             Expr::Literal(crate::query::ast::Literal::String(s)) => {
+                tracing::debug!("Found string literal: {}", s);
                 if s.starts_with('[') {
                     if let Ok(v) = serde_json::from_str::<Vec<f32>>(s) {
+                        tracing::info!("Successfully parsed vector from string, length: {}", v.len());
                         return Some(v);
+                    } else {
+                        tracing::warn!("Failed to parse JSON array from string: {}", s);
                     }
                 }
                 None
@@ -568,7 +594,10 @@ impl ExecutionPlanner {
                 }
                 None
             }
-            _ => None,
+            _ => {
+                tracing::debug!("Expression type not supported for vector parsing");
+                None
+            }
         }
     }
 
@@ -599,19 +628,47 @@ impl ExecutionPlanner {
         }
     }
 
-    /// Convert AST expression to FilterExpression recursively  
+    /// Convert AST expression to FilterExpression recursively
     fn expr_to_filter_expression(&self, expr: &Expr) -> Result<Option<FilterExpression>> {
         match expr {
             Expr::Binary { left, op, right } => {
-                let field = self.extract_field_name(left)?;
-                let operator = self.convert_comparison_op(op)?;
-                let value = self.extract_filter_value(right)?;
+                // Handle logical operators (AND, OR) recursively
+                match op {
+                    BinaryOp::And => {
+                        let left_filter = self.expr_to_filter_expression(left)?;
+                        let right_filter = self.expr_to_filter_expression(right)?;
 
-                Ok(Some(FilterExpression::Comparison {
-                    field,
-                    operator,
-                    value,
-                }))
+                        match (left_filter, right_filter) {
+                            (Some(l), Some(r)) => Ok(Some(FilterExpression::And(vec![l, r]))),
+                            (Some(l), None) => Ok(Some(l)),
+                            (None, Some(r)) => Ok(Some(r)),
+                            (None, None) => Ok(None),
+                        }
+                    }
+                    BinaryOp::Or => {
+                        let left_filter = self.expr_to_filter_expression(left)?;
+                        let right_filter = self.expr_to_filter_expression(right)?;
+
+                        match (left_filter, right_filter) {
+                            (Some(l), Some(r)) => Ok(Some(FilterExpression::Or(vec![l, r]))),
+                            (Some(l), None) => Ok(Some(l)),
+                            (None, Some(r)) => Ok(Some(r)),
+                            (None, None) => Ok(None),
+                        }
+                    }
+                    // Handle comparison operators
+                    _ => {
+                        let field = self.extract_field_name(left)?;
+                        let operator = self.convert_comparison_op(op)?;
+                        let value = self.extract_filter_value(right)?;
+
+                        Ok(Some(FilterExpression::Comparison {
+                            field,
+                            operator,
+                            value,
+                        }))
+                    }
+                }
             }
             _ => Ok(None), // TODO: Handle other expression types
         }
@@ -788,9 +845,8 @@ impl ExecutionPlanner {
         for order_expr in &select.order_by {
             if let Expr::FuncCall { name, args } = &order_expr.expr {
                 if name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 2 {
-                    // TODO: Extract vector from second argument
-                    // For now, return None to indicate vector should be extracted
-                    return Ok(None);
+                    // Extract vector from second argument (first is the vector field name)
+                    return Ok(self.try_parse_query_vector(&args[1]));
                 }
             }
         }
@@ -802,8 +858,10 @@ impl ExecutionPlanner {
         for order_expr in &select.order_by {
             if let Expr::FuncCall { name, args } = &order_expr.expr {
                 if name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 3 {
-                    // TODO: Extract metric from third argument
-                    return Ok("cosine".to_string()); // Default for now
+                    // Extract metric from third argument
+                    if let Expr::Literal(crate::query::ast::Literal::String(s)) = &args[2] {
+                        return Ok(s.to_lowercase());
+                    }
                 }
             }
         }
@@ -842,16 +900,14 @@ impl ExecutionPlanner {
 
     fn generate_projections(&self, select: &Select) -> Vec<ProjectionTransform> {
         let mut transforms = Vec::new();
+        // Note: We no longer need ExtractMetadata transformations because
+        // the executor already creates fields with "metadata." prefix
+        // matching the SELECT clause column names.
+        // Keeping this method for future transformation types.
         for item in &select.projection {
             match &item.expr {
-                Expr::Identifier(name) if name.starts_with("metadata.") => {
-                    let field = name.strip_prefix("metadata.").unwrap_or(name);
-                    transforms.push(ProjectionTransform::ExtractMetadata {
-                        field: field.to_string(),
-                    });
-                }
                 _ => {
-                    // TODO: Handle other projection types
+                    // TODO: Handle other projection types (timestamp formatting, etc.)
                 }
             }
         }
