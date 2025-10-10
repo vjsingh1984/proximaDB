@@ -3,6 +3,9 @@ Tests for ProximaDB Connection Pooling with Real Server
 
 Validates connection pool functionality for both gRPC and REST protocols
 using real ProximaDB server connections.
+
+NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
+requiring a running ProximaDB server and real connections.
 """
 
 import pytest

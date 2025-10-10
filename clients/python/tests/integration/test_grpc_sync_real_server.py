@@ -1,5 +1,8 @@
 """
 Test suite for ProximaDB synchronous gRPC client using real server
+
+NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
+requiring a running ProximaDB server and gRPC connections.
 """
 import pytest
 import time
