@@ -22,15 +22,45 @@ class FakeCollectionStub:
 
 
 def test_grpc_sync_collection_ops(monkeypatch):
+    # Create fake request classes
+    class FakeCollectionConfig:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    class FakeListCollectionsRequest:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    class FakeGetCollectionRequest:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    class FakeDeleteCollectionRequest:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
     # Patch collection stub and connection pool
     monkeypatch.setattr(grpc_mod, "v1_collection_pb2_grpc", types.SimpleNamespace(CollectionServiceStub=FakeCollectionStub), raising=False)
     # Patch message modules to simple namespaces to avoid import dependence
-    monkeypatch.setattr(grpc_mod, "v1_collection_types_pb2", types.SimpleNamespace(CollectionConfig=object, ListCollectionsRequest=object, GetCollectionRequest=object, DeleteCollectionRequest=object), raising=False)
+    monkeypatch.setattr(grpc_mod, "v1_collection_types_pb2", types.SimpleNamespace(
+        CollectionConfig=FakeCollectionConfig,
+        ListCollectionsRequest=FakeListCollectionsRequest,
+        GetCollectionRequest=FakeGetCollectionRequest,
+        DeleteCollectionRequest=FakeDeleteCollectionRequest
+    ), raising=False)
 
     from proximadb.protocols.connection_pools import GrpcConnectionPool, GrpcChannelContext
 
     class FakePool:
         def __init__(self, *a, **k):
+            pass
+        def get_metrics(self):
+            return {}
+        def close(self):
             pass
     class FakeCtx:
         def __init__(self, pool):
