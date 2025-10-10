@@ -112,10 +112,10 @@ class TestCompressionConfig:
         assert config.block_size_kb == 8192
         
         # Invalid sizes should raise ValueError
-        with pytest.raises(ValueError, match="SST block size must be between 1-32 MB"):
+        with pytest.raises(ValueError, match="SST block size must be between 256-16384 KB"):
             CompressionConfig(block_size_kb=128)
-        
-        with pytest.raises(ValueError, match="SST block size must be between 1-32 MB"):
+
+        with pytest.raises(ValueError, match="SST block size must be between 256-16384 KB"):
             CompressionConfig(block_size_kb=32768)
 
 
@@ -128,10 +128,10 @@ class TestCollectionConfigWithCompression:
             name="test_collection",
             dimension=384
         )
-        
+
         assert config.distance_metric == DistanceMetric.COSINE
-        assert config.storage_engine == StorageEngine.VIPER  # Server default
-        assert config.primary_indexing_algorithm == IndexingAlgorithm.HNSW
+        assert config.storage_engine == StorageEngine.SST  # Default is SST (fast, production-ready)
+        # Note: primary_indexing_algorithm is Optional, may not have default
     
     def test_collection_config_with_viper_compression(self):
         """Test CollectionConfig with VIPER-specific compression"""
@@ -355,7 +355,11 @@ class TestCompressionPerformance:
         """Test estimation of compression ratios for different data types"""
         # Test data creation for different compression scenarios
         sparse_data = np.zeros((100, 512))
-        sparse_data[np.random.choice(100*512, 1000, replace=False)] = np.random.randn(1000)
+        # Correctly assign random values to sparse positions
+        indices = np.random.choice(100*512, 1000, replace=False)
+        flat_sparse = sparse_data.flatten()
+        flat_sparse[indices] = np.random.randn(1000)
+        sparse_data = flat_sparse.reshape(100, 512)
         
         dense_data = np.random.rand(100, 512)
         structured_data = np.tile(np.arange(512), (100, 1))

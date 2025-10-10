@@ -303,9 +303,9 @@ class TestRESTAPICompleteness:
             if "404" in str(e) or "not found" in str(e).lower():
                 print("✅ GET /collections/{non_existent} - Proper 404 handling")
             else:
-                print(f"⚠️ GET /collections/{non_existent} - Unexpected error: {e}")
+                print(f"⚠️ GET /collections/{{non_existent}} - Unexpected error: {e}")
         except Exception as e:
-            print(f"❌ GET /collections/{non_existent} - Unexpected error type: {e}")
+            print(f"❌ GET /collections/{{non_existent}} - Unexpected error type: {e}")
         
         # 2. Invalid Vector Dimensions
         try:

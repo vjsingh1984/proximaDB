@@ -7,13 +7,14 @@ from proximadb.models import IncludeFields, VectorSearchRequest, SearchQuery
 def test_convert_metadata_to_rest_format_roundtrip():
     client = ProximaDBClient(url="http://localhost:5678")
     md = {"a": "x", "b": 1, "c": 3.14, "d": True}
-    items = client._convert_metadata_to_rest_format(md)
-    # Ensure keys preserved and types mapped to one field per item
-    keys = {i["key"] for i in items}
-    assert keys == set(md.keys())
-    # Each item should have exactly one typed value
-    for it in items:
-        typed = [k for k in ("string_value", "number_value", "bool_value") if k in it]
+    result = client._convert_metadata_to_rest_format(md)
+    # Result is a dict mapping keys to SqlValue dicts
+    assert isinstance(result, dict)
+    # Ensure keys preserved
+    assert set(result.keys()) == set(md.keys())
+    # Each SqlValue should have exactly one typed value
+    for key, sql_value in result.items():
+        typed = [k for k in ("string_value", "int64_value", "number_value", "bool_value") if k in sql_value]
         assert len(typed) == 1
 
 

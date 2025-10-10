@@ -113,10 +113,18 @@ class TestSDKUpsertOperations:
         # Check that metadata is being stored correctly
         metadata = retrieved.get('metadata', {})
         assert 'description' in metadata
-        assert metadata['description'] == 'initial vector'
+        # Handle both SQL value format and plain values
+        description = metadata['description']
+        if isinstance(description, dict) and 'string_value' in description:
+            description = description['string_value']
+        assert description == 'initial vector'
         # Note: version might be None due to number conversion issues, but the key should exist
-        if 'version' in metadata and metadata['version'] is not None:
-            assert metadata['version'] == 1
+        if 'version' in metadata:
+            version = metadata['version']
+            if isinstance(version, dict) and 'int64_value' in version:
+                version = version['int64_value']
+            if version is not None:
+                assert version == 1
         
         # Test upsert (update)
         updated_vector = [0.0, 1.0, 0.0, 0.0]

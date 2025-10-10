@@ -17,7 +17,18 @@ from .test_helpers import ensure_collection, cleanup_collection, COLLECTION_NAME
 
 
 def extract_metadata_value(value: Any) -> Any:
-    """Extract actual value from potentially JSON-stringified metadata"""
+    """Extract actual value from potentially JSON-stringified or SQL value format metadata"""
+    # Handle SQL value format: {"string_value": "..."}, {"int64_value": 42}, etc.
+    if isinstance(value, dict):
+        if 'string_value' in value:
+            return value['string_value']
+        elif 'int64_value' in value:
+            return value['int64_value']
+        elif 'number_value' in value:
+            return value['number_value']
+        elif 'bool_value' in value:
+            return value['bool_value']
+    # Handle JSON-stringified values
     if isinstance(value, str) and value.startswith('"') and value.endswith('"'):
         return value[1:-1]  # Remove quotes
     return value
