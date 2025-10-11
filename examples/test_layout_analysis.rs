@@ -14,7 +14,7 @@ fn create_simple_vectors() -> Vec<VectorRecord> {
             metadata: HashMap::new(),
             expires_at: None,
             source: None,
-            timestamp: 100 + i,
+            timestamp: Some(100 + i),
             updated_at: None,
             version: None,
         });

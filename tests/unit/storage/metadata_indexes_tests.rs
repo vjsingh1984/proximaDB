@@ -27,8 +27,8 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         config: Some(CollectionConfig {
             name: name.to_string(),
             dimension: 128,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Viper as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Viper as i32),
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,

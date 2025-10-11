@@ -261,8 +261,8 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
         config: Some(CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 256,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            storage_engine: StorageEngine::Viper as i32,
+            distance_metric: Some(DistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Viper as i32),
             tags: vec![],
             auto_index_selection: true,
             owner: Some("test_user".to_string()),
@@ -379,8 +379,8 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
         config: Some(CollectionConfig {
             name: "search_test".to_string(),
             dimension: 512,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            storage_engine: StorageEngine::Viper as i32,
+            distance_metric: Some(DistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Viper as i32),
             tags: vec![],
             auto_index_selection: true,
             owner: Some("test_user".to_string()),
@@ -745,8 +745,8 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
             config: Some(CollectionConfig {
                 name: "algo_test".to_string(),
                 dimension: 512,
-                distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: StorageEngine::Viper as i32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
                 tags: vec![],
                 description: None,
                 filterable_columns: vec![],
@@ -883,8 +883,8 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
             config: Some(CollectionConfig {
                 name: "compression_test".to_string(),
                 dimension: 256, // Common embedding dimension (sentence-transformers, etc.)
-                distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: StorageEngine::Viper as i32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
                 tags: vec![],
                 description: None,
                 filterable_columns: vec![],

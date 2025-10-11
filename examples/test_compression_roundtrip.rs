@@ -18,7 +18,7 @@ fn create_realistic_test_vectors(count: usize, dimension: usize) -> Vec<VectorRe
             metadata: HashMap::new(),
             expires_at: None,
             source: None,
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: None,
             version: None,
         })

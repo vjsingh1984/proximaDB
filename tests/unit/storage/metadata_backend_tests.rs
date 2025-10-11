@@ -89,8 +89,8 @@ async fn test_single_metadata_backend_instance() {
     let collection_config = ProtoCollectionConfig {
         name: "test_collection".to_string(),
         dimension: 128,
-        distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: ProtoStorageEngine::Viper as i32,
+        distance_metric: Some(DistanceMetric::Cosine as i32),
+        storage_engine: Some(ProtoStorageEngine::Viper as i32),
         storage_config: None,
         filterable_columns: vec![],
         index_configs: vec![],
@@ -168,8 +168,8 @@ async fn test_collection_service_dependency_injection() {
         config: Some(ProtoCollectionConfig {
             name: "test_injection".to_string(),
             dimension: 256,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            storage_engine: ProtoStorageEngine::Viper as i32,
+            distance_metric: Some(DistanceMetric::Euclidean as i32),
+            storage_engine: Some(ProtoStorageEngine::Viper as i32),
             storage_config: None,
             filterable_columns: vec![],
             index_configs: vec![],
@@ -267,8 +267,8 @@ async fn test_metadata_backend_persistence() {
                 config: Some(ProtoCollectionConfig {
                     name: format!("persist_collection_{}", i),
                     dimension: 128 * (i + 1) as u32,
-                    distance_metric: DistanceMetric::Cosine as i32,
-                    storage_engine: ProtoStorageEngine::Viper as i32,
+                    distance_metric: Some(DistanceMetric::Cosine as i32),
+                    storage_engine: Some(ProtoStorageEngine::Viper as i32),
                     storage_config: None,
                     filterable_columns: vec![
                         proximadb::proto::proximadb_v1::FilterableColumnSpec {
@@ -410,8 +410,8 @@ async fn test_metadata_backend_deletion() {
             config: Some(ProtoCollectionConfig {
                 name: format!("delete_collection_{}", i),
                 dimension: 128,
-                distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: ProtoStorageEngine::Sst as i32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(ProtoStorageEngine::Sst as i32),
                 storage_config: None,
                 filterable_columns: vec![],
                 index_configs: vec![],
@@ -518,8 +518,8 @@ async fn test_concurrent_metadata_operations() {
                 config: Some(ProtoCollectionConfig {
                     name: format!("concurrent_collection_{}", i),
                     dimension: 64,
-                    distance_metric: DistanceMetric::Cosine as i32,
-                    storage_engine: ProtoStorageEngine::Viper as i32,
+                    distance_metric: Some(DistanceMetric::Cosine as i32),
+                    storage_engine: Some(ProtoStorageEngine::Viper as i32),
                     storage_config: None,
                     filterable_columns: vec![],
                     index_configs: vec![],
@@ -611,8 +611,8 @@ async fn test_metadata_backend_updates() {
         config: Some(ProtoCollectionConfig {
             name: "update_test_collection".to_string(),
             dimension: 128,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: ProtoStorageEngine::Viper as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(ProtoStorageEngine::Viper as i32),
             storage_config: None,
             filterable_columns: vec![],
             index_configs: vec![],
@@ -744,8 +744,8 @@ async fn test_metadata_backend_trait_implementation() {
         config: Some(ProtoCollectionConfig {
             name: "trait_test_proto".to_string(),
             dimension: 512,
-            distance_metric: DistanceMetric::Manhattan as i32,
-            storage_engine: ProtoStorageEngine::Viper as i32,
+            distance_metric: Some(DistanceMetric::Manhattan as i32),
+            storage_engine: Some(ProtoStorageEngine::Viper as i32),
             storage_config: None,
             filterable_columns: vec![
                 proximadb::proto::proximadb_v1::FilterableColumnSpec {

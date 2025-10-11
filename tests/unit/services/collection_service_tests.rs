@@ -51,8 +51,8 @@ async fn test_create_collection() -> Result<()> {
     let config = CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 384,
-        distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: StorageEngine::Viper as i32,
+        distance_metric: Some(DistanceMetric::Cosine as i32),
+        storage_engine: Some(StorageEngine::Viper as i32),
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
@@ -81,8 +81,8 @@ async fn test_get_collection() -> Result<()> {
     let config = CollectionConfig {
         name: "test_get".to_string(),
         dimension: 256,
-        distance_metric: DistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Sst as i32,
+        distance_metric: Some(DistanceMetric::Euclidean as i32),
+        storage_engine: Some(StorageEngine::Sst as i32),
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
@@ -117,8 +117,8 @@ async fn test_list_collections() -> Result<()> {
         let config = CollectionConfig {
             name: format!("collection_{}", i),
             dimension: 128,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Viper as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Viper as i32),
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -150,8 +150,8 @@ async fn test_delete_collection() -> Result<()> {
     let config = CollectionConfig {
         name: "test_delete".to_string(),
         dimension: 64,
-        distance_metric: DistanceMetric::Manhattan as i32,
-        storage_engine: StorageEngine::Sst as i32,
+        distance_metric: Some(DistanceMetric::Manhattan as i32),
+        storage_engine: Some(StorageEngine::Sst as i32),
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
