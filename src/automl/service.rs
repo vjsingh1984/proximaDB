@@ -238,9 +238,19 @@ impl AutoMLService {
             let _ = tx.send(()).await;
         }
 
-        // Wait for optimization task to complete
+        // Wait for optimization task to complete with timeout
         if let Some(handle) = self.optimization_handle.write().await.take() {
-            let _ = handle.await;
+            match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => {
+                    info!("AutoML service stopped successfully");
+                }
+                Ok(Err(e)) => {
+                    warn!("AutoML service task panicked: {:?}", e);
+                }
+                Err(_) => {
+                    warn!("AutoML service shutdown timed out after 5s");
+                }
+            }
         }
 
         // Clear shutdown channel

@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_automl_coordinator_lifecycle() {
     let config = AutoMLConfig {
         enabled: true,
@@ -50,8 +50,14 @@ async fn test_automl_coordinator_lifecycle() {
     let status = coordinator.get_status().await;
     assert!(status.enabled);
 
-    // Stop the coordinator
-    coordinator.stop().await.unwrap();
+    // Stop the coordinator with timeout
+    let stop_result = tokio::time::timeout(
+        Duration::from_secs(8),
+        coordinator.stop()
+    ).await;
+
+    assert!(stop_result.is_ok(), "Coordinator stop timed out");
+    assert!(stop_result.unwrap().is_ok(), "Coordinator stop failed");
 
     // Verify stopped
     let status = coordinator.get_status().await;
