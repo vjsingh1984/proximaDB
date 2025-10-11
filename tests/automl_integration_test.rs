@@ -52,7 +52,7 @@ async fn test_automl_coordinator_lifecycle() {
 
     // Stop the coordinator with timeout
     let stop_result = tokio::time::timeout(
-        Duration::from_secs(8),
+        Duration::from_secs(35),
         coordinator.stop()
     ).await;
 

@@ -242,7 +242,7 @@ impl WorkloadAnalyzer {
 
         // Wait for monitoring task to complete with timeout
         if let Some(handle) = self.monitor_handle.write().await.take() {
-            match tokio::time::timeout(Duration::from_secs(5), handle).await {
+            match tokio::time::timeout(Duration::from_secs(30), handle).await {
                 Ok(Ok(())) => {
                     info!("Workload monitoring stopped successfully");
                 }
@@ -250,7 +250,7 @@ impl WorkloadAnalyzer {
                     tracing::warn!("Workload monitoring task panicked: {:?}", e);
                 }
                 Err(_) => {
-                    tracing::warn!("Workload monitoring shutdown timed out after 5s");
+                    tracing::warn!("Workload monitoring shutdown timed out after 30s");
                 }
             }
         }
