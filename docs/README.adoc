@@ -23,10 +23,10 @@ See link:DOCUMENTATION_ARCHITECTURE.adoc[Documentation Architecture] for complet
 |===
 | Goal | Documentation | Quick Link
 
-| **Get Started** | Installation and first steps | link:01-getting-started/quickstart.adoc[Quickstart]
-| **Choose Engine** | Select optimal storage engine | link:02-guides/engine-selection.adoc[Engine Selection]
-| **API Reference** | REST and gRPC APIs | link:03-reference/rest-api.adoc[REST API]
-| **Deploy** | Production deployment | link:04-operations/deployment.adoc[Deployment Guide]
+| **Get Started** | Installation and first steps | link:01-getting-started/getting_started.adoc[Getting Started]
+| **Choose Engine** | Select optimal storage engine | link:02-guides/engine_selection_optimization_guide.adoc[Engine Selection]
+| **API Reference** | REST and gRPC APIs | link:03-reference/rest-api-specification.adoc[REST API]
+| **Deploy** | Production deployment | link:04-operations/PRODUCTION_RUNBOOK.adoc[Production Runbook]
 | **Optimize** | Performance tuning | link:05-performance/README.adoc[Performance]
 |===
 
