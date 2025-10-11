@@ -269,6 +269,13 @@ tests_new/
 obsolete/
 simple_wal_test
 
+# Test-generated WAL and metadata files
+metadata/
+segment_*/
+*.wal
+*.bcwal
+*.oplog
+
 # Generated test and benchmark data
 *.json
 !package.json
