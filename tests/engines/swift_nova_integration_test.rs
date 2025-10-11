@@ -45,7 +45,7 @@ impl DualModeTestFixture {
                     ("category".to_string(), serde_json::json!(if i % 2 == 0 { "even" } else { "odd" })),
                     ("index".to_string(), serde_json::json!(i)),
                 ])),
-                timestamp: i as i64,
+                timestamp: Some(i as i64),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),

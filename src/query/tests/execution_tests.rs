@@ -635,7 +635,7 @@ async fn create_test_executor_with_collection() -> QueryExecutor {
     use crate::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
     let config = CollectionConfig {
         name: "test_collection".to_string(),
-        dimension: Some(3),  // Match the test vector dimensions
+        dimension: 3,  // Match the test vector dimensions
         distance_metric: Some(DistanceMetric::Cosine as i32),
         storage_engine: Some(StorageEngine::Sst as i32),
         tags: vec![],

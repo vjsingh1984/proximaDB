@@ -3944,7 +3944,7 @@ impl Default for ProximaBlockMetadata {
             record_count: 0,
             size_bytes: 0,
             compressed_size: 0,
-            timestamp: 0,
+            timestamp: Some(0),
             compaction_level: 0,
             has_deletes: false,
             has_updates: false,
@@ -4021,7 +4021,7 @@ mod tests {
                     metadata: std::collections::HashMap::new(),
                     expires_at: None,
                     source: None,
-                    timestamp: 0,
+                    timestamp: Some(0),
                     updated_at: None,
                     version: None,
                 }
@@ -4100,7 +4100,7 @@ mod tests {
                 metadata: HashMap::new(),
                 expires_at: None,
                 source: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 version: None,
             })
@@ -4154,7 +4154,7 @@ mod tests {
                 metadata: HashMap::new(),
                 expires_at: None,
                 source: None,
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 version: None,
             })
@@ -4230,7 +4230,7 @@ mod tests {
                     metadata: HashMap::new(),
                     expires_at: None,
                     source: None,
-                    timestamp: 0,
+                    timestamp: Some(0),
                     updated_at: None,
                     version: None,
                 }
@@ -4452,7 +4452,7 @@ mod tests {
                         metadata: std::collections::HashMap::new(),
                         expires_at: None,
                         source: None,
-                        timestamp: i as i64,
+                        timestamp: Some(i as i64),
                         updated_at: None,
                         version: None,
                     }

@@ -516,7 +516,7 @@ async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
                     id: format!("vec_{}_{}", rg_idx, i),
                     vector,
                     metadata: std::collections::HashMap::new(),
-                    timestamp: 0,
+                    timestamp: Some(0),
                     source: Some(String::new()),
                     version: Some(1),
                     updated_at: None,

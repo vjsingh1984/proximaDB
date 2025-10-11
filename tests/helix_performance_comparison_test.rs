@@ -50,7 +50,7 @@ mod performance_comparison_tests {
                             });
                             metadata
                         },
-                        timestamp: i as i64,
+                        timestamp: Some(i as i64),
                         updated_at: None,
                         expires_at: None,
                         version: None,
@@ -113,7 +113,7 @@ mod performance_comparison_tests {
                                 });
                                 metadata
                             },
-                            timestamp: i as i64,
+                            timestamp: Some(i as i64),
                             updated_at: None,
                             expires_at: None,
                             version: None,

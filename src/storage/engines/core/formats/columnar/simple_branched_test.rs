@@ -20,7 +20,7 @@ mod tests {
                 id: format!("id_{}", i),
                 vector: vec![i as f32; 128],
                 metadata: HashMap::new(), // Empty to avoid MapArray
-                timestamp: i as i64,
+                timestamp: Some(i as i64),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),

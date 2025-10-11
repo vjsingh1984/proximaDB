@@ -41,7 +41,7 @@ mod tests {
             id: "test_vector_1".to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
             metadata: std::collections::HashMap::new(),
-            timestamp: 1234567890,
+            timestamp: Some(1234567890),
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),

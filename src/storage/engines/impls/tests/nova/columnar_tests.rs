@@ -105,7 +105,7 @@ async fn test_unified_columnar_writer() {
         id: "test_1".to_string(),
         vector: vec![0.1; 128],
         metadata: std::collections::HashMap::new(),
-        timestamp: 1000,
+        timestamp: Some(1000),
         updated_at: None,
         expires_at: None,
         version: None,

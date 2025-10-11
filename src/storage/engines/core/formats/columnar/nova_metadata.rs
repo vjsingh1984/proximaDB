@@ -1076,10 +1076,10 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_nova_metadata_serialization() {
+    #[tokio::test]
+    async fn test_nova_metadata_serialization() {
         let _temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::create_default().await?);
+        let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         // Test serialization
@@ -1094,10 +1094,10 @@ mod tests {
         assert!(metadata.memory_footprint() > 0);
     }
 
-    #[test]
-    fn test_nova_columnar_optimization() {
+    #[tokio::test]
+    async fn test_nova_columnar_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::create_default().await?);
+        let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
@@ -1124,10 +1124,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_nova_similarity_search_optimization() {
+    #[tokio::test]
+    async fn test_nova_similarity_search_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::create_default().await?);
+        let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer

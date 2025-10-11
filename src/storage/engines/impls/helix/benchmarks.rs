@@ -39,7 +39,7 @@ mod benchmarks {
                         ("type".to_string(), "benchmark".to_string()),
                         ("cluster".to_string(), (i % 10).to_string()),
                     ])),
-                    timestamp: i as i64,
+                    timestamp: Some(i as i64),
                     expires_at: None,
                 }
             })
@@ -74,7 +74,7 @@ mod benchmarks {
                     metadata: Some(HashMap::from([
                         ("cluster_id".to_string(), cluster_id.to_string()),
                     ])),
-                    timestamp: (cluster_id * vectors_per_cluster + i) as i64,
+                    timestamp: Some((cluster_id * vectors_per_cluster + i) as i64),
                     expires_at: None,
                 });
             }

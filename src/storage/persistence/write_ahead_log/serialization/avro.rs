@@ -385,7 +385,7 @@ mod tests {
                 });
                 map
             },
-            timestamp: 1234567890,
+            timestamp: Some(1234567890),
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),

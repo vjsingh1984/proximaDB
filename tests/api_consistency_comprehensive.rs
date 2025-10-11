@@ -53,7 +53,7 @@ mod comprehensive_api_tests {
                     });
                     metadata
                 },
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: None,
                 expires_at: None,
                 version: None,

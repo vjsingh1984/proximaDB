@@ -985,7 +985,7 @@ mod edge_tests {
                 id: format!("vec_{}", i),
                 vector: vec![0.1; 1024], // Large vector
                 metadata: std::collections::HashMap::new(),
-                timestamp: i as i64,
+                timestamp: Some(i as i64),
                 updated_at: Some(i as i64),
                 expires_at: None,
                 version: Some(1),

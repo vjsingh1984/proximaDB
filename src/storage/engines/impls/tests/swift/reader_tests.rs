@@ -194,7 +194,7 @@ fn test_metadata_index() {
                 });
                 meta
             },
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             expires_at: None,
             version: None,
@@ -207,7 +207,7 @@ fn test_metadata_index() {
             record_count: 1,
             size_bytes: 0,
             compressed_size: 0,
-            timestamp: 0,
+            timestamp: Some(0),
             compaction_level: 0,
             has_deletes: false,
             has_updates: false,

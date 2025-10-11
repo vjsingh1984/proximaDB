@@ -667,7 +667,7 @@ mod tests {
                         });
                         metadata
                     },
-                    timestamp: 0i64,
+                    timestamp: Some(0i64),
                     updated_at: None,
                     expires_at: None,
                     version: None,

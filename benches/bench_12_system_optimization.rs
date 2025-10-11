@@ -99,7 +99,7 @@ fn create_vector_record(id: &str, vector: Vec<f32>, with_metadata: bool) -> Vect
         id: id.to_string(),
         vector,
         metadata,
-        timestamp: 1234567890,
+        timestamp: Some(1234567890),
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
