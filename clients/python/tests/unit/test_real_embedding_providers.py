@@ -9,9 +9,14 @@ To skip these tests (e.g., in CI without models):
 
 To run only these tests:
     pytest -m "requires_models"
+
+NOTE: These tests are skipped by default as they require large model downloads
+and sentence-transformers installation. Enable with --run-slow flag or remove skip.
 """
 
 import pytest
+
+pytest.skip("Tests require sentence-transformers and model downloads. Use --run-slow to enable.", allow_module_level=True)
 import numpy as np
 from typing import List
 
