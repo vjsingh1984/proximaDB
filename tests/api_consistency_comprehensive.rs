@@ -63,7 +63,7 @@ mod comprehensive_api_tests {
     }
 
     #[tokio::test]
-    #[ignore] // Run with: cargo test --ignored test_complete_workflow
+    #[ignore = "Integration test requiring running ProximaDB server on ports 5678/5679. Run with: cargo test --ignored test_complete_workflow"]
     async fn test_complete_workflow() {
         // Initialize hardware capabilities for tests
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
@@ -219,7 +219,7 @@ mod comprehensive_api_tests {
     }
 
     #[tokio::test]
-    #[ignore] // Run with: cargo test --ignored test_error_handling
+    #[ignore = "Integration test requiring running ProximaDB server. Run with: cargo test --ignored test_error_handling"]
     async fn test_error_handling() {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -313,7 +313,7 @@ mod comprehensive_api_tests {
     }
 
     #[tokio::test]
-    #[ignore] // Run with: cargo test --ignored test_response_consistency
+    #[ignore = "Integration test requiring running ProximaDB server. Run with: cargo test --ignored test_response_consistency"]
     async fn test_response_consistency() {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
