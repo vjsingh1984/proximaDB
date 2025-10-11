@@ -342,7 +342,7 @@ mod tests {
             // Handle collection not found error gracefully in test environment
             if let Err(e) = result {
                 if e.to_string().contains("not found") {
-                    println!("Skipping test: Collection not found (expected in test environment)");
+                    trace!("Skipping test: Collection not found (expected in test environment)");
                     return;
                 }
                 panic!("Flush notification failed: {}", e);

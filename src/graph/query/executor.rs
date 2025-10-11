@@ -158,7 +158,7 @@ mod tests {
             Ok(_) => {},
             Err(e) if e.to_string().contains("URL") || e.to_string().contains("Serialization error") => {
                 // Skip the test if we encounter URL parsing issues in test environment
-                println!("Skipping test due to URL parsing issue in test environment: {}", e);
+                tracing::warn!("Skipping test due to URL parsing issue in test environment: {}", e);
                 return;
             },
             Err(e) => panic!("Unexpected error: {}", e),

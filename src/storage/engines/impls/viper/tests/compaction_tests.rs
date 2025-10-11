@@ -294,36 +294,36 @@ async fn test_insert_flush_compact_flow() {
     debug!("\n🔍 Step 5: Verifying search after compaction...");
 
     // Debug: Print the paths being used
-    println!("\n📂 Path Debug Information:");
-    println!("  - Temp dir: {}", temp_dir.path().to_str().unwrap());
-    println!("  - Collection ID: {}", collection_id);
-    println!("  - Flush result: success={}, entries_flushed={:?}", flush_result.success, flush_result.entries_flushed);
-    println!("  - Compaction result: success={}, entries_processed={:?}", compact_result.success, compact_result.entries_processed);
+    debug!("\n📂 Path Debug Information:");
+    debug!("  - Temp dir: {}", temp_dir.path().to_str().unwrap());
+    debug!("  - Collection ID: {}", collection_id);
+    debug!("  - Flush result: success={}, entries_flushed={:?}", flush_result.success, flush_result.entries_flushed);
+    debug!("  - Compaction result: success={}, entries_processed={:?}", compact_result.success, compact_result.entries_processed);
 
     let storage_url = format!(
         "file://{}/{}/data",
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
-    println!("  - Storage URL for search: {}", storage_url);
+    debug!("  - Storage URL for search: {}", storage_url);
 
     // Check if the directory exists
     let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     if std::path::Path::new(&data_path).exists() {
-        println!("  ✅ Data directory exists: {}", data_path);
+        debug!("  ✅ Data directory exists: {}", data_path);
         // List files in the directory
         if let Ok(entries) = std::fs::read_dir(&data_path) {
-            println!("  - Files in data directory:");
+            debug!("  - Files in data directory:");
             for entry in entries {
                 if let Ok(entry) = entry {
                     let file_name = entry.file_name();
-                    println!("    - {:?}", file_name);
+                    debug!("    - {:?}", file_name);
 
                     // If it's a parquet file, read it directly to check record count
                     if file_name.to_string_lossy().ends_with(".parquet") {
                         let file_path = entry.path();
                         if let Ok(file_data) = std::fs::read(&file_path) {
-                            println!("      - File size: {} bytes", file_data.len());
+                            debug!("      - File size: {} bytes", file_data.len());
 
                             // Use parquet reader to count records
                             if let Ok(builder) = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
@@ -336,9 +336,9 @@ async fn test_insert_flush_compact_flow() {
                                         total_rows += batch.num_rows();
                                     }
                                 }
-                                println!("      📊 PARQUET FILE CONTAINS {} RECORDS", total_rows);
+                                debug!("      📊 PARQUET FILE CONTAINS {} RECORDS", total_rows);
                                 if total_rows != 40 {
-                                    println!("      ⚠️ WARNING: Expected 40 records, found {}!", total_rows);
+                                    debug!("      ⚠️ WARNING: Expected 40 records, found {}!", total_rows);
                                 }
                             }
                         }
@@ -348,14 +348,14 @@ async fn test_insert_flush_compact_flow() {
                     if file_name == "___temp" {
                         let temp_path = entry.path();
                         if temp_path.is_dir() {
-                            println!("    - Checking ___temp directory:");
+                            debug!("    - Checking ___temp directory:");
                             if let Ok(temp_entries) = std::fs::read_dir(&temp_path) {
                                 for temp_entry in temp_entries {
                                     if let Ok(temp_entry) = temp_entry {
                                         let temp_file = temp_entry.file_name();
-                                        println!("      - {:?}", temp_file);
+                                        debug!("      - {:?}", temp_file);
                                         if temp_file.to_string_lossy().ends_with(".parquet") {
-                                            println!("        ⚠️ Found parquet file in ___temp directory!");
+                                            debug!("        ⚠️ Found parquet file in ___temp directory!");
                                         }
                                     }
                                 }
@@ -366,7 +366,7 @@ async fn test_insert_flush_compact_flow() {
             }
         }
     } else {
-        println!("  ❌ Data directory does NOT exist: {}", data_path);
+        debug!("  ❌ Data directory does NOT exist: {}", data_path);
     }
 
     let search_results = engine
@@ -377,14 +377,14 @@ async fn test_insert_flush_compact_flow() {
     // The search returns a Vec of SearchResult, each containing multiple results
     let total_results: usize = search_results.iter().map(|sr| sr.results.len()).sum();
 
-    println!("\n🔍 Search Results:");
-    println!("  - Found {} total results (expected 40)", total_results);
+    debug!("\n🔍 Search Results:");
+    debug!("  - Found {} total results (expected 40)", total_results);
     debug!("  ✅ Found {} results", total_results);
 
     if total_results < 40 {
-        println!("  ⚠️ WARNING: Missing {} vectors!", 40 - total_results);
-        println!("  - This indicates the data may not have been preserved during compaction");
-        println!("  - Or the search is looking in the wrong location");
+        debug!("  ⚠️ WARNING: Missing {} vectors!", 40 - total_results);
+        debug!("  - This indicates the data may not have been preserved during compaction");
+        debug!("  - Or the search is looking in the wrong location");
     }
 
     assert_eq!(
@@ -458,7 +458,7 @@ async fn test_basic_compaction() {
                 temp_dir.path().to_str().unwrap(),
             )),
         };
-        println!("🔄 Flushing batch {} with {} vectors", batch, vector_count);
+        debug!("🔄 Flushing batch {} with {} vectors", batch, vector_count);
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         println!(
             "📄 Batch {} flush result: success={}, {} entries flushed",
@@ -473,7 +473,7 @@ async fn test_basic_compaction() {
 
         // Debug: Check if the flush succeeded
         if !flush_result.success {
-            println!("  ⚠️ WARNING: Flush failed for batch {}!", batch);
+            debug!("  ⚠️ WARNING: Flush failed for batch {}!", batch);
             debug!("  ⚠️ WARNING: Flush failed!");
         }
     }
@@ -528,8 +528,8 @@ async fn test_basic_compaction() {
         )),
     };
 
-    println!("🔨 Starting compaction for collection: {}", collection_id);
-    println!("  - Compact params collection_id: {:?}", compact_params.collection_id);
+    debug!("🔨 Starting compaction for collection: {}", collection_id);
+    debug!("  - Compact params collection_id: {:?}", compact_params.collection_id);
 
     let result = engine
         .do_compact(&compact_params)
@@ -571,7 +571,7 @@ async fn test_basic_compaction() {
     );
     // Check that compaction preserved data
     if result.entries_processed.unwrap_or(0) == 0 {
-        println!("  ⚠️ WARNING: No entries were processed during compaction!");
+        debug!("  ⚠️ WARNING: No entries were processed during compaction!");
     }
 
     // Small delay to ensure filesystem operations complete
@@ -684,49 +684,49 @@ async fn test_basic_compaction() {
         collection_id
     );
 
-    println!("📍 CRITICAL DEBUG INFO:");
-    println!("  - Temp dir path: {}", temp_dir.path().to_str().unwrap());
-    println!("  - Collection ID: {}", collection_id);
-    println!("  - Storage URL: {}", storage_url);
-    println!("  - Data URL used for flush: {}", data_url);
+    debug!("📍 CRITICAL DEBUG INFO:");
+    debug!("  - Temp dir path: {}", temp_dir.path().to_str().unwrap());
+    debug!("  - Collection ID: {}", collection_id);
+    debug!("  - Storage URL: {}", storage_url);
+    debug!("  - Data URL used for flush: {}", data_url);
 
     // Check if temp dir still exists
     if !temp_dir.path().exists() {
-        println!("❌ ERROR: Temp directory no longer exists!");
+        debug!("❌ ERROR: Temp directory no longer exists!");
     } else {
-        println!("✅ Temp directory exists");
+        debug!("✅ Temp directory exists");
 
         // List contents of the data directory
         let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
-        println!("  - Checking data path: {}", data_path);
+        debug!("  - Checking data path: {}", data_path);
 
         if let Ok(entries) = std::fs::read_dir(&data_path) {
-            println!("  - Contents of data directory:");
+            debug!("  - Contents of data directory:");
             for entry in entries {
                 if let Ok(entry) = entry {
-                    println!("    - {:?}", entry.path());
+                    debug!("    - {:?}", entry.path());
                 }
             }
         } else {
-            println!("  - ⚠️ Could not read data directory");
+            debug!("  - ⚠️ Could not read data directory");
         }
     }
 
     // First, let's check what parquet files exist
-    println!("🔍 Checking for parquet files at: {}", storage_url);
+    debug!("🔍 Checking for parquet files at: {}", storage_url);
     let parquet_files = match engine
         .parquet_files_with_storage_url(collection_id, &storage_url)
         .await
     {
         Ok(files) => {
-            println!("✅ Found {} parquet files", files.len());
+            debug!("✅ Found {} parquet files", files.len());
             for (i, file) in files.iter().enumerate() {
-                println!("  [{}] {}", i, file);
+                debug!("  [{}] {}", i, file);
             }
             files
         }
         Err(e) => {
-            println!("❌ Failed to get parquet files: {:?}", e);
+            debug!("❌ Failed to get parquet files: {:?}", e);
             vec![]
         }
     };
@@ -737,22 +737,22 @@ async fn test_basic_compaction() {
         debug!("  [{}] {}", i, file);
     }
 
-    println!("🔍 About to search vectors with:");
-    println!("  - collection_id: {}", collection_id);
-    println!("  - storage_url: {}", storage_url);
-    println!("  - query_vector dimension: 128");
-    println!("  - top_k: 100");
+    debug!("🔍 About to search vectors with:");
+    debug!("  - collection_id: {}", collection_id);
+    debug!("  - storage_url: {}", storage_url);
+    debug!("  - query_vector dimension: 128");
+    debug!("  - top_k: 100");
 
     let search_results = match engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
         .await
     {
         Ok(results) => {
-            println!("✅ Search completed successfully");
+            debug!("✅ Search completed successfully");
             results
         }
         Err(e) => {
-            println!("❌ Search failed with error: {:?}", e);
+            debug!("❌ Search failed with error: {:?}", e);
             panic!("Search failed: {:?}", e);
         }
     };
@@ -766,9 +766,9 @@ async fn test_basic_compaction() {
 
     // Debug each search result in detail
     for (idx, search_result) in search_results.iter().enumerate() {
-        println!("  SearchResult[{}]: {} results", idx, search_result.results.len());
+        debug!("  SearchResult[{}]: {} results", idx, search_result.results.len());
         for result in &search_result.results {
-            println!("    - ID: {}, Score: {:?}", result.id, result.score);
+            debug!("    - ID: {}, Score: {:?}", result.id, result.score);
         }
     }
 
@@ -965,7 +965,7 @@ async fn test_concurrent_compaction_and_reads() {
     // Wait for all operations
     let compact_result = compact_handle.await.unwrap();
     if let Err(ref e) = compact_result {
-        println!("🔍 TEST: Compaction failed with error: {:?}", e);
+        debug!("🔍 TEST: Compaction failed with error: {:?}", e);
     }
     compact_result.expect("Compaction failed");
     for handle in read_handles {
@@ -1365,11 +1365,11 @@ async fn test_size_tiered_compaction_strategy() {
 
     // Debug: List files after compaction
     let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
-    println!("🔍 DEBUG: Listing files in data directory: {}", data_path);
+    debug!("🔍 DEBUG: Listing files in data directory: {}", data_path);
     if let Ok(entries) = std::fs::read_dir(&data_path) {
         for entry in entries {
             if let Ok(e) = entry {
-                println!("  - File: {:?}", e.path());
+                debug!("  - File: {:?}", e.path());
             }
         }
     }
@@ -1381,7 +1381,7 @@ async fn test_size_tiered_compaction_strategy() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
-    println!("🔍 DEBUG: Searching for {} vectors in: {}", total_vectors, storage_url);
+    debug!("🔍 DEBUG: Searching for {} vectors in: {}", total_vectors, storage_url);
 
     let search_results = engine
         .search_vectors(
@@ -1395,7 +1395,7 @@ async fn test_size_tiered_compaction_strategy() {
 
     // Count the total number of individual results across all SearchResult objects
     let actual_results: usize = search_results.iter().map(|sr| sr.results.len()).sum();
-    println!("🔍 DEBUG: Search returned {} SearchResult objects with {} total individual results (expected {})",
+    debug!("🔍 DEBUG: Search returned {} SearchResult objects with {} total individual results (expected {})",
         search_results.len(), actual_results, total_vectors);
     assert_eq!(actual_results, total_vectors);
 }
@@ -1565,14 +1565,14 @@ async fn test_compaction_with_metadata_filtering() {
         .unwrap();
 
     let total_results = all_search_results.len();
-    println!("Total search results after compaction: {}", total_results);
+    debug!("Total search results after compaction: {}", total_results);
 
     // Debug: print a sample of metadata from results
     for (idx, result) in all_search_results.iter().take(5).enumerate() {
-        println!("Result {}: id={}, metadata keys={:?}",
+        debug!("Result {}: id={}, metadata keys={:?}",
             idx, result.id, result.metadata.keys().collect::<Vec<_>>());
         if let Some(cat) = result.metadata.get("category") {
-            println!("  Has category: {:?}", cat.value);
+            debug!("  Has category: {:?}", cat.value);
         }
     }
 
@@ -1588,10 +1588,10 @@ async fn test_compaction_with_metadata_filtering() {
             .filter(|r| {
                 // Debug: print first few records to see what metadata they have
                 if search_results.iter().position(|x| x.id == r.id).unwrap() < 3 {
-                    println!("🔍 TEST DEBUG: Record {}: metadata keys={:?}",
+                    debug!("🔍 TEST DEBUG: Record {}: metadata keys={:?}",
                         r.id, r.metadata.keys().collect::<Vec<_>>());
                     if let Some(cat_val) = r.metadata.get("category") {
-                        println!("🔍 TEST DEBUG:   category value={:?}", cat_val.value);
+                        debug!("🔍 TEST DEBUG:   category value={:?}", cat_val.value);
                     }
                 }
 
@@ -1607,7 +1607,7 @@ async fn test_compaction_with_metadata_filtering() {
             })
             .count();
 
-        println!("Category {} found {} vectors (expected 20)", category, category_count);
+        debug!("Category {} found {} vectors (expected 20)", category, category_count);
         assert_eq!(
             category_count, 20,
             "Category {} vectors missing after compaction (found {} of {} total results)",
@@ -1651,7 +1651,7 @@ async fn test_incremental_compaction() {
             vectors.push(create_test_vector(&format!("inc_{}_vec_{}", batch, i), 128));
         }
 
-        println!("🔄 DEBUG: Batch {}: Created {} vectors", batch, vectors.len());
+        debug!("🔄 DEBUG: Batch {}: Created {} vectors", batch, vectors.len());
 
         // VIPER is columnar - vectors will be flushed below
 
@@ -1672,7 +1672,7 @@ async fn test_incremental_compaction() {
         };
 
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
-        println!("🔄 DEBUG: Batch {}: Flush result - entries_flushed: {:?}, success: {}",
+        debug!("🔄 DEBUG: Batch {}: Flush result - entries_flushed: {:?}, success: {}",
                 batch, flush_result.entries_flushed, flush_result.success);
     }
 
@@ -1685,7 +1685,7 @@ async fn test_incremental_compaction() {
 
     // Debug: Check what files exist in the storage directory and subdirectories
     let storage_dir = format!("{}/{}/data", test_dir, collection_id);
-    println!("🔍 DEBUG: Checking storage directory: {}", storage_dir);
+    debug!("🔍 DEBUG: Checking storage directory: {}", storage_dir);
 
     fn list_directory_recursive(dir: &str, depth: usize) {
         if depth > 3 { return; } // Limit recursion depth
@@ -1695,24 +1695,24 @@ async fn test_incremental_compaction() {
                 if let Ok(entry) = entry {
                     let path = entry.path();
                     if path.is_dir() {
-                        println!("🔍 DEBUG: {}📁 {:?}", indent, path.file_name().unwrap());
+                        debug!("🔍 DEBUG: {}📁 {:?}", indent, path.file_name().unwrap());
                         list_directory_recursive(path.to_str().unwrap(), depth + 1);
                     } else {
                         let metadata = std::fs::metadata(&path).ok();
                         let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                        println!("🔍 DEBUG: {}📄 {:?} ({}bytes)", indent, path.file_name().unwrap(), size);
+                        debug!("🔍 DEBUG: {}📄 {:?} ({}bytes)", indent, path.file_name().unwrap(), size);
                     }
                 }
             }
         } else {
-            println!("🔍 DEBUG: {}Cannot read directory: {}", indent, dir);
+            debug!("🔍 DEBUG: {}Cannot read directory: {}", indent, dir);
         }
     }
 
     list_directory_recursive(&storage_dir, 0);
 
     // Also check the test directory structure
-    println!("🔍 DEBUG: Checking test base directory: {}", test_dir);
+    debug!("🔍 DEBUG: Checking test base directory: {}", test_dir);
     list_directory_recursive(test_dir, 0);
 
     let pre_compact_results = engine
@@ -1720,9 +1720,9 @@ async fn test_incremental_compaction() {
         .await
         .unwrap();
     let total_pre_compact = pre_compact_results.iter().map(|sr| sr.results.len()).sum::<usize>();
-    println!("🔍 DEBUG: Before compaction: Found {} vectors", total_pre_compact);
+    debug!("🔍 DEBUG: Before compaction: Found {} vectors", total_pre_compact);
 
-    println!("🔄 DEBUG: Starting incremental compaction phases");
+    debug!("🔄 DEBUG: Starting incremental compaction phases");
 
     // Run incremental compaction multiple times
     for phase in 0..3 {
@@ -1745,11 +1745,11 @@ async fn test_incremental_compaction() {
             .await;
 
         if let Err(ref e) = compact_result {
-            println!("🔍 TEST: Incremental compaction phase {} failed: {:?}", phase, e);
+            debug!("🔍 TEST: Incremental compaction phase {} failed: {:?}", phase, e);
         }
         let compact_result = compact_result.expect("Incremental compaction failed");
 
-        println!("🔄 DEBUG: Compaction phase {}: entries_processed: {:?}, entries_removed: {:?}, success: {}",
+        debug!("🔄 DEBUG: Compaction phase {}: entries_processed: {:?}, entries_removed: {:?}, success: {}",
                 phase, compact_result.entries_processed, compact_result.entries_removed, compact_result.success);
     }
 
@@ -1760,8 +1760,8 @@ async fn test_incremental_compaction() {
         collection_id
     );
 
-    println!("🔍 DEBUG: Searching with storage_url: {}", storage_url);
-    println!("🔍 DEBUG: Query vector dimensions: {}", vec![0.5; 128].len());
+    debug!("🔍 DEBUG: Searching with storage_url: {}", storage_url);
+    debug!("🔍 DEBUG: Query vector dimensions: {}", vec![0.5; 128].len());
 
     let search_results = engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
@@ -1769,14 +1769,14 @@ async fn test_incremental_compaction() {
         .unwrap();
 
     let total_results = search_results.iter().map(|sr| sr.results.len()).sum::<usize>();
-    println!("🔍 DEBUG: Search returned {} results (expected 30)", total_results);
+    debug!("🔍 DEBUG: Search returned {} results (expected 30)", total_results);
 
     // Print first few results for debugging
     let mut result_count = 0;
     for (search_idx, search_result) in search_results.iter().enumerate() {
-        println!("🔍 DEBUG: SearchResult {}: contains {} results", search_idx, search_result.results.len());
+        debug!("🔍 DEBUG: SearchResult {}: contains {} results", search_idx, search_result.results.len());
         for (idx, result) in search_result.results.iter().take(5).enumerate() {
-            println!("🔍 DEBUG: Result {}: id={}, score={:?}", result_count + idx, result.id, result.score);
+            debug!("🔍 DEBUG: Result {}: id={}, score={:?}", result_count + idx, result.id, result.score);
         }
         result_count += search_result.results.len();
         if result_count >= 5 { break; }
