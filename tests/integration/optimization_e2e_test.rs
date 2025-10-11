@@ -132,7 +132,7 @@ fn create_optimization_test_vectors(count: usize) -> Vec<VectorRecord> {
                     });
                     metadata
                 },
-                timestamp: (1000 + i) as i64,
+                timestamp: Some((1000 + i) as i64),
                 updated_at: Some((1000 + i) as i64),
                 expires_at: None,
                 version: Some(1),

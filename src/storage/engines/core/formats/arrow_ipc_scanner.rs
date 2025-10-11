@@ -414,7 +414,7 @@ fn batch_to_vector_records(batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
             } else {
                 Vec::new()
             },
-            timestamp: 0, // TODO: Extract from timestamp column if present
+            timestamp: Some(0), // TODO: Extract from timestamp column if present
             updated_at: None,
             expires_at: None,
             version: None,

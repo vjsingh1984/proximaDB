@@ -57,7 +57,7 @@ fn generate_vector_records(count: usize, dimension: usize) -> Vec<VectorRecord> 
                 .map(|j| ((i + j) as f32 * 0.1).sin())
                 .collect(),
             metadata: HashMap::new(),
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

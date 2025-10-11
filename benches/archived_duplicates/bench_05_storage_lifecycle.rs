@@ -41,7 +41,7 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             id: format!("vec_{:08}", i),
             vector: vec![i as f32 / count as f32; dimension],
             metadata: HashMap::new(),
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

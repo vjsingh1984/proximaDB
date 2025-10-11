@@ -51,7 +51,7 @@ fn create_test_vectors(num_vectors: usize, dimension: usize, pattern: &str) -> V
             metadata: HashMap::new(),
             expires_at: None,
             source: None,
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             version: None,
         });

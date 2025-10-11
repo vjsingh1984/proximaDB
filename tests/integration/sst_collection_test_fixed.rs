@@ -47,7 +47,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                 );
                 metadata
             },
-            timestamp: 1000,
+            timestamp: Some(1000),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -66,7 +66,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                 );
                 metadata
             },
-            timestamp: 1001,
+            timestamp: Some(1001),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -85,7 +85,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                 );
                 metadata
             },
-            timestamp: 1002,
+            timestamp: Some(1002),
             updated_at: None,
             expires_at: None,
             version: Some(1),

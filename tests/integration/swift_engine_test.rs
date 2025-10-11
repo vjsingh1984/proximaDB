@@ -62,7 +62,7 @@ fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
                 id: format!("vec_{}", i),
                 vector,
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
+                timestamp: Some(0),
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),

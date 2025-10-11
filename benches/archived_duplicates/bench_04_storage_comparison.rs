@@ -73,7 +73,7 @@ fn generate_vectors(count: usize, dimension: usize, model: EmbeddingModel) -> Ve
             id: format!("vec_{:08}", i),
             vector,
             metadata: std::collections::HashMap::new(),
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

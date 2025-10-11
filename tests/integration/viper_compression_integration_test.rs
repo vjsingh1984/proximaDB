@@ -184,7 +184,7 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
                     });
                     metadata
                 },
-                timestamp: (1000 + i) as i64,
+                timestamp: Some((1000 + i) as i64),
                 updated_at: Some((1000 + i) as i64),
                 expires_at: None,
                 version: Some(1),

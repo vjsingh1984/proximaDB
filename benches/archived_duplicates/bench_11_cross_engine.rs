@@ -64,7 +64,7 @@ impl BenchmarkSetup {
                 // Generate normalized vectors with values between 0.0 and 1.0
                 vector: vec![i as f32 / count as f32; dimension],
                 metadata: std::collections::HashMap::new(),
-                timestamp: i as i64,
+                timestamp: Some(i as i64),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),

@@ -18,7 +18,7 @@ fn main() -> anyhow::Result<()> {
         metadata: HashMap::new(),
         expires_at: None,
         source: None,
-        timestamp: 0,
+        timestamp: Some(0),
         updated_at: None,
         version: None,
     };

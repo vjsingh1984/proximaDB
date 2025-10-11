@@ -57,7 +57,7 @@ fn create_pattern_vectors(num_vectors: usize, dimension: usize, pattern: &str) -
             metadata: HashMap::new(),
             expires_at: None,
             source: None,
-            timestamp: 0,
+            timestamp: Some(0),
             updated_at: None,
             version: None,
         });

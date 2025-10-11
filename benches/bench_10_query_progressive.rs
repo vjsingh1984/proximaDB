@@ -36,7 +36,7 @@ fn vectors_to_records(vectors: &[Vec<f32>]) -> Vec<VectorRecord> {
             id: format!("vec_{}", i),
             vector: v.clone(),
             metadata: std::collections::HashMap::new(),
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             updated_at: None,
             expires_at: None,
             version: Some(1),
