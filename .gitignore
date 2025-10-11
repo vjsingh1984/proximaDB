@@ -359,9 +359,39 @@ tools/minio
 tools/fake-gcs-server
 newcategory.txt
 ml_prompt.txt
+footer_cache.bin
+
+# AI Assistant instruction files and development artifacts
+CLAUDE.md
 GEMINI.md
 AGENTS.md
-footer_cache.bin
+CURSOR.md
+COPILOT.md
+.claude/
+.cursor/
+.github/copilot-instructions.md
+*_INSTRUCTIONS.md
+
+# AI-generated prompts, summaries, and snapshots
+*prompt*.txt
+*snapshot*
+*_PROMPT.md
+*_SNAPSHOT.md
+*_summary.py
+test_summary*.py
+test_*_summary.py
+*_summary_report.py
+
+# Development planning and architecture documents (root level only)
+/GLOBAL_MANIFEST_*.md
+/RECOVERY_*.md
+/WAL_*.md
+/*_ARCHITECTURE.md
+/*_INTEGRATION.md
+/*_IMPLEMENTATION*.md
+/*_VERIFICATION*.md
+/*_PLAN.md
+/*_FIXES.md
 
 # Project root data and text files
 *.dat
