@@ -116,7 +116,9 @@ impl Analyzer {
                         });
                     }
 
-                    // Use filterable_columns for user-defined metadata fields
+                    // Add filterable_columns to schema for type checking
+                    // These are metadata fields optimized for filtering (stored as separate columns internally)
+                    // Users access them as either "field_name" or "metadata.field_name"
                     for field in config.filterable_columns {
                         let data_type = match crate::proto::proximadb_v1::FilterableDataType::try_from(field.data_type) {
                             Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableString) => DataType::String,
@@ -125,10 +127,13 @@ impl Analyzer {
                             Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean) => DataType::Boolean,
                             _ => DataType::Unknown,
                         };
-                        // Prepend "metadata." to filterable column names for proper scoping
-                        let field_name = format!("metadata.{}", field.name);
-                        columns.insert(field_name.clone(), Column { name: field_name, data_type });
+                        // Register with unqualified name for direct access (e.g., "name")
+                        columns.insert(field.name.clone(), Column { name: field.name.clone(), data_type });
                     }
+
+                    // Note: Non-filterable metadata fields are NOT pre-registered
+                    // They are handled dynamically via "metadata.{key}" syntax with Unknown type
+                    // This matches the VectorRecord schema where all metadata is in the metadata map
                 }
                 // Use alias if provided, otherwise use table name
                 let table_symbol = Symbol::Table { name: table_name.clone(), columns };
@@ -213,12 +218,19 @@ impl Analyzer {
                         return Ok(column_clone.data_type);
                     }
 
-                    // 3. If table_name is "metadata", allow dynamic field access with Unknown type
-                    // This supports metadata fields that weren't declared in filterable_columns
+                    // 3. If table_name is "metadata", try looking up the unqualified column name
+                    // This handles "metadata.name" references where "name" is in filterable_columns
                     if table_name == "metadata" {
+                        let (found_column, _, _) = scope.find_column_in_tables(column_name);
+                        if let Some(column) = found_column {
+                            let column_clone = column.clone();
+                            scope.insert(ident, Symbol::Column(column_clone.clone()));
+                            return Ok(column_clone.data_type);
+                        }
+                        // If not in filterable_columns, allow dynamic field access with Unknown type
                         let inferred_column = Column {
                             name: ident.to_string(),
-                            data_type: DataType::Unknown, // Changed from String to Unknown for flexibility
+                            data_type: DataType::Unknown,
                         };
                         scope.insert(ident, Symbol::Column(inferred_column.clone()));
                         return Ok(DataType::Unknown);
