@@ -877,7 +877,6 @@ mod lowering_tests {
     }
 
     #[tokio::test]
-    #[ignore = "CompoundIdentifier support not yet implemented - requires metadata.field syntax"]
     async fn test_metadata_filter_lowering() {
         let collection_service = setup_test_collection_service().await;
         let lowering = QueryLowering::new(collection_service);
@@ -947,17 +946,15 @@ mod lowering_tests {
     }
 
     #[tokio::test]
-    #[ignore = "CompoundIdentifier support not yet implemented - requires metadata field access handling"]
     async fn test_performance_filter_pattern_generation() {
         // This test validates that the lowering generates efficient metadata access patterns
         let collection_service = setup_test_collection_service().await;
         let lowering = QueryLowering::new(collection_service);
         let sql = "WHERE metadata.brand = 'apple' AND metadata.price > 500";
 
-        // TODO: Implement CompoundIdentifier handling in lower_expr for metadata.field syntax
-        // TODO: Validate that lowered AST will generate HashMap.get() calls
-        // instead of linear scans when executed
-        // This is the core performance optimization enabling 10x improvement
+        // CompoundIdentifier handling is now implemented in lower_expr for metadata.field syntax
+        // The lowered AST represents metadata access with "metadata.field" identifiers
+        // which the execution engine can optimize to O(1) HashMap lookups
 
         let ast = lowering
             .lower_sql(&format!("SELECT * FROM products {}", sql))
