@@ -32,7 +32,7 @@ fn create_test_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorRecord
             },
             expires_at: None,
             source: Some(format!("batch_{}", row / 100)),
-            timestamp: 1640995200 + (row as i64 * 60),
+            timestamp: Some(1640995200 + (row as i64 * 60)),
             updated_at: None,
             version: None,
         });

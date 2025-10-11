@@ -50,7 +50,6 @@ mod tests {
             metadata_flush_threshold: 1000,
             enable_metadata_cache: true,
             cache_ttl_seconds: 300,
-            global_manifest_url: None,
         }
     }
 

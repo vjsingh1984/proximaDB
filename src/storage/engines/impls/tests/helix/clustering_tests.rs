@@ -154,7 +154,7 @@ async fn test_clustering_quality() {
         id: "vec1".to_string(),
         vector: vec![1.0],
         metadata: std::collections::HashMap::new(),
-        timestamp: 0i64,
+        timestamp: Some(0i64),
         updated_at: None,
         expires_at: None,
         version: None,

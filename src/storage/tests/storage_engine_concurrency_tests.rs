@@ -94,7 +94,7 @@ mod tests {
             id: id.to_string(),
             vector: vec![0.1; 128],
             metadata: std::collections::HashMap::new(),
-            timestamp: now,
+            timestamp: Some(now),
             updated_at: Some(now),
             expires_at: None,
             version: Some(1),

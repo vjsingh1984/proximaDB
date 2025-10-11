@@ -99,7 +99,7 @@ fn test_proximadatablock_with_proximacodec() {
         let mut record = VectorRecord::default();
         record.id = format!("vec_{}", i);
         record.vector = vec![i as f32, (i + 1) as f32, (i + 2) as f32, (i + 3) as f32];
-        record.timestamp = i as i64;
+        record.timestamp = Some(i as i64);
         records.push(record);
     }
 
@@ -153,7 +153,7 @@ fn test_proximadatablock_with_proximacodec() {
             assert_eq!(orig.vector, deser.vector);
 
             if orig.timestamp != deser.timestamp {
-                println!("Timestamp mismatch at index {}: orig={}, deser={}", i, orig.timestamp, deser.timestamp);
+                println!("Timestamp mismatch at index {}: orig={:?}, deser={:?}", i, orig.timestamp, deser.timestamp);
             }
             assert_eq!(orig.timestamp, deser.timestamp);
         }

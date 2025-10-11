@@ -452,7 +452,7 @@ mod tests {
             record_count: 1000,
             min_key: "a".to_string(),
             max_key: "z".to_string(),
-            timestamp: Some(chrono::Utc::now().timestamp()),
+            timestamp: chrono::Utc::now().timestamp(),
             last_compacted_at: None,
             bloom_fpr: 0.01,
             metadata_columns: HashMap::new(),

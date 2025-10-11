@@ -21,7 +21,7 @@
 //!
 //! ## Storage Engine Types
 //!
-//! 1. **SST (SSTEngine)**: Row-based, write-optimized with three-stage filtering
+//! 1. **SST (SSTEngine)**: Hybrid columnar (ProximaBlocks), write-optimized with three-stage filtering
 //!    - Best for: Real-time queries, frequent updates, OLTP workloads
 //!    
 //! 2. **VIPER (ViperEngine)**: Columnar Parquet format with advanced quantization

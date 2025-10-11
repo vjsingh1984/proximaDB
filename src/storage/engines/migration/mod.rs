@@ -328,7 +328,7 @@ pub mod utils {
     pub fn engine_display_name(engine: ProtoStorageEngine) -> &'static str {
         match engine {
             ProtoStorageEngine::Viper => "VIPER (Columnar Analytics)",
-            ProtoStorageEngine::Sst => "SST (Row-based OLTP)",
+            ProtoStorageEngine::Sst => "SST (Hybrid Columnar OLTP)",
             ProtoStorageEngine::Swift => "SWIFT (Instant Fast Traversal)",
             ProtoStorageEngine::Nova => "NOVA (Optimized Vector Analytics)",
             ProtoStorageEngine::Mmap => "MMAP (Memory-mapped)",

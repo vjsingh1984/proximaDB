@@ -420,7 +420,7 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                         );
                         metadata
                     },
-                    timestamp: chrono::Utc::now().timestamp(),
+                    timestamp: Some(chrono::Utc::now().timestamp()),
                     updated_at: Some(chrono::Utc::now().timestamp()),
                     expires_at: None,
                     version: Some(1),
@@ -735,7 +735,7 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             id: format!("{}_identical", env.collection_id()),
             vector: vec![1.0, 0.0, 0.0], // Identical to query
             metadata: std::collections::HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: None,
             expires_at: None,
             source: None,
@@ -745,7 +745,7 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             id: format!("{}_orthogonal", env.collection_id()),
             vector: vec![0.0, 1.0, 0.0], // Orthogonal to query
             metadata: std::collections::HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: None,
             expires_at: None,
             source: None,
@@ -755,7 +755,7 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             id: format!("{}_opposite", env.collection_id()),
             vector: vec![-1.0, 0.0, 0.0], // Opposite to query
             metadata: std::collections::HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: None,
             expires_at: None,
             source: None,
@@ -885,7 +885,7 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                         );
                         metadata
                     },
-                    timestamp: chrono::Utc::now().timestamp(),
+                    timestamp: Some(chrono::Utc::now().timestamp()),
                     updated_at: Some(chrono::Utc::now().timestamp()),
                     expires_at: None,
                     version: Some(1),

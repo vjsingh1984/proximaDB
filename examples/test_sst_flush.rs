@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: format!("vec_{}", i),
             vector: vec![i as f32; 128],
             metadata,
-            timestamp: i as i64,
+            timestamp: Some(i as i64),
             updated_at: None,
             expires_at: None,
             version: None,

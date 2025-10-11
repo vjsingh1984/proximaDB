@@ -130,7 +130,7 @@ fn create_vector_records(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord> {
             id: format!("vec_{}", i),
             vector,
             metadata: HashMap::new(),
-            timestamp: 1640995200 + (i as i64 * 60),
+            timestamp: Some(1640995200 + (i as i64 * 60)),
             expires_at: None,
             source: Some(format!("pattern_test")),
             updated_at: None,

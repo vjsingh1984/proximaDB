@@ -28,7 +28,7 @@ fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32; dimension],
                 metadata,
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: Some(chrono::Utc::now().timestamp()),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),

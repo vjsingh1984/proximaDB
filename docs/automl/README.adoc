@@ -4,6 +4,24 @@
 :icons: font
 :source-highlighter: rouge
 
+[IMPORTANT]
+.Development Status
+====
+**Current Status**: 🚧 **PARTIAL IMPLEMENTATION** - Foundation in place, advanced ML features in development
+
+The AutoML framework is actively being developed. Currently available:
+- ✅ Basic workload analysis and pattern detection
+- ✅ Configuration optimization framework
+- ✅ Performance metrics collection
+- 🚧 ML-based prediction models (in progress)
+- 🚧 Advanced optimization algorithms (in progress)
+- 📋 Bayesian/Genetic optimization (planned)
+
+This documentation describes the complete vision and architecture. Features marked as "in progress" or "planned" are part of the link:../09-roadmap/implementation/AUTOML_COMPLETE.adoc[2025 roadmap].
+
+For current capabilities, see <<Current Implementation Status>>.
+====
+
 == Quick Reference
 
 === 🚀 Quick Start
@@ -90,6 +108,53 @@ ProximaDB AutoML automatically optimizes your database performance without manua
 - **Improved Application Performance**: Consistent sub-millisecond query times
 - **Predictable Scaling**: System automatically adapts as your user base grows
 - **Risk Mitigation**: Proactive optimization prevents performance degradation
+
+[[current-implementation-status]]
+== Current Implementation Status
+
+[NOTE]
+====
+**Version 0.1.4 Status** (January 2025)
+====
+
+=== ✅ Implemented Features
+
+**Core Infrastructure**:
+- AutoML coordinator and service framework
+- Configuration management and optimization interfaces
+- Performance metrics collection and tracking
+- Basic workload pattern detection
+
+**Available Now**:
+- Workload analysis: Query pattern recognition, read/write ratio tracking
+- Configuration optimization: Basic parameter tuning based on workload
+- Performance monitoring: Metrics collection and trend analysis
+
+=== 🚧 In Development (Q1-Q2 2025)
+
+**ML Prediction Models**:
+- Performance prediction based on historical data
+- Bottleneck identification algorithms
+- Resource usage forecasting
+
+**Advanced Optimization**:
+- Hyperparameter tuning (TPE, Hyperband)
+- Multi-objective optimization
+- Adaptive learning from production feedback
+
+=== 📋 Planned Features (Q3-Q4 2025)
+
+**Advanced ML Algorithms**:
+- Bayesian Optimization for configuration search
+- Genetic Algorithms for complex parameter spaces
+- Reinforcement Learning for adaptive tuning
+
+**Enterprise Features**:
+- Multi-tenant optimization isolation
+- Cost-aware optimization strategies
+- SLA-driven automatic tuning
+
+See link:../09-roadmap/implementation/AUTOML_COMPLETE.adoc[AutoML Complete Implementation Guide] for detailed timeline and technical specifications.
 
 == AutoML Value Proposition
 

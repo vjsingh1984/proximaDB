@@ -29,7 +29,7 @@ fn test_protobuf_serialization() {
         id: "test_id".to_string(),
         vector: vec![0.1, 0.2, 0.3, 0.4, 0.5],
         metadata,
-        timestamp: chrono::Utc::now().timestamp(),
+        timestamp: Some(chrono::Utc::now().timestamp()),
         updated_at: None,
         expires_at: None,
         version: None,
@@ -82,7 +82,7 @@ fn test_batch_serialization_performance() {
             id: format!("test_id_{}", i),
             vector: vec![0.1; 768], // 768-dimensional vector (BERT-base size)
             metadata,
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: None,
             expires_at: None,
             version: None,

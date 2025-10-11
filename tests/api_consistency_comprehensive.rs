@@ -20,10 +20,11 @@ mod comprehensive_api_tests {
         CollectionConfig {
             name: name.to_string(),
             dimension: 128,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             tags: vec!["test".to_string()],
-            auto_index_selection: false,
             embedding_models: vec![],
             owner: Some("test_owner".to_string()),
             description: None,
@@ -31,7 +32,6 @@ mod comprehensive_api_tests {
             index_configs: vec![],
             quantization: None,
             storage_config: None,
-            primary_index: String::new(),
         }
     }
 

@@ -202,8 +202,10 @@ impl UnifiedTestEnvironment {
         let config = CollectionConfig {
             name: self.collection_id.clone(),
             dimension: dimension as u32,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: engine as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(engine as i32),
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             ..Default::default()
         };
 
@@ -380,7 +382,7 @@ impl UnifiedTestEnvironment {
         (0..count)
             .map(|i| VectorRecord {
                 id: format!("{}_{}", self.collection_id, i),
-                timestamp: (1000 + i) as i64,
+                timestamp: Some((1000 + i) as i64),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
@@ -427,7 +429,7 @@ impl UnifiedTestEnvironment {
             id,
             vector,
             metadata,
-            timestamp,
+            timestamp: Some(timestamp),
             updated_at: None,
             expires_at,
             version: Some(1),
@@ -480,8 +482,10 @@ impl UnifiedTestEnvironment {
         let config = CollectionConfig {
             name: name.to_string(),
             dimension: 3,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             ..Default::default()
         };
 
@@ -751,7 +755,7 @@ pub mod operations {
                     id: record.id,
                     vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
                     metadata: record.metadata,
-                    timestamp: record.timestamp.unwrap_or(0),
+                    timestamp: Some(record.timestamp.unwrap_or(0)),
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
@@ -792,7 +796,7 @@ pub mod operations {
                     id: record.id,
                     vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
                     metadata: record.metadata,
-                    timestamp: record.timestamp.unwrap_or(0),
+                    timestamp: Some(record.timestamp.unwrap_or(0)),
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
@@ -847,7 +851,7 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
         .map(|i| VectorRecord {
             id: format!("{}_{}", prefix, i),
             vector: (0..dimension).map(|j| (i + j) as f32 * 0.1).collect(),
-            timestamp: (1000 + i) as i64,
+            timestamp: Some((1000 + i) as i64),
             metadata: std::collections::HashMap::from([
                 ("test_type".to_string(), SqlValue {
                     value: Some(
@@ -883,8 +887,10 @@ pub fn create_test_collection_with_storage(name: &str, _base_location: String) -
     let config = CollectionConfig {
         name: name.to_string(),
         dimension: 256, // Default dimension for generic tests
-        distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: StorageEngine::Sst as i32,
+        distance_metric: Some(DistanceMetric::Cosine as i32),
+        storage_engine: Some(StorageEngine::Sst as i32),
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         ..Default::default()
     };
 
@@ -993,8 +999,10 @@ pub async fn flush_sst_with_block_stats(
         config: Some(CollectionConfig {
             name: "test_collection".to_string(),
             dimension: vectors[0].vector.len() as u32,
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             ..Default::default()
         }),
         ..Default::default()

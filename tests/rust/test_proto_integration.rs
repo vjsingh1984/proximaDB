@@ -19,16 +19,16 @@ async fn test_quantization_config_fields() -> Result<()> {
     let basic_config = CollectionConfig {
         name: "basic_collection".to_string(),
         dimension: 128,
-        distance_metric: 1,            // COSINE
-        storage_engine: 1,             // VIPER
+        distance_metric: Some(1),            // COSINE
+        storage_engine: Some(1),             // VIPER
         tags: vec![],
         description: Some("Test collection".to_string()),
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
         storage_config: None,
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         owner: None,
         embedding_models: vec![],
     };
@@ -48,16 +48,16 @@ async fn test_index_config_field() -> Result<()> {
     let config_with_index = CollectionConfig {
         name: "indexed_collection".to_string(),
         dimension: 256,
-        distance_metric: 1,            // COSINE
-        storage_engine: 1,             // VIPER
+        distance_metric: Some(1),            // COSINE
+        storage_engine: Some(1),             // VIPER
         tags: vec![],
         description: Some("Test collection".to_string()),
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
         storage_config: None,
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         owner: None,
         embedding_models: vec![],
     };

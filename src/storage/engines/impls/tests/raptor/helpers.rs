@@ -191,11 +191,11 @@ pub fn create_collection_with_compression(compression: CompressionAlgorithm) -> 
         config: Some(CollectionConfig {
             dimension: 4,
             storage_config: Some(StorageConfig {
-                storage_path: "/tmp".to_string(),
+                storage_path: Some("/tmp".to_string()),
                 data_paths: vec![],
                 compression: Some(compression as i32),
-                max_file_size_mb: 100,
-                enable_caching: true,
+                max_file_size_mb: Some(100),
+                enable_caching: Some(true),
             }),
             ..Default::default()
         }),

@@ -58,17 +58,18 @@ fn ensure_test_directories() {
 
 /// Helper to create a test collection
 fn create_test_collection(id: &str, name: &str) -> Collection {
-    use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats, StorageAssignment};
+    use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats};
 
     Collection {
         id: id.to_string(),
         config: Some(CollectionConfig {
             name: name.to_string(),
             dimension: 128,
-            distance_metric: 0, // Cosine
-            storage_engine: 0,  // VIPER
+            distance_metric: Some(0), // Cosine
+            storage_engine: Some(0),  // VIPER
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(true),
             tags: vec!["test".to_string()],
-            auto_index_selection: true,
             owner: Some("test_user".to_string()),
             embedding_models: vec!["test_model".to_string()],
             ..Default::default()
@@ -80,14 +81,7 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: Some(StorageAssignment {
-            primary_path: "/data/collections".to_string(),
-            backup_paths: vec![],
-            engine: 0, // VIPER
-            engine_config: std::collections::HashMap::new(),
-            base_location: "/data".to_string(),
-            assigned_at: chrono::Utc::now().timestamp(),
-        }),
+        storage_assignment: None, // StorageAssignment no longer exists
     }
 }
 

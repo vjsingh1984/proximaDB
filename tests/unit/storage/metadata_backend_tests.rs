@@ -96,8 +96,8 @@ async fn test_single_metadata_backend_instance() {
         index_configs: vec![],
         quantization: None,
         embedding_models: vec![],
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         description: Some("Test collection".to_string()),
         tags: vec!["test".to_string()],
         owner: Some("test_user".to_string()),
@@ -175,8 +175,8 @@ async fn test_collection_service_dependency_injection() {
             index_configs: vec![],
             quantization: None,
             embedding_models: vec![],
-            primary_index: "default".to_string(),
-            auto_index_selection: false,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             description: Some("Test proto-first collection".to_string()),
             tags: vec!["test".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
@@ -208,7 +208,7 @@ async fn test_collection_service_dependency_injection() {
     assert_eq!(retrieved.config.as_ref().unwrap().dimension, 256);
     assert_eq!(
         retrieved.config.as_ref().unwrap().distance_metric,
-        DistanceMetric::Euclidean as i32
+        Some(DistanceMetric::Euclidean as i32)
     );
 
     // Verify collections list
@@ -289,8 +289,8 @@ async fn test_metadata_backend_persistence() {
                     index_configs: vec![],
                     quantization: None,
                     embedding_models: vec![],
-                    primary_index: "default".to_string(),
-                    auto_index_selection: false,
+                    primary_index: Some("default".to_string()),
+                    auto_index_selection: Some(false),
                     description: Some(format!("Proto-first collection {}", i)),
                     tags: vec![format!("proto-tag{}", i), "persist-test".to_string()],
                     owner: Some("test_user".to_string()),
@@ -321,9 +321,9 @@ async fn test_metadata_backend_persistence() {
         assert_eq!(collection_0.config.as_ref().unwrap().filterable_columns.len(), 2);
         assert!(collection_0.config.as_ref().unwrap().quantization.is_some());
         let quantization = collection_0.config.as_ref().unwrap().quantization.as_ref().unwrap();
-        assert!(quantization.enabled);
+        assert!(quantization.enabled.unwrap());
         assert!(!quantization.custom_levels.is_empty());
-        assert!(quantization.enable_progressive_search);
+        assert!(quantization.enable_progressive_search.unwrap());
     }
 
     // Second session - verify proto-first persistence and recovery
@@ -348,15 +348,15 @@ async fn test_metadata_backend_persistence() {
         assert_eq!(collection_1.id, "persist-uuid-1");
         assert_eq!(collection_1.config.as_ref().unwrap().dimension, 256);
         assert_eq!(collection_1.stats.as_ref().unwrap().vector_count, 100);
-        assert_eq!(collection_1.config.as_ref().unwrap().storage_engine, ProtoStorageEngine::Viper as i32);
+        assert_eq!(collection_1.config.as_ref().unwrap().storage_engine, Some(ProtoStorageEngine::Viper as i32));
 
         // Verify proto-first quantization config persisted
         let quantization = collection_1.config.as_ref().unwrap().quantization.as_ref().unwrap();
-        assert!(quantization.enabled);
+        assert!(quantization.enabled.unwrap());
         assert!(!quantization.custom_levels.is_empty());
-        assert!(quantization.enable_progressive_search);
-        assert_eq!(quantization.quality_threshold, 0.9);
-        assert_eq!(quantization.training_sample_size, 10000);
+        assert!(quantization.enable_progressive_search.unwrap());
+        assert_eq!(quantization.quality_threshold, Some(0.9));
+        assert_eq!(quantization.training_sample_size, Some(10000));
 
         // Test get by UUID
         let by_uuid = metadata_backend
@@ -417,8 +417,8 @@ async fn test_metadata_backend_deletion() {
                 index_configs: vec![],
                 quantization: None,
                 embedding_models: vec![],
-                primary_index: "default".to_string(),
-                auto_index_selection: false,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(false),
                 description: None,
                 tags: vec!["deletable".to_string()],
                 owner: None,
@@ -525,8 +525,8 @@ async fn test_concurrent_metadata_operations() {
                     index_configs: vec![],
                     quantization: None,
                     embedding_models: vec![],
-                    primary_index: "default".to_string(),
-                    auto_index_selection: false,
+                    primary_index: Some("default".to_string()),
+                    auto_index_selection: Some(false),
                     description: None,
                     tags: vec!["concurrent".to_string()],
                     owner: None,
@@ -618,8 +618,8 @@ async fn test_metadata_backend_updates() {
             index_configs: vec![],
             quantization: None,
             embedding_models: vec![],
-            primary_index: "default".to_string(),
-            auto_index_selection: false,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             description: Some("Initial description".to_string()),
             tags: vec!["v1".to_string()],
             owner: Some("user1".to_string()),
@@ -768,8 +768,8 @@ async fn test_metadata_backend_trait_implementation() {
             index_configs: vec![],
             quantization: None,
             embedding_models: vec![],
-            primary_index: "default".to_string(),
-            auto_index_selection: false,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             description: Some("Testing proto-first trait implementation".to_string()),
             tags: vec!["trait".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
@@ -797,7 +797,7 @@ async fn test_metadata_backend_trait_implementation() {
     assert_eq!(collection.config.as_ref().unwrap().dimension, 512);
     assert_eq!(
         collection.config.as_ref().unwrap().distance_metric,
-        DistanceMetric::Manhattan as i32
+        Some(DistanceMetric::Manhattan as i32)
     );
 
     // Verify proto-first features
@@ -813,10 +813,10 @@ async fn test_metadata_backend_trait_implementation() {
         .quantization
         .as_ref()
         .unwrap();
-    assert!(quantization.enabled);
+    assert!(quantization.enabled.unwrap());
     assert!(!quantization.custom_levels.is_empty());
-    assert!(quantization.enable_progressive_search);
-    assert_eq!(quantization.quality_threshold, 0.9);
+    assert!(quantization.enable_progressive_search.unwrap());
+    assert_eq!(quantization.quality_threshold, Some(0.9));
 
     let exists = provider
         .collection_exists("trait_test_proto")

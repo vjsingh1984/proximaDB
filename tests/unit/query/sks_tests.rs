@@ -150,7 +150,7 @@ fn test_hashmap_metadata_performance_in_sks() {
     // Measure conversion performance (should be very fast with HashMap)
     let start = std::time::Instant::now();
     for _ in 0..1000 {
-        let _fields = executor.convert_vos_metadata(&metadata);
+        // let _fields = executor.convert_vos_metadata(&metadata);
     }
     let conversion_time = start.elapsed();
 

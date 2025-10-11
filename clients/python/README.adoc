@@ -6,10 +6,25 @@
 
 The official Python client for ProximaDB — gRPC‑first, aligned with current proto.
 
+[IMPORTANT]
+.Security Features Status
+====
+**Development Status**: The enterprise security features (OAuth2, mTLS, RBAC) are currently in active development and not fully production-ready. Some functionality may have incomplete implementations or require additional server-side configuration.
+
+For production deployments, we recommend:
+
+* Use API Key authentication (fully implemented)
+* Use JWT authentication (fully implemented)
+* Test security features thoroughly in staging environments
+* Monitor the changelog for security feature updates
+
+OAuth2 and mTLS features are functional but may require additional testing and hardening before production use.
+====
+
 == Features
 
-* High Performance: **High Performance**: Optimized for ML workloads with numpy integration
-* **Async/Sync APIs**: Both synchronous and asynchronous gRPC client support
+* **High Performance**: Optimized for ML workloads with numpy integration
+* **Async/Sync APIs**: Both synchronous and asynchronous client support
 * **Type Safe**: Full typing support with dataclasses
 * **Batching**: Efficient batch operations for bulk inserts and searches
 * **Rich Filtering**: Advanced metadata filtering with complex queries
@@ -145,6 +160,440 @@ tenant_client = ProximaDBClient(auth_config=tenant_config)
 collections = tenant_client.list_collections()  # Only tenant's collections
 ----
 
+== Client Selection Guide
+
+ProximaDB Python SDK provides multiple client implementations optimized for different use cases. This guide helps you choose the right client for your application.
+
+=== Available Clients
+
+[cols="2,2,2,1"]
+|===
+|Client |Protocol |Use Case |Performance
+
+|`ProximaDBClient` (Unified)
+|gRPC + REST
+|General purpose, recommended default
+|High
+
+|`ProximaDBAsyncUnified`
+|gRPC + REST (Async)
+|High-concurrency async applications
+|Highest
+
+|`ProximaDBClientV1`
+|REST only
+|Simple HTTP-based integration
+|Good
+
+|`ProximaDBSyncGrpcClient`
+|gRPC only
+|Maximum performance, streaming
+|Highest
+|===
+
+=== Decision Tree
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TD
+    A[Choose Python Client] --> B{Need Async?}
+    B -->|Yes| C{Protocol Preference?}
+    B -->|No| D{Protocol Preference?}
+
+    C -->|Any| E[ProximaDBAsyncUnified<br/>Recommended]
+    C -->|gRPC Only| F[ProximaDBSyncGrpcClient<br/>Max Performance]
+
+    D -->|Any| G[ProximaDBClient<br/>Recommended]
+    D -->|REST Only| H[ProximaDBClientV1<br/>Simple]
+    D -->|gRPC Only| I[ProximaDBSyncGrpcClient<br/>Max Performance]
+
+    style E fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style G fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style I fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+----
+
+=== Detailed Comparisons
+
+==== ProximaDBClient (Unified) - **Recommended Default**
+
+[source,python]
+----
+from proximadb import ProximaDBClient
+
+client = ProximaDBClient(url="http://localhost:5678")
+----
+
+**Pros**:
+
+* Automatically selects gRPC or REST based on endpoint
+* Handles connection management and retries
+* Full feature support
+* Simple API
+
+**Cons**:
+
+* Synchronous only (blocks on I/O)
+
+**Best For**:
+
+* Web applications (Flask, Django)
+* CLI tools
+* Batch processing scripts
+* Most applications
+
+==== ProximaDBAsyncUnified - **Recommended for Async**
+
+[source,python]
+----
+from proximadb.unified_client_async import ProximaDBAsyncUnified
+
+async def main():
+    client = ProximaDBAsyncUnified(url="http://localhost:5678")
+    await client.astart()
+    # ... operations
+    await client.aclose()
+----
+
+**Pros**:
+
+* Non-blocking I/O for high concurrency
+* Handles thousands of concurrent requests
+* Automatic protocol selection
+
+**Cons**:
+
+* Requires async/await syntax
+* More complex error handling
+
+**Best For**:
+
+* FastAPI applications
+* High-concurrency services
+* Real-time applications
+* Microservices
+
+==== ProximaDBClientV1 - **Simplest**
+
+[source,python]
+----
+from proximadb import ProximaDBClientV1
+
+client = ProximaDBClientV1(url="http://localhost:5678")
+----
+
+**Pros**:
+
+* Pure REST, works everywhere
+* No gRPC dependencies
+* Simple debugging with cURL
+* Good for testing
+
+**Cons**:
+
+* REST only (slower than gRPC)
+* No streaming support
+* Higher latency
+
+**Best For**:
+
+* Quick prototyping
+* Environments where gRPC is restricted
+* Simple integration testing
+
+==== ProximaDBSyncGrpcClient - **Maximum Performance**
+
+[source,python]
+----
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+
+client = ProximaDBSyncGrpcClient(endpoint="localhost:5679")
+----
+
+**Pros**:
+
+* Maximum performance
+* Connection pooling (15-25% throughput improvement)
+* Lower latency
+* Efficient binary protocol
+
+**Cons**:
+
+* Requires gRPC endpoint (port 5679)
+* More complex setup
+* Less HTTP-tool friendly
+
+**Best For**:
+
+* High-throughput applications
+* Streaming workloads
+* Performance-critical services
+* ML training pipelines
+
+=== Quick Recommendations
+
+[source]
+----
+Use Case → Recommended Client
+
+Web app (Flask/Django) → ProximaDBClient
+FastAPI/async app → ProximaDBAsyncUnified
+CLI tool → ProximaDBClient
+Jupyter notebook → ProximaDBClientV1 (simple)
+ML training → ProximaDBSyncGrpcClient (performance)
+Microservice → ProximaDBAsyncUnified (async + performance)
+Quick test/prototype → ProximaDBClientV1 (simplest)
+----
+
+== Migration Between Clients
+
+All clients share similar APIs, making migration straightforward.
+
+=== From REST to Unified
+
+[source,python]
+----
+# Before: REST client
+from proximadb import ProximaDBClientV1
+client = ProximaDBClientV1(url="http://localhost:5678")
+
+# After: Unified (auto-selects gRPC if available)
+from proximadb import ProximaDBClient
+client = ProximaDBClient(url="http://localhost:5678")  # Same API
+
+# Or explicit gRPC
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+client = ProximaDBSyncGrpcClient(endpoint="localhost:5679")
+----
+
+=== From Sync to Async
+
+[source,python]
+----
+# Before: Synchronous
+from proximadb import ProximaDBClient
+client = ProximaDBClient(url="http://localhost:5678")
+results = client.search(collection="docs", vector=[0.1, 0.2], top_k=10)
+
+# After: Asynchronous
+from proximadb.unified_client_async import ProximaDBAsyncUnified
+import asyncio
+
+async def main():
+    client = ProximaDBAsyncUnified(url="http://localhost:5678")
+    await client.astart()
+    results = await client.search(collection="docs", vector=[0.1, 0.2], top_k=10)
+    await client.aclose()
+
+asyncio.run(main())
+----
+
+**Key Changes**:
+
+1. Add `async def` for functions
+2. Add `await` before all client calls
+3. Call `await client.astart()` and `await client.aclose()`
+4. Use `asyncio.run()` or event loop
+
+=== Client Feature Comparison
+
+[cols="2,1,1,1,1"]
+|===
+|Feature |ProximaDBClient |ProximaDBAsyncUnified |ProximaDBClientV1 |ProximaDBSyncGrpcClient
+
+|Async Support
+|No
+|Yes
+|No
+|No
+
+|gRPC Support
+|Yes
+|Yes
+|No
+|Yes
+
+|REST Support
+|Yes
+|Yes
+|Yes
+|No
+
+|Connection Pooling
+|Yes
+|Yes
+|No
+|Yes (15-25% boost)
+
+|Streaming
+|Limited
+|Limited
+|No
+|Yes
+
+|Retries
+|Yes
+|Yes
+|Yes
+|Yes
+
+|Circuit Breaker
+|Optional
+|Optional
+|Optional
+|Optional
+
+|Authentication
+|Full
+|Full
+|Full
+|Full
+|===
+
+== Performance Tips
+
+=== Connection Reuse
+
+**Always reuse client instances** - Creating new clients repeatedly is expensive.
+
+[source,python]
+----
+# Bad: Creates new connection for each request
+def process_vectors(vectors):
+    for vec in vectors:
+        client = ProximaDBClient(url="http://localhost:5678")  # Don't do this!
+        client.insert(collection="docs", vectors=[vec])
+
+# Good: Reuse single client instance
+client = ProximaDBClient(url="http://localhost:5678")
+def process_vectors(vectors):
+    for vec in vectors:
+        client.insert(collection="docs", vectors=[vec])
+----
+
+=== Batch Operations
+
+Use batch operations for bulk inserts (10-100x faster):
+
+[source,python]
+----
+# Bad: Individual inserts (slow)
+for vec in vectors:
+    client.insert(collection="docs", vectors=[vec])
+
+# Good: Batch insert (fast)
+client.insert(collection="docs", vectors=vectors)
+
+# Even better: Chunked batches for large datasets
+from proximadb.batching_unified import batch_insert_vectors
+
+batch_insert_vectors(
+    client=client,
+    collection="docs",
+    vectors=large_vector_list,
+    batch_size=1000  # Tune based on memory/network
+)
+----
+
+=== Protocol Selection
+
+For maximum performance, use gRPC directly:
+
+[source,python]
+----
+# Good: Automatic protocol selection
+client = ProximaDBClient(url="http://localhost:5678")
+
+# Better: Explicit gRPC for performance-critical code
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+client = ProximaDBSyncGrpcClient(endpoint="localhost:5679")
+----
+
+=== Async for Concurrency
+
+For high-concurrency workloads, use async client:
+
+[source,python]
+----
+import asyncio
+from proximadb.unified_client_async import ProximaDBAsyncUnified
+
+async def search_many(queries):
+    client = ProximaDBAsyncUnified(url="http://localhost:5678")
+    await client.astart()
+
+    # Process multiple queries concurrently
+    tasks = [
+        client.search(collection="docs", vector=query, top_k=10)
+        for query in queries
+    ]
+    results = await asyncio.gather(*tasks)
+
+    await client.aclose()
+    return results
+
+# Process 100 queries concurrently
+results = asyncio.run(search_many(query_vectors))
+----
+
+=== Connection Pooling
+
+gRPC client uses connection pooling automatically:
+
+[source,python]
+----
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+
+# Connection pool with 5 channels (automatic)
+client = ProximaDBSyncGrpcClient(
+    endpoint="localhost:5679",
+    pool_size=5  # Default: optimized for performance
+)
+
+# 15-25% throughput improvement over single connection
+----
+
+=== Memory Optimization
+
+For large vector operations:
+
+[source,python]
+----
+# Use numpy arrays (more efficient than lists)
+import numpy as np
+
+vectors = np.random.rand(10000, 768).astype(np.float32)
+client.insert(collection="docs", vectors=vectors)
+
+# Stream large result sets
+results = client.search(
+    collection="docs",
+    vector=query,
+    top_k=10000,
+    return_vectors=False  # Save bandwidth if not needed
+)
+----
+
+=== Timeouts and Retries
+
+Configure appropriate timeouts:
+
+[source,python]
+----
+from proximadb import ProximaDBClient, ClientConfig
+
+config = ClientConfig(
+    url="http://localhost:5678",
+    timeout_seconds=30,
+    max_retries=3,
+    retry_backoff_seconds=1.0
+)
+
+client = ProximaDBClient(config=config)
+----
+
 == Advanced gRPC Usage
 
 [source,python]
@@ -185,7 +634,6 @@ resp = client.execute_sql(
 )
 print(resp["rows"])  # list of dicts
 ----
-----
 
 // REST client references are being refactored; prefer gRPC for v1.
 
@@ -225,12 +673,12 @@ Search returns a consistent list of SearchResult regardless of protocol. When SK
 # Efficient batch insert
 batch_size = 1000
 for i in range(0, len(all_vectors), batch_size):
-batch = all_vectors[i:i+batch_size]
-await client.insert_vectors(
-collection_id="documents",
-vectors=batch,
-upsert_mode=True
-)
+    batch = all_vectors[i:i+batch_size]
+    await client.insert_vectors(
+        collection_id="documents",
+        vectors=batch,
+        upsert_mode=True
+    )
 ----
 
 === Metadata Filtering
@@ -239,13 +687,13 @@ upsert_mode=True
 ----
 # Search with filters
 results = await client.search_vectors(
-collection_id="documents",
-query_vectors=[query_vector],
-top_k=10,
-metadata_filter={
-"category": "science",
-"year": {"$gte": 2020}
-}
+    collection_id="documents",
+    query_vectors=[query_vector],
+    top_k=10,
+    metadata_filter={
+        "category": "science",
+        "year": {"$gte": 2020}
+    }
 )
 ----
 
@@ -319,6 +767,19 @@ print(resp)
 
 [source,python]
 ----
+from proximadb.protocols.rest_sync import ProximaDBClient
+
+rest = ProximaDBClient(url="http://localhost:5678")
+resp = rest.graph_traverse(
+    start_node_id="n1",
+    max_depth=3,
+    edge_types=["REL"],
+    algorithm="BFS",
+    enable_prefetch=True,
+    prefetch_budget=8,
+)
+print(resp)
+----
 
 === Async Examples
 
@@ -365,17 +826,6 @@ async def main():
     await client.aclose()
 
 asyncio.run(main())
-----
-resp = rest.graph_traverse(
-    start_node_id="n1",
-    max_depth=3,
-    edge_types=["REL"],
-    algorithm="BFS",
-    enable_prefetch=True,
-    prefetch_budget=8,
-)
-print(resp)
-----
 ----
 
 === Running Tests

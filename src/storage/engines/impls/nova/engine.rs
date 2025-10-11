@@ -66,7 +66,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 /// ```
 ///
 /// ### Key Differentiators:
-/// - **vs SST**: Columnar vs row-based, 10x better compression
+/// - **vs SST**: Pure columnar (Parquet) vs hybrid columnar (ProximaBlocks), 10x better compression
 /// - **vs VIPER**: Progressive search vs full scan, 5x faster selective queries
 /// - **vs SWIFT**: Higher compression vs lower latency
 ///

@@ -18,7 +18,7 @@ This guide provides comprehensive implementation instructions for optimizing Pro
 
 **Engines Using Proxima DataBlocks**:
 - ✅ **HELIX Engine**: Locality-optimized storage with Hilbert curve clustering
-- ✅ **SST Engine**: Row-based, write-optimized with three-stage filtering
+- ✅ **SST Engine**: Hybrid columnar (ProximaBlocks), write-optimized with three-stage filtering
 - ✅ **SWIFT Engine**: High-speed row-based with Proxima encoding
 
 **Engines NOT Using Proxima** (separate optimization paths):

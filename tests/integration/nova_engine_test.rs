@@ -73,9 +73,10 @@ async fn test_nova_engine_creation_and_insertion() {
     let config = CollectionConfig {
         name: "nova_test_collection".to_string(),
         dimension: 128,
-        distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: StorageEngine::Nova as i32,
-        auto_index_selection: true,
+        distance_metric: Some(DistanceMetric::Cosine as i32),
+        storage_engine: Some(StorageEngine::Nova as i32),
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(true),
         owner: Some("test_user".to_string()),
         embedding_models: vec!["test_model".to_string()],
         ..Default::default()

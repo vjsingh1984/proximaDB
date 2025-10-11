@@ -831,7 +831,7 @@ src/
 
 |**VIPER** |⚠️ Partial |Parquet columnar, cluster metadata
 |**NOVA** |⚠️ Partial |Quantized columns, advanced compression
-|**SST** |⚠️ Partial |Row-based OLTP, bloom filters
+|**SST** |⚠️ Partial |Hybrid columnar OLTP (ProximaBlocks), bloom filters
 |**SWIFT** |⚠️ Partial |Hierarchical enterprise, superblock cache
 |**RAPTOR** |✅ Active |Adaptive workloads, matrix optimization
 |**HELIX** |⚠️ Partial |Spatial locality optimization, Hilbert curves

@@ -32,7 +32,7 @@
 //!   - `ops/`: Compression, encoding, and performance optimizations
 //!
 //! - **`impls/`**: Engine implementations with unique characteristics
-//!   - `sst/`: Row-based SSTable for OLTP workloads
+//!   - `sst/`: Hybrid columnar SSTable (ProximaBlocks) for OLTP workloads
 //!   - `viper/`: Columnar Parquet for analytics
 //!   - `nova/`: Hybrid quantized columnar engine
 //!   - `swift/`: High-speed hierarchical blocks
@@ -42,7 +42,7 @@
 //!
 //! | Engine | Best For | Storage Format | Key Features |
 //! |--------|----------|----------------|--------------|
-//! | **SST** | Real-time queries, frequent updates | Row-based SSTable | Three-stage filtering, bloom filters |
+//! | **SST** | Real-time queries, frequent updates | Hybrid columnar (ProximaBlocks) | Three-stage filtering, bloom filters |
 //! | **VIPER** | Analytics, batch operations | Columnar Parquet | Advanced quantization, high compression |
 //! | **NOVA** | Mixed workloads | Hybrid columnar | Quantized columns, progressive search |
 //! | **SWIFT** | High-throughput | Hierarchical blocks | Superblock caching, ID indexing |

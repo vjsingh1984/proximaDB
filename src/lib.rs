@@ -238,13 +238,8 @@ impl ProximaDB {
         // Set data directories from storage_locations
         wal_config.multi_disk.data_directories = config.storage.storage_urls();
 
-        // Create GlobalManifestServiceConfig from WALConfig
-        let manifest_config = storage::persistence::write_ahead_log::manifest::GlobalManifestServiceConfig {
-            manifest_url: wal_config.global_manifest_url.clone().unwrap_or_else(|| "file:///tmp/proximadb/manifest".to_string()),
-            enable_checkpointing: true,
-            checkpoint_interval_secs: 300,
-        };
-        let _manifest_service = storage::persistence::write_ahead_log::manifest::init(manifest_config)?;
+        // Initialize global WAL manifest using WALConfig
+        let _manifest_service = storage::persistence::write_ahead_log::manifest::init(&wal_config).await?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
         // Step 4: Create StorageEngine using the CollectionService from SharedServices

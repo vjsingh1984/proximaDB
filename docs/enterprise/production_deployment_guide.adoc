@@ -18,7 +18,7 @@ ProximaDB offers **7 production-ready storage engines** optimized for different 
 %%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "REAL-TIME ENGINES"
-        A[SST Engine<br/>✓ Row-based OLTP<br/>200K vec/sec writes<br/>365ps query, 724μs @ 90% sparse]
+        A[SST Engine<br/>✓ Hybrid Columnar OLTP<br/>200K vec/sec writes<br/>365ps query, 724μs @ 90% sparse]
         B[SWIFT Engine<br/>✓ Fast Traversal<br/>Proxima encoding<br/>101μs flush latency]
     end
 

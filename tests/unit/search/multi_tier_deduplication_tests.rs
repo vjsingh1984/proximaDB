@@ -36,7 +36,7 @@ fn test_basic_deduplication() {
             });
             metadata
         },
-        timestamp: Utc::now().timestamp_micros(),
+        timestamp: Some(Utc::now().timestamp_micros()),
         updated_at: Some(Utc::now().timestamp_micros()),
         expires_at: None,
         version: Some(1),
@@ -89,7 +89,7 @@ fn test_deduplication_without_ids() {
                 id: String::new(),
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: std::collections::HashMap::new(),
-                timestamp: Utc::now().timestamp_micros(),
+                timestamp: Some(Utc::now().timestamp_micros()),
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
@@ -107,7 +107,7 @@ fn test_deduplication_without_ids() {
                 id: String::new(),
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: std::collections::HashMap::new(),
-                timestamp: Utc::now().timestamp_micros(),
+                timestamp: Some(Utc::now().timestamp_micros()),
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
@@ -155,7 +155,7 @@ fn test_metadata_filtering() {
                 });
                 metadata
             },
-            timestamp: Utc::now().timestamp_micros(),
+            timestamp: Some(Utc::now().timestamp_micros()),
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
@@ -174,7 +174,7 @@ fn test_metadata_filtering() {
                 });
                 metadata
             },
-            timestamp: Utc::now().timestamp_micros(),
+            timestamp: Some(Utc::now().timestamp_micros()),
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
@@ -227,7 +227,7 @@ fn test_simple_metadata_query() {
                 });
                 metadata
             },
-            timestamp: Utc::now().timestamp_micros(),
+            timestamp: Some(Utc::now().timestamp_micros()),
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
@@ -246,7 +246,7 @@ fn test_simple_metadata_query() {
                 });
                 metadata
             },
-            timestamp: Utc::now().timestamp_micros(),
+            timestamp: Some(Utc::now().timestamp_micros()),
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
@@ -284,7 +284,7 @@ fn test_mixed_engine_deduplication() {
         id: "vec1".to_string(),
         vector: vec![1.0, 0.0, 0.0],
         metadata: std::collections::HashMap::new(),
-        timestamp: Utc::now().timestamp_micros(),
+        timestamp: Some(Utc::now().timestamp_micros()),
         updated_at: Some(Utc::now().timestamp_micros()),
         expires_at: None,
         version: Some(1),
@@ -351,7 +351,7 @@ fn test_k_limit_enforcement() {
                 id: format!("vec{}", i),
                 vector: vec![i as f32, 0.0, 0.0],
                 metadata: std::collections::HashMap::new(),
-                timestamp: Utc::now().timestamp_micros(),
+                timestamp: Some(Utc::now().timestamp_micros()),
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
@@ -420,7 +420,7 @@ fn test_complex_deduplication_scenario() {
                     });
                     metadata
                 },
-                timestamp: Utc::now().timestamp_micros(),
+                timestamp: Some(Utc::now().timestamp_micros()),
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(version),
@@ -461,7 +461,7 @@ fn test_complex_deduplication_scenario() {
                     });
                     metadata
                 },
-                timestamp: Utc::now().timestamp_micros(),
+                timestamp: Some(Utc::now().timestamp_micros()),
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(version),
@@ -482,7 +482,7 @@ fn test_complex_deduplication_scenario() {
             id: String::new(),
             vector: vec![0.0, 0.0, 1.0],
             metadata: std::collections::HashMap::new(),
-            timestamp: Utc::now().timestamp_micros(),
+            timestamp: Some(Utc::now().timestamp_micros()),
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),

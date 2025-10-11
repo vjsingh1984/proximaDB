@@ -7,7 +7,7 @@
 //! 1. **Unified Search Interface**: All storage engines implement `search_vectors_unified`
 //!    - VIPER: Uses columnar Parquet format with predicate pushdown
 //!    - NOVA: Extends Parquet with additional statistics for aggressive I/O pruning
-//!    - SST: Uses row-based format with bloom filters and hierarchical blocks
+//!    - SST: Uses hybrid columnar format (ProximaBlocks) with bloom filters and hierarchical blocks
 //!    - SWIFT: Zero-overhead storage with progressive quantization
 //!
 //! 2. **Shared Infrastructure**:

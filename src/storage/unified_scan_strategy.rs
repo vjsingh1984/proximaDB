@@ -9,7 +9,7 @@
 //! Key insights from existing implementations:
 //! 1. All engines separate full scan (for compaction) from filtered scan (for queries)
 //! 2. Columnar engines (VIPER/NOVA) have predicate pushdown capabilities
-//! 3. Row-based engines (SST) use bloom filters and block-level filtering
+//! 3. Hybrid columnar engines (SST) use bloom filters and block-level filtering
 //! 4. RAPTOR provides a unified ScanStrategy enum pattern
 //! 5. Parallel processing is key for multi-file scenarios
 
@@ -92,7 +92,7 @@ pub struct ScanCapabilities {
     pub supports_row_group_pruning: bool,
     pub supports_parallel_column_evaluation: bool,
 
-    // From SST (row-based engine)
+    // From SST (hybrid columnar engine)
     pub supports_bloom_filters: bool,
     pub supports_block_cache: bool,
     pub supports_range_scans: bool,

@@ -215,20 +215,16 @@ pub async fn setup_test_directories(base_path: &Path) -> Result<()> {
 /// # Returns
 /// SstRecord with populated test data
 pub fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
-    use crate::proto::proximadb_v1::{SqlValue, sql_value};
+    use serde_json::json;
 
-    let mut metadata = HashMap::new();
-    metadata.insert(
-        "test_key".to_string(),
-        SqlValue {
-            value: Some(sql_value::Value::StringValue("test_value".to_string())),
-        },
-    );
+    let metadata = json!({
+        "test_key": "test_value"
+    });
 
     SstRecord {
         id: id.to_string(),
-        vector: vec![1.0; vector_dim],
-        metadata,
+        vector: Some(vec![1.0; vector_dim]),
+        metadata: Some(metadata),
         timestamp: 1000,
         is_tombstone: false,
         sequence_number: 1,
@@ -663,7 +659,7 @@ mod tests {
     fn test_create_test_record() {
         let record = create_test_record("test_id", 128);
         assert_eq!(record.id, "test_id");
-        assert_eq!(record.vector.len(), 128);
+        assert_eq!(record.vector.as_ref().unwrap().len(), 128);
         assert!(!record.is_tombstone);
     }
 

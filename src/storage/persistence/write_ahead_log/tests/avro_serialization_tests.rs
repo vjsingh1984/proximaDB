@@ -307,7 +307,7 @@ async fn test_avro_write_with_sync() {
 
     // Write with immediate sync
     let sequences = strategy
-        .write_vector_batch_with_sync(batch, collection_id, true)
+        .write_vector_batch_with_sync(batch, collection_id, "/tmp/proximadb-wal-test", true)
         .await
         .expect("Failed to write with sync");
 
@@ -405,7 +405,7 @@ async fn test_avro_multiple_collections() {
         let batch = create_test_batch(vectors);
 
         strategy
-            .write_native_batch(batch, &collection_id)
+            .write_native_batch(batch, &collection_id, "/tmp/proximadb-wal-test")
             .await
             .expect("Failed to write batch");
     }

@@ -607,7 +607,7 @@ mod tests {
                 record_count: 1,
                 size_bytes: 0,
                 compressed_size: 0,
-                timestamp: Some(0),
+                timestamp: 0,
                 compaction_level: 0,
                 has_deletes: false,
                 has_updates: false,

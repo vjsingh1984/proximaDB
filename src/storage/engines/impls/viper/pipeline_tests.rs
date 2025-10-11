@@ -27,7 +27,7 @@ use crate::compute::quantization::types::*;
                     value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
                 }))
                 .collect(),
-            timestamp: now,
+            timestamp: Some(now),
             updated_at: Some(now),
             expires_at: None,
             version: Some(1),

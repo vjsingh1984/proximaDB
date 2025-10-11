@@ -145,12 +145,12 @@ Unified vector database with 6 specialized storage engines and AutoML capabiliti
 - **AutoML** (`src/automl/`): Automated optimization, workload prediction
 
 ### Storage Engines
-- **SST**: Row-based, write-optimized, real-time (`src/storage/engines/impls/sst/`)
+- **SST**: Hybrid columnar (ProximaBlocks), write-optimized, real-time (`src/storage/engines/impls/sst/`)
 - **VIPER**: Columnar Parquet, analytics, batch (`src/storage/engines/impls/viper/`)
 - **NOVA**: Progressive columnar, mixed workloads (`src/storage/engines/impls/nova/`)
-- **SWIFT**: High-speed row-based, low-latency (`src/storage/engines/impls/swift/`)
+- **SWIFT**: Hybrid columnar, ultra-low latency (`src/storage/engines/impls/swift/`)
 - **RAPTOR**: Adaptive row-group, dynamic (`src/storage/engines/impls/raptor/`)
-- **HELIX**: Locality-optimized, Hilbert curve (`src/storage/engines/impls/helix/`)
+- **HELIX**: Hybrid columnar, locality-optimized, Hilbert curve (`src/storage/engines/impls/helix/`)
 
 ### Key Design Patterns
 - Proto-first pipeline with VectorRecord
@@ -160,17 +160,53 @@ Unified vector database with 6 specialized storage engines and AutoML capabiliti
 - UnifiedCachingFilesystem for all backends
 
 ### Configuration (`config/config.toml`)
-- `[server]`: Ports, data directories
-- `[storage]`: Engine selection, locations, metadata URLs
-- `[storage.write_buffer]`: Flush thresholds, memory limits
-- `[storage.compaction]`: Background optimization
-- `[compute.quantization]`: Compression algorithms
+
+**Primary Sections**:
+```toml
+[server]
+node_id = "proximadb-local"        # Node identifier
+bind_address = "127.0.0.1"         # Server bind address
+port = 5678                        # Primary HTTP/REST port
+data_dir = "/tmp/proximadb/data"   # Local data directory
+
+[storage]
+metadata_url = "file:///tmp/proximadb/metadata"  # Collection metadata storage
+
+# Multiple storage locations for data distribution
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb/d1"
+weight = 1
+tags = ["local", "disk1"]
+
+[storage.wal_config]
+global_manifest_url = "file:///tmp/proximadb/manifest"  # Global WAL manifest
+memory_flush_size_bytes = 16777216      # 16MB per-collection flush threshold
+global_flush_threshold = 4294967296     # 4GB total memory threshold
+enable_wal = true
+distribution_strategy = "LoadBalanced"   # WAL distribution across disks
+collection_affinity = true               # Keep collection data together
+
+[api]
+grpc_port = 5679    # gRPC port
+rest_port = 5678    # REST API port
+
+[monitoring]
+log_level = "info"
+dashboard_refresh_interval_seconds = 60
+```
+
+**Optional Advanced Sections** (commented in config, defaults applied):
+- `[storage.assignment_config]`: Storage location assignment strategy
+- `[storage.sst_config]`: SST engine-specific settings
+- `[storage.viper_config]`: VIPER engine-specific settings
+- `[cache]`: Cache memory limits
+- `[security]`: Security and authentication settings
 
 ### Feature Flags
 - `cloud-full`: All cloud storage backends
 - `aws`, `azure`, `gcp`: Individual cloud backends
 - `rocksdb`: RocksDB metadata backend
-- `gpu`: GPU acceleration (CUDA, ROCm, MPS, OpenCL)
+- `gpu`: GPU acceleration (infrastructure exists, kernels present, but compilation disabled - uses CPU fallback, full support planned 2025)
 
 ## Build and Development
 
@@ -217,9 +253,12 @@ Cloud-optimized global WAL manifest for multi-disk deployments.
 **Configuration**:
 ```toml
 [storage.wal_config]
-global_manifest_url = "file:///path/to/manifest"  # Or s3://bucket/manifest
+global_manifest_url = "file:///path/to/manifest"  # Or s3://bucket/manifest, azblob://container/manifest, gs://bucket/manifest
 enable_wal = true
-write_buffer_size_mb = 8192
+memory_flush_size_bytes = 16777216      # 16MB - per-collection flush threshold
+global_flush_threshold = 4294967296     # 4GB - total memory threshold across all collections
+distribution_strategy = "LoadBalanced"   # Options: LoadBalanced, RoundRobin, Random
+collection_affinity = true               # Keep collection's WAL segments on same disk
 ```
 
 **Architecture** (`src/storage/persistence/write_ahead_log/manifest/`):
@@ -262,7 +301,7 @@ RUST_LOG=info cargo run --bin proximadb-server 2>&1 | grep -i "manifest\|global"
 
 ## Server Startup Sequence
 
-1. **Hardware Detection** (15-20ms): CPU, SIMD, GPU, Memory
+1. **Hardware Detection** (15-20ms): CPU, SIMD, Memory
 2. **SharedServices**: Metadata backend, collection service, cache orchestrator
 3. **Global WAL Manifest**: Initialize, load segments, track LSN
 4. **Storage Engine**: WAL recovery, load collections, start compaction

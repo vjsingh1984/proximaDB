@@ -501,7 +501,7 @@ graph TB
     end
 
     subgraph ENGINES["Storage Engines"]
-        SST[SST Engine<br/>Row-Based OLTP]
+        SST[SST Engine<br/>Hybrid Columnar OLTP]
         SWIFT[SWIFT Engine<br/>Hierarchical Storage]
         HELIX[HELIX Engine<br/>Time-Series Optimized]
     end

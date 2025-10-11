@@ -95,8 +95,8 @@ mod helix_integration_tests {
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
-                distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
                 ..Default::default()
             }),
             stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
@@ -184,8 +184,8 @@ mod helix_integration_tests {
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
-                distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
                 ..Default::default()
             }),
             stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
@@ -258,7 +258,7 @@ mod helix_integration_tests {
                     });
                     metadata
                 },
-                timestamp: (50 + i) as i64,
+                timestamp: Some((50 + i) as i64),
                 updated_at: None,
                 expires_at: None,
                 version: None,
@@ -295,8 +295,8 @@ mod helix_integration_tests {
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
-                distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
                 ..Default::default()
             }),
             stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
@@ -405,8 +405,8 @@ mod helix_integration_tests {
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
-                distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
                 ..Default::default()
             }),
             stats: Some(proximadb::proto::proximadb_v1::CollectionStats {

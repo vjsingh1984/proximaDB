@@ -120,7 +120,7 @@ fn create_test_vector(id: &str) -> VectorRecord {
         id: id.to_string(),
         vector: vec![0.1; 128],
         metadata,
-        timestamp: 1234567890i64,
+        timestamp: Some(1234567890i64),
         updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),

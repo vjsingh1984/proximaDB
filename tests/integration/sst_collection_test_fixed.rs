@@ -169,10 +169,11 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
     let collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
         name: collection_id.to_string(),
         dimension: query_vector.len() as u32,
-        distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-        storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+        distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+        storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         tags: vec![],
-        auto_index_selection: false,
         embedding_models: vec![],
         owner: None,
         ..Default::default()

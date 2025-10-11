@@ -406,7 +406,7 @@ impl RecoveryManager {
                     let serializer = SerializerFactory::create(file_info.format);
                     let vectors = serializer.deserialize_batch(&data).context("Failed to deserialize WAL data")?;
                     let count = vectors.len() as u64;
-                    let result = Self::flush_recovered_vectors(&file_info, vectors, &disk_manager, &storage_engines, recovery_mode, &e.storage_path, &metadata_provider).await?;
+                    let result = Self::flush_recovered_vectors(&file_info, vectors, &disk_manager, &storage_engines, recovery_mode, &e.storage_url, &metadata_provider).await?;
                     if result.success {
                         files_recovered += 1;
                         vectors_recovered += count;

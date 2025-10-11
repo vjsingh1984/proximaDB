@@ -24,7 +24,7 @@ fn create_vector_record(
         id: id.to_string(),
         vector,
         metadata: HashMap::new(),
-        timestamp: now,
+        timestamp: Some(now),
         updated_at: Some(now),
         expires_at: expires_at.map(|v| v as i64),
         version,

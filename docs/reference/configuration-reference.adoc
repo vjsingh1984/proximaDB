@@ -1,0 +1,977 @@
+= ProximaDB Configuration Reference
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+Complete reference for ProximaDB configuration options in `config/config.toml`. This document describes all available settings, their defaults, and usage guidelines.
+
+== Overview
+
+ProximaDB uses TOML format for configuration. The configuration file is typically located at:
+
+* Development: `config/config.toml`
+* Production: Specified via `--config` flag or `PROXIMADB_CONFIG` environment variable
+
+[source,bash]
+----
+# Start with custom config
+proximadb-server --config /etc/proximadb/config.toml
+
+# Or via environment variable
+export PROXIMADB_CONFIG=/etc/proximadb/config.toml
+proximadb-server
+----
+
+== Configuration Philosophy
+
+ProximaDB follows a **"smart defaults"** philosophy:
+
+* Minimal configuration required to start
+* Sensible defaults for most use cases
+* Override only what you need
+* Self-documenting with inline comments
+
+[NOTE]
+====
+**Minimal Config**: ProximaDB can start with just 3 settings:
+```toml
+[server]
+port = 5678
+data_dir = "/data/proximadb"
+
+[storage]
+metadata_url = "file:///data/proximadb/metadata"
+```
+====
+
+== Server Configuration
+
+=== `[server]` Section
+
+Core server settings for the ProximaDB node.
+
+[source,toml]
+----
+[server]
+node_id = "proximadb-local"
+bind_address = "127.0.0.1"
+port = 5678
+data_dir = "/tmp/proximadb/data"
+----
+
+==== `node_id`
+
+**Type**: `string` +
+**Default**: `"proximadb-local"` +
+**Required**: No
+
+Unique identifier for this ProximaDB node. Used in:
+* Distributed deployments for node identification
+* Logging and monitoring
+* Cluster coordination (future)
+
+[source,toml]
+----
+node_id = "proximadb-prod-01"
+----
+
+**Best Practices**:
+* Use descriptive names: `proximadb-{env}-{region}-{number}`
+* Keep consistent across restarts
+* Unique per node in distributed setups
+
+==== `bind_address`
+
+**Type**: `string` +
+**Default**: `"127.0.0.1"` +
+**Required**: No
+
+IP address the server binds to for incoming connections.
+
+[source,toml]
+----
+# Listen on all interfaces (production)
+bind_address = "0.0.0.0"
+
+# Listen on specific interface
+bind_address = "192.168.1.100"
+
+# Localhost only (development)
+bind_address = "127.0.0.1"
+----
+
+[WARNING]
+====
+Using `0.0.0.0` exposes the server to all network interfaces. Ensure proper firewall rules are in place.
+====
+
+==== `port`
+
+**Type**: `integer` +
+**Default**: `5678` +
+**Required**: Yes
+
+Primary REST API port.
+
+[source,toml]
+----
+port = 5678  # Default
+port = 8080  # Alternative
+----
+
+**Port Usage**:
+* `port`: REST API (HTTP/HTTPS)
+* `port + 1` (5679): gRPC API (automatically configured)
+
+==== `data_dir`
+
+**Type**: `string` +
+**Default**: `"/tmp/proximadb/data"` +
+**Required**: Yes
+
+Base directory for ProximaDB data files. Used for temporary files, caches, and internal state.
+
+[source,toml]
+----
+# Development
+data_dir = "/tmp/proximadb/data"
+
+# Production
+data_dir = "/var/lib/proximadb/data"
+----
+
+[NOTE]
+====
+This is separate from storage locations. The `data_dir` is for ProximaDB internals, while storage locations (configured in `[storage]`) hold actual vector data.
+====
+
+== API Configuration
+
+=== `[api]` Section
+
+API server configuration for REST and gRPC protocols.
+
+[source,toml]
+----
+[api]
+grpc_port = 5679
+rest_port = 5678
+----
+
+==== `grpc_port`
+
+**Type**: `integer` +
+**Default**: `5679` +
+**Required**: No
+
+Port for gRPC API server.
+
+[source,toml]
+----
+grpc_port = 5679  # Default
+grpc_port = 9090  # Alternative
+----
+
+**When to Use gRPC**:
+* Streaming operations
+* Language clients with gRPC support
+* Better performance for high-throughput workloads
+
+==== `rest_port`
+
+**Type**: `integer` +
+**Default**: `5678` +
+**Required**: No
+
+Port for REST API server.
+
+[source,toml]
+----
+rest_port = 5678  # Default
+rest_port = 8080  # Alternative
+----
+
+**When to Use REST**:
+* Browser-based applications
+* cURL/HTTP client testing
+* Simpler integration
+* Standard HTTP tooling
+
+== Storage Configuration
+
+=== `[storage]` Section
+
+Storage backend configuration for metadata and vector data.
+
+[source,toml]
+----
+[storage]
+metadata_url = "file:///tmp/proximadb/metadata"
+
+[[storage.storage_locations]]
+url = "file:///data/proximadb/d1"
+weight = 1
+tags = ["ssd", "local"]
+----
+
+==== `metadata_url`
+
+**Type**: `string` +
+**Default**: None +
+**Required**: Yes
+
+URL for metadata storage (collection definitions, schemas, indices).
+
+**Supported Backends**:
+
+[source,toml]
+----
+# Local filesystem
+metadata_url = "file:///var/lib/proximadb/metadata"
+
+# RocksDB (when compiled with rocksdb feature)
+metadata_url = "rocksdb:///var/lib/proximadb/metadata.db"
+
+# Cloud storage (future)
+# metadata_url = "s3://bucket/proximadb/metadata"
+----
+
+**Best Practices**:
+* Use fast, reliable storage (SSD preferred)
+* Ensure adequate space (typically < 1GB for metadata)
+* Back up regularly (contains all schema information)
+
+==== `storage_locations`
+
+**Type**: Array of tables +
+**Default**: None +
+**Required**: Yes (at least one location)
+
+Defines where vector data is stored. ProximaDB distributes collections across these locations.
+
+[source,toml]
+----
+[[storage.storage_locations]]
+url = "file:///data/proximadb/d1"
+weight = 1
+tags = ["ssd", "local", "primary"]
+
+[[storage.storage_locations]]
+url = "file:///data/proximadb/d2"
+weight = 2  # 2x more likely to receive new collections
+tags = ["ssd", "local", "secondary"]
+
+[[storage.storage_locations]]
+url = "s3://my-bucket/proximadb/"
+weight = 1
+tags = ["cloud", "backup"]
+----
+
+**Fields**:
+* `url` (required): Storage location URL
+* `weight` (optional, default: 1): Relative weight for distribution
+* `tags` (optional): Labels for filtering/selection
+
+**URL Formats**:
+* Local: `file:///path/to/storage`
+* S3: `s3://bucket/prefix/` (requires AWS credentials)
+* Azure: `azure://container/prefix/` (requires Azure credentials)
+* GCS: `gcs://bucket/prefix/` (requires GCP credentials)
+
+==== `assignment_config`
+
+**Type**: Table (optional) +
+**Default**: Smart defaults
+
+Controls how collections are assigned to storage locations.
+
+[source,toml]
+----
+[storage.assignment_config]
+strategy = "hash"      # Options: hash, round-robin, weighted
+affinity = true        # Keep collection data together
+replication = 1        # Number of replicas (future)
+----
+
+**Strategies**:
+* `hash`: Deterministic hash-based assignment (default, best for consistency)
+* `round-robin`: Rotate through locations sequentially
+* `weighted`: Respect location weights for distribution
+
+**Affinity**:
+* `true` (default): All files for a collection go to same location
+* `false`: Files can be spread across locations
+
+[TIP]
+====
+Use `affinity = true` for better locality and performance. Disable only for extreme parallelism scenarios.
+====
+
+=== `[storage.wal_config]` Section
+
+Write-Ahead Log (WAL) configuration for durability and recovery.
+
+[source,toml]
+----
+[storage.wal_config]
+global_manifest_url = "file:///tmp/proximadb/manifest"
+memory_flush_size_bytes = 16777216     # 16MB
+global_flush_threshold = 4294967296    # 4GB
+enable_wal = true
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+----
+
+==== `global_manifest_url`
+
+**Type**: `string` +
+**Default**: `"file:///tmp/proximadb/manifest"` +
+**Required**: Yes (when WAL enabled)
+
+Location for global WAL manifest that tracks all WAL segments across disks.
+
+[source,toml]
+----
+# Local filesystem
+global_manifest_url = "file:///var/lib/proximadb/manifest"
+
+# Cloud storage for distributed deployments
+global_manifest_url = "s3://bucket/proximadb/manifest"
+----
+
+**v0.1.4 Feature**: Cloud-optimized global WAL manifest for multi-disk deployments with centralized LSN tracking.
+
+==== `memory_flush_size_bytes`
+
+**Type**: `integer` +
+**Default**: `16777216` (16MB) +
+**Required**: No
+
+Write buffer size before flushing to WAL. Larger values = better write throughput, higher memory usage.
+
+[source,toml]
+----
+memory_flush_size_bytes = 16777216   # 16MB (default)
+memory_flush_size_bytes = 67108864   # 64MB (high write throughput)
+memory_flush_size_bytes = 8388608    # 8MB (low memory)
+----
+
+**Tuning Guide**:
+* High write throughput: 64-128MB
+* Balanced: 16-32MB (default)
+* Low memory: 4-8MB
+
+==== `global_flush_threshold`
+
+**Type**: `integer` +
+**Default**: `4294967296` (4GB) +
+**Required**: No
+
+Total WAL size threshold before triggering compaction.
+
+[source,toml]
+----
+global_flush_threshold = 4294967296   # 4GB (default)
+global_flush_threshold = 8589934592   # 8GB (larger datasets)
+----
+
+==== `enable_wal`
+
+**Type**: `boolean` +
+**Default**: `true` +
+**Required**: No
+
+Enable/disable Write-Ahead Log.
+
+[source,toml]
+----
+enable_wal = true   # Recommended for durability
+enable_wal = false  # Only for testing/benchmarking
+----
+
+[WARNING]
+====
+Disabling WAL removes durability guarantees. Data in memory buffers will be lost on crashes. **Only disable for testing.**
+====
+
+==== `distribution_strategy`
+
+**Type**: `string` +
+**Default**: `"LoadBalanced"` +
+**Required**: No
+
+How WAL segments are distributed across storage locations.
+
+[source,toml]
+----
+distribution_strategy = "LoadBalanced"  # Distribute evenly (default)
+distribution_strategy = "Local"         # Prefer local storage
+----
+
+==== `collection_affinity`
+
+**Type**: `boolean` +
+**Default**: `true` +
+**Required**: No
+
+Keep all WAL segments for a collection together.
+
+[source,toml]
+----
+collection_affinity = true   # Better locality (default)
+collection_affinity = false  # Maximum distribution
+----
+
+=== Engine-Specific Configuration
+
+==== `[storage.sst_config]` Section (Optional)
+
+Configuration for SST (hybrid columnar) engine.
+
+[source,toml]
+----
+[storage.sst_config]
+block_size_kb = 2048                        # 2MB blocks (default: 4MB)
+compression = "zstd"                        # Options: zstd, lz4, snappy, none
+compression_level = 3                       # 1-22 (higher = better compression, slower)
+vector_encoding_strategy = "FullVector"     # FullVector, TransposeFieldEncoded, GroupedFieldEncoded
+bloom_filter_fp_rate = 0.01                 # Bloom filter false positive rate (1%)
+compaction_threshold = 10                   # Files before compaction
+----
+
+**Encoding Strategies**:
+* `FullVector`: Standard row-based vector storage (fast, less compression)
+* `TransposeFieldEncoded`: Transpose vectors for better compression (recommended)
+* `GroupedFieldEncoded`: Group similar vectors for compression (best compression)
+
+==== `[storage.viper_config]` Section (Optional)
+
+Configuration for VIPER (columnar Parquet) engine.
+
+[source,toml]
+----
+[storage.viper_config]
+row_group_size = 100000        # Vectors per row group
+compression = "zstd"           # Options: zstd, snappy, gzip, brotli
+compression_level = 3          # Compression level
+enable_statistics = true       # Parquet statistics for pruning
+page_size_kb = 1024           # 1MB pages
+----
+
+**Tuning**:
+* Larger `row_group_size` = better compression, slower queries
+* Smaller `row_group_size` = faster point queries, less compression
+* Recommended: 50K-200K for balanced workloads
+
+==== `[storage.nova_config]` Section (Optional)
+
+Configuration for NOVA (progressive columnar) engine.
+
+[source,toml]
+----
+[storage.nova_config]
+initial_format = "row"          # Start with row format
+transition_threshold = 50000    # Transition to columnar at 50K vectors
+compression = "zstd"
+enable_adaptive = true          # Automatically adapt format
+----
+
+==== `[storage.swift_config]` Section (Optional)
+
+Configuration for SWIFT (hierarchical) engine.
+
+[source,toml]
+----
+[storage.swift_config]
+superblock_cache_mb = 100            # SuperBlock cache size
+datablock_max_records = 5000         # Records per DataBlock
+enable_progressive_search = true     # Progressive hierarchical search
+quantization_level = "INT8"          # Default quantization
+----
+
+==== `[storage.helix_config]` Section (Optional)
+
+Configuration for HELIX (locality-optimized) engine.
+
+[source,toml]
+----
+[storage.helix_config]
+pca_dimensions = 16                  # Dimensions for Hilbert curve (8-64)
+level0_file_num_compaction_trigger = 4
+max_levels = 7
+size_ratio = 10.0
+enable_liquid_clustering = true      # Adaptive clustering
+zone_map_enabled = true             # Zone maps for pruning
+----
+
+**PCA Dimensions**:
+* Lower (8-16): Faster, less accurate clustering
+* Medium (16-32): Balanced (recommended)
+* Higher (32-64): Better clustering, more overhead
+
+==== `[storage.raptor_config]` Section (Optional)
+
+Configuration for RAPTOR (adaptive) engine.
+
+[source,toml]
+----
+[storage.raptor_config]
+row_group_size = 10000
+adaptive_threshold = 50000
+compression = "zstd"
+----
+
+== Cache Configuration
+
+=== `[cache]` Section (Optional)
+
+Memory cache configuration for improved performance.
+
+[source,toml]
+----
+[cache]
+total_memory_mb = 512              # Total cache memory
+vector_cache_mb = 256              # Vector data cache
+metadata_cache_mb = 128            # Metadata cache
+eviction_policy = "lru"            # Options: lru, lfu, adaptive
+----
+
+==== `total_memory_mb`
+
+**Type**: `integer` +
+**Default**: Auto-detected (10% of system RAM) +
+**Required**: No
+
+Total memory allocated to caching.
+
+[source,toml]
+----
+total_memory_mb = 512    # 512MB
+total_memory_mb = 2048   # 2GB
+total_memory_mb = 8192   # 8GB
+----
+
+**Sizing Guide**:
+* Small (< 10GB data): 512MB - 1GB
+* Medium (10-100GB data): 2GB - 4GB
+* Large (> 100GB data): 8GB - 16GB
+
+==== `eviction_policy`
+
+**Type**: `string` +
+**Default**: `"lru"` +
+**Required**: No
+
+Cache eviction strategy.
+
+[source,toml]
+----
+eviction_policy = "lru"       # Least Recently Used (default)
+eviction_policy = "lfu"       # Least Frequently Used
+eviction_policy = "adaptive"  # Adaptive (future)
+----
+
+== Monitoring Configuration
+
+=== `[monitoring]` Section
+
+Logging and monitoring configuration.
+
+[source,toml]
+----
+[monitoring]
+log_level = "info"
+dashboard_refresh_interval_seconds = 60
+enable_metrics = true
+metrics_port = 9090
+----
+
+==== `log_level`
+
+**Type**: `string` +
+**Default**: `"info"` +
+**Required**: No
+
+Logging verbosity level.
+
+[source,toml]
+----
+log_level = "error"    # Errors only
+log_level = "warn"     # Warnings and errors
+log_level = "info"     # Informational (default)
+log_level = "debug"    # Detailed debugging
+log_level = "trace"    # Very verbose (development only)
+----
+
+**Environment Override**:
+[source,bash]
+----
+RUST_LOG=debug proximadb-server  # Override via environment
+RUST_LOG=proximadb=debug,proximadb::storage=trace  # Module-specific
+----
+
+==== `dashboard_refresh_interval_seconds`
+
+**Type**: `integer` +
+**Default**: `60` +
+**Minimum**: `15` +
+**Required**: No
+
+How often to refresh monitoring dashboard (if enabled).
+
+[source,toml]
+----
+dashboard_refresh_interval_seconds = 60   # Every minute (default)
+dashboard_refresh_interval_seconds = 30   # Every 30 seconds
+----
+
+== Security Configuration
+
+=== `[security]` Section (Optional)
+
+[WARNING]
+====
+**Version 0.1.4**: Security features are under development. Use network-level security (firewalls, VPNs) for production deployments.
+====
+
+[source,toml]
+----
+[security]
+enabled = false              # Enable authentication/authorization
+tls_cert_path = "/path/to/cert.pem"
+tls_key_path = "/path/to/key.pem"
+----
+
+**Planned Features** (2025 Roadmap):
+* TLS/SSL encryption
+* API key authentication
+* Role-based access control (RBAC)
+* Tenant isolation
+
+See link:../09-roadmap/future/040-051-enterprise-security.adoc[Enterprise Security Roadmap] for details.
+
+== Complete Example Configurations
+
+=== Development Configuration
+
+Minimal setup for local development.
+
+[source,toml]
+----
+[server]
+node_id = "dev-local"
+bind_address = "127.0.0.1"
+port = 5678
+data_dir = "/tmp/proximadb/data"
+
+[storage]
+metadata_url = "file:///tmp/proximadb/metadata"
+
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb/storage"
+weight = 1
+tags = ["local"]
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+
+[monitoring]
+log_level = "debug"
+----
+
+=== Production Configuration (Single Server)
+
+Optimized for production on a single server with multiple disks.
+
+[source,toml]
+----
+[server]
+node_id = "proximadb-prod-01"
+bind_address = "0.0.0.0"  # Listen on all interfaces
+port = 5678
+data_dir = "/var/lib/proximadb/data"
+
+[storage]
+metadata_url = "file:///var/lib/proximadb/metadata"
+
+# Multiple SSD disks for distribution
+[[storage.storage_locations]]
+url = "file:///mnt/ssd1/proximadb"
+weight = 1
+tags = ["ssd", "primary"]
+
+[[storage.storage_locations]]
+url = "file:///mnt/ssd2/proximadb"
+weight = 1
+tags = ["ssd", "primary"]
+
+[[storage.storage_locations]]
+url = "file:///mnt/ssd3/proximadb"
+weight = 1
+tags = ["ssd", "primary"]
+
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+[storage.wal_config]
+global_manifest_url = "file:///var/lib/proximadb/manifest"
+memory_flush_size_bytes = 67108864  # 64MB
+global_flush_threshold = 8589934592  # 8GB
+enable_wal = true
+distribution_strategy = "LoadBalanced"
+collection_affinity = true
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+
+[cache]
+total_memory_mb = 4096  # 4GB
+eviction_policy = "lru"
+
+[monitoring]
+log_level = "info"
+dashboard_refresh_interval_seconds = 60
+----
+
+=== Cloud Configuration (S3 Backend)
+
+Configuration for cloud deployment with S3 storage.
+
+[source,toml]
+----
+[server]
+node_id = "proximadb-cloud-01"
+bind_address = "0.0.0.0"
+port = 5678
+data_dir = "/var/lib/proximadb/data"
+
+[storage]
+# Local metadata for fast access
+metadata_url = "file:///var/lib/proximadb/metadata"
+
+# S3 storage for vector data
+[[storage.storage_locations]]
+url = "s3://my-bucket/proximadb/primary/"
+weight = 2
+tags = ["cloud", "s3", "primary"]
+
+# Local SSD for hot data cache
+[[storage.storage_locations]]
+url = "file:///mnt/ssd/proximadb"
+weight = 1
+tags = ["local", "cache"]
+
+[storage.assignment_config]
+strategy = "weighted"  # Prefer S3 (weight=2)
+affinity = true
+
+[storage.wal_config]
+# S3 manifest for cloud deployments
+global_manifest_url = "s3://my-bucket/proximadb/manifest/"
+memory_flush_size_bytes = 67108864
+enable_wal = true
+distribution_strategy = "LoadBalanced"
+
+[cache]
+total_memory_mb = 8192  # Large cache for cloud latency
+
+[monitoring]
+log_level = "info"
+----
+
+== Environment Variables
+
+ProximaDB supports environment variable overrides for configuration:
+
+[source,bash]
+----
+# Configuration file location
+export PROXIMADB_CONFIG=/etc/proximadb/config.toml
+
+# Server settings
+export PROXIMADB_PORT=8080
+export PROXIMADB_BIND_ADDRESS=0.0.0.0
+export PROXIMADB_DATA_DIR=/data/proximadb
+
+# Storage
+export PROXIMADB_METADATA_URL=file:///data/metadata
+
+# Logging
+export RUST_LOG=info
+export RUST_LOG=proximadb=debug  # Module-specific
+
+# AWS credentials (for S3 storage)
+export AWS_ACCESS_KEY_ID=your_key
+export AWS_SECRET_ACCESS_KEY=your_secret
+export AWS_REGION=us-east-1
+
+# Azure credentials (for Azure storage)
+export AZURE_STORAGE_ACCOUNT=your_account
+export AZURE_STORAGE_KEY=your_key
+
+# GCP credentials (for GCS storage)
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
+----
+
+== Configuration Validation
+
+ProximaDB validates configuration on startup:
+
+[source,bash]
+----
+# Validate configuration without starting server
+proximadb-server --config config.toml --validate
+
+# Check which configuration is being used
+proximadb-server --config config.toml --print-config
+----
+
+== Troubleshooting
+
+=== Common Configuration Issues
+
+**Issue**: Server won't start - "bind address already in use"
+
+**Solution**: Change the port or stop the conflicting process
+[source,toml]
+----
+[server]
+port = 8080  # Use alternative port
+----
+
+**Issue**: Out of memory errors
+
+**Solution**: Reduce cache size or increase system memory
+[source,toml]
+----
+[cache]
+total_memory_mb = 256  # Reduce cache
+----
+
+[source,toml]
+----
+[storage.wal_config]
+memory_flush_size_bytes = 8388608  # 8MB (reduce buffer)
+----
+
+**Issue**: Slow writes
+
+**Solution**: Increase write buffer size
+[source,toml]
+----
+[storage.wal_config]
+memory_flush_size_bytes = 134217728  # 128MB
+----
+
+**Issue**: WAL manifest corruption
+
+**Solution**: Restore from backup or reinitialize
+[source,bash]
+----
+# Backup manifest before recovery
+cp -r /var/lib/proximadb/manifest /var/lib/proximadb/manifest.backup
+
+# Remove corrupted manifest (will rebuild on startup)
+rm -rf /var/lib/proximadb/manifest/*
+----
+
+== Migration Guide
+
+=== Upgrading from v0.1.3 to v0.1.4
+
+**New Features**:
+* Global WAL manifest system
+* Multi-disk storage distribution
+* Cloud storage backends
+
+**Configuration Changes Required**:
+
+[source,toml]
+----
+# v0.1.3 (old)
+[storage]
+storage_path = "/data/proximadb"
+
+# v0.1.4 (new)
+[storage]
+metadata_url = "file:///data/proximadb/metadata"
+
+[[storage.storage_locations]]
+url = "file:///data/proximadb/storage"
+weight = 1
+
+[storage.wal_config]
+global_manifest_url = "file:///data/proximadb/manifest"
+enable_wal = true
+----
+
+**Migration Steps**:
+1. Backup existing data
+2. Update configuration file
+3. Restart server (will auto-migrate)
+
+== Best Practices
+
+=== Performance Tuning
+
+**High Write Throughput**:
+[source,toml]
+----
+[storage.wal_config]
+memory_flush_size_bytes = 134217728  # 128MB
+global_flush_threshold = 17179869184  # 16GB
+
+[cache]
+total_memory_mb = 2048
+----
+
+**Low Latency Queries**:
+[source,toml]
+----
+[cache]
+total_memory_mb = 8192  # Large cache
+eviction_policy = "lru"
+
+[storage.sst_config]
+bloom_filter_fp_rate = 0.001  # Lower false positives
+----
+
+**Large Scale (Billions of Vectors)**:
+[source,toml]
+----
+# Use HELIX or VIPER engine for collections
+# Distribute across multiple disks
+
+[[storage.storage_locations]]
+url = "file:///mnt/disk{1..10}/proximadb"  # Multiple disks
+
+[storage.wal_config]
+global_flush_threshold = 34359738368  # 32GB
+----
+
+=== Production Checklist
+
+- [ ] Use absolute paths, not `/tmp`
+- [ ] Configure multiple storage locations for distribution
+- [ ] Enable WAL with appropriate thresholds
+- [ ] Set reasonable cache sizes (don't exceed 50% of RAM)
+- [ ] Use `log_level = "info"` in production
+- [ ] Configure backups for metadata and manifest
+- [ ] Test configuration with `--validate` before deployment
+- [ ] Monitor disk space on all storage locations
+- [ ] Use firewall rules to restrict access
+- [ ] Plan for monitoring and alerting
+
+== References
+
+* link:../operations/PRODUCTION_RUNBOOK.adoc[Production Runbook]
+* link:../enterprise/production_deployment_guide.adoc[Deployment Guide]
+* link:../../CLAUDE.md[CLAUDE.md Project Instructions]
+* link:../../README.adoc[Main Documentation]
+
+---
+_Last updated: January 2025 (v0.1.4)_

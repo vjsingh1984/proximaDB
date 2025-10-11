@@ -16,7 +16,7 @@
 //! | Strategy | Engine | Use Case | Format |
 //! |----------|--------|----------|--------|
 //! | Viper | VIPER | Analytics, batch | Columnar (Parquet) |
-//! | Lsm | SST | OLTP, real-time | Row-based (SSTable) |
+//! | Lsm | SST | OLTP, real-time | Hybrid columnar (ProximaBlocks) |
 //! | Hybrid | RAPTOR | Graph navigation | Matrix Trinity |
 //! | Swift | SWIFT | Fast traversal | Row-based optimized |
 //! | Nova | NOVA | Advanced analytics | Enhanced columnar |

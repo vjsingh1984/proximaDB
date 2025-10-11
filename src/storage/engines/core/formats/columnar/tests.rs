@@ -588,7 +588,7 @@ async fn test_multi_file_directory_scan() {
     assert_eq!(unique_records.len(), 6000, "All records should be unique");
 
     // Test filtering by timestamp
-    let filtered_count = all_records.iter().filter(|record| record.timestamp > 3000).count();
+    let filtered_count = all_records.iter().filter(|record| record.timestamp.unwrap() > 3000).count();
 
     assert_eq!(filtered_count, 2999, "Should find exactly 2999 records with timestamp > 3000");
 
@@ -793,7 +793,7 @@ async fn test_customer_api_compatibility() {
 
     assert_eq!(single_result.len(), 1);
     assert_eq!(&single_result[0].id, "cust_002");
-    assert_eq!(single_result[0].timestamp, 2000);
+    assert_eq!(single_result[0].timestamp.unwrap(), 2000);
     assert_eq!(single_result[0].vector.len(), 384);
 
     // Batch ID lookup
@@ -1125,7 +1125,7 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Vec
                 id,
                 vector,
                 metadata: HashMap::new(),
-                timestamp,
+                timestamp: Some(timestamp),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),

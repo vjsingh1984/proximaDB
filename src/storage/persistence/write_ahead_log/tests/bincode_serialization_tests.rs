@@ -168,7 +168,7 @@ async fn test_bincode_large_batch_performance() {
     let start = std::time::Instant::now();
 
     let sequences = strategy
-        .write_native_batch(batch, collection_id)
+        .write_native_batch(batch, collection_id, "/tmp/proximadb-wal-test")
         .await
         .expect("Failed to write large batch");
 
@@ -355,7 +355,7 @@ async fn test_bincode_edge_cases() {
     // Test empty batch
     let empty_batch = create_test_batch(vec![]);
     let empty_sequences = strategy
-        .write_native_batch(empty_batch, collection_id)
+        .write_native_batch(empty_batch, collection_id, "/tmp/proximadb-wal-test")
         .await
         .expect("Failed to write empty batch");
     assert_eq!(empty_sequences.len(), 0);
@@ -365,7 +365,7 @@ async fn test_bincode_edge_cases() {
     let no_id_batch = create_test_batch(vec![no_id_vector]);
 
     let no_id_sequences = strategy
-        .write_native_batch(no_id_batch, collection_id)
+        .write_native_batch(no_id_batch, collection_id, "/tmp/proximadb-wal-test")
         .await
         .expect("Failed to write no-id batch");
     assert_eq!(no_id_sequences.len(), 1);
@@ -375,7 +375,7 @@ async fn test_bincode_edge_cases() {
     let large_batch = create_test_batch(vec![large_vector]);
 
     let large_sequences = strategy
-        .write_native_batch(large_batch, collection_id)
+        .write_native_batch(large_batch, collection_id, "/tmp/proximadb-wal-test")
         .await
         .expect("Failed to write large vector");
     assert_eq!(large_sequences.len(), 1);

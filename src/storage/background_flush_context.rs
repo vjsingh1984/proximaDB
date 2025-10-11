@@ -21,7 +21,7 @@ use crate::services::collection::manager::CollectionService;
 pub enum StorageEngineType {
     /// VIPER - Columnar Parquet-based engine for analytics workloads
     Viper,
-    /// SST - Row-based SSTable engine for OLTP workloads  
+    /// SST - Hybrid columnar SSTable engine for OLTP workloads (ProximaBlocks format)
     Sst,
 }
 

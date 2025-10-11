@@ -560,7 +560,7 @@ mod tests {
                 id: format!("vec_{}", i),
                 vector: vec![0.1; 128], // Dummy vector
                 metadata: map_metadata,
-                timestamp: 1000000 + i as i64,
+                timestamp: Some(1000000 + i as i64),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),

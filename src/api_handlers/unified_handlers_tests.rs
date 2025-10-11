@@ -88,7 +88,7 @@ mod tests {
         let config = create_test_collection_config("test_collection");
 
         assert_eq!(config.name, "test_collection");
-        assert_eq!(config.dimension, Some(128));
+        assert_eq!(config.dimension, 128);
         assert_eq!(config.distance_metric, Some(DistanceMetric::Cosine as i32));
         assert_eq!(config.storage_engine, Some(StorageEngine::Sst as i32));
         assert!(config.description.is_some());
@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(record.id, "test_id");
         assert_eq!(record.vector.len(), 128);
         assert_eq!(record.version, Some(1));
-        assert!(record.timestamp > 0);
+        assert!(record.timestamp.unwrap() > 0);
         assert!(record.metadata.is_empty());
     }
 
@@ -284,7 +284,7 @@ mod tests {
             owner: Some("test_user".to_string()),
         };
 
-        assert_eq!(config.dimension, Some(256));
+        assert_eq!(config.dimension, 256);
         assert_eq!(config.distance_metric, Some(DistanceMetric::Euclidean as i32));
         assert!(config.description.is_none());
         assert!(config.tags.is_empty());
@@ -422,7 +422,7 @@ mod tests {
             id: "edge_case_vector".to_string(),
             vector: edge_vector.clone(),
             metadata: HashMap::new(),
-            timestamp: Utc::now().timestamp(),
+            timestamp: Some(Utc::now().timestamp()),
             updated_at: Some(Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

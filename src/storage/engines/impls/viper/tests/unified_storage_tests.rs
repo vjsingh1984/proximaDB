@@ -69,7 +69,7 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                     });
                     metadata
                 },
-                timestamp: now,
+                timestamp: Some(now),
                 updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),

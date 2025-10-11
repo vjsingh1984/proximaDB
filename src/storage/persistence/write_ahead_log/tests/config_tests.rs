@@ -77,8 +77,8 @@ mod tests {
                 data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
                 distribution_strategy: DiskDistributionStrategy::Hash,
                 collection_affinity: true,
-            global_manifest_url: None,
             },
+            global_manifest_url: None,
             memtable: MemTableConfig {
                 memtable_type: MemTableType::SkipList,
                 global_memory_limit: 256 * 1024 * 1024,
@@ -141,8 +141,8 @@ mod tests {
                 data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
                 distribution_strategy: DiskDistributionStrategy::LoadBalanced,
                 collection_affinity: true,
-            global_manifest_url: None,
             },
+            global_manifest_url: None,
             memtable: MemTableConfig {
                 memtable_type: MemTableType::Art,
                 global_memory_limit: 512 * 1024 * 1024,

@@ -139,7 +139,7 @@ async fn test_sst_atomic_flush_rollback_on_failure() {
         id: "vec1".to_string(),
         vector: vec![], // Empty vector should cause validation to fail
         metadata: std::collections::HashMap::new(),
-        timestamp: 0i64,
+        timestamp: Some(0i64),
         updated_at: None,
         expires_at: None,
         version: None,

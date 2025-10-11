@@ -64,8 +64,8 @@ ProximaDB automatically selects the optimal storage engine based on your data an
 |Engine |Optimized For |Use When
 
 |*SST*
-|Write-heavy, real-time updates
-|Frequent insertions, point queries
+|Hybrid columnar, write-optimized
+|Frequent insertions, real-time updates
 
 |*VIPER*
 |Analytics, batch operations
@@ -90,12 +90,14 @@ ProximaDB automatically selects the optimal storage engine based on your data an
 
 **Hardware Acceleration**
 
-Built-in SIMD acceleration across all operations:
+Production-ready SIMD acceleration for vector operations:
 
-* **Distance Computation**: 20.8M ops/sec (128D), 3.8M ops/sec (512D), 1.2M ops/sec (1536D)
-* **Encoding Analysis**: 9.6x speedup with AVX2/NEON
-* **Automatic Detection**: AVX2, AVX512 (x86_64), NEON (ARM64)
+* **Distance Computation**: Optimized implementations for various dimensions
+* **CPU SIMD**: AVX2, AVX512 (x86_64), NEON (ARM64)
+* **Automatic Detection**: Runtime CPU feature detection
 * **Graceful Fallback**: Scalar implementations when SIMD unavailable
+
+NOTE: GPU acceleration infrastructure exists (kernels, API layer) but real GPU compilation and execution is not yet enabled. Currently using CPU/SIMD fallbacks. Full GPU support planned for 2025 roadmap.
 
 **Compression & Quantization**
 
@@ -208,7 +210,8 @@ curl -X POST http://localhost:5678/v1/collections \
   -d '{
     "name": "products",
     "dimension": 1536,
-    "engine": "auto"
+    "storage_engine": "SST",
+    "distance_metric": "COSINE"
   }'
 
 # Insert vectors
@@ -494,9 +497,14 @@ results = collection.graph_search(
 
 * JavaScript/TypeScript SDK
 * Multi-node clustering
-* GPU acceleration (CUDA, Metal, ROCm)
 * Web dashboard for monitoring
 * Additional security features
+
+**📋 Planned (2025 Roadmap):**
+
+* GPU acceleration (CUDA, Metal, ROCm)
+* Advanced ML algorithms for AutoML
+* Multi-modal search capabilities
 
 **📅 Roadmap:**
 

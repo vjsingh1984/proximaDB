@@ -458,10 +458,11 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let viper_collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
         name: "optimization_test".to_string(),
         dimension: viper_search_params.query_vectors.as_ref().unwrap()[0].len() as u32,
-        distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-        storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+        distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+        storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Viper as i32),
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         tags: vec![],
-        auto_index_selection: false,
         embedding_models: vec![],
         owner: None,
         ..Default::default()

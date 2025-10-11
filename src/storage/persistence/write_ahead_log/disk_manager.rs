@@ -200,13 +200,14 @@ impl WriteAheadLogDiskManager {
             };
             let entry = manifest::GlobalManifestEntry::new(
                 0,  // LSN will be auto-allocated
-                batch_id.to_base62(),  // batch_id as String
                 collection_id.to_string(),  // collection_id
-                self.wal_base_url.clone(),  // storage_path
-                file_name,  // file_path
-                format_str.to_string(),  // format as String
-                checksum,  // checksum_crc32
+                batch_id,  // batch_id (pass reference)
+                file_name,  // file_name
                 data.len() as u64,  // size_bytes
+                checksum,  // checksum_crc32
+                SerializationFormat::from_str(format_str).unwrap_or(SerializationFormat::Bincode),  // format enum
+                0,  // vector_count (unknown at this point)
+                self.wal_base_url.clone(),  // storage_url
             );
             // Async append (non-blocking, high performance)
             manifest_service.append_async(entry).await?;

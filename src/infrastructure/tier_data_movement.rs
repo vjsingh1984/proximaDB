@@ -41,7 +41,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 pub enum TierDataFormat {
     /// Memory tier uses bincode for speed
     Bincode,
-    /// SST format for row-based storage
+    /// SST format for hybrid columnar storage (ProximaBlocks)
     SST,
     /// VIPER format for columnar storage
     VIPER,

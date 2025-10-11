@@ -1741,8 +1741,8 @@ mod tests {
         let collection_config = CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 128,
-            distance_metric: 1,            // Cosine
-            storage_engine: 1,             // Viper
+            distance_metric: Some(1),            // Cosine
+            storage_engine: Some(1),             // Viper
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -1831,8 +1831,8 @@ mod integration_tests {
             config: Some(CollectionConfig {
                 name: "test_atomic_collection".to_string(),
                 dimension: 128,
-                distance_metric: 0, // Cosine
-                storage_engine: 0,  // VIPER
+                distance_metric: Some(0), // Cosine
+                storage_engine: Some(0),  // VIPER
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
@@ -1915,8 +1915,8 @@ mod integration_tests {
             config: Some(CollectionConfig {
                 name: "relative_test_collection".to_string(),
                 dimension: 128,
-                distance_metric: 0, // Cosine
-                storage_engine: 0,  // VIPER
+                distance_metric: Some(0), // Cosine
+                storage_engine: Some(0),  // VIPER
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,

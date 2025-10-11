@@ -6,7 +6,7 @@
 pub mod helix; // High-Efficiency Locality-Indexed eXecution - PCA + Hilbert clustering
 pub mod nova; // Next-gen Optimized Vector Analytics - columnar with quantization
 pub mod raptor; // Row-Aligned Predicated Tensor Optimized Repository
-pub mod sst; // Sorted String Table - row-based OLTP engine
+pub mod sst; // Sorted String Table - hybrid columnar OLTP engine (ProximaBlocks)
 pub mod swift; // Storage With Instant Fast Traversal - hierarchical SST
 pub mod viper; // Vector-optimized Intelligent Parquet with Efficient Retrieval
 

@@ -113,6 +113,7 @@ pub fn create_test_enhanced_stats(id: u32) -> EnhancedRowGroupStats {
             cpu_cost: 20.0,
             memory_cost: 15.0,
             estimated_latency_ms: 50.0,
+            confidence: 0.9,
         },
         access_stats: AccessStats {
             access_count: 0,
@@ -153,6 +154,7 @@ pub fn create_test_enhanced_stats_vec(count: usize) -> Vec<EnhancedRowGroupStats
                     cpu_cost: 20.0 + i as f32,
                     memory_cost: 15.0 + i as f32,
                     estimated_latency_ms: 50.0 + i as f32,
+                    confidence: 0.9,
                 },
                 access_stats: AccessStats {
                     access_count: i as u64,
@@ -279,18 +281,25 @@ pub fn int8_l2_distance_squared(a: &[i8], b: &[i8]) -> f32 {
 /// QueryCharacteristics for optimization decisions
 #[allow(dead_code)]
 pub fn extract_query_characteristics(query: &[f32], top_k: usize) -> QueryCharacteristics {
+    use crate::storage::engines::impls::nova::zone_maps::DistanceMetric;
+
     // Compute L2 norm
     let norm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
 
     // Compute sparsity (fraction of near-zero values)
     let sparsity = query.iter().filter(|&&x| x.abs() < 0.01).count() as f32 / query.len() as f32;
 
+    // Find dominant dimensions (top 5 by absolute value)
+    let mut indexed_query: Vec<(usize, f32)> = query.iter().enumerate().map(|(i, &v)| (i, v.abs())).collect();
+    indexed_query.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let dominant_dimensions = indexed_query.iter().take(5).map(|(i, _)| *i as u32).collect();
+
     QueryCharacteristics {
-        top_k,
-        query_norm: norm,
-        query_sparsity: sparsity,
-        estimated_selectivity: top_k as f32 / 10000.0,  // Simple estimate
-        has_metadata_filter: false,
+        norm,
+        sparsity,
+        dominant_dimensions,
+        distance_metric: "euclidean".to_string(),
+        top_k: top_k as u32,
     }
 }
 
@@ -306,7 +315,7 @@ pub fn extract_query_characteristics(query: &[f32], top_k: usize) -> QueryCharac
 pub fn predict_selectivity_linear(characteristics: &QueryCharacteristics) -> f32 {
     // Simple linear model based on top_k and sparsity
     let base_selectivity = characteristics.top_k as f32 / 10000.0;
-    let sparsity_factor = 1.0 + characteristics.query_sparsity;
+    let sparsity_factor = 1.0 + characteristics.sparsity;
     (base_selectivity * sparsity_factor).min(1.0)
 }
 
@@ -628,17 +637,19 @@ mod tests {
         let query = vec![1.0, 0.0, 0.0, 2.0];
         let characteristics = extract_query_characteristics(&query, 10);
         assert_eq!(characteristics.top_k, 10);
-        assert!(characteristics.query_norm > 0.0);
+        assert!(characteristics.norm > 0.0);
     }
 
     #[test]
     fn test_predict_selectivity() {
+        use crate::storage::engines::impls::nova::zone_maps::DistanceMetric;
+
         let characteristics = QueryCharacteristics {
+            norm: 1.0,
+            sparsity: 0.5,
+            dominant_dimensions: vec![0, 1, 2],
+            distance_metric: "euclidean".to_string(),
             top_k: 100,
-            query_norm: 1.0,
-            query_sparsity: 0.5,
-            estimated_selectivity: 0.01,
-            has_metadata_filter: false,
         };
         let selectivity = predict_selectivity_linear(&characteristics);
         assert!(selectivity > 0.0 && selectivity <= 1.0);

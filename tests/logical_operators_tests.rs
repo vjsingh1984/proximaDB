@@ -58,7 +58,7 @@ mod tests {
             id: id.to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata: metadata_items,
-            timestamp: Utc::now().timestamp(),
+            timestamp: Some(Utc::now().timestamp()),
             updated_at: Some(Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

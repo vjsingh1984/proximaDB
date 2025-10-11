@@ -1,8 +1,13 @@
-//! # SST Storage Engine - Row-Based OLTP Optimized Storage
+//! # SST Storage Engine - Hybrid Columnar OLTP Optimized Storage
 //!
 //! ## ⚡ PRODUCTION-READY REAL-TIME ENGINE - COMPREHENSIVE IMPLEMENTATION
 //!
-//! SST (Sorted String Table) is ProximaDB's **high-performance row-based storage engine** implementing LSM-tree architecture with sophisticated filtering, optimized for OLTP workloads and real-time queries.
+//! SST (Sorted String Table) is ProximaDB's **high-performance hybrid columnar storage engine** implementing LSM-tree architecture with sophisticated filtering, optimized for OLTP workloads and real-time queries.
+//!
+//! **Architecture**: Uses ProximaBlocks hybrid columnar format where:
+//! - All metadata fields stored columnar: `id`, `timestamp`, `version`, `metadata`
+//! - Vector encoding configurable: `TransposeFieldEncoded`, `GroupedFieldEncoded`, or `FullVector`
+//! - Per-column compression with optimal algorithms
 //!
 //! ### ✅ **ENTERPRISE REAL-TIME CAPABILITIES:**
 //! 1. **Three-Stage Filtering Pipeline**: Revolutionary progressive filtering for maximum efficiency

@@ -68,11 +68,11 @@ fn test_dimension_scaling() {
         let result = sizer.calculate_optimal_rowgroup_size().unwrap();
 
         println!(
-            "Dim {}: {} vectors, {:.1}KB per vector, {:.2}x semantic factor",
+            "Dim {}: {} vectors, {:.1}KB per vector (semantic factor disabled - private method)",
             dimension,
             result.vectors_per_rowgroup,
             result.bytes_per_vector as f32 / 1024.0,
-            sizer.calculate_semantic_accuracy_factor()
+            // sizer.calculate_semantic_accuracy_factor() // Private method - disabled
         );
     }
 }

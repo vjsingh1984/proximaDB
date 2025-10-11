@@ -45,7 +45,7 @@ fn create_static_test_vectors() -> Vec<VectorRecord> {
             },
             expires_at: None,
             source: None,
-            timestamp: 1640995200 + (row as i64 * 3600), // Static timestamps
+            timestamp: Some(1640995200 + (row as i64 * 3600)), // Static timestamps
             updated_at: None,
             version: None,
         });

@@ -48,7 +48,7 @@ use crate::storage::engines::core::ops::{
     UniversalPerformanceOptimizer, UniversalOptimizationStrategy
 };
 
-/// SST Engine - Row-based, write-optimized storage with three-stage filtering
+/// SST Engine - Hybrid columnar (ProximaBlocks), write-optimized storage with three-stage filtering
 ///
 /// # Architecture Overview
 ///

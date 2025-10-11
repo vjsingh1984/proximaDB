@@ -867,7 +867,7 @@ mod tests {
                     r#type: crate::proto::proximadb_v1::quantization_level::QuantizationType::Binary as i32,
                     bits: 1,
                     threshold: 0.0,
-                    sign_based: Some(true),
+                    sign_based: true,
                     ..Default::default()
                 },
             ],

@@ -23,7 +23,7 @@
 //!
 //! ### 1. **Storage Engines** (`engines/`)
 //! Six specialized engines for different workloads:
-//! - **SST**: Row-based for OLTP, real-time queries
+//! - **SST**: Hybrid columnar (ProximaBlocks) for OLTP, real-time queries
 //! - **VIPER**: Columnar Parquet for analytics
 //! - **NOVA**: Hybrid quantized columnar
 //! - **SWIFT**: High-speed hierarchical blocks

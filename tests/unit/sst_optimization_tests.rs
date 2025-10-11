@@ -53,7 +53,7 @@ fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
         id,
         vector,
         metadata,
-        timestamp: 1234567890,
+        timestamp: Some(1234567890),
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),

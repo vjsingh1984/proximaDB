@@ -352,7 +352,7 @@ impl StorageEngineBenchmark {
         // This would ideally measure actual memory usage
         // For now, return estimates based on engine characteristics
         let base_memory = match engine_name {
-            "SST" => 100.0,    // Row-based, bloom filters
+            "SST" => 100.0,    // Hybrid columnar (ProximaBlocks), bloom filters
             "VIPER" => 150.0,  // Columnar, Parquet overhead
             "NOVA" => 180.0,   // Enhanced columnar with stats
             "SWIFT" => 80.0,   // Zero-overhead design

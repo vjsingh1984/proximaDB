@@ -4,17 +4,17 @@
 :icons: font
 
 [abstract]
-Row-based, write-optimized storage engine with three-stage filtering architecture for real-time queries and frequent updates.
+Hybrid columnar storage engine with write optimization and three-stage filtering architecture for real-time queries and frequent updates.
 
 == Overview
 
-The SST (Sorted String Table) engine is ProximaDB's row-based storage engine optimized for write-heavy workloads with real-time query requirements.
+The SST (Sorted String Table) engine is ProximaDB's hybrid columnar storage engine optimized for write-heavy workloads with real-time query requirements. It uses ProximaBlocks format where all metadata fields are stored columnar (id, timestamp, version, metadata) and vectors use configurable encoding strategies (TransposeFieldEncoded, GroupedFieldEncoded, or FullVector).
 
 **Key Features**:
 
 * Write-optimized with minimal flush overhead
 * Three-stage filtering: Metadata → Bloom → Vector
-* Row-based storage for point queries
+* Hybrid columnar storage with ProximaBlocks format
 * Real-time insertion without blocking
 * Automatic compaction and optimization
 
@@ -40,7 +40,7 @@ graph TB
     end
 
     subgraph STORAGE["Storage Layer"]
-        L[SST Files<br/>Row-based]
+        L[SST Files<br/>Hybrid Columnar]
         M[Bloom Filters<br/>Per-file]
         N[Metadata Index<br/>Fast lookup]
     end
@@ -155,7 +155,7 @@ async fn flush(&self) -> Result<()> {
     // 1. Acquire write lock
     let records = self.memory_buffer.write().await;
 
-    // 2. Sort by vector ID (row-based optimization)
+    // 2. Sort by vector ID (for efficient lookup)
     records.sort_by_key(|r| &r.id);
 
     // 3. Write SST file
@@ -221,7 +221,7 @@ bloom_filter_fp_rate = 0.01  # 1% false positive
 compaction_threshold = 10  # files
 compaction_interval_secs = 3600  # 1 hour
 
-# Row-based block size
+# ProximaBlocks block size
 block_size = 4096  # bytes
 ----
 

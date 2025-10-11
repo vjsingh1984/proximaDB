@@ -68,12 +68,12 @@ fn create_test_collection(
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
             dimension: 128,
-            distance_metric: 0, // Cosine
-            storage_engine: 0,  // VIPER
+            distance_metric: Some(0), // Cosine
+            storage_engine: Some(0),  // VIPER
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: Some(crate::proto::proximadb_v1::QuantizationConfig {
-                enabled: true,                         // Quantization enabled by default for VIPER
+                enabled: Some(true),                         // Quantization enabled by default for VIPER
                 enable_progressive_search: Some(true), // Progressive search enabled by default
                 ..Default::default()
             }),

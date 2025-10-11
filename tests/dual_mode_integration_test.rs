@@ -236,8 +236,8 @@ mod tests {
         let collection_config = CollectionConfig {
             name: "test_collection".to_string(),
             dimension: fixture.dimension as u32,
-            distance_metric: ProtoDistanceMetric::Euclidean as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
             ..Default::default()
         };
 
@@ -323,8 +323,8 @@ mod tests {
             let collection_config = CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: fixture.dimension as u32,
-                distance_metric: ProtoDistanceMetric::Euclidean as i32,
-                storage_engine: StorageEngine::Sst as i32,
+                distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Sst as i32),
                 ..Default::default()
             };
 

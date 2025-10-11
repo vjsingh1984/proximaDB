@@ -469,8 +469,8 @@ mod tests {
         assert_eq!(config.strategy.unwrap_or(0), 0);  // Proto enums default to 0 (SMART_DEFAULTS)
         assert!(config.custom_levels.is_empty());  // Proto repeated fields default to empty
         assert!(!config.enable_progressive_search.unwrap_or(false));
-        assert_eq!(config.binary_filter_selectivity, 0.0);
-        assert_eq!(config.int8_ranking_selectivity, 0.0);
-        assert_eq!(config.pq_ranking_selectivity, 0.0);
+        assert_eq!(config.binary_filter_selectivity.unwrap_or(0.0), 0.0);
+        assert_eq!(config.int8_ranking_selectivity.unwrap_or(0.0), 0.0);
+        assert_eq!(config.pq_ranking_selectivity.unwrap_or(0.0), 0.0);
     }
 }

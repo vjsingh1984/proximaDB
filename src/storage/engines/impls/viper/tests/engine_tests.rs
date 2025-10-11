@@ -114,8 +114,8 @@ fn create_test_collection(
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
             dimension: 128,  // Match actual test vector dimension
-            distance_metric: 0,            // Cosine
-            storage_engine: 0,             // VIPER
+            distance_metric: Some(0),            // Cosine
+            storage_engine: Some(0),             // VIPER
             tags: vec![],
             description: None,
             filterable_columns: vec![],
