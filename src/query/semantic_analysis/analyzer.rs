@@ -120,6 +120,12 @@ impl Analyzer {
                     // These are metadata fields optimized for filtering (stored as separate columns internally)
                     // Users access them as either "field_name" or "metadata.field_name"
                     for field in config.filterable_columns {
+                        // Skip filterable columns that conflict with standard fields
+                        // Standard fields (id, timestamp, vector, embedding) take precedence
+                        if field.name == "id" || field.name == "timestamp" || field.name == "vector" || field.name == "embedding" {
+                            continue;
+                        }
+
                         let data_type = match crate::proto::proximadb_v1::FilterableDataType::try_from(field.data_type) {
                             Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableString) => DataType::String,
                             Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableInteger) => DataType::Int64,

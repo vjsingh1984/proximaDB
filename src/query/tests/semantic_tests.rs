@@ -29,11 +29,8 @@ impl MockCollectionService {
                     tags: vec![],
                     description: None,
                     filterable_columns: vec![
-                        crate::proto::proximadb_v1::FilterableColumnSpec {
-                            name: "id".to_string(),
-                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
-                            ..Default::default()
-                        },
+                        // Note: "id" is a standard field, not a filterable column
+                        // It's automatically registered by the analyzer
                         crate::proto::proximadb_v1::FilterableColumnSpec {
                             name: "name".to_string(),
                             data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
@@ -49,11 +46,8 @@ impl MockCollectionService {
                             data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
                             ..Default::default()
                         },
-                        crate::proto::proximadb_v1::FilterableColumnSpec {
-                            name: "embedding".to_string(),
-                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32, // Vector represented as float array
-                            ..Default::default()
-                        },
+                        // Note: "embedding" is a standard vector field, not a filterable column
+                        // It's automatically registered as DataType::Vector by the analyzer
                     ],
                     index_configs: vec![],
                     quantization: None,
@@ -220,11 +214,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
         tags: vec![],
         description: None,
         filterable_columns: vec![
-            crate::proto::proximadb_v1::FilterableColumnSpec {
-                name: "id".to_string(),
-                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
-                ..Default::default()
-            },
+            // Note: "id" is a standard field, not a filterable column
+            // It's automatically registered by the analyzer
             crate::proto::proximadb_v1::FilterableColumnSpec {
                 name: "name".to_string(),
                 data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
@@ -240,11 +231,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
                 data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
                 ..Default::default()
             },
-            crate::proto::proximadb_v1::FilterableColumnSpec {
-                name: "embedding".to_string(),
-                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
-                ..Default::default()
-            },
+            // Note: "embedding" is a standard vector field, not a filterable column
+            // It's automatically registered as DataType::Vector by the analyzer
         ],
         index_configs: vec![],
         quantization: None,
