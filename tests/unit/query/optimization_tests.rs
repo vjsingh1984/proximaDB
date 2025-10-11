@@ -28,8 +28,7 @@ fn test_unified_optimizer_creation() {
 
 #[test]
 fn test_cost_model_selectivity() {
-    // let cost_model = UnifiedCostModel::new(); // Constructor is private
-    let cost_model = UnifiedCostModel::default();
+    let cost_model = UnifiedCostModel::new();
 
     let equals = FilterCondition::Equals {
         column: "id".to_string(),

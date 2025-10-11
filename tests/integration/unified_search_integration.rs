@@ -37,7 +37,7 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             id: format!("vec_{}", i),
             vector,
             metadata,
-            timestamp: now as i64,
+            timestamp: Some(now as i64),
             updated_at: Some(now as i64),
             expires_at: None,
             version: Some(1),
@@ -155,7 +155,7 @@ async fn test_vector_record_structure() {
         assert_eq!(vector.id, format!("vec_{}", i));
         assert_eq!(vector.vector.len(), 64);
         assert_eq!(vector.metadata.len(), 3);
-        assert!(vector.timestamp > 0);
+        assert!(vector.timestamp.unwrap_or(0) > 0);
 
         // Test metadata content - metadata is now HashMap<String, SqlValue>
         let category_value = vector.metadata.get("category").unwrap();

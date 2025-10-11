@@ -91,7 +91,7 @@ fn create_sample_vector_record() -> anyhow::Result<VectorRecord> {
         id: "paper_transformer_2017".to_string(),
         vector: vec![0.1; 1536], // Example 1536-dimensional embedding
         metadata,
-        timestamp: chrono::Utc::now().timestamp_millis(),
+        timestamp: Some(chrono::Utc::now().timestamp_millis()),
         updated_at: Some(chrono::Utc::now().timestamp_millis()),
         expires_at: None,
         version: Some(1),

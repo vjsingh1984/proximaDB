@@ -1444,10 +1444,10 @@ impl Default for UnifiedOptimizerConfig {
 }
 
 impl UnifiedCostModel {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut strategies: HashMap<String, Box<dyn CostStrategy>> = HashMap::new();
         strategies.insert("default".to_string(), Box::new(DefaultCostStrategy));
-        
+
         Self {
             strategies,
             historical_costs: Arc::new(parking_lot::RwLock::new(HashMap::new())),

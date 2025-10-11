@@ -323,7 +323,7 @@ fn generate_sparse_vectors(count: usize, dim: usize, sparsity_percent: usize) ->
             id: format!("vec_{}", i),
             vector,
             metadata: std::collections::HashMap::new(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),

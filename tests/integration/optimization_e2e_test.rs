@@ -230,8 +230,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         config: Some(CollectionConfig {
             name: "optimization_test".to_string(),
             dimension: 2048, // Max dimension in test
-            distance_metric: DistanceMetric::Cosine as i32,
-            storage_engine: StorageEngine::Sst as i32,
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
             tags: vec![],
             ..Default::default()
         }),
@@ -356,8 +356,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let sst_collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
         name: "optimization_test".to_string(),
         dimension: sst_search_params.query_vectors.as_ref().unwrap()[0].len() as u32,
-        distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-        storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+        distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+        storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
         tags: vec![],
         ..Default::default()
     };
