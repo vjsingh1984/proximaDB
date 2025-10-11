@@ -35,36 +35,36 @@ fn create_quantization_config(
     pq_bits: u32,
 ) -> QuantizationConfig {
     QuantizationConfig {
-        enabled: enable_binary || enable_int8 || enable_pq,
+        enabled: Some(enable_binary || enable_int8 || enable_pq),
         strategy: if enable_binary && enable_int8 && enable_pq {
-            3 // MEMORY_OPTIMIZED
+            Some(3) // MEMORY_OPTIMIZED
         } else if enable_binary {
-            2 // SPEED_OPTIMIZED
+            Some(2) // SPEED_OPTIMIZED
         } else if enable_int8 && !enable_pq {
-            1 // ACCURACY_OPTIMIZED
+            Some(1) // ACCURACY_OPTIMIZED
         } else {
-            0 // SMART_DEFAULTS
+            Some(0) // SMART_DEFAULTS
         },
         custom_levels: vec![],
-        enable_progressive_search: enable_binary || enable_int8 || enable_pq,
-        binary_filter_selectivity: 0.3,
-        int8_ranking_selectivity: 0.1,
-        pq_ranking_selectivity: 0.05,
-        training_sample_size: 10000,
-        quality_threshold: 0.95,
-        enable_adaptive_training: true,
-        optimize_for_storage: enable_pq,
-        optimize_for_memory: enable_binary && enable_pq,
-        enable_simd_acceleration: true,
-        enable_binary,
-        enable_int8,
-        enable_pq,
-        pq_segments,
-        pq_bits,
-        pq_codebooks: 256,
-        binary_threshold: 0.5,
-        int8_threshold: 0.3,
-        pq_threshold: 0.1,
+        enable_progressive_search: Some(enable_binary || enable_int8 || enable_pq),
+        binary_filter_selectivity: Some(0.3),
+        int8_ranking_selectivity: Some(0.1),
+        pq_ranking_selectivity: Some(0.05),
+        training_sample_size: Some(10000),
+        quality_threshold: Some(0.95),
+        enable_adaptive_training: Some(true),
+        optimize_for_storage: Some(enable_pq),
+        optimize_for_memory: Some(enable_binary && enable_pq),
+        enable_simd_acceleration: Some(true),
+        enable_binary: Some(enable_binary),
+        enable_int8: Some(enable_int8),
+        enable_pq: Some(enable_pq),
+        pq_segments: Some(pq_segments),
+        pq_bits: Some(pq_bits),
+        pq_codebooks: Some(256),
+        binary_threshold: Some(0.5),
+        int8_threshold: Some(0.3),
+        pq_threshold: Some(0.1),
     }
 }
 
@@ -142,8 +142,8 @@ fn bench_viper_flush(c: &mut Criterion) {
                             config: Some(CollectionConfig {
                                 name: "bench-viper".to_string(),
                                 dimension: 768,
-                                distance_metric: DistanceMetric::Euclidean as i32,
-                                storage_engine: StorageEngine::Viper as i32,
+                                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                                storage_engine: Some(StorageEngine::Viper as i32),
                                 quantization: Some(quant_config.clone()),
                                 ..Default::default()
                             }),
