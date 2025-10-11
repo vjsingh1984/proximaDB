@@ -16,22 +16,26 @@ def test_create_collection_monkeypatched_request(monkeypatch):
         captured['method'] = method
         captured['endpoint'] = endpoint
         captured['json'] = kwargs.get('json', {})
-        # Simulate server response for collection creation
+        # Simulate server response for collection creation (unified API format)
         body = {
-            "id": "col-123",
-            "name": captured['json'].get("name", "docs"),
-            "dimension": captured['json'].get("dimension", 128),
-            "metric": captured['json'].get("distance_metric", "cosine"),
-            "vector_count": 0,
-            "created_at": 1,
-            "updated_at": 1,
+            "collection": {
+                "id": "col-123",
+                "config": {
+                    "name": captured['json'].get('config', {}).get("name", "documents"),
+                    "dimension": captured['json'].get('config', {}).get("dimension", 128),
+                    "distance_metric": captured['json'].get('config', {}).get("distance_metric", "cosine"),
+                },
+                "vector_count": 0,
+                "created_at": 1,
+                "updated_at": 1,
+            }
         }
         return FakeResponse(body)
 
     monkeypatch.setattr(client, "_make_request", fake_make_request)
-    coll = client.create_collection("docs")
+    coll = client.create_collection("documents", dimension=128)
     assert coll.id == "col-123"
-    assert coll.config.name == "docs"
+    assert coll.config.name == "documents"
     # Ensure a POST was made
     assert captured['method'] == "POST"
 
@@ -41,10 +45,10 @@ def test_get_collection_parses_response(monkeypatch):
 
     def fake_make_request(method, endpoint, **kwargs):
         assert method == "GET"
-        assert endpoint.startswith("/api/v1/collection/")
+        assert endpoint.startswith("/api/v1/collections/")
         return FakeResponse({
             "id": "col-1",
-            "name": "docs",
+            "name": "documents",
             "dimension": 768,
             "metric": "cosine",
             "vector_count": 10,
@@ -53,7 +57,7 @@ def test_get_collection_parses_response(monkeypatch):
         })
 
     monkeypatch.setattr(client, "_make_request", fake_make_request)
-    c = client.get_collection("docs")
+    c = client.get_collection("documents")
     assert c.id == "col-1"
     assert c.config.dimension == 768
     assert c.stats.vector_count == 10
@@ -66,8 +70,8 @@ def test_list_collections_parses_list(monkeypatch):
         assert method == "GET" and endpoint == "/api/v1/collections"
         return FakeResponse({
             "collections": [
-                {"id": "c1", "name": "a", "dimension": 128, "metric": "cosine", "vector_count": 0},
-                {"id": "c2", "name": "b", "dimension": 256, "metric": "cosine", "vector_count": 3},
+                {"id": "c1", "name": "collection_a", "dimension": 128, "metric": "cosine", "vector_count": 0},
+                {"id": "c2", "name": "collection_b", "dimension": 256, "metric": "cosine", "vector_count": 3},
             ],
             "total_count": 2,
         })
@@ -83,10 +87,10 @@ def test_delete_collection(monkeypatch):
 
     def fake_make_request(method, endpoint, **kwargs):
         assert method == "DELETE"
-        assert endpoint == "/api/v1/collection/docs"
+        assert endpoint == "/api/v1/collections/documents"
         return FakeResponse({"success": True})
 
     monkeypatch.setattr(client, "_make_request", fake_make_request)
-    ok = client.delete_collection("docs")
+    ok = client.delete_collection("documents")
     assert ok is True
 

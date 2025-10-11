@@ -399,7 +399,8 @@ class ProximaDBClient:
             >>> collection = client.create_collection("products", config)
         """
         if config is None:
-            config = CollectionConfig(**kwargs)
+            # Include name in kwargs for config creation
+            config = CollectionConfig(name=name, **kwargs)
         
         # Validate filterable metadata fields limit in client
         if config.filterable_metadata_fields and len(config.filterable_metadata_fields) > 16:

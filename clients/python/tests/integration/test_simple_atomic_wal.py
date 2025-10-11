@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
 Simple Atomic WAL Test using direct HTTP requests
+
+NOTE: Moved from tests/unit/ to tests/integration/ - this is an integration test
+requiring a running ProximaDB server at localhost:5678.
 """
 
 import json
