@@ -150,12 +150,12 @@ class TestCollectionWithQuantization:
             name="test_collection",
             dimension=768,
             distance_metric="cosine",
-            quantization_config=quantization
+            quantization=quantization
         )
-        
-        assert config.quantization_config is not None
-        assert config.quantization_config.enabled is True
-        assert config.quantization_config.type == QuantizationType.PRODUCT
+
+        assert config.quantization is not None
+        assert config.quantization.enabled is True
+        assert config.quantization.type == QuantizationType.PRODUCT
         
     def test_collection_config_without_quantization(self):
         """Test collection config without quantization"""
@@ -164,8 +164,8 @@ class TestCollectionWithQuantization:
             dimension=384,
             distance_metric="euclidean"
         )
-        
-        assert config.quantization_config is None
+
+        assert config.quantization is None
 
 
 class TestProtoQuantizationMessages:
