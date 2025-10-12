@@ -2124,9 +2124,10 @@ impl UnifiedStorageEngine for ViperEngine {
         );
         let collection_opt = Some(ctx.collection.clone());
         // Get parquet files for the collection
-        // Use the storage URL directly as provided by the context
-        // The context should already have the correct path based on the collection configuration
-        let data_path = storage_url.clone();
+        // Use collection_storage_path to include collection_id in the path
+        // storage_url is base_location, but files are at {base_location}/{collection_id}/data/
+        let data_path = ctx.collection_storage_path()
+            .unwrap_or_else(|| format!("{}/{}", storage_url, collection_id));
         debug!("📂 VIPER search: Looking for Parquet files at: {}", data_path);
         let parquet_files = self
             .parquet_files_with_storage_url(collection_id, &data_path)

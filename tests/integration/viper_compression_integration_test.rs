@@ -1074,8 +1074,12 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
 
     let ctx = proximadb::storage::traits::StorageQueryContext {
         search_params,
-        collection: collection_arc,
-        metadata: Default::default(),
+        collection: collection_arc.clone(),
+        metadata: proximadb::storage::traits::StorageQueryMetadata {
+            collection_id: collection_arc.id.clone(),
+            dimension: dimension,
+            ..Default::default()
+        },
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;
