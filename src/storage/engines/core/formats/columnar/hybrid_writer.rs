@@ -214,7 +214,7 @@ impl HybridParquetWriter {
         config: HybridWriterConfig,
     ) -> Result<Self> {
         let file_path = file_path.as_ref().to_path_buf();
-        println!("DEBUG: HybridParquetWriter::new - starting, file_path: {:?}, mode: {:?}", file_path, config.initial_mode);
+        trace!("HybridParquetWriter::new - starting, file_path: {:?}, mode: {:?}", file_path, config.initial_mode);
         info!(
             "Creating hybrid Parquet writer: {:?}, mode: {:?}",
             file_path, config.initial_mode
@@ -224,7 +224,7 @@ impl HybridParquetWriter {
         let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
 
         let streaming_writer = if config.initial_mode == WriterMode::Streaming {
-            println!("DEBUG: HybridParquetWriter::new - creating StreamingParquetWriter");
+            trace!("HybridParquetWriter::new - creating StreamingParquetWriter");
             // For local files, use the simple constructor that doesn't need a filesystem factory
             let writer = StreamingParquetWriter::new(
                 &file_path,
@@ -232,10 +232,10 @@ impl HybridParquetWriter {
                 config.base_config.clone(),
                 None, // Filterable columns will be set via setter method
             )?;
-            println!("DEBUG: HybridParquetWriter::new - StreamingParquetWriter created");
+            trace!("HybridParquetWriter::new - StreamingParquetWriter created");
             Some(writer)
         } else {
-            println!("DEBUG: HybridParquetWriter::new - not creating StreamingParquetWriter (batch mode)");
+            trace!("HybridParquetWriter::new - not creating StreamingParquetWriter (batch mode)");
             None
         };
 
@@ -870,21 +870,21 @@ impl HybridParquetWriter {
         let temp_filename = format!("hybrid_temp_{}.parquet", uuid::Uuid::new_v4());
         let temp_path = _temp_dir.path().join(temp_filename);
 
-        println!("DEBUG: write_with_cache - temp_dir: {:?}", _temp_dir.path());
-        println!("DEBUG: write_with_cache - temp_path: {:?}", temp_path);
+        trace!("write_with_cache - temp_dir: {:?}", _temp_dir.path());
+        trace!("write_with_cache - temp_path: {:?}", temp_path);
 
         // Create writer with temp path - use default filesystem for temp files
         // Temp files are always local, so we don't need the passed filesystem_factory
         // Force streaming mode to ensure file is written
         let mut config = config;
         config.initial_mode = WriterMode::Streaming;
-        println!("DEBUG: write_with_cache - creating writer with streaming mode");
+        trace!("write_with_cache - creating writer with streaming mode");
         let mut writer = HybridParquetWriter::new(
             &temp_path,
             dimension,
             config,
         )?;
-        println!("DEBUG: write_with_cache - writer created");
+        trace!("write_with_cache - writer created");
 
         // Set filterable columns if provided
         if let Some(cols) = filterable_columns {
@@ -897,20 +897,20 @@ impl HybridParquetWriter {
         }
 
         // Write all records
-        println!("DEBUG: write_with_cache - writing {} records", records.len());
+        trace!("write_with_cache - writing {} records", records.len());
         writer.write(records).await?;
-        println!("DEBUG: write_with_cache - records written");
+        trace!("write_with_cache - records written");
 
         // Finalize to get stats and metadata collector
-        println!("DEBUG: write_with_cache - finalizing writer");
+        trace!("write_with_cache - finalizing writer");
         let (stats, collector) = writer.finalize().await?;
-        println!("DEBUG: write_with_cache - writer finalized, checking if temp file exists");
-        println!("DEBUG: write_with_cache - temp_path exists: {}", temp_path.exists());
+        trace!("write_with_cache - writer finalized, checking if temp file exists");
+        trace!("write_with_cache - temp_path exists: {}", temp_path.exists());
 
         // Read temp file data (keep _temp_dir alive until after this)
-        println!("DEBUG: write_with_cache - reading temp file: {:?}", temp_path);
+        trace!("write_with_cache - reading temp file: {:?}", temp_path);
         let data = tokio::fs::read(&temp_path).await?;
-        println!("DEBUG: write_with_cache - temp file read, {} bytes", data.len());
+        trace!("write_with_cache - temp file read, {} bytes", data.len());
 
         // Get filesystem for final URL
         let fs = filesystem_factory.get_filesystem(final_url)?;

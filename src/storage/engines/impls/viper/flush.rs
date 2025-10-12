@@ -485,7 +485,17 @@ impl Flush {
         let data_size = if parquet_data_or_path.len() > 4
             && &parquet_data_or_path[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E]
         {
-            // Get file size from the final path
+            // Legacy path marker - get file size from final path
+            let fs = self.filesystem_factory.get_filesystem(&final_file_path)?;
+            if let Ok(metadata) = fs.metadata(&final_file_path).await {
+                metadata.size as usize
+            } else {
+                0
+            }
+        } else if parquet_data_or_path.len() > 4
+            && &parquet_data_or_path[0..4] == &[0xFF, 0xFF, 0xFF, 0xFF]
+        {
+            // File already written marker - get file size from final path
             let fs = self.filesystem_factory.get_filesystem(&final_file_path)?;
             if let Ok(metadata) = fs.metadata(&final_file_path).await {
                 metadata.size as usize
@@ -493,6 +503,7 @@ impl Flush {
                 0
             }
         } else {
+            // In-memory data - use buffer length
             parquet_data_or_path.len()
         };
 
