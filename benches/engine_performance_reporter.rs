@@ -102,7 +102,7 @@ fn create_vectors_with_sparsity(
                     );
                     metadata
                 },
-                timestamp: (1000 + i) as i64,
+                timestamp: Some((1000 + i) as i64),
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
