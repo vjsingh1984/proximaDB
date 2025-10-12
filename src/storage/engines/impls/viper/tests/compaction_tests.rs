@@ -1527,8 +1527,10 @@ async fn test_compaction_with_metadata_filtering() {
                 }
             ];
         }
+        // Production behavior: base_location is just the base path, not full path
+        let base_location = temp_dir.path().to_str().unwrap().to_string();
         col.storage_assignment = Some(crate::proto::proximadb_v1::StorageAssignment {
-            base_location: storage_url.clone(),
+            base_location: base_location.clone(),
             primary_path: storage_url.clone(),
             backup_paths: vec![],
             engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
@@ -1553,7 +1555,7 @@ async fn test_compaction_with_metadata_filtering() {
         collection: search_collection.clone(),
         metadata: StorageQueryMetadata {
             collection_id: collection_id.to_string(),
-            storage_path: storage_url.clone(),
+            storage_path: temp_dir.path().to_str().unwrap().to_string(), // base_location, not full path
             ..Default::default()
         },
     };
