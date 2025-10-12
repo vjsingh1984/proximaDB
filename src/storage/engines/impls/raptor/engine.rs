@@ -2,6 +2,7 @@ use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use crate::core::errors::ProximaDBError;
 use crate::utils::StoragePath;
+use tracing::{debug, trace};
 use arrow_array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
@@ -826,16 +827,16 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         filter: Option<HashMap<String, String>>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        println!("[RAPTOR SEARCH_INTERNAL] Starting with k={}, query_dim={}", k, query.len());
+        debug!("RAPTOR SEARCH_INTERNAL: Starting with k={}, query_dim={}", k, query.len());
 
         // Use clustering for efficient rowgroup pruning
         let selected_rowgroups = self.select_rowgroups_by_clustering(query).await?;
-        println!("[RAPTOR SEARCH_INTERNAL] Selected {} rowgroups", selected_rowgroups.len());
+        debug!("RAPTOR SEARCH_INTERNAL: Selected {} rowgroups", selected_rowgroups.len());
 
         // STATELESS MODE DETECTION: If no rowgroups selected, engine is stateless
         // This means we need to scan disk files directly
         if selected_rowgroups.is_empty() {
-            println!("[RAPTOR SEARCH_INTERNAL] STATELESS MODE: No rowgroups, scanning disk files");
+            debug!("RAPTOR SEARCH_INTERNAL: STATELESS MODE - No rowgroups, scanning disk files");
             return self.scan_disk_files_for_search(query, k, filter, distance_metric).await;
         }
 
@@ -850,7 +851,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 .await?
         };
 
-        println!("[RAPTOR SEARCH_INTERNAL] Got {} candidates from clustered_search", candidates.len());
+        debug!("RAPTOR SEARCH_INTERNAL: Got {} candidates from clustered_search", candidates.len());
 
         // Apply filters and rerank
         let mut results = Vec::new();
@@ -866,7 +867,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             }
         }
 
-        println!("[RAPTOR SEARCH_INTERNAL] Returning {} final results", results.len());
+        debug!("RAPTOR SEARCH_INTERNAL: Returning {} final results", results.len());
         Ok(results)
     }
 
@@ -878,13 +879,13 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         filter: Option<HashMap<String, String>>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        println!("[SCAN_DISK] Starting disk scan for k={}", k);
+        debug!("SCAN_DISK: Starting disk scan for k={}", k);
 
         // Get the base path - for tests this will be /tmp/collection_id/data
         // In production it comes from storage_path in the search context
         // For now, we'll scan /tmp to find .raptor files
         let base_path = "/tmp".to_string();
-        println!("[SCAN_DISK] Base path: {}", base_path);
+        debug!("SCAN_DISK: Base path={}", base_path);
 
         // List all directories under base_path to find collection data
         let mut all_raptor_files = Vec::new();
@@ -910,7 +911,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         }
 
         let files = all_raptor_files;
-        println!("[SCAN_DISK] Found {} .raptor files", files.len());
+        debug!("SCAN_DISK: Found {} .raptor files", files.len());
 
         if files.is_empty() {
             return Ok(Vec::new());
@@ -920,12 +921,12 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         let mut all_candidates = Vec::new();
 
         for file_path in files {
-            println!("[SCAN_DISK] Reading file: {:?}", file_path);
+            debug!("SCAN_DISK: Reading file: {:?}", file_path);
 
             // Read vectors from file using the writer's read method
             match self.read_vectors_from_file(&file_path).await {
                 Ok(vectors) => {
-                    println!("[SCAN_DISK] Read {} vectors from {:?}", vectors.len(), file_path);
+                    debug!("SCAN_DISK: Read {} vectors from {:?}", vectors.len(), file_path);
 
                     // Compute distance for each vector
                     let distance_compute = UnifiedDistanceCompute::default();
@@ -980,13 +981,13 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                     }
                 }
                 Err(e) => {
-                    println!("[SCAN_DISK] Failed to read {:?}: {}", file_path, e);
+                    debug!("SCAN_DISK: Failed to read {:?}: {}", file_path, e);
                     continue;
                 }
             }
         }
 
-        println!("[SCAN_DISK] Total candidates: {}", all_candidates.len());
+        debug!("SCAN_DISK: Total candidates={}", all_candidates.len());
 
         // Sort by similarity (descending) and take top k
         all_candidates.sort_by(|a, b| {
@@ -996,7 +997,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         });
         all_candidates.truncate(k);
 
-        println!("[SCAN_DISK] Returning {} results", all_candidates.len());
+        debug!("SCAN_DISK: Returning {} results", all_candidates.len());
         Ok(all_candidates)
     }
 
@@ -1026,13 +1027,13 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     }
 
     async fn select_rowgroups_by_clustering(&self, query: &[f32]) -> Result<Vec<u32>> {
-        println!("[SELECT_ROWGROUPS] Starting rowgroup selection");
+        debug!("SELECT_ROWGROUPS: Starting rowgroup selection");
         let cluster_manager = self.cluster_manager.read().await;
         let cluster_assignments = self.cluster_assignments.read().await;
         let rowgroup_manager = self.rowgroup_manager.read().await;
 
-        println!("[SELECT_ROWGROUPS] cluster_assignments has {} entries", cluster_assignments.len());
-        println!("[SELECT_ROWGROUPS] rowgroup_manager has {} rowgroups", rowgroup_manager.row_group_ids().len());
+        debug!("SELECT_ROWGROUPS: cluster_assignments has {} entries", cluster_assignments.len());
+        debug!("SELECT_ROWGROUPS: rowgroup_manager has {} rowgroups", rowgroup_manager.row_group_ids().len());
 
         // STATELESS FALLBACK: If no in-memory rowgroups, we're in stateless mode
         // This happens when:
@@ -1042,15 +1043,15 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // Solution: Return empty to indicate "search all files on disk"
         // The clustered_search method should handle this by scanning disk
         if rowgroup_manager.row_group_ids().is_empty() {
-            println!("[SELECT_ROWGROUPS] STATELESS MODE: No in-memory rowgroups");
-            println!("[SELECT_ROWGROUPS] Returning empty - clustered_search should scan disk");
+            debug!("SELECT_ROWGROUPS: STATELESS MODE - No in-memory rowgroups");
+            debug!("SELECT_ROWGROUPS: Returning empty - clustered_search should scan disk");
             // Return empty Vec which signals to clustered_search to scan all files
             return Ok(Vec::new());
         }
 
         // Find nearest clusters to query
         let nearest_clusters = cluster_manager.find_nearest_clusters(query, 3).await?;
-        println!("[SELECT_ROWGROUPS] Found {} nearest clusters", nearest_clusters.len());
+        debug!("SELECT_ROWGROUPS: Found {} nearest clusters", nearest_clusters.len());
 
         // Select rowgroups that contain these clusters
         let mut selected = Vec::new();
@@ -1062,11 +1063,11 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 }
             }
         }
-        println!("[SELECT_ROWGROUPS] Selected {} rowgroups from clustering", selected.len());
+        debug!("SELECT_ROWGROUPS: Selected {} rowgroups from clustering", selected.len());
 
         // If no clusters found, use centroid-based selection
         if selected.is_empty() {
-            println!("[SELECT_ROWGROUPS] No clusters found, using centroid-based selection");
+            debug!("SELECT_ROWGROUPS: No clusters found, using centroid-based selection");
             for rg_id in rowgroup_manager.row_group_ids() {
                 if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id) {
                     if let Some(centroid) = &rowgroup.centroid {
@@ -1079,7 +1080,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                     }
                 }
             }
-            println!("[SELECT_ROWGROUPS] Selected {} rowgroups from centroids", selected.len());
+            debug!("SELECT_ROWGROUPS: Selected {} rowgroups from centroids", selected.len());
         }
 
         Ok(selected)
@@ -1092,11 +1093,11 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         selected_rowgroups: Vec<u32>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        println!("[CLUSTERED_SEARCH] Starting with {} selected rowgroups", selected_rowgroups.len());
+        debug!("CLUSTERED_SEARCH: Starting with {} selected rowgroups", selected_rowgroups.len());
 
         // STATELESS MODE: If no rowgroups selected, scan disk for files
         if selected_rowgroups.is_empty() {
-            println!("[CLUSTERED_SEARCH] STATELESS MODE: No rowgroups, will scan disk for .raptor files");
+            debug!("CLUSTERED_SEARCH: STATELESS MODE - No rowgroups, will scan disk for .raptor files");
             // TODO: Implement disk scanning and direct file search
             // For now, return empty results to demonstrate the issue
             return Ok(Vec::new());
@@ -1943,10 +1944,8 @@ impl UnifiedStorageEngine for RaptorEngine {
         let collection_id = self.get_collection_id_from_params(params)?;
         let start_time = std::time::Instant::now();
 
-        println!("[RAPTOR FLUSH] Started for collection: {}", collection_id);
-        println!("[RAPTOR FLUSH] {} vectors to flush", params.vector_records.len());
-        tracing::debug!("RAPTOR do_flush started for collection: {}", collection_id);
-        tracing::debug!("RAPTOR do_flush: {} vectors to flush", params.vector_records.len());
+        debug!("RAPTOR FLUSH: Started for collection={}", collection_id);
+        debug!("RAPTOR FLUSH: {} vectors to flush", params.vector_records.len());
 
         // Get collection config dimension - required for proper compaction
         let collection_dimension = params.collection_config.as_ref()
@@ -1960,8 +1959,8 @@ impl UnifiedStorageEngine for RaptorEngine {
                 )
             })?;
 
-        tracing::debug!(
-            "RAPTOR flush: Using collection config dimension: {}",
+        debug!(
+            "RAPTOR FLUSH: Using collection config dimension={}",
             collection_dimension
         );
 
@@ -1969,13 +1968,11 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Format is: {baseurl}/{collectionid}/data/
         let data_dir = self.get_data_dir_from_flush_params(params)?;
 
-        println!("[RAPTOR FLUSH] Data directory: {}", data_dir);
-        tracing::debug!("RAPTOR flush: Data directory: {}", data_dir);
+        debug!("RAPTOR FLUSH: Data directory={}", data_dir);
 
         // Use filesystem API to create directory
         self.filesystem.create_dir_all(&data_dir).await?;
-        println!("[RAPTOR FLUSH] Created directory: {}", data_dir);
-        tracing::debug!("RAPTOR flush: Created directory: {}", data_dir);
+        debug!("RAPTOR FLUSH: Created directory={}", data_dir);
 
         // Create a new filename for this flush using FilenameCodec
         use crate::storage::engines::core::constants;
@@ -1983,8 +1980,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         let filename = codec.generate(0, constants::raptor::FILE_EXTENSION); // Level 0 for new flushes
         let file_path = format!("{}/{}", data_dir, filename);
 
-        println!("[RAPTOR FLUSH] Writing to file: {}", file_path);
-        tracing::debug!("RAPTOR flush: Writing to file {}", file_path);
+        debug!("RAPTOR FLUSH: Writing to file={}", file_path);
 
         // Create a new writer with the proper file path
         let mut writer = RaptorWriter::new(
@@ -1995,19 +1991,15 @@ impl UnifiedStorageEngine for RaptorEngine {
         ).await?;
 
         // Write the vectors from params to the writer first
-        println!("[RAPTOR FLUSH] Writing {} vectors to writer", params.vector_records.len());
-        tracing::debug!("RAPTOR flush: Writing {} vectors to writer", params.vector_records.len());
+        debug!("RAPTOR FLUSH: Writing {} vectors to writer", params.vector_records.len());
         writer.write_vectors(&params.vector_records).await?;
-        println!("[RAPTOR FLUSH] Vectors written to writer");
-        tracing::debug!("RAPTOR flush: Vectors written to writer");
+        debug!("RAPTOR FLUSH: Vectors written to writer");
 
         // Close the writer - this will flush, update metadata, and finalize
-        println!("[RAPTOR FLUSH] Closing writer");
-        tracing::debug!("RAPTOR flush: Closing writer");
+        debug!("RAPTOR FLUSH: Closing writer");
         let vectors_flushed = params.vector_records.len(); // Use the input count
         writer.close().await?;
-        println!("[RAPTOR FLUSH] Writer closed, {} vectors written to {}", vectors_flushed, file_path);
-        tracing::debug!("RAPTOR flush: Writer closed, {} vectors written to {}", vectors_flushed, file_path);
+        debug!("RAPTOR FLUSH: Writer closed, {} vectors written to {}", vectors_flushed, file_path);
 
         // Get actual file size to report bytes written
         let bytes_written = match self.filesystem.metadata(&file_path).await {
@@ -2317,17 +2309,14 @@ impl UnifiedStorageEngine for RaptorEngine {
         let include_metadata = true;
 
         // Log search with enhanced context info
-        println!("[RAPTOR SEARCH] collection={}, k={}, metric={:?}, tier={:?}",
-                 collection_id, k, distance_metric, performance_tier);
-        println!("[RAPTOR SEARCH] storage_path={}", storage_path);
-        println!("[RAPTOR SEARCH] query_vector dim={}", query_vector.len());
-        tracing::info!(
-            "RAPTOR search: collection={}, k={}, metric={:?}, tier={:?}, storage_path={}",
+        debug!(
+            "RAPTOR SEARCH: collection={}, k={}, metric={:?}, tier={:?}, storage_path={}, query_dim={}",
             collection_id,
             k,
             distance_metric,
             performance_tier,
-            storage_path
+            storage_path,
+            query_vector.len()
         );
 
         // Convert filter expression to simple filter for now

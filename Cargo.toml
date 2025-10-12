@@ -375,11 +375,6 @@ harness = false
 path = "benches/bench_15_memory_pool.rs"
 
 [[bench]]
-name = "bench_16_proxima_simd"
-harness = false
-path = "benches/bench_16_proximacodec_comprehensive.rs"
-
-[[bench]]
 name = "bench_16_proximacodec_comprehensive"
 harness = false
 path = "benches/bench_16_proximacodec_comprehensive.rs"

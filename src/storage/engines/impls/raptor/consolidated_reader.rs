@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// - Zero-copy memory-mapped I/O
 /// - Predicate pushdown optimization
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 // Use unified components instead of custom implementations
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
@@ -550,9 +550,9 @@ impl RaptorReader {
         let elapsed = start_time.elapsed();
         let throughput = bytes_read as f64 / elapsed.as_secs_f64() / 1024.0 / 1024.0;
 
-        println!("[READER DEBUG] Scan completed: {} vectors from {} rowgroups", all_vectors.len(), total_rowgroups);
-        tracing::info!(
-            "✅ Full scan completed: {} vectors from {} rowgroups in {:.2}s ({:.1} MB/s)",
+        trace!("READER: Scan completed - {} vectors from {} rowgroups", all_vectors.len(), total_rowgroups);
+        info!(
+            "Full scan completed: {} vectors from {} rowgroups in {:.2}s ({:.1} MB/s)",
             all_vectors.len(),
             total_rowgroups,
             elapsed.as_secs_f64(),
@@ -3072,9 +3072,9 @@ impl ValidationReport {
         }
 
         if self.is_fully_aligned() {
-            println!("🎉 RAPTOR Reader-Writer: FULLY ALIGNED!");
+            debug!("RAPTOR Reader-Writer: FULLY ALIGNED");
         } else {
-            println!("⚠️  RAPTOR Reader-Writer: Alignment needs improvement");
+            debug!("RAPTOR Reader-Writer: Alignment needs improvement");
         }
     }
 }
