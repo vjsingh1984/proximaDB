@@ -235,7 +235,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             let flush_start = std::time::Instant::now();
             let flush_result = runtime.block_on(async {
                 let mut storage_config = StorageConfig::default();
-                storage_config.compression = *compress_value;
+                storage_config.compression = Some(*compress_value);
 
                 // Define filterable columns for metadata schema
                 let filterable_columns = vec![
@@ -408,7 +408,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
                         // Search needs same collection config as flush for proper data loading
                         let mut storage_config = StorageConfig::default();
-                        storage_config.compression = compress_val;
+                        storage_config.compression = Some(compress_val);
 
                         // Same filterable columns as flush
                         let filterable_columns = vec![
@@ -572,7 +572,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
                         // Search needs same collection config as flush for proper data loading
                         let mut storage_config = StorageConfig::default();
-                        storage_config.compression = compress_val;
+                        storage_config.compression = Some(compress_val);
 
                         // Same filterable columns as flush
                         let filterable_columns = vec![
@@ -862,7 +862,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
                             name: collection_id.clone(),
                             dimension: dimension as u32,
                             storage_config: Some(StorageConfig {
-                                compression: compress_val as i32,
+                                compression: Some(compress_val as i32),
                                 ..Default::default()
                             }),
                             ..Default::default()

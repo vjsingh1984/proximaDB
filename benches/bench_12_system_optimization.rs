@@ -578,7 +578,7 @@ fn bench_metadata_handling(c: &mut Criterion) {
                         id: format!("vec_{}", i),
                         vector: v.clone(),
                         metadata,
-                        timestamp: i as i64,
+                        timestamp: Some(i as i64),
                         updated_at: Some(i as i64),
                         expires_at: None,
                         version: Some(1),
