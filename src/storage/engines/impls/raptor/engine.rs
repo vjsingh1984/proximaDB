@@ -826,8 +826,11 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         k: usize,
         filter: Option<HashMap<String, String>>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        storage_path: &str,
+        collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        debug!("RAPTOR SEARCH_INTERNAL: Starting with k={}, query_dim={}", k, query.len());
+        debug!("RAPTOR SEARCH_INTERNAL: Starting with k={}, query_dim={}, storage_path={}, collection_id={}",
+               k, query.len(), storage_path, collection_id);
 
         // Use clustering for efficient rowgroup pruning
         let selected_rowgroups = self.select_rowgroups_by_clustering(query).await?;
@@ -837,7 +840,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // This means we need to scan disk files directly
         if selected_rowgroups.is_empty() {
             debug!("RAPTOR SEARCH_INTERNAL: STATELESS MODE - No rowgroups, scanning disk files");
-            return self.scan_disk_files_for_search(query, k, filter, distance_metric).await;
+            return self.scan_disk_files_for_search(query, k, filter, distance_metric, storage_path, collection_id).await;
         }
 
         // Use Matrix Trinity for candidate selection
@@ -878,37 +881,36 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         k: usize,
         filter: Option<HashMap<String, String>>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        storage_path: &str,
+        collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        debug!("SCAN_DISK: Starting disk scan for k={}", k);
+        debug!("SCAN_DISK: Starting disk scan for k={}, storage_path={}, collection_id={}", k, storage_path, collection_id);
 
-        // Get the base path - for tests this will be /tmp/collection_id/data
-        // In production it comes from storage_path in the search context
-        // For now, we'll scan /tmp to find .raptor files
-        let base_path = "/tmp".to_string();
-        debug!("SCAN_DISK: Base path={}", base_path);
+        // Construct the data directory path: {storage_path}/{collection_id}/data
+        let data_dir = format!("{}/{}/data", storage_path, collection_id);
+        debug!("SCAN_DISK: Looking for files in: {}", data_dir);
 
-        // List all directories under base_path to find collection data
-        let mut all_raptor_files = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&base_path) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if path.is_dir() {
-                    // Check if this directory has a "data" subdirectory
-                    let data_dir = path.join("data");
-                    if data_dir.exists() && data_dir.is_dir() {
-                        // List .raptor files in the data directory
-                        if let Ok(data_entries) = std::fs::read_dir(&data_dir) {
-                            for data_entry in data_entries.filter_map(|e| e.ok()) {
-                                let file_path = data_entry.path();
-                                if file_path.extension().and_then(|s| s.to_str()) == Some("raptor") {
-                                    all_raptor_files.push(file_path);
-                                }
-                            }
-                        }
-                    }
-                }
+        // Use filesystem API to list files (cloud-compatible)
+        let all_raptor_files = match self.filesystem.list(&data_dir).await {
+            Ok(entries) => {
+                let files: Vec<_> = entries
+                    .into_iter()
+                    .filter(|entry| {
+                        // Match both old format (.data) and new format (.raptor)
+                        entry.name.ends_with(".raptor") || entry.name.ends_with(".data")
+                    })
+                    .map(|entry| {
+                        debug!("SCAN_DISK: Found RAPTOR file: {}", entry.name);
+                        entry.url // Use full URL for cloud compatibility
+                    })
+                    .collect();
+                files
             }
-        }
+            Err(e) => {
+                debug!("SCAN_DISK: Could not read directory {}: {}", data_dir, e);
+                Vec::new()
+            }
+        };
 
         let files = all_raptor_files;
         debug!("SCAN_DISK: Found {} .raptor files", files.len());
@@ -920,13 +922,13 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // For each file, read vectors and compute distances
         let mut all_candidates = Vec::new();
 
-        for file_path in files {
-            debug!("SCAN_DISK: Reading file: {:?}", file_path);
+        for file_url in files {
+            debug!("SCAN_DISK: Reading file: {}", file_url);
 
-            // Read vectors from file using the writer's read method
-            match self.read_vectors_from_file(&file_path).await {
+            // Read vectors from file using filesystem API (cloud-compatible)
+            match self.read_vectors_from_file(&file_url).await {
                 Ok(vectors) => {
-                    debug!("SCAN_DISK: Read {} vectors from {:?}", vectors.len(), file_path);
+                    debug!("SCAN_DISK: Read {} vectors from {}", vectors.len(), file_url);
 
                     // Compute distance for each vector
                     let distance_compute = UnifiedDistanceCompute::default();
@@ -981,7 +983,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                     }
                 }
                 Err(e) => {
-                    debug!("SCAN_DISK: Failed to read {:?}: {}", file_path, e);
+                    debug!("SCAN_DISK: Failed to read {}: {}", file_url, e);
                     continue;
                 }
             }
@@ -1001,10 +1003,11 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         Ok(all_candidates)
     }
 
-    /// Read vectors from a single file
-    async fn read_vectors_from_file(&self, file_path: &std::path::Path) -> Result<Vec<VectorRecord>> {
-        // Convert path to string - this is the actual file path, not directory
-        let file_path_str = file_path.to_string_lossy().to_string();
+    /// Read vectors from a single file using filesystem API (cloud-compatible)
+    /// Accepts a URL string (e.g., "file:///path", "s3://bucket/key", "azblob://container/blob")
+    async fn read_vectors_from_file(&self, file_url: &str) -> Result<Vec<VectorRecord>> {
+        // file_url is already a string URL from filesystem.list()
+        let file_path_str = file_url.to_string();
 
         // Get or create a CrossCacheOrchestrator for the reader
         let cache = Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
@@ -2330,12 +2333,12 @@ impl UnifiedStorageEngine for RaptorEngine {
         let results = match performance_tier {
             crate::storage::traits::PerformanceTier::Hot => {
                 // Memory-first search for hot data
-                self.search_internal(query_vector, k, filter, &distance_metric)
+                self.search_internal(query_vector, k, filter, &distance_metric, storage_path, collection_id)
                     .await?
             }
             _ => {
                 // Standard search for other tiers
-                self.search_internal(query_vector, k, filter, &distance_metric)
+                self.search_internal(query_vector, k, filter, &distance_metric, storage_path, collection_id)
                     .await?
             }
         };
