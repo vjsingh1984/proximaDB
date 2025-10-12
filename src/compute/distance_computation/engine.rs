@@ -850,6 +850,16 @@ impl UnifiedDistanceCompute {
     }}
 
     fn cosine_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
+        // Ensure vectors have the same length
+        if a.len() != b.len() {
+            tracing::warn!(
+                "cosine_distance_scalar: vector length mismatch (a={}, b={})",
+                a.len(),
+                b.len()
+            );
+            return f32::INFINITY;
+        }
+
         let mut dot = 0.0;
         let mut norm_a = 0.0;
         let mut norm_b = 0.0;
@@ -965,6 +975,16 @@ impl UnifiedDistanceCompute {
     }}
 
     fn euclidean_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
+        // Ensure vectors have the same length
+        if a.len() != b.len() {
+            tracing::warn!(
+                "euclidean_distance_scalar: vector length mismatch (a={}, b={})",
+                a.len(),
+                b.len()
+            );
+            return f32::INFINITY;
+        }
+
         let mut sum = 0.0;
         for i in 0..a.len() {
             let diff = a[i] - b[i];
