@@ -401,19 +401,30 @@ async fn test_vector_similarity_order_by() {
 }
 
 #[tokio::test]
-#[ignore = "Parameter placeholder support not yet implemented in SQL lowering"]
 async fn test_parameter_placeholder_recognition() {
     let collection_service = setup_test_collection_service().await;
     let lowering = QueryLowering::new(collection_service);
     let sql = "SELECT * FROM products WHERE category = $1 AND price > $2";
 
-    // TODO: Test parameter placeholder recognition and binding preparation
     let ast = lowering.lower_sql(sql).await.unwrap();
 
     match ast {
         Query::Select(select) => {
             assert!(select.selection.is_some());
-            // TODO: Verify parameter placeholders are preserved for binding
+
+            // Verify parameter placeholders are preserved in the AST
+            if let Some(Expr::Binary { left, op: _, right }) = &select.selection {
+                // Left side: category = $1
+                if let Expr::Binary { left: _, op: _, right: param1 } = left.as_ref() {
+                    assert!(matches!(param1.as_ref(), Expr::Param(_)),
+                        "First parameter should be Expr::Param");
+                }
+                // Right side: price > $2
+                if let Expr::Binary { left: _, op: _, right: param2 } = right.as_ref() {
+                    assert!(matches!(param2.as_ref(), Expr::Param(_)),
+                        "Second parameter should be Expr::Param");
+                }
+            }
         }
         _ => panic!("Unexpected query type"),
     }

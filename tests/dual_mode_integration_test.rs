@@ -105,6 +105,29 @@ mod tests {
     async fn test_sst_engine_basic_operations() -> Result<()> {
         let fixture = StorageTestFixture::new(100, 128).await?;
 
+        // Create collection config
+        let collection_config = CollectionConfig {
+            name: "test_collection".to_string(),
+            dimension: 128,
+            distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
+            ..Default::default()
+        };
+
+        let collection = Collection {
+            id: "test_collection".to_string(),
+            config: Some(collection_config),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/sst".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Sst as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
         // Flush test vectors to SST engine
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
@@ -115,7 +138,7 @@ mod tests {
             vector_records: fixture.test_vectors.clone(),
             trigger_compaction: false,
             batch_ids: vec![],
-            collection_config: None,
+            collection_config: Some(collection),
             estimated_size: 1024,
         };
 
@@ -136,6 +159,29 @@ mod tests {
     async fn test_viper_engine_basic_operations() -> Result<()> {
         let fixture = StorageTestFixture::new(100, 128).await?;
 
+        // Create collection config
+        let collection_config = CollectionConfig {
+            name: "test_collection".to_string(),
+            dimension: 128,
+            distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Viper as i32),
+            ..Default::default()
+        };
+
+        let collection = Collection {
+            id: "test_collection".to_string(),
+            config: Some(collection_config),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/viper".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
         // Flush test vectors to VIPER engine
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
@@ -146,7 +192,7 @@ mod tests {
             vector_records: fixture.test_vectors.clone(),
             trigger_compaction: false,
             batch_ids: vec![],
-            collection_config: None,
+            collection_config: Some(collection),
             estimated_size: 1024,
         };
 
@@ -167,8 +213,49 @@ mod tests {
     async fn test_cross_engine_consistency() -> Result<()> {
         let fixture = StorageTestFixture::new(50, 64).await?;
 
+        // Create collection configs for both engines
+        let sst_collection = Collection {
+            id: "test_collection".to_string(),
+            config: Some(CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 64,
+                distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/sst".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Sst as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
+        let viper_collection = Collection {
+            id: "test_collection".to_string(),
+            config: Some(CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 64,
+                distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/viper".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
         // Flush same data to both engines
-        let flush_params = FlushParameters {
+        let sst_flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
             force: false,
             synchronous: true,
@@ -177,12 +264,25 @@ mod tests {
             vector_records: fixture.test_vectors.clone(),
             trigger_compaction: false,
             batch_ids: vec![],
-            collection_config: None,
+            collection_config: Some(sst_collection),
             estimated_size: 1024,
         };
 
-        let sst_result = fixture.sst_engine.do_flush(&flush_params).await?;
-        let viper_result = fixture.viper_engine.do_flush(&flush_params).await?;
+        let viper_flush_params = FlushParameters {
+            collection_id: Some("test_collection".to_string()),
+            force: false,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            vector_records: fixture.test_vectors.clone(),
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(viper_collection),
+            estimated_size: 1024,
+        };
+
+        let sst_result = fixture.sst_engine.do_flush(&sst_flush_params).await?;
+        let viper_result = fixture.viper_engine.do_flush(&viper_flush_params).await?;
 
         assert!(sst_result.success);
         assert!(viper_result.success);
@@ -199,6 +299,27 @@ mod tests {
     async fn test_metadata_filtering() -> Result<()> {
         let fixture = StorageTestFixture::new(100, 32).await?;
 
+        // Create collection config
+        let collection = Collection {
+            id: "test_collection".to_string(),
+            config: Some(CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 32,
+                distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/sst".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Sst as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
         // Flush data to SST engine
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
@@ -209,7 +330,7 @@ mod tests {
             vector_records: fixture.test_vectors.clone(),
             trigger_compaction: false,
             batch_ids: vec![],
-            collection_config: None,
+            collection_config: Some(collection.clone()),
             estimated_size: 1024,
         };
 
@@ -223,29 +344,11 @@ mod tests {
             value: serde_json::Value::String("even".to_string()),
         };
 
-        // TODO: Fix StorageQueryContext to use proper search_params and collection
-        // Create mock collection and search params for the test
+        // Create search params for the test
         use proximadb::{
             core::search::SearchParams,
-            proto::proximadb_v1::{
-                Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine,
-            },
             storage::traits::StorageQueryMetadata,
         };
-
-        let collection_config = CollectionConfig {
-            name: "test_collection".to_string(),
-            dimension: fixture.dimension as u32,
-            distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
-            storage_engine: Some(StorageEngine::Sst as i32),
-            ..Default::default()
-        };
-
-        let collection = Arc::new(Collection {
-            id: "test_collection".to_string(),
-            config: Some(collection_config),
-            ..Default::default()
-        });
 
         let mut search_params = SearchParams::single_vector(vec![0.5; fixture.dimension]);
         search_params.top_k = Some(10);
@@ -256,7 +359,7 @@ mod tests {
 
         let query_ctx = StorageQueryContext {
             search_params: Arc::new(search_params),
-            collection,
+            collection: Arc::new(collection),
             metadata,
         };
 
@@ -283,8 +386,49 @@ mod tests {
     async fn test_batch_retrieval_by_ids() -> Result<()> {
         let fixture = StorageTestFixture::new(100, 64).await?;
 
+        // Create collection configs for both engines
+        let sst_collection = Collection {
+            id: "test_collection".to_string(),
+            config: Some(CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 64,
+                distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/sst".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Sst as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
+        let viper_collection = Collection {
+            id: "test_collection".to_string(),
+            config: Some(CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 64,
+                distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/viper".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
         // Flush data to both engines
-        let flush_params = FlushParameters {
+        let sst_flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
             force: false,
             synchronous: true,
@@ -293,12 +437,25 @@ mod tests {
             vector_records: fixture.test_vectors.clone(),
             trigger_compaction: false,
             batch_ids: vec![],
-            collection_config: None,
+            collection_config: Some(sst_collection.clone()),
             estimated_size: 1024,
         };
 
-        fixture.sst_engine.do_flush(&flush_params).await?;
-        fixture.viper_engine.do_flush(&flush_params).await?;
+        let viper_flush_params = FlushParameters {
+            collection_id: Some("test_collection".to_string()),
+            force: false,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            vector_records: fixture.test_vectors.clone(),
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(viper_collection.clone()),
+            estimated_size: 1024,
+        };
+
+        fixture.sst_engine.do_flush(&sst_flush_params).await?;
+        fixture.viper_engine.do_flush(&viper_flush_params).await?;
 
         // Select specific IDs to retrieve
         let ids_to_retrieve = vec![
@@ -320,39 +477,35 @@ mod tests {
                 .vector
                 .clone();
 
-            let collection_config = CollectionConfig {
-                name: "test_collection".to_string(),
-                dimension: fixture.dimension as u32,
-                distance_metric: Some(ProtoDistanceMetric::Euclidean as i32),
-                storage_engine: Some(StorageEngine::Sst as i32),
-                ..Default::default()
+            let mut sst_search_params = SearchParams::single_vector(target_vector.clone());
+            sst_search_params.top_k = Some(1);
+            sst_search_params.distance_metric = Some(DistanceMetric::Euclidean);
+
+            let sst_query_ctx = StorageQueryContext {
+                search_params: Arc::new(sst_search_params),
+                collection: Arc::new(sst_collection.clone()),
+                metadata: StorageQueryMetadata::default(),
             };
 
-            let collection = Arc::new(Collection {
-                id: "test_collection".to_string(),
-                config: Some(collection_config),
-                ..Default::default()
-            });
+            let mut viper_search_params = SearchParams::single_vector(target_vector);
+            viper_search_params.top_k = Some(1);
+            viper_search_params.distance_metric = Some(DistanceMetric::Euclidean);
 
-            let mut search_params = SearchParams::single_vector(target_vector);
-            search_params.top_k = Some(1);
-            search_params.distance_metric = Some(DistanceMetric::Euclidean);
-
-            let query_ctx = StorageQueryContext {
-                search_params: Arc::new(search_params),
-                collection,
+            let viper_query_ctx = StorageQueryContext {
+                search_params: Arc::new(viper_search_params),
+                collection: Arc::new(viper_collection.clone()),
                 metadata: StorageQueryMetadata::default(),
             };
 
             let sst_results = fixture
                 .sst_engine
-                .search_vectors_unified(&query_ctx)
+                .search_vectors_unified(&sst_query_ctx)
                 .await?;
             assert_eq!(sst_results[0].id, *id, "SST should retrieve exact match");
 
             let viper_results = fixture
                 .viper_engine
-                .search_vectors_unified(&query_ctx)
+                .search_vectors_unified(&viper_query_ctx)
                 .await?;
             assert_eq!(
                 viper_results[0].id, *id,
