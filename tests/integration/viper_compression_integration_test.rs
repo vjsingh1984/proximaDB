@@ -1029,3 +1029,91 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// Test VIPER search with "none" compression to reproduce benchmark issue
+#[tokio::test]
+async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
+    // Initialize
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let env = UnifiedTestEnvironment::new().await?;
+
+    // Create VIPER engine with "none" compression (the problematic case from benchmark)
+    let viper_config = proximadb::core::config::ViperConfig {
+        row_group_size: 50_000,
+        compression: "none".to_string(),
+        compression_level: 0,
+        ..Default::default()
+    };
+
+    let engine = ViperEngine::from_core_config(viper_config, env.filesystem.clone()).await?;
+
+    info!("🧪 Testing VIPER search with 'none' compression");
+
+    // Create test vectors with known vec_0
+    let dimension = 128;
+    let vectors = env.create_test_vectors_with_dimension(100, dimension);
+
+    // Flush vectors
+    let flush_params = operations::build_flush_params(&env, vectors.clone(), StorageEngine::Viper).await?;
+    let flush_result = engine.flush(flush_params).await?;
+
+    assert!(flush_result.success, "Flush should succeed");
+    println!("✓ Flushed {} vectors", flush_result.entries_flushed.unwrap_or(0));
+
+    // Search for vec_0 (first vector)
+    let query_vector = vectors[0].vector.clone();
+    let collection = env.create_test_collection_with_settings(StorageEngine::Viper, dimension as i32, None);
+    let collection_arc = Arc::new(collection.clone());
+
+    let search_params = Arc::new(SearchParams {
+        vector: Some(query_vector.clone()),
+        top_k: Some(10),
+        ..SearchParams::default()
+    });
+
+    let ctx = proximadb::storage::traits::StorageQueryContext {
+        search_params,
+        collection: collection_arc,
+        metadata: Default::default(),
+    };
+
+    let results = engine.search_vectors_unified(&ctx).await?;
+
+    println!("📊 Search returned {} results", results.len());
+
+    if results.is_empty() {
+        println!("❌ ISSUE REPRODUCED: No results returned with 'none' compression!");
+
+        // Debug: Check if files were created
+        let storage_path = env.persistent_dir.to_str().unwrap();
+        let parquet_files = find_parquet_files_recursive(storage_path);
+        println!("📁 Found {} parquet files in storage at: {}", parquet_files.len(), storage_path);
+        for file in &parquet_files {
+            println!("   - {:?} (size: {} bytes)", file, std::fs::metadata(file).map(|m| m.len()).unwrap_or(0));
+        }
+
+        // Debug: Check what the search is looking for
+        println!("🔍 Collection ID: {}", env.collection_id());
+        println!("🔍 Storage assignment primary_path: {:?}", collection.storage_assignment.as_ref().map(|sa| &sa.primary_path));
+        println!("🔍 Storage assignment base_location: {:?}", collection.storage_assignment.as_ref().map(|sa| &sa.base_location));
+
+        return Err(anyhow::anyhow!("Search returned no results with 'none' compression"));
+    }
+
+    // Verify vec_0 is in results (should be top result since we're searching for itself)
+    let vec_0_id = format!("{}_0", env.collection_id());
+    let found_vec_0 = results.iter().any(|r| r.id == vec_0_id);
+
+    if !found_vec_0 {
+        info!("❌ ISSUE: {} not found in results", vec_0_id);
+        info!("Results IDs: {:?}", results.iter().map(|r| &r.id).collect::<Vec<_>>());
+    } else {
+        info!("✓ {} found in results (as expected)", vec_0_id);
+    }
+
+    assert!(found_vec_0, "Should find vec_0 in search results");
+
+    info!("✅ VIPER search with 'none' compression works correctly");
+    Ok(())
+}

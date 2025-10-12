@@ -226,7 +226,12 @@ impl UnifiedTestEnvironment {
                 backup_paths: vec![],
                 engine: engine as i32,
                 engine_config: std::collections::HashMap::new(),
-                base_location: self.persistent_dir.to_str().unwrap().to_string(),
+                // base_location should be parent directory (without collection_id)
+                // to avoid path doubling when engines append collection_id
+                base_location: self.persistent_dir.parent()
+                    .and_then(|p| p.to_str())
+                    .unwrap_or(self.persistent_dir.to_str().unwrap())
+                    .to_string(),
                 assigned_at: chrono::Utc::now().timestamp_millis(),
             }),
         }
