@@ -414,8 +414,10 @@ impl GraphEngine for PulsarGraphEngine {
     fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         // For edges, we need to consider both source and target nodes
         // For simplicity, use source node's shard as primary
-        let rt = tokio::runtime::Handle::current();
-        let primary_shard = rt.block_on(self.get_primary_shard(&edge.from_node_id))?;
+        // Use tokio::task::block_in_place to avoid runtime-in-runtime issue
+        let primary_shard = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.get_primary_shard(&edge.from_node_id))
+        })?;
 
         let result = primary_shard.insert_edge(edge.clone())?;
 
@@ -531,40 +533,42 @@ impl GraphEngine for PulsarGraphEngine {
     }
 
     fn get_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>> {
-        let rt = tokio::runtime::Handle::current();
+        let mut all_nodes = Vec::new();
 
-        rt.block_on(async {
-            let mut all_nodes = Vec::new();
-
-            for shard_entry in self.shards.iter() {
-                let shard = shard_entry.value();
-                if let Ok(nodes) = shard.get_nodes_by_label(label) {
-                    all_nodes.extend(nodes);
-                }
+        for shard_entry in self.shards.iter() {
+            let shard = shard_entry.value();
+            if let Ok(nodes) = shard.get_nodes_by_label(label) {
+                all_nodes.extend(nodes);
             }
+        }
 
-            Ok(all_nodes)
-        })
+        Ok(all_nodes)
     }
 
     fn node_count(&self) -> Result<usize> {
-        // Simple synchronous implementation for compatibility
-        let mut total = 0;
+        // Count unique nodes across all shards (avoiding replication duplicates)
+        let mut seen_ids = std::collections::HashSet::new();
         for shard_entry in self.shards.iter() {
             let shard = shard_entry.value();
-            total += shard.node_count()?;
+            // Get all nodes and track their IDs
+            for node_entry in shard.nodes.iter() {
+                seen_ids.insert(node_entry.key().clone());
+            }
         }
-        Ok(total)
+        Ok(seen_ids.len())
     }
 
     fn edge_count(&self) -> Result<usize> {
-        // Simple synchronous implementation for compatibility
-        let mut total = 0;
+        // Count unique edges across all shards (avoiding replication duplicates)
+        let mut seen_ids = std::collections::HashSet::new();
         for shard_entry in self.shards.iter() {
             let shard = shard_entry.value();
-            total += shard.edge_count()?;
+            // Get all edges and track their IDs
+            for edge_entry in shard.edges.iter() {
+                seen_ids.insert(edge_entry.key().clone());
+            }
         }
-        Ok(total)
+        Ok(seen_ids.len())
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
