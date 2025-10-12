@@ -221,10 +221,17 @@ async fn test_search_vectors() -> Result<()> {
         }),
         ..Default::default()
     });
+    // Create metadata matching production behavior: storage_path is base_location
+    let metadata = crate::storage::traits::StorageQueryMetadata {
+        collection_id: "test_collection".to_string(),
+        storage_path: "/tmp".to_string(), // Production: base_location, engine adds /{collection_id}/data
+        dimension: 4,
+        ..Default::default()
+    };
     let query_context = crate::storage::traits::StorageQueryContext {
         search_params,
         collection,
-        metadata: crate::storage::traits::StorageQueryMetadata::default(),
+        metadata,
     };
     println!("Calling search_vectors_unified...");
     let results = engine

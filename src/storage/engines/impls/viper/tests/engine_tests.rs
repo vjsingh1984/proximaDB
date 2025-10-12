@@ -215,6 +215,15 @@ async fn search_with_params(
         ..SearchParams::default()
     });
 
+    // Extract base_location from storage_url (remove /collection_id/data suffix)
+    // storage_url format: file://{base_path}/{collection_id}/data
+    // base_location should be: file://{base_path}
+    let base_location = if storage_url.contains(&format!("/{}/data", collection_id)) {
+        storage_url.replace(&format!("/{}/data", collection_id), "")
+    } else {
+        storage_url.to_string()
+    };
+
     // Create minimal collection config for testing
     let collection = Arc::new(crate::proto::proximadb_v1::Collection {
         id: collection_id.to_string(),
@@ -226,8 +235,8 @@ async fn search_with_params(
             ..Default::default()
         }),
         storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-            base_location: storage_url.to_string(),
-            primary_path: storage_url.to_string(),
+            base_location: base_location.clone(), // Just base, not full path
+            primary_path: storage_url.to_string(), // Full path for primary_path
             backup_paths: vec![],
             engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
             engine_config: Default::default(),
@@ -236,11 +245,12 @@ async fn search_with_params(
         ..Default::default()
     });
 
+    // Production behavior: storage_path is base_location, engines append /{collection_id}/data
     let metadata = StorageQueryMetadata {
         collection_id: collection_id.to_string(),
         use_axis_indexes: false,
         has_quantization: false,
-        storage_path: storage_url.to_string(),
+        storage_path: base_location, // Match production: just base_location
         dimension: query_vector.len(),
         distance_metric: distance_metric.into(),
         ..Default::default()
