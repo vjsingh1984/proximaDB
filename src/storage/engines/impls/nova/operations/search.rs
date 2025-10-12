@@ -119,10 +119,26 @@ impl NovaSearchOperations {
 
         // Use standard collection data path (same as other engines)
         let data_path = crate::utils::StoragePath::collection_data_path(base_location, collection_id);
+
+        debug!("📂 NOVA search: base_location={}, collection_id={}", base_location, collection_id);
+        debug!("📂 NOVA search: Constructed data_path={}", data_path);
+
         let fs = self.filesystem.get_filesystem(&data_path)?;
 
         // List files in the data directory
-        let entries = fs.list(&data_path).await?;
+        let entries = match fs.list(&data_path).await {
+            Ok(e) => e,
+            Err(err) => {
+                debug!("📂 NOVA search: Failed to list directory {}: {}", data_path, err);
+                return Ok(Vec::new());
+            }
+        };
+
+        debug!("📂 NOVA search: Listed {} entries in {}", entries.len(), data_path);
+        for entry in &entries {
+            debug!("  - {} (is_dir={}, name={})", entry.url, entry.metadata.is_directory, entry.name);
+        }
+
         let files: Vec<String> = entries
             .into_iter()
             .filter(|e| !e.metadata.is_directory && e.name.ends_with(".parquet"))
