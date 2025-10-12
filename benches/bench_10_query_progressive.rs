@@ -106,8 +106,8 @@ async fn progressive_search_real(
         config: Some(CollectionConfig {
             name: "bench-nova".to_string(),
             dimension: query.len() as u32,
-            distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
-            storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+            distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+            storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
             ..Default::default()
         }),
         stats: Some(CollectionStats::default()),
