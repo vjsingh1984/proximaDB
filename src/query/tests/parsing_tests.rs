@@ -378,7 +378,6 @@ async fn test_metadata_filter_lowering() {
 }
 
 #[tokio::test]
-#[ignore = "Array literal support not yet implemented in SQL lowering"]
 async fn test_vector_similarity_order_by() {
     let collection_service = setup_test_collection_service().await;
     let lowering = QueryLowering::new(collection_service);
