@@ -400,6 +400,7 @@ impl Flush {
 
         // Since HybridWriter handled everything, create a marker to indicate completion
         let final_file_path = stats.file_path.clone();
+        let file_size_for_stats = stats.file_size;  // Capture file size from stats
         let mut parquet_data_or_path = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Magic bytes to indicate already written
         parquet_data_or_path.extend_from_slice(final_file_path.as_bytes());
 
@@ -495,13 +496,8 @@ impl Flush {
         } else if parquet_data_or_path.len() > 4
             && &parquet_data_or_path[0..4] == &[0xFF, 0xFF, 0xFF, 0xFF]
         {
-            // File already written marker - get file size from final path
-            let fs = self.filesystem_factory.get_filesystem(&final_file_path)?;
-            if let Ok(metadata) = fs.metadata(&final_file_path).await {
-                metadata.size as usize
-            } else {
-                0
-            }
+            // File already written marker - use captured file size from stats
+            file_size_for_stats as usize
         } else {
             // In-memory data - use buffer length
             parquet_data_or_path.len()
