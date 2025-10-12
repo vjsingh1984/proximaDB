@@ -399,3 +399,4 @@ test_*_summary.py
 
 # Obsolete files marked for removal
 *.obsolete
+/target/
