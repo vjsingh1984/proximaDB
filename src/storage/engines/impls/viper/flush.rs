@@ -337,11 +337,26 @@ impl Flush {
 
         // Configure HybridParquetWriter like NOVA does
         use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
+        // Convert string compression to Parquet compression enum
+        let parquet_compression = match viper_config.compression.as_str() {
+            "none" => parquet::basic::Compression::UNCOMPRESSED,
+            "zstd" => parquet::basic::Compression::ZSTD(Default::default()),
+            "snappy" => parquet::basic::Compression::SNAPPY,
+            "gzip" => parquet::basic::Compression::GZIP(Default::default()),
+            "lz4" => parquet::basic::Compression::LZ4,
+            "brotli" => parquet::basic::Compression::BROTLI(Default::default()),
+            "lzo" => parquet::basic::Compression::LZO,
+            _ => {
+                debug!("Unknown compression '{}', defaulting to ZSTD", viper_config.compression);
+                parquet::basic::Compression::ZSTD(Default::default())
+            }
+        };
+
         let writer_config = ParquetWriterConfig {
             row_group_size: viper_config.row_group_size,
             page_size: 1024 * 1024, // 1MB pages
             write_batch_size: 10000,
-            compression: parquet::basic::Compression::ZSTD(Default::default()),
+            compression: parquet_compression,
             compression_level: Some(viper_config.compression_level),
             enable_dictionary: true,
             enable_bloom_filters: true,
