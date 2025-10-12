@@ -111,28 +111,30 @@ impl NovaSearchOperations {
         let filter_expression = ctx.search_params.filter_expression.as_ref();
 
         // Get files for the collection
-        // Get the collection's storage path from context
-        let storage_path = ctx.collection_storage_path()
+        // NOVA stores files in {base_location}/{collection_id}/data (standard path)
+        // Production behavior: metadata.storage_path is base_location
+        let base_location = ctx.storage_url()
             .ok_or_else(|| anyhow::anyhow!("No storage path in context"))?;
+        let collection_id = &ctx.collection.id;
 
-        // List all parquet files in the nova directory
-        let nova_path = format!("{}/nova", storage_path);
-        let fs = self.filesystem.get_filesystem(&nova_path)?;
+        // Use standard collection data path (same as other engines)
+        let data_path = crate::utils::StoragePath::collection_data_path(base_location, collection_id);
+        let fs = self.filesystem.get_filesystem(&data_path)?;
 
-        // List files in the nova directory
-        let entries = fs.list(&nova_path).await?;
+        // List files in the data directory
+        let entries = fs.list(&data_path).await?;
         let files: Vec<String> = entries
             .into_iter()
             .filter(|e| !e.metadata.is_directory && e.name.ends_with(".parquet"))
-            .map(|e| format!("{}/{}", nova_path, e.name))
+            .map(|e| format!("{}/{}", data_path, e.name))
             .collect();
 
         if files.is_empty() {
-            debug!("NOVA: No parquet files found in {}", nova_path);
+            debug!("📂 NOVA search: No parquet files found in {}", data_path);
             return Ok(Vec::new());
         }
 
-        debug!("NOVA: Found {} parquet files for search", files.len());
+        debug!("📂 NOVA search: Found {} parquet files in {}", files.len(), data_path);
 
         // Use bounded priority queue to maintain only top-k results
         let mut priority_queue = BoundedPriorityQueue::new(k);

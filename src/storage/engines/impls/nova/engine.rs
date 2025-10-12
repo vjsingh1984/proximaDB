@@ -1067,6 +1067,126 @@ impl NovaEngine {
     pub fn get_fallback_quantization_engine(&self) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
         &self.fallback_quantization_engine
     }
+
+    /// Wrapper function for tests and benchmarks
+    /// Converts legacy storage_url parameter to proper StorageQueryContext
+    ///
+    /// # Parameters
+    /// - `collection_id`: Collection identifier
+    /// - `storage_url`: Storage URL (can be full path with /data or base path)
+    /// - `query_vector`: Query vector
+    /// - `k`: Number of results to return
+    pub async fn search_vectors(
+        &self,
+        collection_id: &str,
+        storage_url: &str,
+        query_vector: &[f32],
+        k: usize,
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        info!(
+            "🔍 NOVA Engine: search_vectors called - collection={}, storage_url={}, k={}",
+            collection_id, storage_url, k
+        );
+
+        use crate::core::search::SearchParams;
+        use crate::storage::traits::{StorageQueryContext, StorageQueryMetadata};
+
+        let search_params = Arc::new(SearchParams {
+            vector: Some(query_vector.to_vec()),
+            top_k: Some(k),
+            ..SearchParams::default()
+        });
+
+        // Extract base_location from storage_url (tests/benchmarks often pass full path)
+        // Production behavior: metadata.storage_path should be base_location
+        let base_location = if storage_url.contains(&format!("/{}/data", collection_id)) {
+            storage_url.replace(&format!("/{}/data", collection_id), "")
+        } else {
+            storage_url.to_string()
+        };
+
+        // Create minimal collection config for testing
+        let collection = crate::proto::proximadb_v1::Collection {
+            id: collection_id.to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: query_vector.len() as u32,
+                distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+                storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Nova as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                base_location: base_location.clone(),
+                primary_path: storage_url.to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Nova as i32,
+                engine_config: Default::default(),
+                assigned_at: 0,
+            }),
+            ..Default::default()
+        };
+
+        let collection = Arc::new(collection);
+
+        let ctx = StorageQueryContext {
+            search_params,
+            collection,
+            metadata: StorageQueryMetadata {
+                collection_id: collection_id.to_string(),
+                use_axis_indexes: false,
+                has_quantization: false,
+                storage_path: base_location, // Use base_location, not full path
+                ..Default::default()
+            },
+        };
+
+        let internal_results = self.search_vectors_unified(&ctx).await?;
+        debug!("search_vectors_unified returned {} results", internal_results.len());
+
+        // Convert OptimizedSearchRecord to SearchVectorRecord and wrap in SearchResult
+        let search_records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = internal_results
+            .into_iter()
+            .map(|r| {
+                let vector = r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default();
+                crate::proto::proximadb_v1::SearchVectorRecord {
+                    id: r.id,
+                    score: r.score as f64,
+                    vector,
+                    metadata: r.metadata.clone(),
+                    version: None,
+                    similarity: r.similarity,
+                    timestamp: None,
+                    source: r.source.and_then(|sc| {
+                        match sc.data {
+                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => Some(text),
+                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => Some(url),
+                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => Some("[Binary Content]".to_string()),
+                            None => Some("[Empty Content]".to_string()),
+                        }
+                    }),
+                    expanded_context: r.expanded_context.iter().map(|sc| {
+                        match &sc.data {
+                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => url.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => "[Binary Content]".to_string(),
+                            None => "[Empty Content]".to_string(),
+                        }
+                    }).collect(),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: std::collections::HashMap::new(),
+                    index_path: None,
+                }
+            })
+            .collect();
+
+        // Wrap in SearchResult
+        Ok(vec![crate::proto::proximadb_v1::SearchResult {
+            results: search_records.clone(),
+            total_found: search_records.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }])
+    }
 }
 
 #[async_trait]

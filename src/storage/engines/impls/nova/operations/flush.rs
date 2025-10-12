@@ -57,8 +57,8 @@ impl NovaFlushOperations {
             uuid::Uuid::new_v4()
         );
 
-        // Use base_location from StorageAssignment instead of hardcoded path
-        let storage_path = format!("{}/{}/nova", base_location, collection_id);
+        // Use standard path: {base_location}/{collection_id}/data (same as other engines)
+        let storage_path = crate::utils::StoragePath::collection_data_path(base_location, collection_id);
         let full_path = format!("{}/{}", storage_path, file_name);
 
         // Create directory if it doesn't exist

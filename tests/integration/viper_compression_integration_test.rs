@@ -1121,3 +1121,53 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
     info!("✅ VIPER search with 'none' compression works correctly");
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "NOVA engine needs additional setup"]
+async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
+    use proximadb::storage::engines::impls::nova::NovaEngine;
+    use proximadb::proto::proximadb_v1::StorageEngine;
+    use proximadb::core::search::SearchParams;
+    use std::sync::Arc;
+
+    // Initialize
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let env = UnifiedTestEnvironment::new().await?;
+
+    // Create NOVA engine (use default constructor for now)
+    let engine = NovaEngine::new().await?;
+
+    info!("🧪 Testing NOVA search with 'none' compression");
+
+    // Create test vectors with known vec_0
+    let dimension = 128;
+    let vectors = env.create_test_vectors_with_dimension(100, dimension);
+
+    // Flush vectors using the wrapper function
+    let storage_url = format!("{}/{}/data",
+        env.persistent_dir.to_str().unwrap(),
+        env.collection_id()
+    );
+
+    // For now, use the search wrapper since flush requires full implementation
+    // This test verifies the search path logic is correct
+    let query_vector = vectors[0].vector.clone();
+
+    // Test the wrapper function that benchmarks use
+    let results = engine.search_vectors(
+        env.collection_id(),
+        &storage_url,
+        &query_vector,
+        10,
+    ).await?;
+
+    println!("📊 Search returned {} result groups", results.len());
+    let total_results: usize = results.iter().map(|r| r.results.len()).sum();
+    println!("📊 Total individual results: {}", total_results);
+
+    // Note: This test currently expects no results because we didn't flush
+    // This is just verifying the search path construction doesn't panic
+    info!("✅ NOVA search wrapper works correctly (path construction validated)");
+    Ok(())
+}

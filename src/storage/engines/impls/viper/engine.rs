@@ -1406,6 +1406,15 @@ impl ViperEngine {
         // For testing, create a minimal collection config
         // This avoids the need for collection service in tests
         // Note: In production, use search_vectors_unified with proper context
+
+        // Extract base_location from storage_url (tests often pass full path with /data)
+        // Production behavior: metadata.storage_path should be base_location
+        let base_location = if storage_url.contains(&format!("/{}/data", collection_id)) {
+            storage_url.replace(&format!("/{}/data", collection_id), "")
+        } else {
+            storage_url.to_string()
+        };
+
         let collection = crate::proto::proximadb_v1::Collection {
             id: collection_id.to_string(),
             config: Some(crate::proto::proximadb_v1::CollectionConfig {
@@ -1416,7 +1425,7 @@ impl ViperEngine {
                 ..Default::default()
             }),
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-                base_location: storage_url.to_string(),
+                base_location: base_location.clone(),
                 primary_path: storage_url.to_string(),
                 backup_paths: vec![],
                 engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
@@ -1435,7 +1444,7 @@ impl ViperEngine {
                 collection_id: collection_id.to_string(),
                 use_axis_indexes: false,
                 has_quantization: false,
-                storage_path: storage_url.to_string(),
+                storage_path: base_location, // Use base_location, not full path
                 ..Default::default()
             },
         };
