@@ -393,6 +393,9 @@ impl WorkloadAnalyzer {
             WorkloadPattern::ReadHeavy
         } else if stats.read_write_ratio < 0.1 {
             WorkloadPattern::WriteHeavy
+        } else if (0.5..=2.0).contains(&stats.read_write_ratio) {
+            // Check for balanced workload before burstiness
+            WorkloadPattern::Balanced
         } else if stats.burstiness_score > 100.0 {
             WorkloadPattern::BatchProcessing
         } else if stats.pattern_stability > self.config.stability_threshold
@@ -400,8 +403,6 @@ impl WorkloadAnalyzer {
             WorkloadPattern::Streaming
         } else if stats.query_latency_p99 > 1000.0 && stats.avg_reads_per_sec < 100.0 {
             WorkloadPattern::Analytics
-        } else if (0.5..=2.0).contains(&stats.read_write_ratio) {
-            WorkloadPattern::Balanced
         } else {
             WorkloadPattern::Mixed
         };
