@@ -911,7 +911,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
                                     name: collection_id.clone(),
                                     dimension: dimension as u32,
                                     storage_config: Some(StorageConfig {
-                                        compression: compress_val as i32,
+                                        compression: Some(compress_val as i32),
                                         ..Default::default()
                                     }),
                                     ..Default::default()
