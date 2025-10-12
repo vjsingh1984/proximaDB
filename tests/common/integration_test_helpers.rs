@@ -221,7 +221,14 @@ impl UnifiedTestEnvironment {
             stats: Some(stats),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
-            storage_assignment: None,
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: self.persistent_dir.to_str().unwrap().to_string(),
+                backup_paths: vec![],
+                engine: engine as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: self.persistent_dir.to_str().unwrap().to_string(),
+                assigned_at: chrono::Utc::now().timestamp_millis(),
+            }),
         }
     }
 
@@ -619,7 +626,12 @@ pub mod operations {
         // Ensure directories exist
         environment.ensure_all_directories().await?;
 
-        let collection_config = environment.create_test_collection_for_engine(engine);
+        // Detect dimension from vectors
+        let dimension = vectors.first()
+            .map(|v| v.vector.len() as i32)
+            .unwrap_or(3); // Fallback to 3 if no vectors
+
+        let collection_config = environment.create_test_collection_with_settings(engine, dimension, None);
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
             vector_records: vectors,
