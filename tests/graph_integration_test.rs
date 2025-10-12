@@ -23,37 +23,41 @@
 // use helpers::graph_test_utils::*;
 use proximadb::{
     graph::{Edge, Node, OperationMode, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{property_value::Value, NodeQuery, TraversalRequest, TraversalAlgorithm, GraphStats, PropertyFilter, PropertyFilterOperator},
+    proto::proximadb_v1::{property_value::Value, NodeQuery, TraversalRequest, TraversalAlgorithm, GraphStats, PropertyFilter, PropertyFilterOperator, GraphStorageConfig, CompressionAlgorithm},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 
 const TEST_GRAPH_ID: &str = "test_graph";
 
-/// Test basic CRUD operations on nodes
-#[tokio::test]
-async fn test_node_crud_operations() {
-    let service = Arc::new(GraphOperationsService::new());
-
-    // Create the test graph collection first
+/// Helper function to ensure the test graph collection exists
+async fn ensure_test_graph_exists(service: &GraphOperationsService) {
     let create_request = proximadb::proto::proximadb_v1::CreateGraphRequest {
         graph_id: TEST_GRAPH_ID.to_string(),
         name: Some("Test Graph Collection".to_string()),
         description: Some("Test graph for integration testing".to_string()),
         schema: None,
-        storage_config: None,
+        storage_config: Some(GraphStorageConfig {
+            engine_type: "ORION".to_string(),
+            base_url: "/tmp/proximadb-test-graph".to_string(),
+            compression: CompressionAlgorithm::CompressionSnappy as i32,
+            enable_wal: true,
+            snapshot_interval_hours: 24,
+            engine_specific_config: HashMap::new(),
+        }),
         engine_config: None,
         access_control: None,
     };
 
     // Create the graph collection (ignore if it already exists)
-    match service.create_graph_collection(create_request).await {
-        Ok(_) => println!("Created test graph collection: {}", TEST_GRAPH_ID),
-        Err(e) if e.to_string().contains("already exists") => {
-            println!("Test graph collection already exists: {}", TEST_GRAPH_ID);
-        }
-        Err(e) => panic!("Failed to create test graph collection: {}", e),
-    }
+    let _ = service.create_graph_collection(create_request).await;
+}
+
+/// Test basic CRUD operations on nodes
+#[tokio::test]
+async fn test_node_crud_operations() {
+    let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Create a test node
     let node = Node {
@@ -121,6 +125,7 @@ async fn test_node_crud_operations() {
 #[tokio::test]
 async fn test_edge_crud_operations() {
     let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Create nodes first
     let node1 = Node {
@@ -193,6 +198,7 @@ async fn test_edge_crud_operations() {
 #[tokio::test]
 async fn test_graph_traversal() {
     let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Create a small graph: A -> B -> C -> D
     //                            -> E
@@ -264,6 +270,7 @@ async fn test_graph_traversal() {
 #[tokio::test]
 async fn test_node_query() {
     let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Create test nodes with different properties
     for i in 0..5 {
@@ -334,6 +341,7 @@ async fn test_node_query() {
 #[tokio::test]
 async fn test_batch_operations() {
     let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Batch create nodes
     let mut nodes = Vec::new();
@@ -379,6 +387,7 @@ async fn test_batch_operations() {
 #[tokio::test]
 async fn test_graph_stats() {
     let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Create some nodes and edges
     for i in 0..10 {
@@ -419,6 +428,7 @@ async fn test_graph_stats() {
 #[tokio::test]
 async fn test_unique_constraints() {
     let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Add unique constraint on email property for User label
     service.add_unique_constraint(TEST_GRAPH_ID, "User", "email").await.unwrap();
@@ -474,6 +484,7 @@ async fn test_unique_constraints() {
 #[tokio::test]
 async fn test_concurrent_operations() {
     let service = Arc::new(GraphOperationsService::new());
+    ensure_test_graph_exists(&service).await;
 
     // Spawn multiple tasks creating nodes concurrently
     let mut handles = vec![];
