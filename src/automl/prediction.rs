@@ -199,6 +199,11 @@ impl LinearRegressionModel {
             prediction += coef * feat;
         }
 
+        // Guard against NaN/Inf from numerical instability
+        if !prediction.is_finite() {
+            return 0.0;
+        }
+
         prediction
     }
 
@@ -229,12 +234,25 @@ impl LinearRegressionModel {
                 intercept_gradient += error;
             }
 
-            // Update weights
+            // Update weights with numerical stability checks
             let n = samples.len() as f64;
             for (i, grad) in gradient.iter().enumerate() {
-                self.coefficients[i] -= learning_rate * grad / n;
+                let update = learning_rate * grad / n;
+                if update.is_finite() {
+                    self.coefficients[i] -= update;
+                }
+                // Guard against NaN/Inf in coefficients
+                if !self.coefficients[i].is_finite() {
+                    self.coefficients[i] = 0.0;
+                }
             }
-            self.intercept -= learning_rate * intercept_gradient / n;
+            let intercept_update = learning_rate * intercept_gradient / n;
+            if intercept_update.is_finite() {
+                self.intercept -= intercept_update;
+            }
+            if !self.intercept.is_finite() {
+                self.intercept = 0.0;
+            }
         }
     }
 }

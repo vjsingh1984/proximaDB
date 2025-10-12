@@ -98,8 +98,15 @@ async fn test_workload_pattern_transitions() {
     let pattern = analyzer.analyze_workload("test_collection").await.unwrap();
     assert_eq!(pattern, WorkloadPattern::WriteHeavy);
 
-    // Transition to balanced
-    for _ in 0..15 {
+    // Transition to balanced - record more samples to dominate the average
+    // After 15 write-heavy samples, need enough balanced samples for avg_reads/avg_writes to be in 0.5-2.0
+    // Target: avg_reads/avg_writes in [0.5, 2.0]
+    // With 15 samples at 10/1000 and N samples at 500/500:
+    // avg_reads = (150 + 500*N) / (15 + N)
+    // avg_writes = (15000 + 500*N) / (15 + N)
+    // ratio = (150 + 500*N) / (15000 + 500*N)
+    // For ratio >= 0.5: 150 + 500*N >= 0.5 * (15000 + 500*N) => N >= 29.4
+    for _ in 0..35 {
         analyzer.record_metric("test_collection", "reads_per_sec", 500.0).await.unwrap();
         analyzer.record_metric("test_collection", "writes_per_sec", 500.0).await.unwrap();
         analyzer.record_metric("test_collection", "query_latency_ms", 10.0).await.unwrap();
