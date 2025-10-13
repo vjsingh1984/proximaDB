@@ -477,11 +477,11 @@ async fn test_end_to_end_search() {
             data_size_bytes: 0,
         }),
         storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/tmp/helix".to_string(),
+            primary_path: temp_dir.path().join("helix").to_str().unwrap().to_string(),
             backup_paths: vec![],
             engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
             engine_config: HashMap::new(),
-            base_location: "/tmp".to_string(),
+            base_location: temp_dir.path().to_str().unwrap().to_string(),
             assigned_at: 0,
         }),
         ..Default::default()
@@ -529,7 +529,10 @@ async fn test_end_to_end_search() {
         }),
         created_at: 0,
         updated_at: 0,
-        storage_assignment: None,
+        storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+            base_location: temp_dir.path().to_str().unwrap().to_string(),
+            ..Default::default()
+        }),
     });
 
     let search_context = StorageQueryContext {
