@@ -16,8 +16,6 @@ use crate::compute::distance_computation::DistanceMetric;
 
 use crate::storage::engines::impls::nova::progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig};
 use crate::storage::engines::impls::nova::streaming_search::{StreamingSearchEngine, StreamingSearchConfig};
-use crate::storage::engines::impls::nova::hierarchical_stats::SuperBlock;
-use crate::storage::engines::impls::nova::zone_maps::{AdvancedZoneMap, CostBasedOptimizer};
 
 /// Handles all search operations for NOVA engine
 pub struct NovaSearchOperations {

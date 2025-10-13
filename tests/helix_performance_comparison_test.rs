@@ -196,10 +196,30 @@ mod performance_comparison_tests {
         vectors: &[VectorRecord],
         query_vectors: &[Vec<f32>],
         collection_id: &str,
+        base_path: &str,
     ) -> PerformanceMetrics {
         let engine_name = engine.engine_name().to_string();
+        println!("[DEBUG] Starting benchmark for engine: {}", engine_name);
+
+        // Create collection config with storage assignment
+        let collection_config = proximadb::proto::proximadb_v1::Collection {
+            id: collection_id.to_string(),
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: VECTOR_DIMS as u32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: base_path.to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         // Measure flush performance
+        println!("[DEBUG] Starting flush for {} vectors", vectors.len());
         let flush_start = Instant::now();
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
@@ -210,15 +230,17 @@ mod performance_comparison_tests {
             timeout_ms: None,
             trigger_compaction: false,
             batch_ids: vec![],
-            collection_config: None,
+            collection_config: Some(collection_config.clone()),
             estimated_size: 0,
         };
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         let flush_time = flush_start.elapsed();
+        println!("[DEBUG] Flush completed in {:?}", flush_time);
         let flush_throughput = vectors.len() as f64 / flush_time.as_secs_f64();
 
         // Measure compaction performance (if applicable)
         let (compaction_time, compaction_throughput) = if engine_name != "viper" {
+            println!("[DEBUG] Starting compaction for {}", engine_name);
             let compact_start = Instant::now();
             let compact_params = CompactionParameters {
                 collection_id: Some(collection_id.to_string()),
@@ -227,11 +249,12 @@ mod performance_comparison_tests {
                 hints: HashMap::new(),
                 timeout_ms: None,
                 priority: proximadb::storage::traits::OperationPriority::Medium,
-                collection_config: None,
+                collection_config: Some(collection_config.clone()),
                 estimated_input_size: 0,
             };
             let compact_result = engine.do_compact(&compact_params).await.unwrap();
             let compact_time = compact_start.elapsed();
+            println!("[DEBUG] Compaction completed in {:?}", compact_time);
             let throughput = if compact_result.bytes_written.unwrap_or(0) > 0 {
                 (compact_result.bytes_written.unwrap_or(0) as f64 / 1_048_576.0)
                     / compact_time.as_secs_f64()
@@ -240,12 +263,17 @@ mod performance_comparison_tests {
             };
             (Some(compact_time), Some(throughput))
         } else {
+            println!("[DEBUG] Skipping compaction for VIPER engine");
             (None, None)
         };
 
         // Measure query performance
+        println!("[DEBUG] Starting queries ({} queries)", query_vectors.len());
         let mut query_times = Vec::new();
-        for query in query_vectors {
+        for (idx, query) in query_vectors.iter().enumerate() {
+            if idx % 10 == 0 {
+                println!("[DEBUG] Query {}/{}", idx, query_vectors.len());
+            }
             let query_start = Instant::now();
             let search_params = Arc::new(proximadb::core::search::SearchParams {
                 query_vectors: Some(vec![query.clone()]),
@@ -276,7 +304,10 @@ mod performance_comparison_tests {
                 stats: None,
                 created_at: 0,
                 updated_at: 0,
-                storage_assignment: None,
+                storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                    base_location: base_path.to_string(),
+                    ..Default::default()
+                }),
             });
 
             let ctx = StorageQueryContext {
@@ -288,6 +319,7 @@ mod performance_comparison_tests {
             let _ = engine.search_vectors_unified(&ctx).await.unwrap();
             query_times.push(query_start.elapsed());
         }
+        println!("[DEBUG] All queries completed");
 
         // Calculate percentiles
         let avg_query_time = query_times.iter().sum::<Duration>() / query_times.len() as u32;
@@ -368,13 +400,13 @@ mod performance_comparison_tests {
 
         // Benchmark each engine
         let helix_metrics =
-            benchmark_engine(helix_engine, &vectors, &query_vectors, "test_collection").await;
+            benchmark_engine(helix_engine, &vectors, &query_vectors, "test_collection", temp_dir.path().to_str().unwrap()).await;
 
         let sst_metrics =
-            benchmark_engine(sst_engine, &vectors, &query_vectors, "test_collection").await;
+            benchmark_engine(sst_engine, &vectors, &query_vectors, "test_collection", temp_dir.path().to_str().unwrap()).await;
 
         let viper_metrics =
-            benchmark_engine(viper_engine, &vectors, &query_vectors, "test_collection").await;
+            benchmark_engine(viper_engine, &vectors, &query_vectors, "test_collection", temp_dir.path().to_str().unwrap()).await;
 
         // Print results
         helix_metrics.print_summary();
@@ -437,10 +469,10 @@ mod performance_comparison_tests {
 
         // Benchmark each engine
         let helix_metrics =
-            benchmark_engine(helix_engine, &vectors, &query_vectors, "test_collection").await;
+            benchmark_engine(helix_engine, &vectors, &query_vectors, "test_collection", temp_dir.path().to_str().unwrap()).await;
 
         let sst_metrics =
-            benchmark_engine(sst_engine, &vectors, &query_vectors, "test_collection").await;
+            benchmark_engine(sst_engine, &vectors, &query_vectors, "test_collection", temp_dir.path().to_str().unwrap()).await;
 
         // Print results
         helix_metrics.print_summary();
@@ -486,7 +518,7 @@ mod performance_comparison_tests {
                 ) as Arc<dyn UnifiedStorageEngine>;
 
                 let metrics =
-                    benchmark_engine(engine, &vectors, &query_vectors, "test_collection").await;
+                    benchmark_engine(engine, &vectors, &query_vectors, "test_collection", temp_dir.path().to_str().unwrap()).await;
 
                 helix_times.push((size, metrics.avg_query_time));
             }
@@ -513,7 +545,7 @@ mod performance_comparison_tests {
                 ) as Arc<dyn UnifiedStorageEngine>;
 
                 let metrics =
-                    benchmark_engine(engine, &vectors, &query_vectors, "test_collection").await;
+                    benchmark_engine(engine, &vectors, &query_vectors, "test_collection", temp_dir.path().to_str().unwrap()).await;
 
                 sst_times.push((size, metrics.avg_query_time));
             }
@@ -573,6 +605,23 @@ mod performance_comparison_tests {
             .unwrap(),
         );
 
+        // Create collection config with storage assignment
+        let collection_config = proximadb::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: VECTOR_DIMS as u32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
         // Flush data in multiple batches to create multiple files
         for chunk in vectors.chunks(1000) {
             let flush_params = FlushParameters {
@@ -584,7 +633,7 @@ mod performance_comparison_tests {
                 timeout_ms: None,
                 trigger_compaction: false,
                 batch_ids: vec![],
-                collection_config: None,
+                collection_config: Some(collection_config.clone()),
                 estimated_size: 0,
             };
             engine.do_flush(&flush_params).await.unwrap();
@@ -598,7 +647,7 @@ mod performance_comparison_tests {
             hints: HashMap::new(),
             timeout_ms: None,
             priority: proximadb::storage::traits::OperationPriority::Medium,
-            collection_config: None,
+            collection_config: Some(collection_config.clone()),
             estimated_input_size: 0,
         };
         engine.do_compact(&compact_params).await.unwrap();
@@ -641,7 +690,10 @@ mod performance_comparison_tests {
                 stats: None,
                 created_at: 0,
                 updated_at: 0,
-                storage_assignment: None,
+                storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                    base_location: temp_dir.path().to_str().unwrap().to_string(),
+                    ..Default::default()
+                }),
             });
 
             let ctx = StorageQueryContext {
@@ -693,17 +745,21 @@ mod performance_comparison_tests {
 
         let vectors = create_test_vectors(5000, VECTOR_DIMS, "uniform", 42);
 
+        // Create temp dirs (need to keep them alive)
+        let temp_dir_helix = TempDir::new().unwrap();
+        let temp_dir_sst = TempDir::new().unwrap();
+        let temp_dir_viper = TempDir::new().unwrap();
+
         // Measure memory usage for each engine
-        let engines = vec![
+        let engines: Vec<(&str, Arc<dyn UnifiedStorageEngine>, &str)> = vec![
             ("HELIX", {
-                let temp_dir = TempDir::new().unwrap();
                 let config = HelixConfig::default();
                 Arc::new(
                     HelixEngine::new()
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
-            }),
+            }, temp_dir_helix.path().to_str().unwrap()),
             ("SST", {
                 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
                 use proximadb::core::config::SstConfig;
@@ -711,7 +767,6 @@ mod performance_comparison_tests {
                     FilesystemConfig, FilesystemFactory,
                 };
 
-                let temp_dir = TempDir::new().unwrap();
                 let sst_config = SstConfig::default();
                 let fs_config = FilesystemConfig::default();
                 let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
@@ -723,7 +778,7 @@ mod performance_comparison_tests {
                         .await
                         .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
-            }),
+            }, temp_dir_sst.path().to_str().unwrap()),
             ("VIPER", {
                 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
                 use proximadb::core::config::ViperConfig;
@@ -731,7 +786,6 @@ mod performance_comparison_tests {
                     FilesystemConfig, FilesystemFactory,
                 };
 
-                let temp_dir = TempDir::new().unwrap();
                 let viper_config = ViperConfig::default();
                 let fs_config = FilesystemConfig::default();
                 let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
@@ -743,10 +797,27 @@ mod performance_comparison_tests {
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
-            }),
+            }, temp_dir_viper.path().to_str().unwrap()),
         ];
 
-        for (name, engine) in engines {
+        for (name, engine, base_path) in engines {
+            // Create collection config with storage assignment
+            let collection_config = proximadb::proto::proximadb_v1::Collection {
+                id: "test_collection".to_string(),
+                config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                    name: "test_collection".to_string(),
+                    dimension: VECTOR_DIMS as u32,
+                    distance_metric: Some(DistanceMetric::Euclidean as i32),
+                    storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                    ..Default::default()
+                }),
+                storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                    base_location: base_path.to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+
             // Flush data
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
@@ -757,7 +828,7 @@ mod performance_comparison_tests {
                 timeout_ms: None,
                 trigger_compaction: false,
                 batch_ids: vec![],
-                collection_config: None,
+                collection_config: Some(collection_config),
                 estimated_size: 0,
             };
             let flush_result = engine.do_flush(&flush_params).await.unwrap();
@@ -803,6 +874,23 @@ mod performance_comparison_tests {
             .unwrap(),
         );
 
+        // Create collection config with storage assignment
+        let collection_config = proximadb::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: VECTOR_DIMS as u32,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
         // Load data
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
@@ -813,10 +901,13 @@ mod performance_comparison_tests {
             timeout_ms: None,
             trigger_compaction: false,
             batch_ids: vec![],
-            collection_config: None,
+            collection_config: Some(collection_config),
             estimated_size: 0,
         };
         engine.do_flush(&flush_params).await.unwrap();
+
+        // Capture base_path outside the loop for use in async closures
+        let base_path = temp_dir.path().to_str().unwrap().to_string();
 
         // Test with different concurrency levels
         for concurrency in [1, 5, 10, 20] {
@@ -827,6 +918,7 @@ mod performance_comparison_tests {
                 for query in batch {
                     let engine_clone = engine.clone();
                     let query_clone = query.clone();
+                    let base_path_clone = base_path.clone();
                     let handle = tokio::spawn(async move {
                         let search_params = Arc::new(proximadb::core::search::SearchParams {
                             query_vectors: Some(vec![query_clone]),
@@ -860,7 +952,10 @@ mod performance_comparison_tests {
                             stats: None,
                             created_at: 0,
                             updated_at: 0,
-                            storage_assignment: None,
+                            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                                base_location: base_path_clone,
+                                ..Default::default()
+                            }),
                         });
 
                         let ctx = StorageQueryContext {

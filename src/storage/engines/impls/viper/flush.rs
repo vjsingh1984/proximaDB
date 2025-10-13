@@ -449,16 +449,26 @@ impl Flush {
             {
                 Ok(path) => {
                     info!("✅ VIPER: Step 3 - Parquet atomically moved: {}", path);
-                    // Clean up temp file if it still exists
-                    if let Err(e) = std::fs::remove_file(temp_path) {
-                        debug!("Temp file already moved or deleted: {}", e);
+                    // Clean up temp file if it still exists using filesystem API
+                    let temp_path_str = temp_path.to_str().unwrap_or("");
+                    if !temp_path_str.is_empty() {
+                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str) {
+                            if let Err(e) = local_fs.delete(temp_path_str).await {
+                                debug!("Temp file already moved or deleted: {}", e);
+                            }
+                        }
                     }
                     path
                 }
                 Err(e) => {
-                    // Clean up temp file on error
-                    if let Err(cleanup_err) = std::fs::remove_file(temp_path) {
-                        debug!("Failed to clean up temp file: {}", cleanup_err);
+                    // Clean up temp file on error using filesystem API
+                    let temp_path_str = temp_path.to_str().unwrap_or("");
+                    if !temp_path_str.is_empty() {
+                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str) {
+                            if let Err(cleanup_err) = local_fs.delete(temp_path_str).await {
+                                debug!("Failed to clean up temp file: {}", cleanup_err);
+                            }
+                        }
                     }
                     error!("❌ VIPER: Step 3 - Atomic move failed: {}", e);
                     return Err(e.context("Failed to atomically move Parquet file"));
@@ -635,7 +645,11 @@ impl Flush {
         temp_file_path: &std::path::Path,
         collection_config: &Option<crate::proto::proximadb_v1::Collection>,
     ) -> Result<String> {
-        let file_size = std::fs::metadata(temp_file_path)?.len();
+        // Get local filesystem for temp file (cloud-compatible)
+        let temp_path_str = temp_file_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid temp file path"))?;
+        let local_fs = self.filesystem_factory.get_filesystem(temp_path_str)?;
+        let file_size = local_fs.metadata(temp_path_str).await?.size;
+
         info!(
             "🔄 Moving Parquet file atomically with zero-copy: {} ({} bytes)",
             filename, file_size
@@ -672,8 +686,8 @@ impl Flush {
         {
             info!("✅ Using UnifiedCachingFilesystem with intelligent staging and caching");
 
-            // Read data once for optimized write
-            let data = std::fs::read(temp_file_path)?;
+            // Read data once for optimized write using filesystem API (cloud-compatible)
+            let data = local_fs.read(temp_path_str).await?;
 
             // Configure write options for atomic operation
             let write_options = crate::storage::persistence::filesystem::FileOptions {
@@ -696,7 +710,7 @@ impl Flush {
             // Fallback to standard filesystem API
             debug!("Using standard filesystem API (consider enabling ZeroCopyFilesystem)");
 
-            let data = std::fs::read(temp_file_path)?;
+            let data = local_fs.read(temp_path_str).await?;
 
             let write_options = crate::storage::persistence::filesystem::FileOptions {
                 create_dirs: true,

@@ -1309,27 +1309,7 @@ impl UnifiedStorageEngine for NovaEngine {
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
-        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-        use crate::core::search::results::OptimizedSearchRecord;
-
-        // Extract search parameters from context
-        let query_vector = ctx.search_params.vector.as_ref()
-            .or(ctx.search_params.query_vectors.as_ref().and_then(|vecs| vecs.first()))
-            .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
-        let k = ctx.search_params.top_k.unwrap_or(10);
-        let collection_id = &ctx.collection.id;
-
-        // Get files for the collection
-        let collection_path = format!("/data/collections/{}/nova", collection_id);
-        // Get files for the collection - simplified for now
-        let files: Vec<String> = vec![];
-
-        if files.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Delegate to modularized search operations
+        // Delegate directly to modularized search operations
         self.search_ops.search_vectors_unified(ctx).await
     }
 

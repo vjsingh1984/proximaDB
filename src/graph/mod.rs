@@ -134,8 +134,8 @@ pub struct GraphMemoryPool {
     /// Composite (from,to,type) edge index for uniqueness checks
     pub edge_composite_index: Arc<DashMap<(NodeId, NodeId, String), EdgeId>>,
 
-    /// Unique constraints registry: (label, property) -> (value -> node_id)
-    pub unique_constraints: Arc<DashMap<(String, String), DashMap<String, NodeId>>>,
+    /// Unique constraints registry: (graph_id, label, property) -> (value -> node_id)
+    pub unique_constraints: Arc<DashMap<(String, String, String), DashMap<String, NodeId>>>,
 }
 
 impl GraphMemoryPool {

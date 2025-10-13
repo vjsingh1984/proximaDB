@@ -22,8 +22,8 @@
 // mod helpers;
 // use helpers::graph_test_utils::*;
 use proximadb::{
-    graph::{Edge, Node, OperationMode, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{property_value::Value, NodeQuery, TraversalRequest, TraversalAlgorithm, GraphStats, PropertyFilter, PropertyFilterOperator, GraphStorageConfig, CompressionAlgorithm},
+    graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
+    proto::proximadb_v1::{property_value::Value, NodeQuery, TraversalRequest, TraversalAlgorithm, PropertyFilter, GraphStorageConfig, CompressionAlgorithm},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,6 +32,11 @@ const TEST_GRAPH_ID: &str = "test_graph";
 
 /// Helper function to ensure the test graph collection exists
 async fn ensure_test_graph_exists(service: &GraphOperationsService) {
+    // Clean up any existing test data from previous runs
+    let test_dir = "/tmp/proximadb-test-graph";
+    let _ = std::fs::remove_dir_all(test_dir);
+    std::fs::create_dir_all(test_dir).unwrap();
+
     let create_request = proximadb::proto::proximadb_v1::CreateGraphRequest {
         graph_id: TEST_GRAPH_ID.to_string(),
         name: Some("Test Graph Collection".to_string()),
@@ -39,7 +44,7 @@ async fn ensure_test_graph_exists(service: &GraphOperationsService) {
         schema: None,
         storage_config: Some(GraphStorageConfig {
             engine_type: "ORION".to_string(),
-            base_url: "/tmp/proximadb-test-graph".to_string(),
+            base_url: test_dir.to_string(),
             compression: CompressionAlgorithm::CompressionSnappy as i32,
             enable_wal: true,
             snapshot_interval_hours: 24,
@@ -202,6 +207,7 @@ async fn test_graph_traversal() {
 
     // Create a small graph: A -> B -> C -> D
     //                            -> E
+    println!("🔍 DEBUG: Creating nodes...");
     for id in ["A", "B", "C", "D", "E"] {
         let node = Node {
             id: id.to_string(),
@@ -211,7 +217,8 @@ async fn test_graph_traversal() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node(TEST_GRAPH_ID, node).await.unwrap();
+        let created = service.create_node(TEST_GRAPH_ID, node).await.unwrap();
+        println!("  ✅ Created node: {}", created.id);
     }
 
     // Create edges
@@ -222,6 +229,7 @@ async fn test_graph_traversal() {
         ("edge4", "B", "E"),
     ];
 
+    println!("🔍 DEBUG: Creating edges...");
     for (id, from, to) in edges {
         let edge = Edge {
             id: id.to_string(),
@@ -233,15 +241,19 @@ async fn test_graph_traversal() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
+        let created = service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
+        println!("  ✅ Created edge: {} ({} -> {})", created.id, created.from_node_id, created.to_node_id);
     }
 
     // Test get neighbors
+    println!("🔍 DEBUG: Getting neighbors of A...");
     let neighbors = service.get_neighbors(TEST_GRAPH_ID, &"A".to_string()).await.unwrap();
+    println!("  Found {} neighbors: {:?}", neighbors.len(), neighbors.iter().map(|n| &n.id).collect::<Vec<_>>());
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id, "B".to_string());
 
     // Test traversal
+    println!("🔍 DEBUG: Starting BFS traversal from A with max_depth=2...");
     let traversal_request = TraversalRequest {
         graph_id: TEST_GRAPH_ID.to_string(),
         start_node_id: "A".to_string(),
@@ -257,13 +269,29 @@ async fn test_graph_traversal() {
 
     let result = service.traverse(TEST_GRAPH_ID, traversal_request).await.unwrap();
 
+    println!("🔍 DEBUG: Traversal result:");
+    println!("  Nodes found: {}", result.nodes.len());
+    for node in &result.nodes {
+        println!("    - Node: {}", node.id);
+    }
+    println!("  Edges found: {}", result.edges.len());
+    for edge in &result.edges {
+        println!("    - Edge: {} -> {}", edge.from_node_id, edge.to_node_id);
+    }
+    if let Some(stats) = &result.stats {
+        println!("  Stats: nodes_visited={}, edges_traversed={}, max_depth={}",
+                 stats.nodes_visited, stats.edges_traversed, stats.max_depth_reached);
+    }
+
     // Should find A, B, C, E (depth 0, 1, 2)
-    assert!(result.nodes.len() >= 3);
+    println!("🔍 DEBUG: Checking assertion (expecting >= 3 nodes)...");
+    assert!(result.nodes.len() >= 3, "Expected at least 3 nodes, got {}", result.nodes.len());
 
     // Verify nodes are found
     let node_ids: Vec<String> = result.nodes.iter().map(|n| n.id.clone()).collect();
-    assert!(node_ids.contains(&"A".to_string()));
-    assert!(node_ids.contains(&"B".to_string()));
+    println!("🔍 DEBUG: Node IDs: {:?}", node_ids);
+    assert!(node_ids.contains(&"A".to_string()), "Node A not found");
+    assert!(node_ids.contains(&"B".to_string()), "Node B not found");
 }
 
 /// Test node querying with filters
@@ -390,6 +418,7 @@ async fn test_graph_stats() {
     ensure_test_graph_exists(&service).await;
 
     // Create some nodes and edges
+    println!("🔍 DEBUG: Creating nodes for stats test...");
     for i in 0..10 {
         let node = Node {
             id: format!("stats_node_{}", i),
@@ -399,9 +428,11 @@ async fn test_graph_stats() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node(TEST_GRAPH_ID, node).await.unwrap();
+        let created = service.create_node(TEST_GRAPH_ID, node).await.unwrap();
+        println!("  ✅ Created node: {} with labels: {:?}", created.id, created.labels);
     }
 
+    println!("🔍 DEBUG: Creating edges for stats test...");
     for i in 0..5 {
         let edge = Edge {
             id: format!("stats_edge_{}", i),
@@ -413,15 +444,28 @@ async fn test_graph_stats() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
+        let created = service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
+        println!("  ✅ Created edge: {} ({} -> {}) type: {}", created.id, created.from_node_id, created.to_node_id, created.edge_type);
     }
 
     // Get statistics
+    println!("🔍 DEBUG: Fetching graph statistics...");
     let stats = service.get_stats(TEST_GRAPH_ID).await.unwrap();
-    assert_eq!(stats.total_nodes, 10);
-    assert_eq!(stats.total_edges, 5);
-    assert!(stats.label_stats.len() > 0);
-    assert!(stats.edge_type_stats.len() > 0);
+    println!("  Total nodes: {}", stats.total_nodes);
+    println!("  Total edges: {}", stats.total_edges);
+    println!("  Label stats entries: {}", stats.label_stats.len());
+    for label_stat in &stats.label_stats {
+        println!("    - {}: {} nodes", label_stat.label, label_stat.count);
+    }
+    println!("  Edge type stats entries: {}", stats.edge_type_stats.len());
+    for edge_stat in &stats.edge_type_stats {
+        println!("    - {}: {} edges", edge_stat.edge_type, edge_stat.count);
+    }
+
+    assert_eq!(stats.total_nodes, 10, "Expected 10 nodes, got {}", stats.total_nodes);
+    assert_eq!(stats.total_edges, 5, "Expected 5 edges, got {}", stats.total_edges);
+    assert!(stats.label_stats.len() > 0, "Expected label stats, got {}", stats.label_stats.len());
+    assert!(stats.edge_type_stats.len() > 0, "Expected edge type stats, got {}", stats.edge_type_stats.len());
 }
 
 /// Test unique constraints
@@ -430,9 +474,12 @@ async fn test_unique_constraints() {
     let service = Arc::new(GraphOperationsService::new());
     ensure_test_graph_exists(&service).await;
 
+    println!("🔍 DEBUG: Adding unique constraint on User.email...");
     // Add unique constraint on email property for User label
     service.add_unique_constraint(TEST_GRAPH_ID, "User", "email").await.unwrap();
+    println!("  ✅ Unique constraint added");
 
+    println!("🔍 DEBUG: Creating first user with email test@example.com...");
     // Create first user
     let node1 = Node {
         id: "user_with_email_1".to_string(),
@@ -451,8 +498,10 @@ async fn test_unique_constraints() {
     };
 
     let created = service.create_node(TEST_GRAPH_ID, node1).await.unwrap();
+    println!("  ✅ Created first user: {}", created.id);
     assert_eq!(created.id, "user_with_email_1".to_string());
 
+    println!("🔍 DEBUG: Attempting to create second user with duplicate email (should fail)...");
     // Try to create second user with same email - should fail
     let node2 = Node {
         id: "user_with_email_2".to_string(),
@@ -471,12 +520,24 @@ async fn test_unique_constraints() {
     };
 
     let result = service.create_node(TEST_GRAPH_ID, node2).await;
-    assert!(result.is_err());
+
+    match &result {
+        Ok(node) => {
+            println!("  ❌ UNEXPECTED: Second user was created: {} (should have failed!)", node.id);
+        }
+        Err(e) => {
+            println!("  ✅ Creation correctly failed with error: {}", e);
+        }
+    }
+
+    assert!(result.is_err(), "Expected error due to unique constraint violation, but creation succeeded");
 
     // Verify error message contains constraint violation
     if let Err(e) = result {
         let error_msg = e.to_string();
-        assert!(error_msg.contains("unique constraint") || error_msg.contains("Unique constraint"));
+        println!("  Error message: {}", error_msg);
+        assert!(error_msg.contains("unique constraint") || error_msg.contains("Unique constraint"),
+                "Error message doesn't mention unique constraint: {}", error_msg);
     }
 }
 

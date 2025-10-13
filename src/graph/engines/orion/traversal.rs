@@ -171,7 +171,7 @@ pub async fn breadth_first_search(
         }
         // Check depth limit
         if let Some(max_depth) = config.max_depth {
-            if current_depth >= max_depth {
+            if current_depth > max_depth {
                 break;
             }
         }
@@ -365,7 +365,7 @@ pub async fn depth_first_search(
 
         // Check depth limit
         if let Some(max_depth) = config.max_depth {
-            if depth >= max_depth {
+            if depth > max_depth {
                 continue;
             }
         }

@@ -395,14 +395,13 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Enforce unique constraints per label/property
-        // TODO: Update constraints to be graph-specific
-        // self.enforce_unique_constraints_on_node(&node)?;
+        // Enforce unique constraints per label/property for this specific graph
+        self.enforce_unique_constraints_on_node(graph_id, &node)?;
 
         let node_arc = engine.insert_node(node)?;
 
-        // TODO: Register unique keys per graph
-        // self.register_node_in_unique_constraints(&node_arc);
+        // Register unique keys for this specific graph
+        self.register_node_in_unique_constraints(graph_id, &node_arc);
 
         Ok(node_arc)
     }
@@ -429,11 +428,11 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Enforce unique constraints before update
-        self.enforce_unique_constraints_on_node(&node)?;
+        // Enforce unique constraints before update for this specific graph
+        self.enforce_unique_constraints_on_node(graph_id, &node)?;
         let node_arc = engine.update_node(node)?;
-        // Update unique key registry
-        self.register_node_in_unique_constraints(&node_arc);
+        // Update unique key registry for this specific graph
+        self.register_node_in_unique_constraints(graph_id, &node_arc);
         Ok(node_arc)
     }
 
@@ -456,9 +455,9 @@ impl GraphOperationsService {
                 id
             )));
         }
-        // Remove from unique constraints if present
+        // Remove from unique constraints if present for this specific graph
         if let Some(node) = engine.get_node(id)? {
-            self.unregister_node_from_unique_constraints(&node);
+            self.unregister_node_from_unique_constraints(graph_id, &node);
         }
         GraphEngine::delete_node(&*engine, id)
     }
@@ -541,9 +540,9 @@ impl GraphOperationsService {
                 }
             }
         }
-        // Remove from unique constraints if present
+        // Remove from unique constraints if present for this specific graph
         if let Some(node) = engine.get_node(id)? {
-            self.unregister_node_from_unique_constraints(&node);
+            self.unregister_node_from_unique_constraints(graph_id, &node);
         }
         // Delete node
         GraphEngine::delete_node(&*engine, id)
@@ -554,13 +553,13 @@ impl GraphOperationsService {
         // Get the graph engine to ensure it exists
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Store constraint key with graph_id prefix for uniqueness
-        let key = (format!("{}::{}", graph_id, label), property.to_string());
+        // Store constraint key with graph_id for graph-specific constraints
+        let key = (graph_id.to_string(), label.to_string(), property.to_string());
         let map: DashMap<String, String> = DashMap::new();
-        // Build from existing nodes in this specific graph
-        // TODO: Need to filter nodes by graph_id when building the index
-        for entry in self.memory_pool.nodes.iter() {
-            let node = entry.value();
+
+        // Build from existing nodes in this specific graph (use engine's get_all_nodes)
+        let existing_nodes = engine.get_all_nodes()?;
+        for node in existing_nodes {
             if !node.labels.contains(&label.to_string()) {
                 continue;
             }
@@ -586,20 +585,22 @@ impl GraphOperationsService {
         // Get the graph engine to ensure it exists
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Store constraint key with graph_id prefix for uniqueness
-        let key = (format!("{}::{}", graph_id, label), property.to_string());
+        // Remove constraint using graph-specific key
+        let key = (graph_id.to_string(), label.to_string(), property.to_string());
         self.memory_pool.unique_constraints.remove(&key);
 
         Ok(())
     }
 
-    fn enforce_unique_constraints_on_node(&self, node: &Node) -> Result<()> {
+    fn enforce_unique_constraints_on_node(&self, graph_id: &str, node: &Node) -> Result<()> {
         // For each label/property under constraint, ensure no duplicate value exists
         for label in &node.labels {
             for entry in self.memory_pool.unique_constraints.iter() {
-                let (clabel, cprop) = entry.key();
+                let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if clabel == label {
+
+                // Only check constraints for this specific graph
+                if cgraph == graph_id && clabel == label {
                     if let Some(val) = node.properties.get(cprop) {
                         let k = Self::index_key_for_value_internal(val);
                         if let Some(existing) = map.get(&k) {
@@ -617,13 +618,14 @@ impl GraphOperationsService {
         Ok(())
     }
 
-    fn register_node_in_unique_constraints(&self, node: &Arc<Node>) {
+    fn register_node_in_unique_constraints(&self, graph_id: &str, node: &Arc<Node>) {
         for label in &node.labels {
             let label = label.clone();
             for entry in self.memory_pool.unique_constraints.iter() {
-                let (clabel, cprop) = entry.key();
+                let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if *clabel == label {
+                // Only register for this specific graph
+                if cgraph == graph_id && *clabel == label {
                     if let Some(val) = node.properties.get(cprop) {
                         let k = Self::index_key_for_value_internal(val);
                         map.insert(k, node.id.clone());
@@ -633,13 +635,14 @@ impl GraphOperationsService {
         }
     }
 
-    fn unregister_node_from_unique_constraints(&self, node: &Arc<Node>) {
+    fn unregister_node_from_unique_constraints(&self, graph_id: &str, node: &Arc<Node>) {
         for label in &node.labels {
             let label = label.clone();
             for entry in self.memory_pool.unique_constraints.iter() {
-                let (clabel, cprop) = entry.key();
+                let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if *clabel == label {
+                // Only unregister from this specific graph
+                if cgraph == graph_id && *clabel == label {
                     if let Some(val) = node.properties.get(cprop) {
                         let k = Self::index_key_for_value_internal(val);
                         if let Some(existing) = map.get(&k) {
@@ -1209,10 +1212,28 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
+        // Collect label statistics by iterating through all nodes
+        let mut label_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        if let Ok(nodes) = engine.get_all_nodes() {
+            for node in nodes {
+                for label in &node.labels {
+                    *label_counts.entry(label.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let label_stats: Vec<crate::proto::proximadb_v1::LabelStats> = label_counts
+            .into_iter()
+            .map(|(label, count)| crate::proto::proximadb_v1::LabelStats {
+                label,
+                count,
+            })
+            .collect();
+
         let stats = crate::proto::proximadb_v1::GraphStats {
             total_nodes: engine.node_count().unwrap_or(0) as u64,
             total_edges: self.stats_edges.load(std::sync::atomic::Ordering::Relaxed),
-            label_stats: vec![], // TODO: Implement detailed label stats
+            label_stats,
             edge_type_stats: self
                 .edge_type_counts
                 .iter()

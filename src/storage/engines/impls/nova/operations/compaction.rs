@@ -16,7 +16,6 @@ use crate::storage::engines::core::formats::columnar::{
 };
 
 use crate::storage::engines::impls::nova::hierarchical_stats::{SuperBlock, EnhancedRowGroupStats};
-use crate::storage::engines::impls::nova::zone_maps::AdvancedZoneMap;
 
 /// Handles all compaction operations for NOVA engine
 pub struct NovaCompactionOperations {
@@ -36,26 +35,62 @@ impl NovaCompactionOperations {
     ) -> Result<CompactionResult> {
         let start = std::time::Instant::now();
 
-        info!(
-            "🔄 NOVA: Starting compaction for collection {}",
-            params.collection_id.as_deref().unwrap_or("default")
-        );
+        let collection_id = params.collection_id.as_deref().unwrap_or("default");
+        info!("🔄 NOVA: Starting compaction for collection {}", collection_id);
 
-        // For NOVA, we need to list files from the collection directory
-        let collection_path = format!("/data/collections/{}/nova", params.collection_id.as_deref().unwrap_or("default"));
-        // List files in the collection directory
-        let input_files: Vec<String> = vec![]; // For now, simplified implementation
+        // Get base_location from collection config
+        let base_location = params.collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .map(|s| s.base_location.as_str())
+            .unwrap_or("/data/collections");
 
-        if input_files.is_empty() {
+        // Use standard path: {base_location}/{collection_id}/data
+        let data_path = crate::utils::StoragePath::collection_data_path(base_location, collection_id);
+
+        debug!("🔄 NOVA compaction: base_location={}, data_path={}", base_location, data_path);
+
+        // List parquet files in the data directory
+        let fs = self.filesystem.get_filesystem(&data_path)?;
+        let entries = match fs.list(&data_path).await {
+            Ok(e) => e,
+            Err(err) => {
+                debug!("🔄 NOVA compaction: Directory {} does not exist or is empty: {}", data_path, err);
+                return Ok(CompactionResult {
+                    success: true,
+                    collections_affected: vec![collection_id.to_string()],
+                    entries_processed: Some(0),
+                    entries_removed: Some(0),
+                    bytes_read: Some(0),
+                    bytes_written: Some(0),
+                    input_files: Some(0),
+                    output_files: Some(0),
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    completed_at: chrono::Utc::now(),
+                    engine_metrics: HashMap::new(),
+                });
+            }
+        };
+
+        let input_files: Vec<String> = entries
+            .into_iter()
+            .filter(|e| !e.metadata.is_directory && e.name.ends_with(".parquet"))
+            .map(|e| format!("{}/{}", data_path, e.name))
+            .collect();
+
+        debug!("🔄 NOVA compaction: Found {} parquet files", input_files.len());
+
+        if input_files.len() < 2 {
+            debug!("🔄 NOVA compaction: Not enough files to compact (need at least 2)");
             return Ok(CompactionResult {
                 success: true,
-                collections_affected: vec![params.collection_id.clone().unwrap_or("default".to_string())],
+                collections_affected: vec![collection_id.to_string()],
                 entries_processed: Some(0),
                 entries_removed: Some(0),
                 bytes_read: Some(0),
                 bytes_written: Some(0),
-                input_files: Some(0),
-                output_files: Some(0),
+                input_files: Some(input_files.len() as u64),
+                output_files: Some(input_files.len() as u64),
                 duration_ms: Some(start.elapsed().as_millis() as u64),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
@@ -65,43 +100,78 @@ impl NovaCompactionOperations {
         // Read all input files
         let mut all_records = Vec::new();
         let mut bytes_before = 0u64;
+        let original_count;
 
+        info!("🔄 NOVA compaction: Reading {} input files", input_files.len());
         for file_path in &input_files {
-            let file_metadata = self.filesystem.metadata(file_path).await?;
+            let fs_for_meta = self.filesystem.get_filesystem(file_path)?;
+            let file_metadata = fs_for_meta.metadata(file_path).await?;
             bytes_before += file_metadata.size;
 
             // Read records using UnifiedParquetReader
-            let records = self.read_parquet_file(file_path).await?;
+            let records = self.read_parquet_file(file_path, collection_id).await?;
+            debug!("🔄 NOVA compaction: Read {} records from {}", records.len(), file_path);
             all_records.extend(records);
         }
+
+        original_count = all_records.len();
+        info!("🔄 NOVA compaction: Read total {} records from {} files", original_count, input_files.len());
 
         // Sort by ID for better locality
         all_records.sort_by(|a, b| a.id.cmp(&b.id));
 
-        // Remove duplicates keeping latest version
-        all_records.dedup_by(|a, b| a.id == b.id);
+        // Remove duplicates keeping latest version (by timestamp)
+        let mut unique_records = Vec::new();
+        let mut prev_id: Option<String> = None;
 
-        // Write compacted file
-        let output_path = self.generate_compacted_file_path(&params.collection_id.as_deref().unwrap_or("default"));
+        for record in all_records {
+            if let Some(ref pid) = prev_id {
+                if &record.id != pid {
+                    unique_records.push(record.clone());
+                    prev_id = Some(record.id);
+                }
+                // Skip duplicates (keep first occurrence after sort)
+            } else {
+                unique_records.push(record.clone());
+                prev_id = Some(record.id);
+            }
+        }
+
+        let entries_removed = (original_count - unique_records.len()) as u64;
+        info!("🔄 NOVA compaction: After deduplication: {} records ({} removed)", unique_records.len(), entries_removed);
+
+        // Write compacted file to same data directory
+        let output_path = self.generate_compacted_file_path(&data_path, collection_id);
+        debug!("🔄 NOVA compaction: Writing compacted file to {}", output_path);
+
         let bytes_after = self.write_compacted_file(
             &params,
             &output_path,
-            all_records.clone(),
+            unique_records.clone(),
             128 * 1024 * 1024, // Default 128MB target size
         ).await?;
 
-        // Always clean up input files after successful compaction
+        info!("🔄 NOVA compaction: Written {} bytes to {}", bytes_after, output_path);
+
+        // Clean up input files after successful compaction
         for file_path in &input_files {
-            if let Err(e) = self.filesystem.delete(file_path).await {
+            debug!("🔄 NOVA compaction: Deleting input file {}", file_path);
+            let fs_for_delete = self.filesystem.get_filesystem(file_path)?;
+            if let Err(e) = fs_for_delete.delete(file_path).await {
                 warn!("Failed to delete input file {}: {}", file_path, e);
             }
         }
 
+        info!(
+            "🔄 NOVA compaction: Complete - {} files → 1 file, {} → {} bytes, {} duplicates removed",
+            input_files.len(), bytes_before, bytes_after, entries_removed
+        );
+
         Ok(CompactionResult {
             success: true,
-            collections_affected: vec![params.collection_id.clone().unwrap_or("default".to_string())],
-            entries_processed: Some(all_records.len() as u64),
-            entries_removed: Some(0), // Will be improved with deduplication tracking
+            collections_affected: vec![collection_id.to_string()],
+            entries_processed: Some(original_count as u64),
+            entries_removed: Some(entries_removed),
             bytes_read: Some(bytes_before),
             bytes_written: Some(bytes_after),
             input_files: Some(input_files.len() as u64),
@@ -113,29 +183,29 @@ impl NovaCompactionOperations {
     }
 
     /// Read parquet file using UnifiedParquetReader
-    async fn read_parquet_file(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    async fn read_parquet_file(&self, file_path: &str, collection_id: &str) -> Result<Vec<VectorRecord>> {
         // Get filesystem
         let fs = self.filesystem.get_filesystem(file_path)?;
 
-        // Use default reader configuration
-        let reader_config = ReaderConfig::default();
+        // Create unified caching filesystem
+        let unified_fs = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            fs,
+            collection_id.to_string(),
+            "nova".to_string(),
+        ));
 
-        // Create UnifiedParquetReader
+        // Create UnifiedParquetReader - dimension will be read from file
         let reader = UnifiedParquetReader::new(
             vec![file_path.to_string()],
-            768, // Default dimension, will be overridden from file
+            128, // Default dimension, will be overridden from file metadata
             self.filesystem.clone(),
-            Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-                fs,
-                "nova_collection".to_string(),
-                "nova".to_string(),
-            )),
-            "nova_collection".to_string(),
+            unified_fs,
+            collection_id.to_string(),
             "nova".to_string(),
         )?;
 
-        // Read all records - read_all_records takes a filter and returns Result
-        reader.read_all_records(10000, None).await
+        // Read all records
+        reader.read_all_records(100000, None).await
     }
 
     /// Write compacted file using HybridParquetWriter
@@ -146,14 +216,15 @@ impl NovaCompactionOperations {
         records: Vec<VectorRecord>,
         target_size: u64,
     ) -> Result<u64> {
-        use crate::storage::engines::core::formats::columnar::hybrid_writer::{HybridParquetWriter, HybridWriterConfig};
-
+        // Get dimension from collection config FIRST, then fall back to actual vectors
         let dimension = params.collection_config
             .as_ref()
             .and_then(|collection| collection.config.as_ref())
             .map(|config| config.dimension as usize)
             .or_else(|| records.first().map(|r| r.vector.len()))
-            .unwrap_or(768);
+            .ok_or_else(|| anyhow::anyhow!(
+                "Cannot determine vector dimension: no collection config and no records provided"
+            ))?;
 
         let writer_config = ParquetWriterConfig {
             row_group_size: 50000,
@@ -193,33 +264,27 @@ impl NovaCompactionOperations {
             max_row_group_size: 100000,
         };
 
-        // Use HybridParquetWriter for adaptive optimization during compaction
-        // Get filesystem
-        let fs = self.filesystem.get_filesystem(output_path)?;
-        let mut writer = HybridParquetWriter::new(
-            output_path,
+        // Use HybridParquetWriter::write_with_cache for compaction
+        let (stats, _) = HybridParquetWriter::write_with_cache(
+            &records,
             dimension,
             hybrid_config,
-        )?;
+            output_path,
+            &*self.filesystem,
+            None, // filterable_columns
+            None, // metadata_collector
+        ).await?;
 
-        // Write records in batches
-        let batch_size = 10000;
-        for chunk in records.chunks(batch_size) {
-            // Write batch directly
-            writer.write_batch(chunk).await?;
-        }
-
-        let (stats, _) = writer.finalize().await?;
         Ok(stats.file_size)
     }
 
-    /// Generate compacted file path
-    fn generate_compacted_file_path(&self, collection_id: &str) -> String {
+    /// Generate compacted file path in the data directory
+    fn generate_compacted_file_path(&self, data_path: &str, collection_id: &str) -> String {
         let timestamp = chrono::Utc::now().timestamp_millis();
         let uuid = uuid::Uuid::new_v4();
         format!(
-            "/data/collections/{}/nova/compacted_{}_{}.parquet",
-            collection_id, timestamp, uuid
+            "{}/nova_{}_compacted_{}_{}.parquet",
+            data_path, collection_id, timestamp, uuid
         )
     }
 }

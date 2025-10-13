@@ -1625,6 +1625,8 @@ async fn test_incremental_compaction() {
 
     // Use persistent test directory instead of temporary directory
     let test_dir = "/tmp/proximadb-test/viper-incremental-compaction";
+    // Clean up any existing test data from previous runs
+    let _ = std::fs::remove_dir_all(test_dir);
     std::fs::create_dir_all(test_dir).unwrap();
 
     let config = create_compaction_config(test_dir);

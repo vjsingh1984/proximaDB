@@ -2066,11 +2066,13 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Get collection_id and data directory using trait-level helpers
         let collection_id = self.get_collection_id_from_compaction_params(params)?;
         let data_dir = self.get_data_dir_from_compaction_params(params)?;
-        let input_files: Vec<String> = match std::fs::read_dir(&data_dir) {
+
+        // Use filesystem API for cloud-compatible file listing
+        let input_files: Vec<String> = match self.filesystem.list(&data_dir).await {
             Ok(entries) => entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "raptor"))
-                .map(|e| e.path().to_string_lossy().to_string())
+                .into_iter()
+                .filter(|e| !e.metadata.is_directory && e.name.ends_with(".raptor"))
+                .map(|e| format!("{}/{}", data_dir, e.name))
                 .collect(),
             Err(_) => Vec::new(),
         };

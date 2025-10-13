@@ -15,7 +15,6 @@ use crate::storage::engines::core::formats::columnar::{
     FIELD_ID,
 };
 
-use crate::storage::engines::impls::nova::hierarchical_stats::SuperBlock;
 use crate::storage::engines::impls::nova::nova_meta_collector::NovaMetadataCollector;
 
 /// Handles all flush operations for NOVA engine
@@ -61,9 +60,16 @@ impl NovaFlushOperations {
         let storage_path = crate::utils::StoragePath::collection_data_path(base_location, collection_id);
         let full_path = format!("{}/{}", storage_path, file_name);
 
+        debug!("📂 NOVA flush: base_location={}, collection_id={}", base_location, collection_id);
+        debug!("📂 NOVA flush: storage_path={}", storage_path);
+        debug!("📂 NOVA flush: full_path={}", full_path);
+
         // Create directory if it doesn't exist
         let fs = self.filesystem.get_filesystem(&storage_path)?;
-        let _ = fs.create_dir_all(&storage_path).await;
+        match fs.create_dir_all(&storage_path).await {
+            Ok(_) => debug!("📂 NOVA flush: Created directory {}", storage_path),
+            Err(e) => debug!("📂 NOVA flush: Failed to create directory {}: {}", storage_path, e),
+        }
 
         // Configure writer with NOVA-specific optimizations
         let writer_config = ParquetWriterConfig {
@@ -116,7 +122,11 @@ impl NovaFlushOperations {
         // Get filesystem instance for writer
         let fs = self.filesystem.get_filesystem(&full_path)?;
 
-        let (stats, collector) = HybridParquetWriter::write_with_cache(
+        debug!("📂 NOVA flush: About to call HybridParquetWriter::write_with_cache");
+        debug!("📂 NOVA flush: records.len()={}, dimension={}", records.len(), dimension);
+        debug!("📂 NOVA flush: full_path={}", full_path);
+
+        let (stats, collector) = match HybridParquetWriter::write_with_cache(
             &records,
             dimension,
             hybrid_config,
@@ -125,7 +135,16 @@ impl NovaFlushOperations {
             None, // filterable_columns
             metadata_collector,
         )
-        .await?;
+        .await {
+            Ok(result) => {
+                debug!("✅ NOVA flush: HybridParquetWriter::write_with_cache succeeded");
+                result
+            },
+            Err(e) => {
+                debug!("❌ NOVA flush: HybridParquetWriter::write_with_cache failed: {:?}", e);
+                return Err(e);
+            }
+        };
 
         // Extract NOVA-specific metadata if collector was returned
         let nova_metadata: HashMap<String, serde_json::Value> = HashMap::new(); // Simplified for now
@@ -133,8 +152,17 @@ impl NovaFlushOperations {
         // Write sidecar metadata file
         let metadata_path = full_path.replace(".parquet", ".nova_meta.json");
         let metadata_json = serde_json::to_string_pretty(&nova_metadata)?;
-        fs.write(&metadata_path, metadata_json.as_bytes(), None)
-            .await?;
+        debug!("📂 NOVA flush: Writing metadata to {}", metadata_path);
+        match fs.write(&metadata_path, metadata_json.as_bytes(), None).await {
+            Ok(_) => debug!("✅ NOVA flush: Metadata file written successfully"),
+            Err(e) => debug!("❌ NOVA flush: Failed to write metadata: {:?}", e),
+        }
+
+        debug!("📂 NOVA flush: Verifying file exists: {}", full_path);
+        match fs.metadata(&full_path).await {
+            Ok(meta) => debug!("✅ NOVA flush: File exists! size={}", meta.size),
+            Err(e) => debug!("❌ NOVA flush: File does NOT exist: {:?}", e),
+        }
 
         info!(
             "✅ NOVA: Written {} bytes with {} compression ratio",
@@ -167,12 +195,13 @@ impl NovaFlushOperations {
     ) -> Result<FlushResult> {
         let start = std::time::Instant::now();
 
-        // Get dimension from actual vectors first, then fall back to config
-        let dimension = params.vector_records.first()
-            .map(|r| r.vector.len())
-            .or_else(|| params.collection_config.as_ref()
-                .and_then(|c| c.config.as_ref().map(|cfg| cfg.dimension as usize)))
-            .ok_or_else(|| anyhow::anyhow!("Cannot determine vector dimension"))?;
+        // Get dimension from collection config FIRST (authoritative), then fall back to actual vectors
+        let dimension = params.collection_config.as_ref()
+            .and_then(|c| c.config.as_ref().map(|cfg| cfg.dimension as usize))
+            .or_else(|| params.vector_records.first().map(|r| r.vector.len()))
+            .ok_or_else(|| anyhow::anyhow!(
+                "Cannot determine vector dimension: no collection config and no vectors provided"
+            ))?;
 
         // Get compression from hints or use default
         let compression_algo = params.hints.get("compression")
