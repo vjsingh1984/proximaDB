@@ -1276,8 +1276,12 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         if let Some(ref storage_assignment) = collection_config.storage_assignment {
             let base_location = &storage_assignment.base_location;
-            Ok(format!("{}/{}/data", base_location, collection_id))
+            let data_dir = format!("{}/{}/data", base_location, collection_id);
+            println!("[STORAGE DEBUG] get_data_dir_from_collection_config: collection_id={}, base_location={}, data_dir={}",
+                collection_id, base_location, data_dir);
+            Ok(data_dir)
         } else {
+            println!("[STORAGE DEBUG] get_data_dir_from_collection_config: NO storage_assignment for collection '{}'", collection_id);
             Err(anyhow::anyhow!(
                 "No storage assignment found in collection config for collection '{}'",
                 collection_id

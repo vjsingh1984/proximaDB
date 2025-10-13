@@ -374,6 +374,11 @@ pub async fn write_helix_sstable(
     };
     // Use our own metadata structures instead of SST headers
 
+    if !records.is_empty() {
+        println!("[HELIX DEBUG] write_helix_sstable: path={:?}, records={}, first_vector.len()={}",
+            path, records.len(), records[0].vector.len());
+    }
+
     let mut file_data = BytesMut::new();
 
     // Write magic and version
@@ -513,9 +518,11 @@ pub async fn search_helix_sstable(
     distance_metric: &crate::compute::distance_computation::DistanceMetric,
 ) -> Result<Vec<(String, f32, HashMap<String, String>)>> {
     // We use our own metadata, not SST headers
+    println!("[HELIX DEBUG] search_helix_sstable: path={:?}, query_vector.len()={}", path, query_vector.len());
 
     // Read entire file
     let file_data = filesystem.read(path.to_str().unwrap_or("")).await?;
+    println!("[HELIX DEBUG] Read file, size={} bytes", file_data.len());
 
     // Read footer to get metadata
     let file_len = file_data.len();
@@ -598,9 +605,13 @@ pub async fn search_helix_sstable(
 
         // Deserialize block
         let block = ProximaDataBlock::deserialize(&block_data)?;
+        println!("[HELIX DEBUG] Block {}: {} records", block_idx, block.records.len());
 
         // Search within block
-        for record in &block.records {
+        for (rec_idx, record) in block.records.iter().enumerate() {
+            if rec_idx == 0 {
+                println!("[HELIX DEBUG] First record in block {}: id={}, vector.len()={}", block_idx, record.id, record.vector.len());
+            }
             // Convert metadata format (assuming we need HashMap<String, String>)
             let metadata = HashMap::new(); // TODO: Convert record.metadata properly
 
