@@ -49,7 +49,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
+/MANIFEST
 .pytest_cache/
 .coverage
 .tox/
