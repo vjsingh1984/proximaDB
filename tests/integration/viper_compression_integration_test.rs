@@ -489,7 +489,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
 
     // Build correct CompactionParameters and call production code directly
     info!("🔄 Starting VIPER compaction with correct configuration");
-    let compact_params = operations::build_compaction_params(&env, StorageEngine::Viper);
+    let compact_params = operations::build_compaction_params_with_dimension(&env, StorageEngine::Viper, 128);
     let compaction_result = engine.compact(compact_params).await?;
 
     info!("✅ VIPER COMPACTION COMPLETED:");
@@ -533,7 +533,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
 
     // Create a simple test to verify the engine still works
     let test_vectors = env.create_test_vectors_with_dimension(10, 128);
-    let collection_config = env.create_test_collection_for_engine(StorageEngine::Viper);
+    let collection_config = env.create_test_collection_with_settings(StorageEngine::Viper, 128, None);
     let test_flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some(format!("{}_post_compact", env.collection_id())),
         vector_records: test_vectors,

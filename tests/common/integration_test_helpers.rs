@@ -15,7 +15,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // Core ProximaDB imports
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -630,28 +630,12 @@ pub mod operations {
         // Ensure directories exist
         environment.ensure_all_directories().await?;
 
-        // Detect dimension from vectors with detailed logging
-        info!("🔍 build_flush_params: Received {} vectors", vectors.len());
-
+        // Detect dimension from vectors
         let dimension = vectors.first()
-            .map(|v| {
-                let dim = v.vector.len() as i32;
-                info!("🔍 build_flush_params: Detected dimension {} from first vector", dim);
-                dim
-            })
-            .unwrap_or_else(|| {
-                warn!("⚠️ build_flush_params: No vectors found, falling back to dimension 3");
-                3
-            });
-
-        info!("🔍 build_flush_params: Creating collection with dimension {}", dimension);
+            .map(|v| v.vector.len() as i32)
+            .unwrap_or(3); // Fallback to 3 if no vectors
 
         let collection_config = environment.create_test_collection_with_settings(engine, dimension, None);
-
-        // Verify the collection config has the correct dimension
-        if let Some(ref cfg) = collection_config.config {
-            info!("✅ build_flush_params: Collection config created with dimension {}", cfg.dimension);
-        }
 
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
@@ -890,6 +874,22 @@ pub mod operations {
         engine: StorageEngine,
     ) -> CompactionParameters {
         let collection_config = environment.create_test_collection_for_engine(engine);
+        CompactionParameters {
+            collection_id: Some(environment.collection_id().to_string()),
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection_config),
+            ..Default::default()
+        }
+    }
+
+    /// Build correct CompactionParameters with specific dimension
+    pub fn build_compaction_params_with_dimension(
+        environment: &UnifiedTestEnvironment,
+        engine: StorageEngine,
+        dimension: i32,
+    ) -> CompactionParameters {
+        let collection_config = environment.create_test_collection_with_settings(engine, dimension, None);
         CompactionParameters {
             collection_id: Some(environment.collection_id().to_string()),
             force: true,
