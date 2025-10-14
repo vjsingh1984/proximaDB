@@ -69,6 +69,7 @@ pub async fn setup_test_directories(base_path: &std::path::Path) -> Result<()> {
 pub struct UnifiedTestEnvironment {
     pub collection_id: String,
     pub temp_dir: TempDir,
+    pub persistent_base: PathBuf,
     pub persistent_dir: PathBuf,
     pub filesystem: Arc<FilesystemFactory>,
     pub sst_config: SstConfig,
@@ -115,6 +116,7 @@ impl UnifiedTestEnvironment {
         Ok(Self {
             collection_id,
             temp_dir,
+            persistent_base,
             persistent_dir,
             filesystem,
             sst_config,
@@ -226,12 +228,9 @@ impl UnifiedTestEnvironment {
                 backup_paths: vec![],
                 engine: engine as i32,
                 engine_config: std::collections::HashMap::new(),
-                // base_location should be parent directory (without collection_id)
-                // to avoid path doubling when engines append collection_id
-                base_location: self.persistent_dir.parent()
-                    .and_then(|p| p.to_str())
-                    .unwrap_or(self.persistent_dir.to_str().unwrap())
-                    .to_string(),
+                // base_location should be the parent directory (/tmp/proximadb_unified_tests)
+                // so engines can append collection_id to get /tmp/proximadb_unified_tests/<collection_id>/data/
+                base_location: self.persistent_base.to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp_millis(),
             }),
         }
@@ -631,12 +630,29 @@ pub mod operations {
         // Ensure directories exist
         environment.ensure_all_directories().await?;
 
-        // Detect dimension from vectors
+        // Detect dimension from vectors with detailed logging
+        info!("🔍 build_flush_params: Received {} vectors", vectors.len());
+
         let dimension = vectors.first()
-            .map(|v| v.vector.len() as i32)
-            .unwrap_or(3); // Fallback to 3 if no vectors
+            .map(|v| {
+                let dim = v.vector.len() as i32;
+                info!("🔍 build_flush_params: Detected dimension {} from first vector", dim);
+                dim
+            })
+            .unwrap_or_else(|| {
+                warn!("⚠️ build_flush_params: No vectors found, falling back to dimension 3");
+                3
+            });
+
+        info!("🔍 build_flush_params: Creating collection with dimension {}", dimension);
 
         let collection_config = environment.create_test_collection_with_settings(engine, dimension, None);
+
+        // Verify the collection config has the correct dimension
+        if let Some(ref cfg) = collection_config.config {
+            info!("✅ build_flush_params: Collection config created with dimension {}", cfg.dimension);
+        }
+
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
             vector_records: vectors,
@@ -755,8 +771,29 @@ pub mod operations {
         });
         let query_context = proximadb::storage::traits::StorageQueryContext {
             search_params,
-            collection,
-            metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+            collection: collection.clone(),
+            metadata: proximadb::storage::traits::StorageQueryMetadata {
+                collection_id: collection.id.clone(),
+                use_axis_indexes: false,
+                has_quantization: false,
+                dimension: collection.config.as_ref()
+                    .map(|c| c.dimension)
+                    .unwrap_or(0) as usize,
+                distance_metric: collection.config.as_ref()
+                    .and_then(|c| c.distance_metric)
+                    .and_then(|dm| std::convert::TryInto::<proximadb::compute::distance_computation::DistanceMetric>::try_into(dm).ok())
+                    .unwrap_or(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+                storage_strategy: proximadb::storage::engines::StorageEngineStrategy::Sst,
+                storage_path: collection.storage_assignment.as_ref()
+                    .map(|sa| sa.base_location.clone())
+                    .unwrap_or_default(),
+                quantization_config: None,
+                estimated_vector_count: 0,
+                estimated_size_bytes: 0,
+                performance_tier: proximadb::storage::traits::PerformanceTier::Hot,
+                compression_enabled: false,
+                quantization_enabled: false,
+            },
         };
 
         // Direct production call using unified search
@@ -796,8 +833,29 @@ pub mod operations {
         let search_params = Arc::new(proximadb::core::search::SearchParams::default());
         let query_context = proximadb::storage::traits::StorageQueryContext {
             search_params,
-            collection,
-            metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+            collection: collection.clone(),
+            metadata: proximadb::storage::traits::StorageQueryMetadata {
+                collection_id: collection.id.clone(),
+                use_axis_indexes: false,
+                has_quantization: false,
+                dimension: collection.config.as_ref()
+                    .map(|c| c.dimension)
+                    .unwrap_or(0) as usize,
+                distance_metric: collection.config.as_ref()
+                    .and_then(|c| c.distance_metric)
+                    .and_then(|dm| std::convert::TryInto::<proximadb::compute::distance_computation::DistanceMetric>::try_into(dm).ok())
+                    .unwrap_or(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+                storage_strategy: proximadb::storage::engines::StorageEngineStrategy::Viper,
+                storage_path: collection.storage_assignment.as_ref()
+                    .map(|sa| sa.base_location.clone())
+                    .unwrap_or_default(),
+                quantization_config: None,
+                estimated_vector_count: 0,
+                estimated_size_bytes: 0,
+                performance_tier: proximadb::storage::traits::PerformanceTier::Hot,
+                compression_enabled: false,
+                quantization_enabled: false,
+            },
         };
 
         // Direct production call using VIPER's unified search
@@ -900,7 +958,7 @@ pub fn create_metadata_store_config() -> proximadb::storage::metadata::MetadataS
 }
 
 /// Create test collection with storage (global function for backward compatibility)
-pub fn create_test_collection_with_storage(name: &str, _base_location: String) -> Collection {
+pub fn create_test_collection_with_storage(name: &str, base_location: String) -> Collection {
     let config = CollectionConfig {
         name: name.to_string(),
         dimension: 256, // Default dimension for generic tests
@@ -923,7 +981,14 @@ pub fn create_test_collection_with_storage(name: &str, _base_location: String) -
         stats: Some(stats),
         created_at: chrono::Utc::now().timestamp_millis(),
         updated_at: chrono::Utc::now().timestamp_millis(),
-        storage_assignment: None, // StorageAssignment no longer exists
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}/collections/{}", base_location, name),
+            backup_paths: vec![],
+            engine: StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location,
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
     }
 }
 

@@ -792,7 +792,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
     eprintln!("   Collection ID Format: {{engine}}-{{compression}}-{{batchsize}}");
     eprintln!("   Engines: sst, viper, nova, swift, raptor, helix");
     eprintln!("   Compressions: none, zstd, lz4, snappy, gzip");
-    eprintln!("   Batch Sizes: 250, 1000, 5000");
+    eprintln!("   Batch Sizes: 1024, 4096, 10240");
     eprintln!("   Total Combinations: 105 (7 engines × 5 compressions × 3 batch sizes)");
 
     let dimension = 768;
@@ -801,9 +801,9 @@ fn bench_large_scale_search(c: &mut Criterion) {
     // Test different scales
     // Use standard batch sizes for scales
     let scales = vec![
-        ("250", STANDARD_BATCH_SIZES[0]),    // Small batch
-        ("1000", STANDARD_BATCH_SIZES[1]),   // Medium batch
-        ("5000", STANDARD_BATCH_SIZES[2]),   // Large batch
+        ("1024", STANDARD_BATCH_SIZES[0]),    // Small batch
+        ("4096", STANDARD_BATCH_SIZES[1]),    // Medium batch
+        ("10240", STANDARD_BATCH_SIZES[2]),   // Large batch
     ];
 
     // Test with different compression methods
@@ -889,7 +889,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
 
                 // Benchmark search
                 let mut group = c.benchmark_group(format!("search_{}-{}-{}",engine_name, compress_name, batch_size_name));
-                group.measurement_time(Duration::from_secs(5));
+                group.measurement_time(Duration::from_secs(10));
                 group.sample_size(40);
                 group.warm_up_time(Duration::from_secs(1));
 

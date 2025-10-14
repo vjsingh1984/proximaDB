@@ -171,12 +171,18 @@ impl SstEngine {
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        debug!("🔄 SST: Starting direct search for collection {}", collection_id);
+        tracing::debug!("[SST] Starting direct search for collection {}, storage_url: {}", collection_id, storage_url);
 
         let mut all_candidates = Vec::new();
 
         // Discover SSTable files for this collection
+        eprintln!("DEBUG SEARCH: Discovering SSTable files at storage_url: {}", storage_url);
         let sstable_files = self.discover_sstable_files(storage_url).await?;
+        tracing::debug!("[SST] Discovered {} SSTable files", sstable_files.len());
+        eprintln!("DEBUG SEARCH: Discovered {} SSTable files", sstable_files.len());
+        for (i, file) in sstable_files.iter().enumerate() {
+            eprintln!("DEBUG SEARCH:   File {}: {}", i, file);
+        }
 
         debug!(
             "🔍 SST: Found {} SSTable files for collection {}",
@@ -216,9 +222,11 @@ impl SstEngine {
 
         // Get sorted results from bounded queue
         let mut all_candidates = priority_queue.into_sorted_vec();
+        eprintln!("DEBUG SEARCH: Before filtering - {} candidates", all_candidates.len());
 
         // Filter results based on include flags
         self.filter_search_results(&mut all_candidates, include_vectors, include_metadata);
+        eprintln!("DEBUG SEARCH: After filtering - {} candidates", all_candidates.len());
 
         info!(
             "🏁 SST: Direct search completed - Collection: {}, Results: {}/{}",
@@ -232,35 +240,43 @@ impl SstEngine {
 
     /// Discover SSTable files for a collection
     async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
+        tracing::debug!("[SST] discover_sstable_files called with storage_url: {}", storage_url);
+
         let mut files = Vec::new();
 
         // storage_url is already the correct data directory path from collection_storage_path()
         // No need to parse and reconstruct - use it directly
         let data_url = storage_url;
 
-        debug!("🔍 SST discover_sstable_files: Looking for .sst files in {}", data_url);
-
         // List files in the collection directory
         let fs = self.filesystem().get_filesystem(data_url)?;
+        tracing::debug!("[SST] Got filesystem for data_url: {}", data_url);
 
         // Handle case where directory doesn't exist yet (e.g., before first flush)
         let entries = match fs.list(data_url).await {
-            Ok(entries) => entries,
+            Ok(entries) => {
+                tracing::debug!("[SST] Found {} entries in {}", entries.len(), data_url);
+                entries
+            },
             Err(e) if e.to_string().contains("No such file or directory") => {
-                debug!("   Directory doesn't exist yet: {}", data_url);
+                tracing::warn!("[SST] Directory doesn't exist yet: {}", data_url);
                 return Ok(files);
             }
-            Err(e) => return Err(anyhow::anyhow!("Failed to list directory {}: {}", data_url, e)),
+            Err(e) => {
+                tracing::error!("[SST] Failed to list directory {}: {:?}", data_url, e);
+                return Err(anyhow::anyhow!("Failed to list directory {}: {}", data_url, e));
+            }
         };
 
         for entry in entries {
+            tracing::trace!("[SST] Examining entry: name={}, url={}, is_dir={}", entry.name, entry.url, entry.metadata.is_directory);
             if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
                 files.push(entry.url);
-                debug!("   Found SST file: {}", entry.name);
+                tracing::debug!("[SST] Found .sst file: {}", entry.name);
             }
         }
 
-        debug!("📂 Discovered {} SST files in {}", files.len(), data_url);
+        tracing::debug!("[SST] Discovered {} .sst files in {}", files.len(), data_url);
         Ok(files)
     }
 

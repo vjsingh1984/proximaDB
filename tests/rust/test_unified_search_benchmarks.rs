@@ -465,9 +465,12 @@ mod tests {
     
     #[tokio::test]
     async fn test_unified_search_benchmark_small() -> Result<()> {
-        // Initialize logging
+        // Initialize logging - respects RUST_LOG environment variable
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("info")
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+            )
             .try_init();
         
         // Small benchmark for CI/CD
@@ -500,9 +503,12 @@ mod tests {
     #[tokio::test]
     #[ignore] // Run with: cargo test --ignored
     async fn test_unified_search_benchmark_full() -> Result<()> {
-        // Initialize logging
+        // Initialize logging - respects RUST_LOG environment variable
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("info")
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+            )
             .try_init();
         
         // Full benchmark

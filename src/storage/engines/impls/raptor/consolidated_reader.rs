@@ -2022,6 +2022,14 @@ impl RaptorReader {
         .await?;
         tracing::debug!("RAPTOR load_footer: Footer metadata bytes: {:?}", footer_metadata_bytes);
 
+        // Validate we read the expected 8 bytes
+        if footer_metadata_bytes.len() < 8 {
+            return Err(anyhow::anyhow!(
+                "Failed to read footer metadata: expected 8 bytes, got {} bytes",
+                footer_metadata_bytes.len()
+            ));
+        }
+
         let footer_size = u32::from_le_bytes(footer_metadata_bytes[0..4].try_into()?) as u64;
         let magic = &footer_metadata_bytes[4..8];
         tracing::debug!("RAPTOR load_footer: Footer size: {} bytes, magic: {:?}, expected: {:?}",

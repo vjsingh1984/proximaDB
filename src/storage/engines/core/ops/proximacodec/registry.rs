@@ -36,7 +36,7 @@ impl ImplementationRegistry {
             crate::core::hardware_capabilities::GpuBackend::None => "None",
         };
 
-        debug!(
+        trace!(
             "🔧 [REGISTRY] Initializing with HW capabilities: CPU={}, cores={}, GPU={}",
             hw_caps.cpu.model_name,
             hw_caps.cpu.physical_cores,
@@ -55,7 +55,7 @@ impl ImplementationRegistry {
     /// Encoders are tried in registration order (GPU → SIMD → Baseline).
     /// Register high-priority implementations first.
     pub fn register_encoder(&mut self, encoder: Box<dyn RawEncoder>) {
-        debug!(
+        trace!(
             "✅ [REGISTRY] Registered encoder: {}",
             encoder.name()
         );
@@ -67,7 +67,7 @@ impl ImplementationRegistry {
     /// Decoders are tried in registration order (GPU → SIMD → Baseline).
     /// Register high-priority implementations first.
     pub fn register_decoder(&mut self, decoder: Box<dyn RawDecoder>) {
-        debug!(
+        trace!(
             "✅ [REGISTRY] Registered decoder: {}",
             decoder.name()
         );
@@ -95,7 +95,7 @@ impl ImplementationRegistry {
 
         for encoder in &self.encoders {
             if encoder.supports(scheme) {
-                debug!(
+                trace!(
                     "✅ [REGISTRY] Selected encoder: {} for scheme: {}",
                     encoder.name(),
                     scheme.name()
@@ -141,7 +141,7 @@ impl ImplementationRegistry {
 
         for decoder in &self.decoders {
             if decoder.supports(scheme) {
-                debug!(
+                trace!(
                     "✅ [REGISTRY] Selected decoder: {} for scheme: {}",
                     decoder.name(),
                     scheme.name()

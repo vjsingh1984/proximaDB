@@ -8,8 +8,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::persistence::filesystem::FileSystem;
 
 /// Hilbert key type
 pub type HilbertKey = u64;
@@ -134,6 +136,43 @@ impl PCAModel {
         self.explained_variance = new_model.explained_variance;
         self.version += 1;
         Ok(())
+    }
+
+    /// Serialize PCA model to bytes for persistence
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        bincode::serialize(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize PCA model: {}", e))
+    }
+
+    /// Deserialize PCA model from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        bincode::deserialize(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize PCA model: {}", e))
+    }
+
+    /// Save PCA model to filesystem
+    pub async fn save_to_file(
+        &self,
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        model_path: &str,
+    ) -> Result<()> {
+        let bytes = self.to_bytes()?;
+        filesystem.write(model_path, &bytes, None).await
+            .map_err(|e| anyhow::anyhow!("Failed to write PCA model to {}: {}", model_path, e))?;
+        tracing::info!("[HELIX] Saved PCA model to {} (version: {}, {} bytes)", model_path, self.version, bytes.len());
+        Ok(())
+    }
+
+    /// Load PCA model from filesystem
+    pub async fn load_from_file(
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        model_path: &str,
+    ) -> Result<Self> {
+        let bytes = filesystem.read(model_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to read PCA model from {}: {}", model_path, e))?;
+        let model = Self::from_bytes(&bytes)?;
+        tracing::info!("[HELIX] Loaded PCA model from {} (version: {}, {} components)", model_path, model.version, model.n_components);
+        Ok(model)
     }
 }
 

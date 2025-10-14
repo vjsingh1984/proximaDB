@@ -168,7 +168,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error as IoError;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 use url::Url;
 
 pub mod atomic_strategy;
@@ -1315,13 +1315,12 @@ impl FilesystemFactory {
     /// Unified path extraction from URLs with consistent behavior
     /// This is the SINGLE method that should be used throughout the filesystem layer
     pub fn resolve_path(url: &str) -> FsResult<String> {
-        // Debug logging can be removed once issues are resolved
-        debug!("🔍 DEBUG resolve_path: Input URL = '{}'", url);
+        trace!("🔍 [FILESYSTEM] resolve_path: Input URL = '{}'", url);
 
         // Case 1: No scheme present - return as-is (this preserves relative paths)
         if !url.contains("://") {
-            debug!(
-                "🔍 DEBUG resolve_path: No scheme, returning as-is: '{}'",
+            trace!(
+                "🔍 [FILESYSTEM] resolve_path: No scheme, returning as-is: '{}'",
                 url
             );
             return Ok(url.to_string());
@@ -1334,21 +1333,21 @@ impl FilesystemFactory {
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
                 let relative_path = &url[7..]; // Remove "file://" prefix, keep "./"
-                debug!(
-                    "🔍 DEBUG resolve_path: Explicit relative path: '{}'",
+                trace!(
+                    "🔍 [FILESYSTEM] resolve_path: Explicit relative path: '{}'",
                     relative_path
                 );
                 Ok(relative_path.to_string())
             } else if url.starts_with("file:///") {
                 // Absolute path: file:///absolute/path
                 let absolute_path = &url[8..]; // Remove "file:///" prefix
-                debug!("🔍 DEBUG resolve_path: Absolute path: '/{}'", absolute_path);
+                trace!("🔍 [FILESYSTEM] resolve_path: Absolute path: '/{}'", absolute_path);
                 Ok(format!("/{}", absolute_path))
             } else {
                 // Implicit relative path: file://relative/path (treat as relative)
                 let relative_path = &url[7..]; // Remove "file://" prefix
-                debug!(
-                    "🔍 DEBUG resolve_path: Implicit relative path: '{}'",
+                trace!(
+                    "🔍 [FILESYSTEM] resolve_path: Implicit relative path: '{}'",
                     relative_path
                 );
                 Ok(relative_path.to_string())
@@ -1358,7 +1357,7 @@ impl FilesystemFactory {
             let parsed_url = Url::parse(url)
                 .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
             let path = parsed_url.path();
-            debug!("🔍 DEBUG resolve_path: Non-file scheme path: '{}'", path);
+            trace!("🔍 [FILESYSTEM] resolve_path: Non-file scheme path: '{}'", path);
             Ok(path.to_string())
         }
     }

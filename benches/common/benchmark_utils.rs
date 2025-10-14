@@ -15,9 +15,9 @@ pub const STANDARD_DIMENSIONS: &[usize] = &[
 
 /// Standard batch sizes for realistic workloads
 pub const STANDARD_BATCH_SIZES: &[usize] = &[
-    250,   // Small batch
-    1000,  // Medium batch
-    5000,  // Large batch
+    1024,   // Small batch
+    4096,   // Medium batch
+    10240,  // Large batch
 ];
 
 /// Print system information for benchmark reproducibility

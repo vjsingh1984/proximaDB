@@ -1942,7 +1942,7 @@ impl ProximaDataBlock {
                           indices.len(), record_count);
                     (0..record_count).map(|i| i as i64).collect()
                 } else {
-                    debug!("Successfully decoded {} ID indices", indices.len());
+                    trace!("Successfully decoded {} ID indices", indices.len());
                     indices
                 }
             }
@@ -1952,27 +1952,31 @@ impl ProximaDataBlock {
             }
         };
 
-        // STEP 3: Skip metadata sections (simplified for now)
+        // STEP 3: Read and deserialize metadata sections
         trace!("[DECODE] Position {}: Reading metadata key count", cursor.position());
         let mut metadata_key_count_bytes = [0u8; 4];
         cursor.read_exact(&mut metadata_key_count_bytes)?;
         let metadata_key_count = u32::from_le_bytes(metadata_key_count_bytes) as usize;
         trace!("[DECODE] Position {}: Metadata key count: {} (bytes: {:?})", cursor.position(), metadata_key_count, metadata_key_count_bytes);
 
+        // Store metadata for each key (key_name -> Vec of SqlValue, one per record)
+        let mut metadata_columns: std::collections::HashMap<String, Vec<Option<crate::proto::proximadb_v1::SqlValue>>> =
+            std::collections::HashMap::new();
+
         for i in 0..metadata_key_count {
             trace!("[DECODE] Processing metadata key {}", i);
 
-            // Read and skip key name (actually read the bytes, don't just set position)
+            // Read key name
             let mut key_len_bytes = [0u8; 4];
             cursor.read_exact(&mut key_len_bytes)?;
             let key_len = u32::from_le_bytes(key_len_bytes) as usize;
             trace!("[DECODE] Metadata key[{}] name length: {} (bytes: {:?})", i, key_len, key_len_bytes);
             let mut key_name_bytes = vec![0u8; key_len];
             cursor.read_exact(&mut key_name_bytes)?;
-            let key_name = String::from_utf8_lossy(&key_name_bytes);
+            let key_name = String::from_utf8_lossy(&key_name_bytes).to_string();
             trace!("[DECODE] Metadata key[{}] name: '{}' (read {} bytes)", i, key_name, key_len);
 
-            // Read and skip presence bitmap (actually read the bytes, don't just set position)
+            // Read presence bitmap
             let mut bitmap_len_bytes = [0u8; 4];
             cursor.read_exact(&mut bitmap_len_bytes)?;
             let bitmap_len = u32::from_le_bytes(bitmap_len_bytes) as usize;
@@ -1981,7 +1985,7 @@ impl ProximaDataBlock {
             cursor.read_exact(&mut bitmap_bytes)?;
             trace!("[DECODE] Metadata key[{}] bitmap: read {} bytes", i, bitmap_len);
 
-            // Read and skip compressed values (actually read the bytes, don't just set position)
+            // Read sparse values blob (contains length-prefixed raw bytes for each present value)
             let mut values_len_bytes = [0u8; 4];
             cursor.read_exact(&mut values_len_bytes)?;
             let values_len = u32::from_le_bytes(values_len_bytes) as usize;
@@ -1990,7 +1994,89 @@ impl ProximaDataBlock {
             cursor.read_exact(&mut values_bytes)?;
             trace!("[DECODE] Metadata key[{}] values: read {} bytes", i, values_len);
 
+            // Parse the sparse values blob manually
+            // Format: each value is [u32 length][raw bytes]
+            let mut sparse_values = Vec::new();
+            let mut values_cursor = std::io::Cursor::new(values_bytes);
+
+            while values_cursor.position() < values_cursor.get_ref().len() as u64 {
+                let mut val_len_bytes = [0u8; 4];
+                if let Err(_) = values_cursor.read_exact(&mut val_len_bytes) {
+                    break; // End of data
+                }
+                let val_len = u32::from_le_bytes(val_len_bytes) as usize;
+
+                if val_len == 0 {
+                    // Null value
+                    sparse_values.push(None);
+                } else {
+                    let mut val_bytes = vec![0u8; val_len];
+                    if let Err(_) = values_cursor.read_exact(&mut val_bytes) {
+                        break; // Corrupted data
+                    }
+
+                    // Try to determine value type from length and content
+                    // This is a heuristic since we don't store type info
+                    let sql_value = if val_len == 8 {
+                        // Could be f64 (NumberValue) or i64 (Int64Value)
+                        // For now assume f64 since that's most common
+                        let num = f64::from_le_bytes(val_bytes.as_slice().try_into().unwrap_or([0u8; 8]));
+                        Some(crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(num)),
+                        })
+                    } else if val_len == 1 && (val_bytes[0] == 0 || val_bytes[0] == 1) {
+                        // Single byte with value 0 or 1: this is a bool
+                        let is_true = val_bytes[0] != 0;
+                        Some(crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(is_true)),
+                        })
+                    } else {
+                        // Otherwise assume string
+                        let s = String::from_utf8_lossy(&val_bytes).to_string();
+                        Some(crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                        })
+                    };
+                    sparse_values.push(sql_value);
+                }
+            }
+
+            eprintln!("DEBUG DESER KEY[{}]: Parsed {} sparse values from {} bytes, bitmap.len={}, record_count={}",
+                i, sparse_values.len(), values_len, bitmap_bytes.len(), record_count);
+
+            // Use bitmap to reconstruct full column with None for missing values
+            let mut full_values = Vec::with_capacity(record_count);
+            let mut value_idx = 0;
+
+            for record_idx in 0..record_count {
+                let byte_idx = record_idx / 8;
+                let bit_idx = record_idx % 8;
+
+                let is_present = if byte_idx < bitmap_bytes.len() {
+                    (bitmap_bytes[byte_idx] & (1 << bit_idx)) != 0
+                } else {
+                    false
+                };
+
+                if is_present && value_idx < sparse_values.len() {
+                    full_values.push(sparse_values[value_idx].clone());
+                    value_idx += 1;
+                } else {
+                    full_values.push(None);
+                }
+            }
+
+            eprintln!("DEBUG DESER KEY[{}]: Reconstructed {} values with {} present", i, full_values.len(), value_idx);
+            metadata_columns.insert(key_name.clone(), full_values);
+            trace!("[DECODE] Metadata key[{}]: Stored {} values for key '{}'", i, record_count, key_name);
+
             trace!("[DECODE] Finished processing metadata key {}, cursor at position: {}", i, cursor.position());
+        }
+
+        trace!("[DECODE] Deserialized metadata for {} keys", metadata_columns.len());
+        eprintln!("DEBUG DESERIALIZE: Metadata columns count: {}", metadata_columns.len());
+        for (key, values) in &metadata_columns {
+            eprintln!("DEBUG DESERIALIZE:   Key '{}': {} values", key, values.len());
         }
 
         // STEP 4: Read and skip timestamps (actually read the bytes, don't just set position)
@@ -2019,7 +2105,7 @@ impl ProximaDataBlock {
         // Decode timestamps using ProximaCodec (migrated from old decoder)
         let decoded_timestamps = match codec.decode_i64(&timestamp_bytes) {
             Ok(timestamps) => {
-                debug!("✅ [DECODE] Successfully decoded {} timestamps", timestamps.len());
+                trace!("✅ [DECODE] Successfully decoded {} timestamps", timestamps.len());
                 timestamps
             }
             Err(e) => {
@@ -2029,7 +2115,7 @@ impl ProximaDataBlock {
         };
 
         // ============ STEP 5: Decode Source Column ============
-        debug!("[DECODE] Decoding source column...");
+        trace!("[DECODE Decoding source column...");
         let mut source_dict_len_bytes = [0u8; 4];
         cursor.read_exact(&mut source_dict_len_bytes)?;
         let source_dict_len = u32::from_le_bytes(source_dict_len_bytes) as usize;
@@ -2058,7 +2144,7 @@ impl ProximaDataBlock {
         // Use record_count from header instead of storing redundant count
         let decoded_source_indices = match codec.decode_i64(&encoded_source_data) {
             Ok(indices) => {
-                debug!("✅ [DECODE] Successfully decoded {} source indices", indices.len());
+                trace!("✅ [DECODE] Successfully decoded {} source indices", indices.len());
                 indices
             }
             Err(e) => {
@@ -2068,7 +2154,7 @@ impl ProximaDataBlock {
         };
 
         // ============ STEP 7-9: Decode Optional Fields (updated_at, expires_at, version, quantized_vector) ============
-        debug!("[DECODE] Decoding optional fields...");
+        trace!("[DECODE Decoding optional fields...");
 
         // Decode updated_at
         let mut updated_at_type_bytes = [0u8; 4];
@@ -2221,7 +2307,7 @@ impl ProximaDataBlock {
         trace!("[DECODE] Block metadata deserialized successfully");
 
         // ============ RECONSTRUCT COMPLETE VECTORRECORDS FROM COLUMNAR DATA ============
-        debug!("🔧 [DECODE] Reconstructing {} VectorRecords from columnar data", record_count);
+        trace!("🔧 [DECODE] Reconstructing {} VectorRecords from columnar data", record_count);
 
         // All data should have exactly record_count elements in the same order
         if records.len() != record_count || decoded_id_indices.len() != record_count || decoded_source_indices.len() != record_count {
@@ -2262,11 +2348,30 @@ impl ProximaDataBlock {
             record.version = decoded_versions.get(i).copied().flatten();
             // quantized_vector removed - internalized in storage
 
-            trace!("🔧 [DECODE] Record[{}]: ID='{}', Timestamp={:?}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}",
-                i, record.id, record.timestamp, record.source, record.updated_at, record.expires_at, record.version);
+            // Populate metadata from columnar storage
+            eprintln!("DEBUG RECONSTRUCT: Record[{}] before metadata: {} keys", i, record.metadata.len());
+            for (key, values) in &metadata_columns {
+                eprintln!("DEBUG RECONSTRUCT:   Checking key '{}', values.len={}", key, values.len());
+                match values.get(i) {
+                    Some(Some(sql_value)) => {
+                        eprintln!("DEBUG RECONSTRUCT:     Adding key '{}' to record[{}], value={:?}", key, i, sql_value);
+                        record.metadata.insert(key.clone(), sql_value.clone());
+                    }
+                    Some(None) => {
+                        eprintln!("DEBUG RECONSTRUCT:     Value at [{}] is None", i);
+                    }
+                    None => {
+                        eprintln!("DEBUG RECONSTRUCT:     Index {} out of bounds", i);
+                    }
+                }
+            }
+            eprintln!("DEBUG RECONSTRUCT: Record[{}] after metadata: {} keys", i, record.metadata.len());
+
+            trace!("🔧 [DECODE] Record[{}]: ID='{}', Timestamp={:?}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}, Metadata_keys={}",
+                i, record.id, record.timestamp, record.source, record.updated_at, record.expires_at, record.version, record.metadata.len());
         }
 
-        debug!("✅ [DECODE] Successfully reconstructed {} VectorRecords", record_count);
+        trace!("✅ [DECODE] Successfully reconstructed {} VectorRecords", record_count);
 
         // Reconstruct the block
         let block_id = metadata.record_count;
@@ -3096,7 +3201,7 @@ impl ProximaDataBlock {
             // Decode Proxima encoded data with fallback handling
             let decoded_floats = if vector_data.len() >= 2 && vector_data[0] == 0xFF && vector_data[1] == 0xFB {
                 // Fallback marker detected - decode raw f32 data
-                debug!("🔧 [DECODE_FV] Fallback marker detected, using raw f32 decoding");
+                trace!("🔧 [DECODE_FV] Fallback marker detected, using raw f32 decoding");
                 let raw_data = &vector_data[2..]; // Skip fallback marker
                 if raw_data.len() != vector_count * dimension * 4 {
                     return Err(anyhow::anyhow!("Fallback raw data size mismatch: {} vs {}",
@@ -3108,16 +3213,16 @@ impl ProximaDataBlock {
                     let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                     decoded.push(value);
                 }
-                debug!("🔧 [DECODE_FV] Fallback decoded {} floats", decoded.len());
+                trace!("🔧 [DECODE_FV] Fallback decoded {} floats", decoded.len());
                 decoded
             } else {
                 // Normal ProximaCodec decoding with enhanced error handling (migrated from old decoder)
-                debug!("🔍 [DECODE_FV] Using ProximaCodec decoding, data size: {} bytes", vector_data.len());
+                trace!("🔍 [DECODE_FV] Using ProximaCodec decoding, data size: {} bytes", vector_data.len());
                         let codec = ProximaCodec::global();
 
                 match codec.decode(&vector_data) {
                     Ok(floats) => {
-                        debug!("✅ [DECODE_FV] Proxima decoded {} floats successfully", floats.len());
+                        trace!("✅ [DECODE_FV] Proxima decoded {} floats successfully", floats.len());
                         floats
                     }
                     Err(e) => {
@@ -3143,7 +3248,7 @@ impl ProximaDataBlock {
                 let vector = decoded_floats[start_idx..end_idx].to_vec();
 
                 let temp_id = format!("fv_vec_{:06}", i);
-                debug!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from Proxima data", i, temp_id);
+                trace!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from Proxima data", i, temp_id);
 
                 records.push(VectorRecord {
                     id: temp_id,
@@ -3165,7 +3270,7 @@ impl ProximaDataBlock {
                 let vector: Vec<f32> = bytemuck::cast_slice(&vector_bytes).to_vec();
 
                 let temp_id = format!("fv_vec_{:06}", i);
-                debug!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from raw data", i, temp_id);
+                trace!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from raw data", i, temp_id);
 
                 records.push(VectorRecord {
                     id: temp_id,

@@ -274,25 +274,22 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/data/collections".to_string(),
+            primary_path: format!("{}/collections", temp_dir.path().display()),
             backup_paths: vec![],
             engine: StorageEngine::Viper as i32,
             engine_config: std::collections::HashMap::new(),
-            base_location: "/data".to_string(),
+            base_location: temp_dir.path().to_str().unwrap().to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
         }),
     };
 
     // Flush vectors
     let vectors = create_test_vectors(1000, 256, "flush_test");
-    let base_path = temp_dir.path().to_str().unwrap();
-    let collection_config =
-        create_test_collection_with_storage("test_collection", base_path.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors,
         force: true,
-        collection_config: Some(collection_config),
+        collection_config: Some(collection.clone()),
         ..Default::default()
     };
     let flush_result = engine.flush(flush_params).await?;
@@ -393,25 +390,22 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/data/collections".to_string(),
+            primary_path: format!("{}/collections", temp_dir.path().display()),
             backup_paths: vec![],
             engine: StorageEngine::Viper as i32,
             engine_config: std::collections::HashMap::new(),
-            base_location: "/data".to_string(),
+            base_location: temp_dir.path().to_str().unwrap().to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
         }),
     };
 
     // Create and flush diverse test data
     let vectors = create_test_vectors(2000, 512, "search");
-    let base_path = temp_dir.path().to_str().unwrap();
-    let collection_config =
-        create_test_collection_with_storage("search_test", base_path.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("search_test".to_string()),
         vector_records: vectors,
         force: true,
-        collection_config: Some(collection_config),
+        collection_config: Some(collection.clone()),
         ..Default::default()
     };
     engine.flush(flush_params).await?;
@@ -456,12 +450,21 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
 
     for batch in 0..batches {
         let vectors = env.create_test_vectors_with_dimension(vectors_per_batch, 128);
+        let vector_count = vectors.len();
 
         // Build correct parameters and call production code directly
         let flush_params =
             operations::build_flush_params(&env, vectors, StorageEngine::Viper).await?;
 
+        // Debug: Log the dimension in collection_config
+        if let Some(ref config) = flush_params.collection_config {
+            if let Some(ref cfg) = config.config {
+                info!("🔍 Batch {}: Collection config dimension = {}", batch + 1, cfg.dimension);
+            }
+        }
+
         // Direct call to production code
+        info!("🚀 Batch {}: Calling engine.flush() with {} vectors", batch + 1, vector_count);
         let result = engine.flush(flush_params).await?;
         assert!(result.success, "Batch {} flush should succeed", batch + 1);
 
@@ -764,11 +767,11 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
             storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
-                primary_path: "/data/collections".to_string(),
+                primary_path: format!("{}/collections", temp_dir.path().display()),
                 backup_paths: vec![],
                 engine: StorageEngine::Viper as i32,
                 engine_config: std::collections::HashMap::new(),
-                base_location: "/data".to_string(),
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp(),
             }),
         };
@@ -776,14 +779,11 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         // Flush test data
         let vectors = create_test_vectors(500, 512, "algo");
 
-        let base_path = temp_dir.path().to_str().unwrap();
-        let collection_config =
-            create_test_collection_with_storage("algo_test", base_path.to_string());
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("algo_test".to_string()),
             vector_records: vectors,
             force: true,
-            collection_config: Some(collection_config),
+            collection_config: Some(collection.clone()),
             ..Default::default()
         };
         let start = std::time::Instant::now();
@@ -903,11 +903,11 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
             storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
-                primary_path: "/data/collections".to_string(),
+                primary_path: format!("{}/collections", temp_dir.path().display()),
                 backup_paths: vec![],
                 engine: StorageEngine::Viper as i32,
                 engine_config: std::collections::HashMap::new(),
-                base_location: "/data".to_string(),
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp(),
             }),
         };
@@ -926,14 +926,11 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
             "🔍 Vector sparsity: {:.1}% zeros ({} out of {} elements)",
             sparsity_percent, zero_count, total_elements
         );
-        let base_path = temp_dir.path().to_str().unwrap();
-        let collection_config =
-            create_test_collection_with_storage("compression_test", base_path.to_string());
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("compression_test".to_string()),
             vector_records: vectors,
             force: true,
-            collection_config: Some(collection_config),
+            collection_config: Some(collection.clone()),
             ..Default::default()
         };
         engine.flush(flush_params).await?;

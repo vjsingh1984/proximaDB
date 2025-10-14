@@ -852,6 +852,14 @@ async fn test_vector_search() {
     let collection = Arc::new(Collection {
         id: "test_collection".to_string(),
         config: Some(collection_config),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp/proximadb-data".to_string(),
+            assigned_at: 0,
+        }),
         ..Default::default()
     });
 
@@ -1113,7 +1121,14 @@ async fn test_proxima_integration() {
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_path));
     let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await.unwrap());
-    let filesystem = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
+    let base_filesystem = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
+
+    // Wrap in UnifiedCachingFilesystem for production-like behavior
+    let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        base_filesystem,
+        "test_collection".to_string(),
+        "helix".to_string(),
+    ));
 
     let records = create_test_records(100, 128);
     let path = temp_dir.path().join("test.helix");
@@ -1126,6 +1141,7 @@ async fn test_proxima_integration() {
         50, // block size
         crate::storage::engines::constants::HELIX_MAGIC,
         None,
+        Some(256), // Default Hilbert curve size
     )
     .await
     .unwrap();
@@ -1134,6 +1150,9 @@ async fn test_proxima_integration() {
 
     // Search SSTable
     let query = vec![0.5; 128];
+    let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+        ComputeDistanceMetric::Euclidean
+    ));
     let results = proxima::search_helix_sstable(
         &filesystem,
         &path,
@@ -1141,6 +1160,7 @@ async fn test_proxima_integration() {
         None,
         5,
         &ComputeDistanceMetric::Euclidean,
+        &distance_compute,
     )
     .await
     .unwrap();

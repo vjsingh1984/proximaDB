@@ -679,3 +679,123 @@ fn test_centroid_distance_matrix_performance() {
     println!("   - Store matrix in footer: +k²×4 bytes");
     println!("   - Example: k=1000 → +4MB storage, 0ms compute");
 }
+
+#[tokio::test]
+async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
+    // LARGE-SCALE SEARCH BENCHMARK
+    // Single batch test with 5120 vectors - balances test coverage with execution time
+
+    // Create engine once - it's stateless and reads from disk
+    let engine = create_test_engine().await?;
+    let dimension = 128;
+    let num_vectors = 5120;  // Single sizeable batch for efficient testing
+
+    // Setup collection with unique ID
+    let mut collection = create_test_collection_with_dimension(dimension);
+    collection.id = "raptor_benchmark_5k".to_string();
+
+    // Update storage paths
+    if let Some(ref mut storage) = collection.storage_assignment {
+        storage.primary_path = "/tmp/raptor_benchmark_5k".to_string();
+        storage.base_location = "/tmp/raptor_benchmark_5k".to_string();
+    }
+
+    // Generate test vectors
+    let mut test_vectors = Vec::with_capacity(num_vectors);
+
+    for i in 0..num_vectors {
+        let vector: Vec<f32> = (0..dimension)
+            .map(|d| ((i * dimension + d) as f32 * 0.01).sin())
+            .collect();
+
+        test_vectors.push(VectorRecord {
+            id: format!("vec_{:05}", i),
+            vector,
+            metadata: HashMap::from([
+                ("index".to_string(), crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string())),
+                }),
+            ]),
+            timestamp: Some(i as i64),
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            source: None,
+        });
+    }
+
+    // Flush vectors to RAPTOR storage
+    let flush_params = crate::storage::traits::FlushParameters {
+        collection_id: Some(collection.id.clone()),
+        vector_records: test_vectors.clone(),
+        force: true,
+        synchronous: true,
+        hints: HashMap::new(),
+        timeout_ms: None,
+        trigger_compaction: false,
+        batch_ids: vec![],
+        collection_config: Some(collection.clone()),
+        estimated_size: 0,
+    };
+
+    let flush_result = engine.do_flush(&flush_params).await?;
+
+    assert_eq!(flush_result.entries_flushed.unwrap_or(0), num_vectors as u64);
+    assert!(flush_result.bytes_written.unwrap_or(0) > 0);
+
+    // Perform search test
+    let query_vector = test_vectors[0].vector.clone();
+    let search_params = Arc::new(crate::core::search::SearchParams {
+        query_vectors: Some(vec![query_vector]),
+        top_k: Some(10),
+        distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Euclidean),
+        ..Default::default()
+    });
+
+    // Store storage path before moving collection
+    let storage_path = collection.storage_assignment.as_ref()
+        .map(|s| s.primary_path.clone())
+        .unwrap_or_else(|| "/tmp/raptor_benchmark_5k".to_string());
+
+    let collection_id = collection.id.clone();
+    let collection_arc = Arc::new(collection);
+
+    // Properly populate metadata with storage path (CRITICAL for RAPTOR to find files)
+    let metadata = crate::storage::traits::StorageQueryMetadata {
+        collection_id: collection_id.clone(),
+        use_axis_indexes: false,
+        has_quantization: false,
+        dimension,
+        distance_metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
+        storage_strategy: crate::storage::traits::StorageEngineStrategy::Raptor,
+        storage_path: storage_path.clone(),  // CRITICAL: This tells RAPTOR where to find files
+        quantization_config: None,
+        estimated_vector_count: num_vectors as u64,
+        estimated_size_bytes: 0,
+        performance_tier: crate::storage::traits::PerformanceTier::Hot,
+        compression_enabled: false,
+        quantization_enabled: false,
+    };
+
+    let ctx = crate::storage::traits::StorageQueryContext {
+        search_params: search_params.clone(),
+        collection: collection_arc.clone(),
+        metadata,
+    };
+
+    let results = engine.search_vectors_unified(&ctx).await?;
+
+    // Verify results
+    assert!(!results.is_empty(), "Search should return results");
+    assert!(results.len() <= 10, "Should return at most top_k results");
+    assert_eq!(results[0].id, "vec_00000", "First result should be exact match");
+
+    // Score can be either distance (close to 0.0) or similarity (close to 1.0)
+    assert!(
+        results[0].score < 0.01 || results[0].score > 0.99,
+        "First result should have exact match score (near 0.0 for distance or near 1.0 for similarity), got: {}",
+        results[0].score
+    );
+
+    Ok(())
+}

@@ -46,7 +46,7 @@ impl ProgressiveSearchCoordinator {
         sstables: &[SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<dyn FileSystem>,
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         info!(
             "Starting progressive search for k={} across {} SSTables",
@@ -72,6 +72,7 @@ impl ProgressiveSearchCoordinator {
             // Execute multi-stage progressive search
             self.execute_quantized_search(
                 query_vector,
+                query_hilbert,
                 &pruned_sstables,
                 k,
                 distance_metric,
@@ -83,6 +84,7 @@ impl ProgressiveSearchCoordinator {
             // Fallback to direct FP32 search
             self.execute_fp32_search(
                 query_vector,
+                query_hilbert,
                 &pruned_sstables,
                 k,
                 distance_metric,
@@ -132,10 +134,11 @@ impl ProgressiveSearchCoordinator {
     async fn execute_quantized_search(
         &self,
         query_vector: &[f32],
+        query_hilbert: Option<HilbertKey>,
         sstables: &[&SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<dyn FileSystem>,
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
         quant_engine: &Arc<StorageQuantizationEngine>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut candidates = Vec::new();
@@ -145,6 +148,7 @@ impl ProgressiveSearchCoordinator {
         let binary_candidates = self
             .search_with_quantization(
                 query_vector,
+                query_hilbert,
                 sstables,
                 k * 10, // Get more candidates for refinement
                 distance_metric,
@@ -197,10 +201,11 @@ impl ProgressiveSearchCoordinator {
     async fn search_with_quantization(
         &self,
         query_vector: &[f32],
+        query_hilbert: Option<HilbertKey>,
         sstables: &[&SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<dyn FileSystem>,
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut priority_queue = BoundedPriorityQueue::new(k);
@@ -210,6 +215,7 @@ impl ProgressiveSearchCoordinator {
             let results = self
                 .search_sstable_quantized(
                     query_vector,
+                    query_hilbert,
                     sstable,
                     k,
                     distance_metric,
@@ -290,10 +296,11 @@ impl ProgressiveSearchCoordinator {
     async fn execute_fp32_search(
         &self,
         query_vector: &[f32],
+        query_hilbert: Option<HilbertKey>,
         sstables: &[&SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<dyn FileSystem>,
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut priority_queue = BoundedPriorityQueue::new(k);
 
@@ -302,8 +309,10 @@ impl ProgressiveSearchCoordinator {
                 filesystem,
                 sstable,
                 query_vector,
+                query_hilbert, // Pass through query_hilbert for block-level pruning
                 k,
                 &distance_metric,
+                &self.distance_compute,
                 None,
                 None, // candidate_ids
             )
@@ -323,10 +332,11 @@ impl ProgressiveSearchCoordinator {
     async fn search_sstable_quantized(
         &self,
         query_vector: &[f32],
+        query_hilbert: Option<HilbertKey>,
         sstable: &SStableMetadata,
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<dyn FileSystem>,
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
         quantization_level: &UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         // This is a simplified version - in production, would read
@@ -335,8 +345,10 @@ impl ProgressiveSearchCoordinator {
             filesystem,
             sstable,
             query_vector,
+            query_hilbert, // Pass through query_hilbert for block-level pruning
             k,
             &distance_metric,
+            &self.distance_compute,
             None,
             None, // candidate_ids
         )

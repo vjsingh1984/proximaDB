@@ -18,6 +18,59 @@ mod helix_integration_tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
+    /// Helper to clean up old HELIX test files from previous runs
+    /// This ensures tests always start with fresh data
+    fn cleanup_old_helix_test_files() {
+        use std::fs;
+        use std::path::Path;
+
+        // Clean /tmp directory
+        if let Ok(entries) = fs::read_dir("/tmp") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name() {
+                    let name_str = name.to_string_lossy();
+                    // Remove old .helix files and helix_test_ directories
+                    if name_str.ends_with(".helix") || name_str.starts_with("helix_test_") {
+                        let _ = if path.is_dir() {
+                            fs::remove_dir_all(&path)
+                        } else {
+                            fs::remove_file(&path)
+                        };
+                    }
+                }
+            }
+        }
+
+        // Clean system temp directory (macOS: /var/folders, Linux: /tmp)
+        if cfg!(target_os = "macos") {
+            if let Ok(entries) = fs::read_dir("/var/folders") {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    // Search in /var/folders/*/T/ directories
+                    let temp_path = path.join("T");
+                    if temp_path.exists() {
+                        if let Ok(temp_entries) = fs::read_dir(&temp_path) {
+                            for temp_entry in temp_entries.flatten() {
+                                let temp_file = temp_entry.path();
+                                if let Some(name) = temp_file.file_name() {
+                                    let name_str = name.to_string_lossy();
+                                    if name_str.starts_with("helix_test_") || name_str.ends_with(".helix") {
+                                        let _ = if temp_file.is_dir() {
+                                            fs::remove_dir_all(&temp_file)
+                                        } else {
+                                            fs::remove_file(&temp_file)
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Helper to create test vectors
     fn create_test_vectors(count: usize, dims: usize, seed: u64) -> Vec<VectorRecord> {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
@@ -49,6 +102,9 @@ mod helix_integration_tests {
 
     #[tokio::test]
     async fn test_helix_basic_operations() {
+        // Clean up old test files before starting
+        cleanup_old_helix_test_files();
+
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
@@ -124,7 +180,10 @@ mod helix_integration_tests {
             }),
             created_at: 0,
             updated_at: 0,
-            storage_assignment: None,
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
         });
 
         let ctx = StorageQueryContext {
@@ -144,6 +203,9 @@ mod helix_integration_tests {
 
     #[tokio::test]
     async fn test_helix_compaction() {
+        // Clean up old test files before starting
+        cleanup_old_helix_test_files();
+
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
@@ -231,7 +293,10 @@ mod helix_integration_tests {
             }),
             created_at: 0,
             updated_at: 0,
-            storage_assignment: None,
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
         });
 
         let ctx = StorageQueryContext {
@@ -246,6 +311,9 @@ mod helix_integration_tests {
 
     #[tokio::test]
     async fn test_helix_clustering_effectiveness() {
+        // Clean up old test files before starting
+        cleanup_old_helix_test_files();
+
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
@@ -359,7 +427,10 @@ mod helix_integration_tests {
             }),
             created_at: 0,
             updated_at: 0,
-            storage_assignment: None,
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
         });
 
         let ctx = StorageQueryContext {
@@ -385,6 +456,9 @@ mod helix_integration_tests {
 
     #[tokio::test]
     async fn test_helix_with_metadata_filtering() {
+        // Clean up old test files before starting
+        cleanup_old_helix_test_files();
+
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
@@ -486,7 +560,10 @@ mod helix_integration_tests {
             }),
             created_at: 0,
             updated_at: 0,
-            storage_assignment: None,
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
         });
 
         let ctx = StorageQueryContext {

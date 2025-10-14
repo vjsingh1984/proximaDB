@@ -1526,7 +1526,7 @@ impl UnifiedSstableReader {
 
         let params = SearchParams {
             vector: Some(query_vector.to_vec()),
-            filter_expression: filter,
+            filter_expression: filter.clone(),
             top_k: Some(k),
             ..Default::default()
         };
@@ -1535,6 +1535,13 @@ impl UnifiedSstableReader {
         // This delegates all I/O to the shared infrastructure
         let blocks = self.apply_strategy(&strategy, &params, &context).await?;
         trace!("SST Reader: apply_strategy returned {} blocks", blocks.len());
+        eprintln!("DEBUG READ: Got {} blocks from file", blocks.len());
+        if let Some(first_block) = blocks.first() {
+            eprintln!("DEBUG READ: First block has {} records", first_block.records.len());
+            if let Some(first_rec) = first_block.records.first() {
+                eprintln!("DEBUG READ: First record - id: {}, metadata: {:?}", first_rec.id, first_rec.metadata);
+            }
+        }
 
         // Step 4: Process blocks and compute distances
         let mut results = Vec::new();
@@ -1544,8 +1551,20 @@ impl UnifiedSstableReader {
 
         for block in blocks {
             for record in block.records {
-                // SharedSstFormatReader already handles filtering at block level
-                // No need for record-level filtering here
+                // Apply metadata filtering at record level (type-safe, no conversion)
+                // Uses centralized SqlValue filtering from core::search::sql_value_filter
+                if let Some(filter_expr) = &filter {
+                    eprintln!("DEBUG FILTER: Evaluating record {}", record.id);
+                    eprintln!("DEBUG FILTER:   Metadata: {:?}", record.metadata);
+                    eprintln!("DEBUG FILTER:   Filter: {:?}", filter_expr);
+                    let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
+                    eprintln!("DEBUG FILTER:   Matches: {}", matches);
+                    trace!("Filter evaluation: record {} metadata={:?} matches={}", record.id, record.metadata, matches);
+                    if !matches {
+                        // Record doesn't match filter, skip it
+                        continue;
+                    }
+                }
 
                 // Compute distance
                 let distance = distance_compute.calculate_distance(
@@ -1582,83 +1601,6 @@ impl UnifiedSstableReader {
 
         debug!("✅ SST: Search complete, found {} results", final_results.len());
         Ok(final_results)
-    }
-
-
-
-
-    /// Ultra-fast metadata comparison using optimized string comparison
-    #[inline(always)]
-    fn fast_metadata_match(
-        &self,
-        metadata: &[crate::proto::proximadb_v1::MetadataItem],
-        filter_key: &str,
-        filter_value: &serde_json::Value,
-    ) -> bool {
-        // Early exit if no metadata
-        if metadata.is_empty() {
-            return false;
-        }
-
-        // Linear search is often faster than HashMap lookup for small metadata sets (< 16 items)
-        // which is typical for vector metadata
-        for item in metadata.iter() {
-            if &item.key == filter_key {
-                return self.fast_value_comparison(&item.value, filter_value);
-            }
-        }
-        false
-    }
-
-    /// Extract filter information once for high-performance repeated use
-    #[inline(always)]
-    fn extract_filter<'a>(
-        &self,
-        params: &'a SearchParams,
-    ) -> Option<(&'a str, &'a serde_json::Value)> {
-        match &params.filter_expression {
-            Some(FilterExpression::Comparison {
-                field,
-                operator: _,
-                value,
-            }) => Some((field.as_str(), value)),
-            _ => None,
-        }
-    }
-
-    #[inline(always)]
-    fn fast_value_comparison(
-        &self,
-        item_value: &Option<crate::proto::proximadb_v1::metadata_item::Value>,
-        filter_value: &serde_json::Value,
-    ) -> bool {
-        match (item_value, filter_value) {
-            // Hot path: string comparisons (most common case)
-            (
-                Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)),
-                serde_json::Value::String(filter_s),
-            ) => {
-                // Use ptr-based comparison first, then memcmp for equality
-                ptr::eq(s.as_ptr(), filter_s.as_ptr()) || s == filter_s
-            }
-            // Hot path: number comparisons
-            (
-                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)),
-                serde_json::Value::Number(filter_n),
-            ) => {
-                // Direct f64 comparison is very fast
-                filter_n
-                    .as_f64()
-                    .map_or(false, |filter_val| (*n - filter_val).abs() < f64::EPSILON)
-            }
-            // Less common paths
-            (
-                Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)),
-                serde_json::Value::Bool(filter_b),
-            ) => *b == *filter_b,
-            (None, serde_json::Value::Null) => true,
-            _ => false,
-        }
     }
 
     /// Validate SST1 magic marker in a file to ensure it's a valid SSTable
@@ -2394,8 +2336,8 @@ impl UnifiedSstableReader {
         let mut filtered_out = 0u32;
         let mut tombstones = 0u32;
 
-        // Extract filter for fast access (avoid repeated Options checks)
-        let filter_info = self.extract_filter(params);
+        // Extract filter expression for centralized type-safe filtering
+        let filter_expr = params.filter_expression.as_ref();
 
         // OPTIMIZED SEARCH LOOP: Use unified distance compute for semantic correctness
         for (block_idx, block) in blocks.iter().enumerate() {
@@ -2424,25 +2366,10 @@ impl UnifiedSstableReader {
                     continue;
                 }
 
-                // Ultra-fast metadata filtering (hot path optimization)
-                if let Some((filter_key, filter_value)) = filter_info {
-                    // Convert HashMap to Vec<MetadataItem> for fast_metadata_match
-                    let metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = record.metadata
-                        .iter()
-                        .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
-                            key: k.clone(),
-                            value: match &v.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => 
-                                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone())),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => 
-                                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(*n)),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => 
-                                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b)),
-                                _ => None,
-                            },
-                        })
-                        .collect();
-                    if !self.fast_metadata_match(&metadata_items, filter_key, filter_value) {
+                // Type-safe metadata filtering (zero-allocation, zero-conversion)
+                // Uses centralized SqlValue filtering from core::search::sql_value_filter
+                if let Some(filter) = filter_expr {
+                    if !crate::core::search::sql_value_filter::evaluate_filter(filter, &record.metadata) {
                         filtered_out += 1;
                         continue; // Skip to next record immediately
                     }

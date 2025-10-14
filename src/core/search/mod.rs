@@ -4,6 +4,7 @@ pub mod bounded_queue;
 pub mod engine_benchmarks;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
+pub mod sql_value_filter;
 pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;

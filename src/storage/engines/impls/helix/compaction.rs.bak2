@@ -309,7 +309,6 @@ impl LeveledCompactor {
                 self.config.proxima_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
-                Some(256), // Default Hilbert curve size
             )
             .await?;
 
@@ -494,7 +493,6 @@ impl LeveledCompactor {
                 self.config.proxima_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
-                Some(256), // Default Hilbert curve size
             )
             .await?;
 

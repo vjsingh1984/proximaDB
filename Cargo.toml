@@ -257,14 +257,27 @@ debug-filters = []  # Enable debug filtering for search operations
 # faiss-gpu = ["faiss"]  # Unused - no FAISS integration
 
 [profile.release]
+opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
+debug = false
+strip = false  # Keep symbols for profiling
+incremental = false
 
 # Test configuration
 [[test]]
 name = "integration"
 path = "tests/rust/mod.rs"
+
+# Benchmark profile - optimized but allows faster iteration than full release
+[profile.bench]
+inherits = "release"
+lto = "thin"  # Faster than "fat", still optimized
+codegen-units = 4  # Balance between compile time and runtime performance
+debug = false
+strip = false  # Keep symbols for profiling tools (flamegraph, perf)
+incremental = false
 
 # Release build profile optimized for production
 [profile.release-server]
@@ -277,17 +290,22 @@ debug = false
 strip = true
 
 # Development build with tests
+# IMPORTANT: dev and test profiles should match for artifact reuse
 [profile.dev]
 opt-level = 0
 debug = true
 overflow-checks = true
 incremental = true
+split-debuginfo = "unpacked"  # Faster linking, reusable debug info
 
-# Test profile
+# Test profile - must match dev exactly for artifact sharing
+# Cargo ONLY reuses artifacts if profiles are identical
 [profile.test]
-opt-level = 1
+opt-level = 0  # MUST match dev for artifact reuse (0, not 1!)
 debug = true
+overflow-checks = true
 incremental = true
+split-debuginfo = "unpacked"
 
 # Benchmark configuration - Organized by functional categories
 
@@ -378,4 +396,107 @@ path = "benches/bench_15_memory_pool.rs"
 name = "bench_16_proximacodec_comprehensive"
 harness = false
 path = "benches/bench_16_proximacodec_comprehensive.rs"
+
+# ============================================================================
+# BUILD OPTIMIZATION STRATEGY
+# ============================================================================
+#
+# GOAL: Maximize artifact reuse across build, test, and bench targets
+#
+# KEY INSIGHT: Cargo reuses artifacts ONLY when profiles are IDENTICAL.
+# Any difference in opt-level, debug, or other flags triggers full recompilation.
+#
+# PROFILE CONFIGURATION:
+# 1. dev = test (opt-level=0, debug=true)
+#    → cargo build and cargo test share the SAME artifacts
+#    → Test-only code is compiled incrementally on top of build artifacts
+#
+# 2. bench (opt-level=3, thin LTO, 4 codegen units)
+#    → Faster than full release (fat LTO, 1 codegen unit)
+#    → Still well-optimized for performance measurements
+#    → Keeps debug symbols for profiling tools (perf, flamegraph)
+#
+# 3. release (opt-level=3, LTO=true, 1 codegen unit)
+#    → Full optimization for production
+#
+# 4. release-server (inherits release + strip=true)
+#    → Maximum optimization, stripped for deployment
+#
+# WORKFLOW:
+# Development cycle:
+#   cargo build       # 2m37s (first time, opt-level=0)
+#   cargo test        # ~5-10s (reuses build artifacts, incremental)
+#   cargo test        # ~2-5s (subsequent runs, incremental)
+#
+# Performance testing:
+#   cargo build --release     # ~3-4min (opt-level=3, full LTO)
+#   cargo bench               # ~90s (thin LTO, reuses some artifacts)
+#
+# Production deployment:
+#   cargo build --profile release-server  # ~4-5min (fat LTO, stripped)
+#
+# ARTIFACT REUSE MECHANICS:
+# ✓ dev → test:  100% reuse (profiles identical)
+# ✓ release → bench:  Partial reuse (different LTO strategy)
+# ✗ dev → bench:  No reuse (different opt-level)
+# ✗ test → release:  No reuse (different opt-level)
+#
+# BENEFITS:
+# ✓ Fast test iterations (dev artifacts fully reused)
+# ✓ Faster benchmarks (thin LTO vs fat LTO: ~50% compile time reduction)
+# ✓ Incremental compilation works across cargo build/test
+# ✓ Debug symbols in benchmarks for profiling
+# ✓ Production builds fully optimized independently
+#
+# TRADE-OFFS:
+# - Tests run at opt-level=0 (slower execution, but compilation is 10x faster)
+# - If test execution speed matters, use: cargo test --release (slower compile)
+# - Benchmarks must always use optimized builds (handled automatically)
+#
+# RECOMMENDED COMMANDS:
+# Daily dev: cargo test               # Fast compile, adequate test speed
+# Quick check: cargo test --lib       # Even faster (lib only)
+# Specific test: cargo test test_name # Incremental, only compiles needed code
+# Performance: cargo bench            # Optimized but faster than full release
+# Production: cargo build --profile release-server  # Maximum optimization
+# ============================================================================
+
+# Dependencies optimization for faster compilation
+# Optimize dependencies even in dev/test builds (they rarely change)
+[profile.dev.package."*"]
+opt-level = 2  # Optimize dependencies (arrow, parquet, etc.)
+debug = false  # No debug info for dependencies (saves disk space)
+
+[profile.test.package."*"]
+opt-level = 2  # Must match dev for artifact reuse
+debug = false
+
+[profile.bench.package."*"]
+opt-level = 3  # Full optimization for dependencies in benchmarks
+debug = false
+
+# Special handling for heavy dependencies
+[profile.dev.package.arrow]
+opt-level = 3  # Arrow is performance-critical
+
+[profile.dev.package.parquet]
+opt-level = 3  # Parquet is performance-critical
+
+[profile.dev.package.arrow-array]
+opt-level = 3
+
+[profile.dev.package.arrow-buffer]
+opt-level = 3
+
+[profile.test.package.arrow]
+opt-level = 3  # Must match dev
+
+[profile.test.package.parquet]
+opt-level = 3  # Must match dev
+
+[profile.test.package.arrow-array]
+opt-level = 3
+
+[profile.test.package.arrow-buffer]
+opt-level = 3
 

@@ -489,10 +489,12 @@ impl SharedSstFormatReader {
             let mut block_vectors = Vec::new();
 
             for record in &block.records {
-                // Apply filter expression if provided
+                // Apply filter expression if provided (type-safe SqlValue filtering)
+                // Uses centralized utility from core::search::sql_value_filter
                 if let Some(filter) = filter_expression {
-                    // TODO: Implement proper filter evaluation
-                    // For now, pass all records
+                    if !crate::core::search::sql_value_filter::evaluate_filter(filter, &record.metadata) {
+                        continue; // Skip records that don't match filter
+                    }
                 }
                 block_records.push(record);
                 block_vectors.push(record.vector.as_slice());

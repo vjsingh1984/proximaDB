@@ -49,7 +49,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::sync::{Arc, OnceLock};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 use crate::core::memory::pool::{VectorMemoryPool, PooledItem};
 
 // Use proto enum as the single source of truth for DistanceMetric
@@ -214,26 +214,26 @@ fn get_platform_capability() -> PlatformCapability {
         match backend {
             #[cfg(target_arch = "x86_64")]
             HardwareBackend::AVX512 => {
-                debug!("Using AVX-512 SIMD from global hardware detection");
+                trace!("Using AVX-512 SIMD from global hardware detection");
                 PlatformCapability::X86Avx512
             }
             #[cfg(target_arch = "x86_64")]
             HardwareBackend::AVX2 => {
-                debug!("Using AVX2 SIMD from global hardware detection");
+                trace!("Using AVX2 SIMD from global hardware detection");
                 PlatformCapability::X86Avx2
             }
             #[cfg(target_arch = "x86_64")]
             HardwareBackend::SSE => {
-                debug!("Using SSE2 SIMD from global hardware detection");
+                trace!("Using SSE2 SIMD from global hardware detection");
                 PlatformCapability::X86Sse2
             }
             #[cfg(target_arch = "aarch64")]
             HardwareBackend::NEON => {
-                debug!("Using ARM NEON SIMD from global hardware detection");
+                trace!("Using ARM NEON SIMD from global hardware detection");
                 PlatformCapability::ArmNeon
             }
             HardwareBackend::Scalar | _ => {
-                debug!("Using scalar implementation from global hardware detection");
+                trace!("Using scalar implementation from global hardware detection");
                 PlatformCapability::Scalar
             }
         }
@@ -580,7 +580,7 @@ impl UnifiedDistanceCompute {
         let caps = get_hardware_capabilities();
         let hardware_backend = caps.preferred_backend();
 
-        debug!(
+        trace!(
             "Creating UnifiedDistanceCompute with metric: {:?}, backend: {:?}, platform: {:?}",
             metric, hardware_backend, platform_capability
         );
@@ -599,7 +599,7 @@ impl UnifiedDistanceCompute {
     /// Create with explicit backend selection (for testing)
     pub fn with_backend(metric: DistanceMetric, backend: HardwareBackend) -> Self {
         let platform_capability = get_platform_capability(); // Uses global cached detection
-        debug!(
+        trace!(
             "Creating UnifiedDistanceCompute with explicit backend: {:?}, platform: {:?}",
             backend, platform_capability
         );
@@ -626,17 +626,17 @@ impl UnifiedDistanceCompute {
                 // Try to create GPU accelerator based on detected hardware
                 match self.preferred_backend {
                     HardwareBackend::CUDA => {
-                        debug!("Initializing CUDA GPU accelerator");
+                        trace!("Initializing CUDA GPU accelerator");
                         // TODO: Implement CUDA accelerator
                         None
                     }
                     HardwareBackend::ROCm => {
-                        debug!("Initializing ROCm GPU accelerator");
+                        trace!("Initializing ROCm GPU accelerator");
                         // TODO: Implement ROCm accelerator
                         None
                     }
                     HardwareBackend::MPS => {
-                        debug!("Initializing Metal Performance Shaders accelerator");
+                        trace!("Initializing Metal Performance Shaders accelerator");
                         // TODO: Implement MPS accelerator
                         None
                     }
@@ -1686,7 +1686,7 @@ pub fn prewarm_calculator_cache() {
         let test_vec_b = vec![0.0f32, 1.0f32];
         let compute = UnifiedDistanceCompute::new(metric);
         let _distance = compute.distance(&test_vec_a, &test_vec_b);
-        debug!("Pre-warmed distance computation for metric: {:?}", metric);
+        trace!("Pre-warmed distance computation for metric: {:?}", metric);
     }
 }
 

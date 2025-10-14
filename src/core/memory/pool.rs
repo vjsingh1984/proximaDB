@@ -302,7 +302,7 @@ where
             stats.total_buffers_created = self.config.initial_size;
         }
 
-        debug!("🏊 Initialized pool with {} buffers", buffers.len());
+        trace!("🏊 Initialized pool with {} buffers", buffers.len());
     }
 
     /// Internal method to return buffer to pool
