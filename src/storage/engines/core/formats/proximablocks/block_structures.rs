@@ -1483,7 +1483,7 @@ impl ProximaDataBlock {
             result.write_all(&(presence_bitmap.len() as u32).to_le_bytes())?;
             result.write_all(&presence_bitmap)?;
 
-            // Compress and write sparse values
+            // Compress and write sparse values with algorithm marker
             if !sparse_values.is_empty() {
                 // Use metadata-specific compression algorithm, fall back to main algorithm
                 let metadata_algo = config.metadata_algorithm.unwrap_or(config.algorithm);
@@ -1493,10 +1493,16 @@ impl ProximaDataBlock {
                     config.compression_level as i32,
                     CompressionContext::Block,
                 )?;
-                result.write_all(&(compressed_values.len() as u32).to_le_bytes())?;
+
+                // Write: [u32 total_len][u8 marker][compressed_bytes]
+                // Uses ProximaDB standard compression markers for consistency
+                let marker = crate::core::compression::markers::compression_marker(&metadata_algo);
+                let total_len = 1 + compressed_values.len(); // 1 byte for marker
+                result.write_all(&(total_len as u32).to_le_bytes())?;
+                result.write_all(&[marker])?;
                 result.write_all(&compressed_values)?;
             } else {
-                result.write_all(&0u32.to_le_bytes())?;
+                result.write_all(&0u32.to_le_bytes())?; // No data
             }
         }
 
@@ -2068,16 +2074,33 @@ impl ProximaDataBlock {
             cursor.read_exact(&mut bitmap_bytes)?;
             trace!("[DECODE] Metadata key[{}] bitmap: read {} bytes", i, bitmap_len);
 
-            // Read sparse values blob (contains length-prefixed raw bytes for each present value)
+            // Read sparse values with compression marker (consistent with serialize)
             let mut values_len_bytes = [0u8; 4];
             cursor.read_exact(&mut values_len_bytes)?;
             let values_len = u32::from_le_bytes(values_len_bytes) as usize;
-            trace!("[DECODE] Metadata key[{}] values length: {} (bytes: {:?})", i, values_len, values_len_bytes);
-            let mut values_bytes = vec![0u8; values_len];
-            cursor.read_exact(&mut values_bytes)?;
-            trace!("[DECODE] Metadata key[{}] values: read {} bytes", i, values_len);
+            trace!("[DECODE] Metadata key[{}] total length (marker + compressed): {}", i, values_len);
 
-            // Parse the sparse values blob manually
+            // Decompress using algorithm marker
+            let values_bytes = if values_len > 0 {
+                // Read compression marker (1 byte)
+                let mut marker_byte = [0u8; 1];
+                cursor.read_exact(&mut marker_byte)?;
+                let compression_algo = crate::core::compression::markers::compression_algorithm_from_marker(marker_byte[0]);
+                trace!("[DECODE] Metadata key[{}] compression: {:?} (marker=0x{:02x})", i, compression_algo, marker_byte[0]);
+
+                // Read compressed bytes (total_len - 1 for marker)
+                let compressed_len = values_len - 1;
+                let mut compressed_bytes = vec![0u8; compressed_len];
+                cursor.read_exact(&mut compressed_bytes)?;
+
+                // Decompress using algorithm from marker
+                decompress(&compressed_bytes, compression_algo, CompressionContext::Block)?
+            } else {
+                Vec::new() // No data
+            };
+            trace!("[DECODE] Metadata key[{}] decompressed to {} bytes", i, values_bytes.len());
+
+            // Parse the decompressed sparse values blob
             // Format: each value is [u32 length][raw bytes]
             let mut sparse_values = Vec::new();
             let mut values_cursor = std::io::Cursor::new(values_bytes);
