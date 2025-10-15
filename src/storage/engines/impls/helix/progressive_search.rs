@@ -313,9 +313,9 @@ impl ProgressiveSearchCoordinator {
                 k,
                 &distance_metric,
                 &self.distance_compute,
+                None, // No filter expression at this level
+                None, // No candidate_ids
                 None, // No collection available at this level
-                None,
-                None, // candidate_ids
             )
             .await?;
 
@@ -350,9 +350,9 @@ impl ProgressiveSearchCoordinator {
             k,
             &distance_metric,
             &self.distance_compute,
-                None, // No collection available at this level
-            None,
-            None, // candidate_ids
+            None, // No filter expression at this level
+            None, // No candidate_ids
+            None, // No collection available at this level
         )
         .await
     }

@@ -468,7 +468,7 @@ mod helix_integration_tests {
         .await
         .unwrap();
 
-        // Create vectors with different metadata
+        // Create vectors with different metadata (String, Integer, Boolean, Float)
         let mut vectors = Vec::new();
         for i in 0..100 {
             vectors.push(VectorRecord {
@@ -476,6 +476,7 @@ mod helix_integration_tests {
                 vector: vec![i as f32 / 100.0; 128],
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
+                    // String field
                     metadata.insert("category".to_string(), proximadb::proto::proximadb_v1::SqlValue {
                         value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(if i % 2 == 0 {
                             "even".to_string()
@@ -483,8 +484,17 @@ mod helix_integration_tests {
                             "odd".to_string()
                         }))
                     });
+                    // Float field
                     metadata.insert("batch".to_string(), proximadb::proto::proximadb_v1::SqlValue {
                         value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue((i / 10) as f64))
+                    });
+                    // Integer field
+                    metadata.insert("count".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i as i64 * 10))
+                    });
+                    // Boolean field
+                    metadata.insert("enabled".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(i % 2 == 0))
                     });
                     metadata
                 },
@@ -496,7 +506,7 @@ mod helix_integration_tests {
             });
         }
 
-        // Create collection config with storage assignment
+        // Create collection config with filterable columns for type-safe filtering
         let collection_config = Collection {
             id: "test_collection".to_string(),
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
@@ -504,6 +514,36 @@ mod helix_integration_tests {
                 dimension: 128,
                 distance_metric: Some(DistanceMetric::Euclidean as i32),
                 storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                filterable_columns: vec![
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "category".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                        indexed: false,
+                        supports_range: false,
+                        estimated_cardinality: Some(2),
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "batch".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                        indexed: false,
+                        supports_range: true,
+                        estimated_cardinality: Some(10),
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "count".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableInteger as i32,
+                        indexed: false,
+                        supports_range: true,
+                        estimated_cardinality: Some(100),
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "enabled".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableBoolean as i32,
+                        indexed: false,
+                        supports_range: false,
+                        estimated_cardinality: Some(2),
+                    },
+                ],
                 ..Default::default()
             }),
             storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
@@ -550,7 +590,37 @@ mod helix_integration_tests {
                 name: "test_collection".to_string(),
                 dimension: 128,
                 distance_metric: Some(DistanceMetric::Euclidean as i32),
-                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                filterable_columns: vec![
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "category".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                        indexed: false,
+                        supports_range: false,
+                        estimated_cardinality: Some(2),
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "batch".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                        indexed: false,
+                        supports_range: true,
+                        estimated_cardinality: Some(10),
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "count".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableInteger as i32,
+                        indexed: false,
+                        supports_range: true,
+                        estimated_cardinality: Some(100),
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "enabled".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableBoolean as i32,
+                        indexed: false,
+                        supports_range: false,
+                        estimated_cardinality: Some(2),
+                    },
+                ],
                 ..Default::default()
             }),
             stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
@@ -574,14 +644,217 @@ mod helix_integration_tests {
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
 
-        // All results should have even category
+        // All results should have even category (even indices: 0, 2, 4, ..., 98)
+        assert!(results.len() <= 10, "Should return at most top_k results");
         for result in &results {
             let vec_id: usize = result
                 .id
                 .strip_prefix("vec_")
                 .and_then(|s| s.parse().ok())
                 .expect("Invalid ID format");
-            assert_eq!(vec_id % 2, 0, "Expected only even-indexed vectors");
+            assert_eq!(vec_id % 2, 0, "Expected only even-indexed vectors (filter: category=even)");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_helix_integer_filter() {
+        cleanup_old_helix_test_files();
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let temp_dir = TempDir::new().unwrap();
+        let engine = HelixEngine::new().await.unwrap();
+
+        // Create vectors with integer metadata
+        let mut vectors = Vec::new();
+        for i in 0..100 {
+            vectors.push(VectorRecord {
+                id: format!("vec_{}", i),
+                vector: vec![i as f32 / 100.0; 128],
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("count".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i as i64 * 10))
+                    });
+                    metadata
+                },
+                timestamp: Some(i as i64),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            });
+        }
+
+        let collection_config = Collection {
+            id: "test_helix_int".to_string(),
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                name: "test_helix_int".to_string(),
+                dimension: 128,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                filterable_columns: vec![
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "count".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableInteger as i32,
+                        indexed: false,
+                        supports_range: true,
+                        estimated_cardinality: Some(100),
+                    },
+                ],
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        engine.do_flush(&FlushParameters {
+            collection_id: Some("test_helix_int".to_string()),
+            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+            force: true,
+            synchronous: true,
+            hints: HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection_config.clone()),
+            estimated_size: 0,
+        }).await.unwrap();
+
+        // Test: count >= 500 (should get indices 50..99 = 50 results)
+        use proximadb::core::search::{ComparisonOperator, FilterExpression};
+        let filter = FilterExpression::Comparison {
+            field: "count".to_string(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(500),
+        };
+
+        let query = vec![0.5; 128];
+        let search_params = Arc::new(SearchParams {
+            query_vectors: Some(vec![query]),
+            top_k: Some(100),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            filter_expression: Some(filter),
+            ..Default::default()
+        });
+
+        let ctx = StorageQueryContext {
+            search_params,
+            collection: Arc::new(collection_config),
+            metadata: StorageQueryMetadata::default(),
+        };
+
+        let results = engine.search_vectors_unified(&ctx).await.unwrap();
+
+        // Verify all results have count >= 500
+        assert_eq!(results.len(), 50, "Expected 50 results for count >= 500 (indices 50-99)");
+        for result in &results {
+            let vec_id: usize = result.id.strip_prefix("vec_")
+                .and_then(|s| s.parse().ok())
+                .expect("Invalid ID format");
+            assert!(vec_id >= 50, "Expected vec_id >= 50, got {}", vec_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_helix_boolean_filter() {
+        cleanup_old_helix_test_files();
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let temp_dir = TempDir::new().unwrap();
+        let engine = HelixEngine::new().await.unwrap();
+
+        // Create vectors with boolean metadata
+        let mut vectors = Vec::new();
+        for i in 0..100 {
+            vectors.push(VectorRecord {
+                id: format!("vec_{}", i),
+                vector: vec![i as f32 / 100.0; 128],
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("enabled".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(i % 2 == 0))
+                    });
+                    metadata
+                },
+                timestamp: Some(i as i64),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            });
+        }
+
+        let collection_config = Collection {
+            id: "test_helix_bool".to_string(),
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                name: "test_helix_bool".to_string(),
+                dimension: 128,
+                distance_metric: Some(DistanceMetric::Euclidean as i32),
+                storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Helix as i32),
+                filterable_columns: vec![
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "enabled".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableBoolean as i32,
+                        indexed: false,
+                        supports_range: false,
+                        estimated_cardinality: Some(2),
+                    },
+                ],
+                ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        engine.do_flush(&FlushParameters {
+            collection_id: Some("test_helix_bool".to_string()),
+            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+            force: true,
+            synchronous: true,
+            hints: HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection_config.clone()),
+            estimated_size: 0,
+        }).await.unwrap();
+
+        // Test: enabled = true (should get even indices = 50 results)
+        use proximadb::core::search::{ComparisonOperator, FilterExpression};
+        let filter = FilterExpression::Comparison {
+            field: "enabled".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(true),
+        };
+
+        let query = vec![0.5; 128];
+        let search_params = Arc::new(SearchParams {
+            query_vectors: Some(vec![query]),
+            top_k: Some(100),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            filter_expression: Some(filter),
+            ..Default::default()
+        });
+
+        let ctx = StorageQueryContext {
+            search_params,
+            collection: Arc::new(collection_config),
+            metadata: StorageQueryMetadata::default(),
+        };
+
+        let results = engine.search_vectors_unified(&ctx).await.unwrap();
+
+        // Verify all results have enabled = true
+        assert_eq!(results.len(), 50, "Expected 50 results for enabled=true (even indices)");
+        for result in &results {
+            let vec_id: usize = result.id.strip_prefix("vec_")
+                .and_then(|s| s.parse().ok())
+                .expect("Invalid ID format");
+            assert_eq!(vec_id % 2, 0, "Expected only even-indexed vectors (enabled=true)");
         }
     }
 }

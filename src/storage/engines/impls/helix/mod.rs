@@ -1546,10 +1546,8 @@ impl UnifiedStorageEngine for HelixEngine {
 
         info!("HELIX pruned {:.1}% of SSTables", pruning_ratio * 100.0);
 
-        // Create thread-safe filter using unified evaluator
-        let filter_fn = crate::storage::engines::core::create_filter_fn(
-            ctx.search_params.filter_expression.as_ref(),
-        );
+        // Get filter expression from context for type-safe SqlValue filtering
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
 
         // Decide whether to use parallel or sequential search based on config
         let use_parallel = self.config.parallel_search_enabled
@@ -1579,7 +1577,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 k,
                 distance_metric,
                 self.distance_compute.clone(),
-                filter_fn,
+                filter_expression.cloned(),
             )
             .await?;
 
@@ -1606,7 +1604,7 @@ impl UnifiedStorageEngine for HelixEngine {
                     k * 2, // Get more candidates for better quality
                     &distance_metric,
                     &self.distance_compute,
-                    filter_fn.clone(),
+                    filter_expression, // Pass FilterExpression for type-safe filtering
                     None, // No specific IDs to check
                     Some(&*ctx.collection), // Pass collection for type-safe metadata
                 )

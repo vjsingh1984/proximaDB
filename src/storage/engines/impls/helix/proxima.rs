@@ -582,7 +582,7 @@ pub(crate) async fn read_helix_header_optimized(
     Ok(header)
 }
 
-/// Read and search a HELIX SSTable with bloom filter pruning
+/// Read and search a HELIX SSTable with bloom filter pruning and type-safe filtering
 pub async fn search_helix_sstable(
     filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     path: &Path,
@@ -592,7 +592,8 @@ pub async fn search_helix_sstable(
     distance_metric: &crate::compute::distance_computation::DistanceMetric,
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     collection: Option<&crate::proto::proximadb_v1::Collection>,
-) -> Result<Vec<(String, f32, HashMap<String, String>)>> {
+    filter_expression: Option<&crate::core::search::FilterExpression>,
+) -> Result<Vec<(String, f32, std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>)>> {
     // CLOUD-OPTIMIZED: Read unified file header in 2 API calls (metadata + header)
     // UnifiedCachingFilesystem will cache this, so subsequent queries = 0 API calls!
     let header = read_helix_header_optimized(filesystem, path).await?;
@@ -677,13 +678,19 @@ pub async fn search_helix_sstable(
 
         // Search within block
         for record in block.records.iter() {
-            // Use the actual metadata from record (already type-safe SqlValue format)
-            let metadata = HashMap::new(); // Legacy format for backward compatibility
+            // Apply type-safe filter if present
+            if let Some(filter_expr) = filter_expression {
+                let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
+                if !matches {
+                    continue; // Skip records that don't match filter
+                }
+            }
 
             // Use shared UnifiedDistanceCompute for correct metric-specific distance calculation
             let distance = distance_compute.distance(query_vector, &record.vector);
 
-            results.push((record.id.clone(), distance, metadata));
+            // Return SqlValue metadata (type-safe)
+            results.push((record.id.clone(), distance, record.metadata.clone()));
         }
     }
 
