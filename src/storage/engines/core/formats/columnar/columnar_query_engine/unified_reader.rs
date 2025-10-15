@@ -414,15 +414,15 @@ impl UnifiedParquetReader {
             .map(|c| c.enable_metadata_filtering)
             .unwrap_or(false);
 
-        // Extract metadata filters from search plan for row group pruning
-        let metadata_filters = search_plan.metadata_filters.clone();
+        // Extract filter expression from search plan for row group pruning
+        let filter_expression = search_plan.filter_expression.clone();
 
         debug!("UnifiedParquetReader: Optimized search starting");
         debug!("  Files to scan: {}", self.file_paths.len());
         debug!("  Column projection: vectors={}, metadata={}", needs_vectors, needs_metadata);
         debug!("  Top-k: {}, Early termination: {}", search_plan.top_k, search_plan.enable_early_termination);
-        if !metadata_filters.is_empty() {
-            debug!("  Metadata filters: {} conditions", metadata_filters.len());
+        if filter_expression.is_some() {
+            debug!("  Filter expression: present");
         }
 
         // Initialize bounded priority queue for top-k results
@@ -456,7 +456,7 @@ impl UnifiedParquetReader {
                 file_path,
                 needs_vectors,
                 needs_metadata,
-                &metadata_filters,
+                filter_expression.as_ref(),
                 quantization_enabled,
             ).await?;
 
@@ -599,7 +599,7 @@ impl UnifiedParquetReader {
         file_path: &str,
         needs_vectors: bool,
         needs_metadata: bool,
-        metadata_filters: &[crate::storage::engines::core::formats::columnar::MetadataFilter],
+        filter_expression: Option<&crate::core::search::FilterExpression>,
         quantization_enabled: bool,
     ) -> Result<(Vec<VectorRecord>, usize)> {
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -629,23 +629,13 @@ impl UnifiedParquetReader {
         let metadata = file_reader.metadata();
         let total_row_groups = metadata.num_row_groups();
 
-        // ROW GROUP PRUNING: Filter row groups based on statistics, filters, and bloom filters
-        let selected_row_groups = if !metadata_filters.is_empty() {
-            // Use FilterPushdown to prune based on statistics
-            use super::filter_pushdown_engine::FilterPushdown;
-
-            let pruning_engine = FilterPushdown::new();
-            let row_groups_metadata: Vec<_> = (0..total_row_groups)
-                .map(|i| metadata.row_group(i).clone())
-                .collect();
-
-            let mut selected = pruning_engine.prune_row_groups(metadata_filters, &row_groups_metadata);
-
-            // BLOOM FILTER OPTIMIZATION: Further prune based on ID bloom filters if searching for specific IDs
-            selected = self.apply_bloom_filter_pruning(file_path, &selected, metadata_filters).await?;
-
-            debug!("  Row group pruning: {} filters applied", metadata_filters.len());
-            selected
+        // ROW GROUP PRUNING: Filter row groups based on filter expression
+        // For now, we skip row group pruning with FilterExpression until FilterPushdown is updated
+        // TODO: Update FilterPushdown to work with FilterExpression instead of MetadataFilter
+        let selected_row_groups: Vec<usize> = if filter_expression.is_some() {
+            debug!("  Filter expression present - row group pruning with FilterExpression not yet implemented");
+            // Select all row groups for now - will implement statistics-based pruning later
+            (0..total_row_groups).collect()
         } else {
             // No filters, select all row groups
             (0..total_row_groups).collect()
@@ -714,6 +704,26 @@ impl UnifiedParquetReader {
             if let Ok(idx) = schema.index_of("extra_meta") {
                 projection.push(idx);
             }
+
+            // Add ALL non-reserved columns (filterable columns) to projection
+            // This is crucial for reading typed metadata columns
+            for field_idx in 0..schema.fields().len() {
+                let field_name = schema.field(field_idx).name();
+
+                // Skip columns we've already added or reserved columns
+                if matches!(field_name.as_str(),
+                    "id" | "row_group_offset" | "row_index" | "vector" | "vector_fp32" |
+                    "q_binary" | "q_int8" | "qp_int8_scale" | "qp_int8_min" | "qp_int8_max" |
+                    "q_pq4" | "q_pq8" | "q_pq16" | "q_pq32" |
+                    "timestamp" | "updated_at" | "expires_at" | "version" | "source" | "extra_meta" | "metadata"
+                ) {
+                    continue;
+                }
+
+                // This is a filterable column - add to projection
+                projection.push(field_idx);
+            }
+
             // Also add version and timestamp for filtering
             if let Ok(idx) = schema.index_of("version") {
                 projection.push(idx);
@@ -753,12 +763,22 @@ impl UnifiedParquetReader {
             // Extract records from this batch
             let batch_records = self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
 
-            // Add all records to results
-            records.extend(batch_records);
+            // Apply filter expression to records if present
+            if let Some(filter_expr) = filter_expression {
+                for record in batch_records {
+                    if self.matches_filter_expression(&record, filter_expr) {
+                        records.push(record);
+                    }
+                }
+            } else {
+                // No filter - add all records
+                records.extend(batch_records);
+            }
         }
 
         debug!("  Row groups: {}/{} selected (skipped {})",
                total_row_groups - row_groups_skipped, total_row_groups, row_groups_skipped);
+        debug!("  Records after filtering: {}", records.len());
 
         Ok((records, row_groups_skipped))
     }
@@ -934,13 +954,93 @@ impl UnifiedParquetReader {
             };
 
             let metadata = if needs_metadata {
-                // Extract metadata from "extra_meta" Map column if present
+                // Extract metadata from typed filterable columns first (preserving types),
+                // then from "extra_meta" Map column (as strings)
                 let mut meta_map = HashMap::new();
+                use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+                use arrow_array::{Array as ArrowArrayTrait, BooleanArray, Int64Array, Float64Array};
 
+                // First, extract from typed filterable columns (if any exist in the schema)
+                // Common filterable columns: category, price, enabled, etc.
+                // We'll check the batch schema for any non-standard columns that aren't
+                // our reserved fields (id, vector, timestamp, etc.)
+                let schema = batch.schema();
+                for field in schema.fields() {
+                    let field_name = field.name();
+
+                    // Skip reserved columns
+                    if matches!(field_name.as_str(),
+                        "id" | "row_group_offset" | "row_index" | "vector" | "vector_fp32" |
+                        "q_binary" | "q_int8" | "qp_int8_scale" | "qp_int8_min" | "qp_int8_max" |
+                        "q_pq4" | "q_pq8" | "q_pq16" | "q_pq32" |
+                        "timestamp" | "updated_at" | "expires_at" | "version" | "source" | "extra_meta"
+                    ) {
+                        continue;
+                    }
+
+                    // This is a filterable column - extract with proper type
+                    if let Some(col) = batch.column_by_name(field_name) {
+                        use arrow::datatypes::DataType;
+                        match field.data_type() {
+                            DataType::Utf8 => {
+                                if let Some(str_array) = col.as_any().downcast_ref::<StringArray>() {
+                                    if !ArrowArrayTrait::is_null(str_array, row_idx) {
+                                        meta_map.insert(
+                                            field_name.clone(),
+                                            SqlValue {
+                                                value: Some(Value::StringValue(str_array.value(row_idx).to_string()))
+                                            }
+                                        );
+                                    }
+                                }
+                            },
+                            DataType::Int64 => {
+                                if let Some(int_array) = col.as_any().downcast_ref::<Int64Array>() {
+                                    if !ArrowArrayTrait::is_null(int_array, row_idx) {
+                                        meta_map.insert(
+                                            field_name.clone(),
+                                            SqlValue {
+                                                value: Some(Value::Int64Value(int_array.value(row_idx)))
+                                            }
+                                        );
+                                    }
+                                }
+                            },
+                            DataType::Float64 => {
+                                if let Some(float_array) = col.as_any().downcast_ref::<Float64Array>() {
+                                    if !ArrowArrayTrait::is_null(float_array, row_idx) {
+                                        meta_map.insert(
+                                            field_name.clone(),
+                                            SqlValue {
+                                                value: Some(Value::NumberValue(float_array.value(row_idx)))
+                                            }
+                                        );
+                                    }
+                                }
+                            },
+                            DataType::Boolean => {
+                                if let Some(bool_array) = col.as_any().downcast_ref::<BooleanArray>() {
+                                    if !ArrowArrayTrait::is_null(bool_array, row_idx) {
+                                        meta_map.insert(
+                                            field_name.clone(),
+                                            SqlValue {
+                                                value: Some(Value::BoolValue(bool_array.value(row_idx)))
+                                            }
+                                        );
+                                    }
+                                }
+                            },
+                            _ => {
+                                // Unsupported type - skip
+                            }
+                        }
+                    }
+                }
+
+                // Then, extract from "extra_meta" Map column if present (non-filterable metadata)
                 if let Some(map_col) = batch.column_by_name("extra_meta") {
                     if let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>() {
                         use arrow_array::Array;
-                        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
                         if !map_array.is_null(row_idx) {
                             let map_value = map_array.value(row_idx);
@@ -953,7 +1053,8 @@ impl UnifiedParquetReader {
                                             if !keys.is_null(i) && !values.is_null(i) {
                                                 let key = keys.value(i).to_string();
                                                 let value = values.value(i).to_string();
-                                                meta_map.insert(key, SqlValue {
+                                                // Only insert if not already present from typed columns
+                                                meta_map.entry(key).or_insert(SqlValue {
                                                     value: Some(Value::StringValue(value))
                                                 });
                                             }
@@ -1359,32 +1460,71 @@ impl UnifiedParquetReader {
         true
     }
 
-    /// Check if record matches extra_meta filters
+    /// Check if record matches filter expression using centralized sql_value_filter
+    /// This ensures consistency with SST and other engines
+    fn matches_filter_expression(&self, record: &VectorRecord, filter_expr: &crate::core::search::FilterExpression) -> bool {
+        // Use centralized type-safe SqlValue filtering from core::search::sql_value_filter
+        // VectorRecord.metadata is map<string, SqlValue> per proto definition
+        crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata)
+    }
+
+    /// Legacy method for backward compatibility with MetadataFilter
+    /// Converts MetadataFilter to FilterExpression and uses centralized evaluation
     fn matches_extra_meta_filter(&self, record: &VectorRecord, filter: &MetadataFilter) -> bool {
-        // Check filters against the metadata field which contains JSON
-        for condition in &filter.clauses {
-            if let Some(metadata_value) = record.metadata.get(&condition.field) {
-                // Compare SqlValue with filter value
-                let matches = match (&metadata_value.value, &condition.value) {
-                    (Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s1)),
-                     Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s2))) => s1 == s2,
-                    (Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i1)),
-                     Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i2))) => i1 == i2,
-                    (Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f1)),
-                     Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f2))) => (f1 - f2).abs() < 0.0001,
-                    (Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b1)),
-                     Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b2))) => b1 == b2,
-                    _ => false,
-                };
-                if !matches {
-                    return false;
-                }
-            } else {
-                // Field not found in metadata
-                return false;
-            }
+        // Convert legacy MetadataFilter to FilterExpression
+        let filter_expr = self.convert_metadata_filter_to_expression(filter);
+
+        // Use centralized filter evaluation
+        crate::core::search::sql_value_filter::evaluate_filter(&filter_expr, &record.metadata)
+    }
+
+    /// Convert legacy MetadataFilter to FilterExpression
+    fn convert_metadata_filter_to_expression(&self, filter: &MetadataFilter) -> crate::core::search::FilterExpression {
+        use crate::core::search::{FilterExpression, ComparisonOperator};
+
+        if filter.clauses.is_empty() {
+            // Empty filter matches everything - return a trivial true condition
+            return FilterExpression::Comparison {
+                field: "__always_true".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::Value::Bool(true),
+            };
         }
-        true
+
+        // Convert each clause to a Comparison expression
+        let expressions: Vec<FilterExpression> = filter.clauses.iter().map(|clause| {
+            // Convert filter_clause::Value to serde_json::Value
+            let value = match &clause.value {
+                Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => {
+                    serde_json::Value::String(s.clone())
+                }
+                Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i)) => {
+                    serde_json::Value::Number((*i).into())
+                }
+                Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f)) => {
+                    serde_json::Number::from_f64(*f)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null)
+                }
+                Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b)) => {
+                    serde_json::Value::Bool(*b)
+                }
+                _ => serde_json::Value::Null,
+            };
+
+            FilterExpression::Comparison {
+                field: clause.field.clone(),
+                operator: ComparisonOperator::Equals, // MetadataFilter only supports equals
+                value,
+            }
+        }).collect();
+
+        // Combine with AND logic (MetadataFilter default)
+        if expressions.len() == 1 {
+            expressions.into_iter().next().unwrap()
+        } else {
+            FilterExpression::And(expressions)
+        }
     }
 
     /// Get schema from cached metadata (leverages UnifiedCachingFilesystem)

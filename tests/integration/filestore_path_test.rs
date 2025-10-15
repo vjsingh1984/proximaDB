@@ -81,7 +81,14 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: None, // StorageAssignment no longer exists
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: "/tmp/test".to_string(),
+            backup_paths: vec![],
+            engine: 0, // VIPER
+            engine_config: std::collections::HashMap::new(),
+            base_location: "/tmp/test".to_string(),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     }
 }
 

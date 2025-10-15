@@ -339,6 +339,8 @@ pub struct CollectionContext {
     pub creation_time: chrono::DateTime<chrono::Utc>,
     /// I/O optimization hints for efficient SSTable access
     pub io_optimization_hints: Option<HashMap<String, serde_json::Value>>,
+    /// Collection config for type-safe metadata deserialization
+    pub collection: Option<Arc<crate::proto::proximadb_v1::Collection>>,
 }
 
 /// Modular block reader for shared block-level operations
@@ -408,7 +410,7 @@ impl ModularBlockReader {
             .read_range(block_offset + 4, estimated_block_size as usize)
             .await?;
 
-        let data_block = ProximaDataBlock::deserialize(&block_data).map_err(|e| {
+        let data_block = ProximaDataBlock::deserialize(&block_data, None).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to deserialize ProximaDataBlock for quantized section: {}",
                 e
@@ -934,7 +936,7 @@ impl ModularBlockReader {
         let block_data = self.read_range(offset, size).await?;
 
         // NEW: Use hierarchical deserialization with automatic compression detection
-        ProximaDataBlock::deserialize(&block_data).map_err(|e| {
+        ProximaDataBlock::deserialize(&block_data, None).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to deserialize hierarchical ProximaDataBlock at offset {}: {}",
                 offset,
@@ -1028,13 +1030,13 @@ impl ModularBlockReader {
         match mode {
             ReadMode::Direct => {
                 // Use hierarchical deserialization for correct format handling
-                ProximaDataBlock::deserialize(&block_data).map_err(|e| {
+                ProximaDataBlock::deserialize(&block_data, None).map_err(|e| {
                     anyhow::anyhow!("Failed to deserialize hierarchical DataBlock: {}", e)
                 })
             }
             ReadMode::Buffered | ReadMode::Streaming => {
                 // Use hierarchical deserialization with automatic compression detection
-                ProximaDataBlock::deserialize(&block_data).map_err(|e| {
+                ProximaDataBlock::deserialize(&block_data, None).map_err(|e| {
                     anyhow::anyhow!(
                         "Failed to deserialize hierarchical DataBlock in buffered mode: {}",
                         e
@@ -1196,7 +1198,7 @@ impl Iterator for BlockIterator<VectorRecord> {
             "🔍 VectorRecord STREAMING: Attempting to deserialize DataBlock from {} bytes",
             block_data.len()
         );
-        match ProximaDataBlock::deserialize(&block_data) {
+        match ProximaDataBlock::deserialize(&block_data, None) {
             Ok(data_block) => {
                 debug!(
                     "🔍 VectorRecord STREAMING: Successfully deserialized ProximaDataBlock with {} records",
@@ -1494,6 +1496,7 @@ impl UnifiedSstableReader {
         filter: Option<FilterExpression>,
         k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         trace!("SST Reader: search_with_filter called with file_path: {}", file_path);
         // REFACTORED: Use SharedSstFormatReader like SWIFT does
@@ -1522,6 +1525,7 @@ impl UnifiedSstableReader {
             level: 0,
             creation_time: chrono::Utc::now(),
             io_optimization_hints: None,
+            collection: collection.map(|c| Arc::new(c.clone())),
         };
 
         let params = SearchParams {
@@ -1864,6 +1868,7 @@ impl UnifiedSstableReader {
             level: 0,
             creation_time: chrono::Utc::now(),
             io_optimization_hints: None,
+            collection: None,
         };
 
         // Apply compaction strategy
@@ -2145,7 +2150,7 @@ impl UnifiedSstableReader {
 
             // Use cache lookup when enabled
             let blocks = if enable_cache_lookup {
-                self.read_file_with_cache(file_path).await?
+                self.read_file_with_cache(file_path, context.collection.as_deref()).await?
             } else {
                 // Use modular reading for range-based optimization
                 if use_range_reads {
@@ -2156,7 +2161,7 @@ impl UnifiedSstableReader {
                     )
                     .await?
                 } else {
-                    self.read_file_direct(file_path).await?
+                    self.read_file_direct(file_path, context.collection.as_deref()).await?
                 }
             };
 
@@ -2231,7 +2236,7 @@ impl UnifiedSstableReader {
             // Check disk cache first if enabled, otherwise direct read
             let blocks = if use_disk_cache_if_exists {
                 // Try cache first, fallback to direct read
-                match self.read_file_with_cache(file_path).await {
+                match self.read_file_with_cache(file_path, context.collection.as_deref()).await {
                     Ok(cached_blocks) => {
                         debug!("💾 COMPACTION: Using disk cache for {}", file_path);
                         cached_blocks
@@ -2301,6 +2306,7 @@ impl UnifiedSstableReader {
                 level: 0,
                 creation_time: chrono::Utc::now(),
                 io_optimization_hints: None,
+                collection: None,
             },
             enable_metadata_cache,
         )
@@ -2497,9 +2503,9 @@ impl UnifiedSstableReader {
 
             trace!("SST Full Scan: Reading blocks (use_block_cache={})", use_block_cache);
             let blocks = if use_block_cache {
-                self.read_file_with_cache(file_path).await?
+                self.read_file_with_cache(file_path, context.collection.as_deref()).await?
             } else {
-                self.read_file_direct(file_path).await?
+                self.read_file_direct(file_path, context.collection.as_deref()).await?
             };
             trace!("SST Full Scan: Loaded {} blocks from file", blocks.len());
             debug!("  📦 Loaded {} blocks from this file", blocks.len());
@@ -2570,9 +2576,9 @@ impl UnifiedSstableReader {
             let start_time = std::time::Instant::now();
 
             let result = if use_block_cache {
-                self.read_file_with_cache(file_path).await
+                self.read_file_with_cache(file_path, None).await
             } else {
-                self.read_file_direct(file_path).await
+                self.read_file_direct(file_path, None).await
             };
 
             let elapsed = start_time.elapsed();
@@ -2630,7 +2636,7 @@ impl UnifiedSstableReader {
                 context.sstable_files.len(),
                 file_path
             );
-            let blocks = self.read_file_direct(file_path).await?;
+            let blocks = self.read_file_direct(file_path, None).await?;
             debug!("  📦 Loaded {} blocks from this file", blocks.len());
 
             all_blocks.extend(blocks);
@@ -2842,6 +2848,7 @@ impl UnifiedSstableReader {
                     level: context.level,
                     creation_time: context.creation_time,
                     io_optimization_hints: context.io_optimization_hints.clone(),
+                    collection: context.collection.clone(),
                 };
 
                 if let Some(block) = self.load_block_with_cache(&file_context, block_idx).await? {
@@ -3039,7 +3046,7 @@ impl UnifiedSstableReader {
         let block_data = fs
             .read_range(&context.file_path, block_offset + 4, block_len)
             .await?;
-        let block: ProximaDataBlock = ProximaDataBlock::deserialize(&block_data)?;
+        let block: ProximaDataBlock = ProximaDataBlock::deserialize(&block_data, None)?;
 
         debug!(
             "Loaded block {} from SSTable using range request ({} bytes)",
@@ -3280,6 +3287,7 @@ impl UnifiedSstableReader {
             level: 0,
             creation_time: chrono::Utc::now(),
             io_optimization_hints: None,
+            collection: None,
         };
 
         // Use full scan strategy for single key lookup
@@ -3606,14 +3614,14 @@ impl UnifiedSstableReader {
         Ok(loaded_blocks)
     }
 
-    async fn read_file_with_cache(&self, path: &str) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_file_with_cache(&self, path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<ProximaDataBlock>> {
         trace!("SST Read with Cache: Starting for path: {}", path);
 
         // For Proxima format, we need to read the data blocks directly after the header
         // The format is: SST1 | header_len | header | bloom_len | bloom | index_len | index | data_blocks
 
         // Read the file to find data blocks
-        let blocks = self.read_proximablocks(path).await?;
+        let blocks = self.read_proximablocks(path, collection).await?;
 
         trace!("SST Read with Cache: Loaded {} Proxima blocks", blocks.len());
         Ok(blocks)
@@ -3656,7 +3664,7 @@ impl UnifiedSstableReader {
                     match fs.read_range(path, offset, block_size as u64).await {
                         Ok(block_data) if block_data.len() == block_size as usize => {
                             // Try to deserialize as Proxima block
-                            match ProximaDataBlock::deserialize(&block_data) {
+                            match ProximaDataBlock::deserialize(&block_data, None) {
                                 Ok(block) => {
                                     blocks.push(block);
                                     offset += block_size as u64;
@@ -3686,7 +3694,7 @@ impl UnifiedSstableReader {
     }
 
     /// Read Proxima format data blocks from SST file
-    async fn read_proximablocks(&self, path: &str) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_proximablocks(&self, path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<ProximaDataBlock>> {
         use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
         trace!("SST Proxima: Reading blocks from: {}", path);
@@ -3776,7 +3784,7 @@ impl UnifiedSstableReader {
             trace!("SST Proxima: Reading block at offset {} with {} bytes", offset, block_len);
 
             // Deserialize using Proxima deserializer
-            match ProximaDataBlock::deserialize(&block_data) {
+            match ProximaDataBlock::deserialize(&block_data, collection) {
                 Ok(block) => {
                     trace!("SST Proxima: Successfully deserialized block with {} records", block.records.len());
                     blocks.push(block);
@@ -3805,6 +3813,7 @@ impl UnifiedSstableReader {
             level: 0,
             creation_time: chrono::Utc::now(),
             io_optimization_hints: None,
+            collection: None,
         };
 
         let num_blocks = index.entries.len();
@@ -3879,7 +3888,7 @@ impl UnifiedSstableReader {
                 .await?
             } else {
                 // Fall back to normal read with cache
-                self.read_file_direct(file_path).await?
+                self.read_file_direct(file_path, None).await?
             };
 
             let elapsed = start_time.elapsed();
@@ -4012,7 +4021,7 @@ impl UnifiedSstableReader {
 
             let block_data = &data[offset..offset + block_len];
 
-            match ProximaDataBlock::deserialize(block_data) {
+            match ProximaDataBlock::deserialize(block_data, None) {
                 Ok(block) => {
                     debug!(
                         "✅ COMPACTION: Deserialized block with {} records",
@@ -4040,10 +4049,10 @@ impl UnifiedSstableReader {
         Ok(blocks)
     }
 
-    async fn read_file_direct(&self, path: &str) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_file_direct(&self, path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<ProximaDataBlock>> {
         // Use the same Proxima reader as read_file_with_cache
         trace!("SST Read Direct: Starting for path: {}", path);
-        self.read_proximablocks(path).await
+        self.read_proximablocks(path, collection).await
     }
 
     async fn read_file_direct_with_strategy(
@@ -4200,7 +4209,7 @@ impl UnifiedSstableReader {
                 entry.block_id,
                 block_data.len()
             );
-            match ProximaDataBlock::deserialize(block_data) {
+            match ProximaDataBlock::deserialize(block_data, None) {
                 Ok(block) => {
                     debug!(
                         "✅ Successfully deserialized block {} with {} records",
@@ -4653,6 +4662,7 @@ impl ReadingStrategySelector {
             level: 0,
             creation_time: chrono::Utc::now(),
             io_optimization_hints: None,
+            collection: None,
         };
 
         // Use compaction-optimized strategy - read all records

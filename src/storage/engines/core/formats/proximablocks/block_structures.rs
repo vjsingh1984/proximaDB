@@ -1739,9 +1739,92 @@ impl ProximaDataBlock {
         Ok(final_result)
     }
 
-    /// Deserialize a block
-    /// Delegates decoding to the proxima module
-    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
+    /// Helper function to deserialize metadata value using collection config for type information
+    ///
+    /// This implements the recommendation to use filterable_columns from collection config
+    /// as the source of truth for metadata types, avoiding storage overhead and type ambiguity.
+    ///
+    /// For filterable metadata: Uses type from collection config (no guessing!)
+    /// For non-filterable metadata: Uses heuristic (like Parquet's extra_meta)
+    fn deserialize_metadata_value(
+        key_name: &str,
+        val_bytes: &[u8],
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> crate::proto::proximadb_v1::SqlValue {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value, FilterableDataType};
+
+        // Try to get type from collection config for filterable columns
+        if let Some(config) = collection_config {
+            if let Some(cfg) = config.config.as_ref() {
+                // Check if this key is a declared filterable column
+                if let Some(col_spec) = cfg.filterable_columns.iter().find(|c| c.name == key_name) {
+                    // Use declared type from config (single source of truth!)
+                    return match col_spec.data_type() {
+                        FilterableDataType::FilterableInteger => {
+                            let i = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            SqlValue { value: Some(Value::Int64Value(i)) }
+                        }
+                        FilterableDataType::FilterableFloat => {
+                            let f = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            SqlValue { value: Some(Value::NumberValue(f)) }
+                        }
+                        FilterableDataType::FilterableBoolean => {
+                            SqlValue { value: Some(Value::BoolValue(val_bytes.get(0).map(|&b| b != 0).unwrap_or(false))) }
+                        }
+                        FilterableDataType::FilterableString => {
+                            let s = String::from_utf8_lossy(val_bytes).to_string();
+                            SqlValue { value: Some(Value::StringValue(s)) }
+                        }
+                        FilterableDataType::FilterableDatetime => {
+                            let ts = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            SqlValue { value: Some(Value::Int64Value(ts)) }
+                        }
+                        _ => {
+                            // Unknown type, fall back to heuristic
+                            Self::deserialize_metadata_value_heuristic(val_bytes)
+                        }
+                    };
+                }
+            }
+        }
+
+        // Not a filterable column or no config available: use heuristic
+        // This is the same approach as Parquet's extra_meta (stores as strings)
+        Self::deserialize_metadata_value_heuristic(val_bytes)
+    }
+
+    /// Heuristic-based deserialization for non-filterable metadata
+    /// Similar to Parquet's extra_meta approach (best-effort type guessing)
+    fn deserialize_metadata_value_heuristic(val_bytes: &[u8]) -> crate::proto::proximadb_v1::SqlValue {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+
+        // For non-filterable metadata, we use heuristics (no type info available)
+        // Could also just store everything as strings like Parquet's extra_meta
+        let val_len = val_bytes.len();
+
+        if val_len == 8 {
+            // 8 bytes: could be f64 or i64
+            // Default to f64 (most common for non-filterable metadata)
+            let num = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+            SqlValue { value: Some(Value::NumberValue(num)) }
+        } else if val_len == 1 && (val_bytes[0] == 0 || val_bytes[0] == 1) {
+            // Single byte with value 0 or 1: likely a bool
+            SqlValue { value: Some(Value::BoolValue(val_bytes[0] != 0)) }
+        } else {
+            // Everything else: treat as string
+            let s = String::from_utf8_lossy(val_bytes).to_string();
+            SqlValue { value: Some(Value::StringValue(s)) }
+        }
+    }
+
+    /// Deserialize a block with optional collection config for type-safe metadata
+    ///
+    /// The collection_config parameter enables type-safe metadata deserialization:
+    /// - Filterable columns use declared types from config (no guessing!)
+    /// - Non-filterable metadata uses heuristic (like Parquet extra_meta)
+    ///
+    /// Backward compatible: Pass None to use heuristic for all metadata
+    pub fn deserialize(data: &[u8], collection_config: Option<&crate::proto::proximadb_v1::Collection>) -> anyhow::Result<Self> {
         use crate::core::compression::{CompressionContext, CompressionAlgorithm, decompress};
         use std::io::Read;
 
@@ -2015,34 +2098,22 @@ impl ProximaDataBlock {
                         break; // Corrupted data
                     }
 
-                    // Try to determine value type from length and content
-                    // This is a heuristic since we don't store type info
-                    let sql_value = if val_len == 8 {
-                        // Could be f64 (NumberValue) or i64 (Int64Value)
-                        // For now assume f64 since that's most common
-                        let num = f64::from_le_bytes(val_bytes.as_slice().try_into().unwrap_or([0u8; 8]));
-                        Some(crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(num)),
-                        })
-                    } else if val_len == 1 && (val_bytes[0] == 0 || val_bytes[0] == 1) {
-                        // Single byte with value 0 or 1: this is a bool
-                        let is_true = val_bytes[0] != 0;
-                        Some(crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(is_true)),
-                        })
-                    } else {
-                        // Otherwise assume string
-                        let s = String::from_utf8_lossy(&val_bytes).to_string();
-                        Some(crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
-                        })
-                    };
-                    sparse_values.push(sql_value);
+                    // Deserialize value using collection config for type info (if available)
+                    // This uses filterable_columns from collection config as the source of truth
+                    // for type information, eliminating guesswork for declared filterable columns!
+                    let sql_value = Self::deserialize_metadata_value(&key_name, &val_bytes, collection_config);
+                    sparse_values.push(Some(sql_value));
                 }
             }
 
-            eprintln!("DEBUG DESER KEY[{}]: Parsed {} sparse values from {} bytes, bitmap.len={}, record_count={}",
-                i, sparse_values.len(), values_len, bitmap_bytes.len(), record_count);
+            tracing::trace!(
+                key_index = i,
+                sparse_count = sparse_values.len(),
+                bytes_len = values_len,
+                bitmap_len = bitmap_bytes.len(),
+                record_count,
+                "Parsed sparse values for metadata key"
+            );
 
             // Use bitmap to reconstruct full column with None for missing values
             let mut full_values = Vec::with_capacity(record_count);
@@ -2066,7 +2137,7 @@ impl ProximaDataBlock {
                 }
             }
 
-            eprintln!("DEBUG DESER KEY[{}]: Reconstructed {} values with {} present", i, full_values.len(), value_idx);
+            tracing::trace!(key_index = i, total_values = full_values.len(), present_count = value_idx, "Reconstructed metadata column");
             metadata_columns.insert(key_name.clone(), full_values);
             trace!("[DECODE] Metadata key[{}]: Stored {} values for key '{}'", i, record_count, key_name);
 
@@ -2074,9 +2145,9 @@ impl ProximaDataBlock {
         }
 
         trace!("[DECODE] Deserialized metadata for {} keys", metadata_columns.len());
-        eprintln!("DEBUG DESERIALIZE: Metadata columns count: {}", metadata_columns.len());
+        tracing::trace!(column_count = metadata_columns.len(), "Deserialized metadata");
         for (key, values) in &metadata_columns {
-            eprintln!("DEBUG DESERIALIZE:   Key '{}': {} values", key, values.len());
+            tracing::trace!(key_name = %key, value_count = values.len(), "Metadata column details");
         }
 
         // STEP 4: Read and skip timestamps (actually read the bytes, don't just set position)
@@ -2349,23 +2420,23 @@ impl ProximaDataBlock {
             // quantized_vector removed - internalized in storage
 
             // Populate metadata from columnar storage
-            eprintln!("DEBUG RECONSTRUCT: Record[{}] before metadata: {} keys", i, record.metadata.len());
+            tracing::trace!(record_index = i, keys_before = record.metadata.len(), "Record before metadata");
             for (key, values) in &metadata_columns {
-                eprintln!("DEBUG RECONSTRUCT:   Checking key '{}', values.len={}", key, values.len());
+                tracing::trace!(key = %key, values_len = values.len(), record_index = i, "Checking metadata key");
                 match values.get(i) {
                     Some(Some(sql_value)) => {
-                        eprintln!("DEBUG RECONSTRUCT:     Adding key '{}' to record[{}], value={:?}", key, i, sql_value);
+                        tracing::trace!(key = %key, record_index = i, value = ?sql_value, "Adding metadata to record");
                         record.metadata.insert(key.clone(), sql_value.clone());
                     }
                     Some(None) => {
-                        eprintln!("DEBUG RECONSTRUCT:     Value at [{}] is None", i);
+                        tracing::trace!(record_index = i, "Value is None");
                     }
                     None => {
-                        eprintln!("DEBUG RECONSTRUCT:     Index {} out of bounds", i);
+                        tracing::trace!(record_index = i, "Index out of bounds");
                     }
                 }
             }
-            eprintln!("DEBUG RECONSTRUCT: Record[{}] after metadata: {} keys", i, record.metadata.len());
+            tracing::trace!(record_index = i, keys_after = record.metadata.len(), "Record after metadata");
 
             trace!("🔧 [DECODE] Record[{}]: ID='{}', Timestamp={:?}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}, Metadata_keys={}",
                 i, record.id, record.timestamp, record.source, record.updated_at, record.expires_at, record.version, record.metadata.len());

@@ -179,7 +179,7 @@ fn bench_memory_pressure(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_pressure");
 
     // Simulate a large result set
-    let num_results = 5000; // Use standard large batch size
+    let num_results = 5120; // Use standard large batch size (power of 2)
     let dimension = 768; // BERT dimension
 
     group.bench_function("original_memory", |b| {
@@ -203,15 +203,15 @@ fn bench_memory_pressure(c: &mut Criterion) {
             let mut results = Vec::with_capacity(num_results);
             // Pre-create Arc vectors (simulating a shared pool)
             let vectors: Vec<Arc<Vec<f32>>> =
-                (0..100) // Reuse 100 vectors
-                    .map(|i| Arc::new(vec![i as f32 / 100.0; dimension]))
+                (0..128) // Reuse 128 vectors (power of 2)
+                    .map(|i| Arc::new(vec![i as f32 / 128.0; dimension]))
                     .collect();
 
             for i in 0..num_results {
                 results.push(OptimizedSearchResult {
                     id: format!("id_{}", i),
                     score: 0.9,
-                    vector: Some(Arc::clone(&vectors[i % 100])), // Share vectors
+                    vector: Some(Arc::clone(&vectors[i % 128])), // Share vectors
                     metadata: HashMap::new(),
                 });
             }

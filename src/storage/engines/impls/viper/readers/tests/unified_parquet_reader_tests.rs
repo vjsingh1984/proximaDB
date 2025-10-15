@@ -76,7 +76,7 @@ mod tests {
                 supports_range_requests: false,
                 file_paths: None,
             },
-            metadata_filters: vec![],
+            filter_expression: None,
             query_vector: params.vector.clone(),
             top_k: params.top_k.unwrap_or(100) as usize,
             min_score: None,  // No minimum score filter for tests

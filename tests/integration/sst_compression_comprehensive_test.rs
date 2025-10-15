@@ -146,7 +146,26 @@ async fn test_compression_for_data(
     let mut flush_params_compressed =
         operations::build_flush_params(&env_compressed, vectors, StorageEngine::Sst).await?;
 
-    // Compression is already configured in the SstConfig
+    // Set compression in the collection storage config
+    if let Some(ref mut collection_config) = flush_params_compressed.collection_config {
+        if let Some(ref mut config) = collection_config.config {
+            use proximadb::proto::proximadb_v1::{StorageConfig as ProtoStorageConfig, CompressionAlgorithm};
+
+            let compression_algo = match algorithm {
+                "none" => CompressionAlgorithm::CompressionNone as i32,
+                "zstd" => CompressionAlgorithm::CompressionZstd as i32,
+                "lz4" => CompressionAlgorithm::CompressionLz4 as i32,
+                "snappy" => CompressionAlgorithm::CompressionSnappy as i32,
+                "gzip" => CompressionAlgorithm::CompressionGzip as i32,
+                _ => CompressionAlgorithm::CompressionZstd as i32,
+            };
+
+            config.storage_config = Some(ProtoStorageConfig {
+                compression: Some(compression_algo),
+                ..Default::default()
+            });
+        }
+    }
 
     let compressed_result = compressed_engine.do_flush(&flush_params_compressed).await?;
     assert!(compressed_result.success, "Compressed flush should succeed");

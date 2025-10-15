@@ -38,8 +38,9 @@ pub struct SearchPlan {
     pub available_quantization: Vec<UnifiedQuantizationLevel>,
     /// Storage characteristics
     pub storage_info: StorageInfo,
-    /// Metadata filters to apply during search (for row group pruning and filtering)
-    pub metadata_filters: Vec<crate::storage::engines::core::formats::columnar::MetadataFilter>,
+    /// Unified filter expression to apply during search (for row group pruning and filtering)
+    /// Uses centralized sql_value_filter::evaluate_filter for type-safe SqlValue metadata filtering
+    pub filter_expression: Option<crate::core::search::FilterExpression>,
     /// Query vector for similarity search (needed for quantized pre-filtering)
     pub query_vector: Option<Vec<f32>>,
 
@@ -299,7 +300,7 @@ impl IntegratedSearchOptimizer {
                 crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
             ],
             storage_info,
-            metadata_filters: vec![], // TODO: Extract from search request
+            filter_expression: None, // TODO: Extract from search request
             query_vector: None, // TODO: Extract from search request
             top_k: 100, // Default top-k
             min_score: None, // No minimum score by default

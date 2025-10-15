@@ -150,7 +150,7 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
     let mut group = c.benchmark_group("engine_comparison_insertion");
     // Adjust timing for slower operations
     group.measurement_time(std::time::Duration::from_secs(10)); // Increase from 5s to 10s
-    group.sample_size(50); // Reduce from 100 to 50 samples
+    group.sample_size(64); // Reduce from 128 to 50 samples
 
     // Test different vector counts with BERT embeddings (768D)
     for count in [1000, 5000].iter() {
@@ -234,7 +234,7 @@ fn bench_all_engines_search(c: &mut Criterion) {
     let mut group = c.benchmark_group("engine_comparison_search");
     // Adjust timing for search operations
     group.measurement_time(std::time::Duration::from_secs(10)); // Increase from 5s to 10s
-    group.sample_size(50); // Reduce from 100 to 50 samples
+    group.sample_size(64); // Reduce from 128 to 50 samples
 
     // Use BERT embedding for query
     let mut generator = EmbeddingGenerator::new(EmbeddingModel::Bert);

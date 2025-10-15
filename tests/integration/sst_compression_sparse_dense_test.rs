@@ -69,8 +69,17 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     let mut flush_params =
         operations::build_flush_params(&base_env, vectors.clone(), StorageEngine::Sst).await?;
 
-    // TODO: Fix compression config assignment - collection compression config needs updating
-    // Compression is now handled at the engine level, not collection level
+    // Set compression in the collection storage config
+    if let Some(ref mut collection_config) = flush_params.collection_config {
+        if let Some(ref mut config) = collection_config.config {
+            use proximadb::proto::proximadb_v1::{StorageConfig as ProtoStorageConfig, CompressionAlgorithm};
+
+            config.storage_config = Some(ProtoStorageConfig {
+                compression: Some(CompressionAlgorithm::CompressionZstd as i32),
+                ..Default::default()
+            });
+        }
+    }
 
     let compressed_result = compressed_engine.do_flush(&flush_params).await?;
     assert!(compressed_result.success);
@@ -188,8 +197,17 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     let mut flush_params =
         operations::build_flush_params(&base_env, vectors.clone(), StorageEngine::Sst).await?;
 
-    // TODO: Fix compression config assignment - collection compression config needs updating
-    // Compression is now handled at the engine level, not collection level
+    // Set compression in the collection storage config
+    if let Some(ref mut collection_config) = flush_params.collection_config {
+        if let Some(ref mut config) = collection_config.config {
+            use proximadb::proto::proximadb_v1::{StorageConfig as ProtoStorageConfig, CompressionAlgorithm};
+
+            config.storage_config = Some(ProtoStorageConfig {
+                compression: Some(CompressionAlgorithm::CompressionZstd as i32),
+                ..Default::default()
+            });
+        }
+    }
 
     let compressed_result = compressed_engine.do_flush(&flush_params).await?;
     assert!(compressed_result.success);

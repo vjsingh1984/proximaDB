@@ -1654,6 +1654,9 @@ impl ViperEngine {
             self.fallback_quantization_engine.clone()
         }
     }
+
+    // Removed convert_filter_expression_to_metadata_filter - no longer needed
+    // VIPER now uses FilterExpression directly with SearchPlan
 }
 
 // Close the impl ViperEngine block
@@ -2210,7 +2213,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 UnifiedQuantizationLevel::Pq4,
                 UnifiedQuantizationLevel::Pq8,
             ], // VIPER supports all quantization levels
-            metadata_filters: vec![], // TODO: Extract from search parameters
+            filter_expression: filter_expression.cloned(), // Use FilterExpression directly
             query_vector: Some(query_vector.to_vec()),
             top_k: k,
             min_score: None, // No minimum threshold
@@ -2287,7 +2290,9 @@ impl UnifiedStorageEngine for ViperEngine {
 
         // Perform search using the reader's search_vectors method
         debug!("Calling parquet_reader.search_vectors with collection {}", collection_context.collection_id);
+
         // Convert search_params to SearchPlan using unified_interface
+        // Now directly passes FilterExpression - no conversion needed
         let search_plan = crate::core::search::unified_interface::SearchPlan {
             collection_id: collection_id.to_string(),
             collection_config: collection_opt
@@ -2313,7 +2318,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 supports_range_requests: true,
                 file_paths: Some(parquet_files.clone()),
             },
-            metadata_filters: vec![], // TODO: Extract from search parameters
+            filter_expression: filter_expression.cloned(),  // ✅ Direct FilterExpression usage
             query_vector: Some(query_vector.to_vec()),
             top_k: k,
             min_score: None,

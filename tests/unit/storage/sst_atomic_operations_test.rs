@@ -100,7 +100,7 @@ async fn test_sst_atomic_flush_creates_staging_directory() {
     // Filter for SSTable files that belong to this collection specifically
     let sst_files: Vec<_> = entries
         .iter()
-        .filter(|e| e.name.ends_with(".sstable"))
+        .filter(|e| e.name.ends_with(".sst") || e.name.ends_with(".sstable"))
         .collect();
 
     // Debug: print all files found
@@ -146,17 +146,13 @@ async fn test_sst_atomic_flush_rollback_on_failure() {
         source: None,
     }];
 
-    // Create flush parameters
-    let flush_params = FlushParameters {
-        collection_id: Some(collection_id.to_string()),
-        vector_records: vectors,
-        force: false,
-        synchronous: true,
-        ..Default::default()
-    };
+    // Use production code directly with proper parameters
+    let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst)
+        .await
+        .unwrap();
 
     // Perform flush
-    let result = lsm_tree.flush(flush_params).await;
+    let result = lsm_tree.do_flush(&flush_params).await;
 
     // Note: Empty vectors are currently allowed by SST storage
     // This test was expecting failure but the implementation doesn't validate empty vectors
@@ -180,7 +176,7 @@ async fn test_sst_atomic_flush_rollback_on_failure() {
         let entries = fs.list(&data_dir).await.unwrap();
         let sst_files: Vec<_> = entries
             .iter()
-            .filter(|e| e.name.ends_with(".sstable"))
+            .filter(|e| e.name.ends_with(".sst") || e.name.ends_with(".sstable"))
             .collect();
 
         // Empty vectors may or may not create SSTable files depending on implementation

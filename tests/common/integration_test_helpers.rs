@@ -512,7 +512,14 @@ impl UnifiedTestEnvironment {
             stats: Some(stats),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
-            storage_assignment: None,
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: format!("{}/collections/{}", _base_location, name),
+                backup_paths: vec![],
+                engine: StorageEngine::Sst as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: _base_location,
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
         }
     }
 
@@ -986,8 +993,8 @@ pub fn create_test_collection_with_storage(name: &str, base_location: String) ->
             backup_paths: vec![],
             engine: StorageEngine::Sst as i32,
             engine_config: std::collections::HashMap::new(),
-            base_location,
-            assigned_at: chrono::Utc::now().timestamp(),
+            base_location: base_location.clone(),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
         }),
     }
 }
@@ -1077,7 +1084,14 @@ pub async fn flush_sst_with_block_stats(
 
     let collection_config = Collection {
         id: "test_collection".to_string(),
-        storage_assignment: None, // StorageAssignment no longer exists
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: environment.persistent_dir.to_str().unwrap().to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: environment.persistent_base.to_str().unwrap().to_string(),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
         config: Some(CollectionConfig {
             name: "test_collection".to_string(),
             dimension: vectors[0].vector.len() as u32,

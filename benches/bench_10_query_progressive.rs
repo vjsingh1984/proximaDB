@@ -205,7 +205,7 @@ fn bench_search_scenarios(c: &mut Criterion) {
     let runtime = Runtime::new().unwrap();
     let dimension = 768; // BERT embeddings
     let model = EmbeddingModel::Bert;
-    let database = generate_embedding_vectors(5000, dimension, model);
+    let database = generate_embedding_vectors(5120, dimension, model);
     let records = vectors_to_records(&database);
     let query = generate_embedding_vectors(1, dimension, model)[0].clone();
 
@@ -246,7 +246,7 @@ fn bench_dimension_scaling(c: &mut Criterion) {
         (768, EmbeddingModel::Bert),
         (1536, EmbeddingModel::OpenAIAda),
     ];
-    let database_size = 1000;
+    let database_size = 1024;
 
     for (dimension, model) in test_configs {
         let database = generate_embedding_vectors(database_size, dimension, model);
@@ -282,35 +282,35 @@ fn bench_stage_performance(c: &mut Criterion) {
     let runtime = Runtime::new().unwrap();
     let dimension = 768; // Use BERT for stage testing
     let model = EmbeddingModel::Bert;
-    let database = generate_embedding_vectors(10000, dimension, model);
+    let database = generate_embedding_vectors(10240, dimension, model);
     let records = vectors_to_records(&database);
     let query = generate_embedding_vectors(1, dimension, model)[0].clone();
 
     // Test with different stage size configurations
     let configurations = vec![
         ("aggressive", StageSizes {
-            binary_candidates: 500,
-            int8_candidates: 100,
-            pq_candidates: 50,
+            binary_candidates: 512,
+            int8_candidates: 128,
+            pq_candidates: 64,
             fp32_candidates: 10,
-            total_computations: 660,  // Sum of all candidate stages
-            effective_expansion: 50.0,  // binary_candidates / fp32_candidates
+            total_computations: 714,  // Sum of all candidate stages
+            effective_expansion: 51.2,  // binary_candidates / fp32_candidates
         }),
         ("balanced", StageSizes {
-            binary_candidates: 1000,
-            int8_candidates: 200,
-            pq_candidates: 100,
+            binary_candidates: 1024,
+            int8_candidates: 256,
+            pq_candidates: 128,
             fp32_candidates: 10,
-            total_computations: 1310,  // Sum of all candidate stages
-            effective_expansion: 100.0,  // binary_candidates / fp32_candidates
+            total_computations: 1418,  // Sum of all candidate stages
+            effective_expansion: 102.4,  // binary_candidates / fp32_candidates
         }),
         ("conservative", StageSizes {
-            binary_candidates: 2000,
-            int8_candidates: 500,
-            pq_candidates: 200,
+            binary_candidates: 2048,
+            int8_candidates: 512,
+            pq_candidates: 256,
             fp32_candidates: 10,
-            total_computations: 2710,  // Sum of all candidate stages
-            effective_expansion: 200.0,  // binary_candidates / fp32_candidates
+            total_computations: 2826,  // Sum of all candidate stages
+            effective_expansion: 204.8,  // binary_candidates / fp32_candidates
         }),
     ];
 

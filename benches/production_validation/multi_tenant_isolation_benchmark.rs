@@ -96,8 +96,8 @@ pub fn multi_tenant_isolation_benchmark(c: &mut Criterion) {
 
                             let tenant_start = Instant::now();
 
-                            // Execute 100 queries per tenant
-                            for query_idx in 0..100 {
+                            // Execute 128 queries per tenant
+                            for query_idx in 0..128 {
                                 let query = generate_tenant_specific_query(&tenant, query_idx);
                                 let query_start = Instant::now();
 
@@ -233,7 +233,7 @@ async fn create_test_tenants(count: usize) -> Vec<TestTenant> {
                 max_concurrent_operations: 25,
             },
             _ => TenantResourceLimits {
-                max_qps: 500,
+                max_qps: 512,
                 max_collections: 10,
                 max_concurrent_operations: 10,
             },
@@ -422,7 +422,7 @@ mod tests {
         for tenant in &tenants {
             match tenant.tier.as_str() {
                 "enterprise" => assert!(tenant.resource_limits.max_qps >= 1000),
-                "professional" => assert!(tenant.resource_limits.max_qps >= 500),
+                "professional" => assert!(tenant.resource_limits.max_qps >= 512),
                 "basic" => assert!(tenant.resource_limits.max_qps >= 100),
                 _ => panic!("Unknown tier: {}", tenant.tier),
             }

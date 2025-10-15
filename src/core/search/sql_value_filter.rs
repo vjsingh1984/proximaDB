@@ -88,6 +88,19 @@ pub fn evaluate_filter(
                 (Some(SqlVal::NumberValue(n)), ComparisonOperator::GreaterThanOrEqual) => {
                     compare_number_gte(*n, value)
                 }
+                // Integer comparisons
+                (Some(SqlVal::Int64Value(n)), ComparisonOperator::LessThan) => {
+                    compare_int64_lt(*n, value)
+                }
+                (Some(SqlVal::Int64Value(n)), ComparisonOperator::LessThanOrEqual) => {
+                    compare_int64_lte(*n, value)
+                }
+                (Some(SqlVal::Int64Value(n)), ComparisonOperator::GreaterThan) => {
+                    compare_int64_gt(*n, value)
+                }
+                (Some(SqlVal::Int64Value(n)), ComparisonOperator::GreaterThanOrEqual) => {
+                    compare_int64_gte(*n, value)
+                }
                 (None, _) => false, // Field not found in metadata
                 _ => false,         // Unsupported comparison (e.g., string < string)
             }
@@ -104,6 +117,16 @@ fn compare_sql_value_to_json(sql_val: &SqlVal, json_val: &serde_json::Value) -> 
             if let Some(n2_f64) = n2.as_f64() {
                 // Use epsilon comparison for floating point equality
                 (n1 - n2_f64).abs() < f64::EPSILON
+            } else {
+                false
+            }
+        }
+        (SqlVal::Int64Value(n1), serde_json::Value::Number(n2)) => {
+            // Try exact integer match first, then fall back to float comparison
+            if let Some(n2_i64) = n2.as_i64() {
+                n1 == &n2_i64
+            } else if let Some(n2_f64) = n2.as_f64() {
+                (*n1 as f64 - n2_f64).abs() < f64::EPSILON
             } else {
                 false
             }
@@ -153,6 +176,58 @@ fn compare_number_gte(n: f64, json_val: &serde_json::Value) -> bool {
     if let serde_json::Value::Number(filter_num) = json_val {
         if let Some(filter_f64) = filter_num.as_f64() {
             return n >= filter_f64;
+        }
+    }
+    false
+}
+
+/// Compare Int64 for less-than
+#[inline]
+fn compare_int64_lt(n: i64, json_val: &serde_json::Value) -> bool {
+    if let serde_json::Value::Number(filter_num) = json_val {
+        if let Some(filter_i64) = filter_num.as_i64() {
+            return n < filter_i64;
+        } else if let Some(filter_f64) = filter_num.as_f64() {
+            return (n as f64) < filter_f64;
+        }
+    }
+    false
+}
+
+/// Compare Int64 for less-than-or-equal
+#[inline]
+fn compare_int64_lte(n: i64, json_val: &serde_json::Value) -> bool {
+    if let serde_json::Value::Number(filter_num) = json_val {
+        if let Some(filter_i64) = filter_num.as_i64() {
+            return n <= filter_i64;
+        } else if let Some(filter_f64) = filter_num.as_f64() {
+            return (n as f64) <= filter_f64;
+        }
+    }
+    false
+}
+
+/// Compare Int64 for greater-than
+#[inline]
+fn compare_int64_gt(n: i64, json_val: &serde_json::Value) -> bool {
+    if let serde_json::Value::Number(filter_num) = json_val {
+        if let Some(filter_i64) = filter_num.as_i64() {
+            return n > filter_i64;
+        } else if let Some(filter_f64) = filter_num.as_f64() {
+            return (n as f64) > filter_f64;
+        }
+    }
+    false
+}
+
+/// Compare Int64 for greater-than-or-equal
+#[inline]
+fn compare_int64_gte(n: i64, json_val: &serde_json::Value) -> bool {
+    if let serde_json::Value::Number(filter_num) = json_val {
+        if let Some(filter_i64) = filter_num.as_i64() {
+            return n >= filter_i64;
+        } else if let Some(filter_f64) = filter_num.as_f64() {
+            return (n as f64) >= filter_f64;
         }
     }
     false

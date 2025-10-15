@@ -161,7 +161,7 @@ impl SstEngine {
     /// 3. Combines and ranks results
     pub async fn fallback_to_direct_search(
         &self,
-        _ctx: &StorageQueryContext,
+        ctx: &StorageQueryContext,
         collection_id: &str,
         storage_url: &str,
         query_vector: &[f32],
@@ -176,12 +176,11 @@ impl SstEngine {
         let mut all_candidates = Vec::new();
 
         // Discover SSTable files for this collection
-        eprintln!("DEBUG SEARCH: Discovering SSTable files at storage_url: {}", storage_url);
+        tracing::debug!(storage_url = %storage_url, "Discovering SSTable files");
         let sstable_files = self.discover_sstable_files(storage_url).await?;
         tracing::debug!("[SST] Discovered {} SSTable files", sstable_files.len());
-        eprintln!("DEBUG SEARCH: Discovered {} SSTable files", sstable_files.len());
         for (i, file) in sstable_files.iter().enumerate() {
-            eprintln!("DEBUG SEARCH:   File {}: {}", i, file);
+            tracing::trace!(index = i, file = %file, "Discovered SSTable file");
         }
 
         debug!(
@@ -200,6 +199,7 @@ impl SstEngine {
                 filter_expression.cloned(),
                 k * 2, // Get more candidates for better accuracy
                 distance_metric,
+                Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
             ).await {
                 Ok(results) => {
                     debug!("📊 Found {} candidates in {}", results.len(), sstable_path);
@@ -222,11 +222,11 @@ impl SstEngine {
 
         // Get sorted results from bounded queue
         let mut all_candidates = priority_queue.into_sorted_vec();
-        eprintln!("DEBUG SEARCH: Before filtering - {} candidates", all_candidates.len());
+        tracing::debug!(candidate_count = all_candidates.len(), "Before filtering");
 
         // Filter results based on include flags
         self.filter_search_results(&mut all_candidates, include_vectors, include_metadata);
-        eprintln!("DEBUG SEARCH: After filtering - {} candidates", all_candidates.len());
+        tracing::debug!(filtered_count = all_candidates.len(), "After filtering");
 
         info!(
             "🏁 SST: Direct search completed - Collection: {}, Results: {}/{}",

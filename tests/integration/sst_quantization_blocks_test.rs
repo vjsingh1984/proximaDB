@@ -77,11 +77,13 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
 
         // Flush with collection config for quantization
         // Note: vectors are passed in flush_params, not inserted separately
+        let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
+        let collection = test_env.create_test_collection();
         let flush_params = FlushParameters {
             vector_records: vectors.clone(),
             force: false,
             collection_id: Some("test_collection".to_string()),
-            collection_config: None,
+            collection_config: Some(collection.clone()),
             ..Default::default()
         };
 
@@ -120,11 +122,9 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
             ..Default::default()
         });
 
-        let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
-        let collection = std::sync::Arc::new(test_env.create_test_collection());
         let query_context = StorageQueryContext {
             search_params,
-            collection,
+            collection: std::sync::Arc::new(collection),
             metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
         };
 
@@ -234,11 +234,13 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     let mut sst_storage = SstEngine::new().await?;
 
     // Flush with vectors
+    let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
+    let collection = test_env.create_test_collection();
     let flush_params = FlushParameters {
         vector_records: vectors.clone(),
         force: false,
         collection_id: Some("test_collection".to_string()),
-        collection_config: None,
+        collection_config: Some(collection),
         ..Default::default()
     };
 

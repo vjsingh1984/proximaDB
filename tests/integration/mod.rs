@@ -64,6 +64,15 @@ pub mod filestore_path_test;
 // Unified search integration tests - NEW unified search interface
 pub mod unified_search_integration;
 
+// Comprehensive filter integration tests - Tests all data types and operators
+pub mod comprehensive_filter_test;
+
+// SST engine comprehensive filter tests
+pub mod sst_comprehensive_filter_test;
+
+// SWIFT engine comprehensive filter tests
+pub mod swift_comprehensive_filter_test;
+
 // Write Buffer optimization integration tests - NEW optimized Write Buffer writer
 // pub mod write_ahead_log_optimization_integration_test; // File doesn't exist
 

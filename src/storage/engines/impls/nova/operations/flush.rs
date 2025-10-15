@@ -36,6 +36,7 @@ impl NovaFlushOperations {
         compression_algo: &str,
         dimension: usize,
         base_location: &str,
+        filterable_columns: Option<Vec<crate::proto::proximadb_v1::FilterableColumnSpec>>,
     ) -> Result<(String, u64, HashMap<String, serde_json::Value>)> {
         use crate::storage::engines::core::formats::columnar::{
             parquet_write_engine::ParquetWriterConfig,
@@ -132,7 +133,7 @@ impl NovaFlushOperations {
             hybrid_config,
             &full_path,
             &*self.filesystem,
-            None, // filterable_columns
+            filterable_columns,
             metadata_collector,
         )
         .await {
@@ -215,6 +216,11 @@ impl NovaFlushOperations {
             .map(|s| s.base_location.as_str())
             .unwrap_or("/data/collections");
 
+        // Extract filterable_columns from collection config
+        let filterable_columns = params.collection_config.as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.filterable_columns.clone());
+
         // Delegate to write_nova_file_to_disk
         let (path, bytes_written, metadata) = self.write_nova_file_to_disk(
             params.collection_id.as_deref().unwrap_or("default"),
@@ -222,6 +228,7 @@ impl NovaFlushOperations {
             compression_algo,
             dimension,
             base_location,
+            filterable_columns,
         ).await?;
 
         Ok(FlushResult {

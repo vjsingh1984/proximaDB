@@ -74,7 +74,7 @@ fn bench_node_creation(c: &mut Criterion) {
         (service, collection_service)
     });
 
-    for size in [100, 1000, 10000] {
+    for size in [128, 1024, 10240] {
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("create_nodes", size), &size, |b, &size| {
             b.iter(|| {
@@ -129,7 +129,7 @@ fn bench_edge_creation(c: &mut Criterion) {
 
     // Pre-create nodes for edges
     runtime.block_on(async {
-        for i in 0..100 {
+        for i in 0..128 {
             let node = Node {
                 id: format!("edge_node_{}", i),
                 labels: vec!["EdgeNode".to_string()],
@@ -142,7 +142,7 @@ fn bench_edge_creation(c: &mut Criterion) {
         }
     });
 
-    for size in [100, 1000, 5000] {
+    for size in [128, 1024, 5120] {
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("create_edges", size), &size, |b, &size| {
             b.iter(|| {
@@ -150,8 +150,8 @@ fn bench_edge_creation(c: &mut Criterion) {
                     for i in 0..size {
                         let edge = Edge {
                             id: format!("bench_edge_{}", i),
-                            from_node_id: format!("edge_node_{}", i % 100),
-                            to_node_id: format!("edge_node_{}", (i + 1) % 100),
+                            from_node_id: format!("edge_node_{}", i % 128),
+                            to_node_id: format!("edge_node_{}", (i + 1) % 128),
                             edge_type: "CONNECTS_TO".to_string(),
                             properties: HashMap::from([
                                 (
@@ -190,7 +190,7 @@ fn bench_node_queries(c: &mut Criterion) {
         ensure_benchmark_graph_exists(&collection_service).await.unwrap();
 
         // Create test nodes
-        for i in 0..1000 {
+        for i in 0..1024 {
             let node = Node {
                 id: format!("query_node_{}", i),
                 labels: vec![
@@ -258,7 +258,7 @@ fn bench_node_queries(c: &mut Criterion) {
                         key: "value".to_string(),
                         operator: PropertyFilterOperator::GreaterThan as i32,
                         value: Some(PropertyValue {
-                            value: Some(Value::IntValue(500)),
+                            value: Some(Value::IntValue(512)),
                         }),
                     }],
                     limit: Some(20),
@@ -287,7 +287,7 @@ fn bench_traversal(c: &mut Criterion) {
         ensure_benchmark_graph_exists(&collection_service).await.unwrap();
 
         // Create a small connected graph for traversal
-        for i in 0..100 {
+        for i in 0..128 {
             let node = Node {
                 id: format!("trav_node_{}", i),
                 labels: vec!["TraversalNode".to_string()],
@@ -303,8 +303,8 @@ fn bench_traversal(c: &mut Criterion) {
         for i in 0..150 {
             let edge = Edge {
                 id: format!("trav_edge_{}", i),
-                from_node_id: format!("trav_node_{}", i % 100),
-                to_node_id: format!("trav_node_{}", (i * 7 + 3) % 100), // Create interesting connections
+                from_node_id: format!("trav_node_{}", i % 128),
+                to_node_id: format!("trav_node_{}", (i * 7 + 3) % 128), // Create interesting connections
                 edge_type: "TRAVERSES".to_string(),
                 properties: HashMap::new(),
                 weight: None,
@@ -329,7 +329,7 @@ fn bench_traversal(c: &mut Criterion) {
                     edge_types: vec![],
                     node_labels: vec![],
                     filters: vec![],
-                    limit: Some(50),
+                    limit: Some(64),
                     timeout_ms: None,
                     max_frontier: None,
                 };
@@ -350,7 +350,7 @@ fn bench_traversal(c: &mut Criterion) {
                     edge_types: vec![],
                     node_labels: vec![],
                     filters: vec![],
-                    limit: Some(50),
+                    limit: Some(64),
                     timeout_ms: None,
                     max_frontier: None,
                 };

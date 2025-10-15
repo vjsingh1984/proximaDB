@@ -231,11 +231,11 @@ fn bench_engine_flush_with_compression(c: &mut Criterion) {
     let vectors = Arc::new(generate_vectors(1000, 768));
 
     // Calculate uncompressed baseline size
-    let uncompressed_size = 1000 * 768 * 4; // 1000 vectors * 768 dims * 4 bytes (f32)
+    let uncompressed_size = 1000 * 768 * 4; // 1024 vectors * 768 dims * 4 bytes (f32)
     eprintln!("\n📊 COMPRESSION BENCHMARK ANALYSIS");
     eprintln!("   Baseline uncompressed size: {} bytes ({:.2} MB)",
              uncompressed_size, uncompressed_size as f64 / (1024.0 * 1024.0));
-    eprintln!("   Testing 1000 vectors with 768 dimensions\n");
+    eprintln!("   Testing 1024 vectors with 768 dimensions\n");
 
     // Test different compression algorithms
     let compression_configs = vec![
@@ -374,7 +374,7 @@ fn bench_engine_memory_efficiency(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
-    let batch_sizes = vec![100, 500, 1000, 5000];
+    let batch_sizes = vec![128, 512, 1000, 5000];
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
 

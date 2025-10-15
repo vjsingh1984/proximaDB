@@ -23,6 +23,7 @@ use proximadb::storage::metadata::single_index::SingleCollectionIndex;
 use tracing::{debug, error, info, warn};
 
 fn create_test_collection(id: &str, name: &str) -> Collection {
+    let temp_dir = tempfile::tempdir().unwrap();
     Collection {
         id: id.to_string(),
         config: Some(CollectionConfig {
@@ -48,7 +49,14 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: chrono::Utc::now().timestamp_millis(),
         updated_at: chrono::Utc::now().timestamp_millis(),
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", temp_dir.path().display()),
+            backup_paths: vec![],
+            engine: StorageEngine::Viper as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: format!("{}", temp_dir.path().display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     }
 }
 

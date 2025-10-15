@@ -120,10 +120,13 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     let sst_storage = proximadb::storage::engines::impls::sst::SstEngine::new().await?;
 
     // Test SST compression through flush operation
+    let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
+    let collection = test_env.create_test_collection();
     let flush_params = proximadb::storage::FlushParameters {
         vector_records: vectors,
         force: false,
         collection_id: Some("test_collection".to_string()),
+        collection_config: Some(collection),
         ..Default::default()
     };
     let flush_result = sst_storage.do_flush(&flush_params).await?;

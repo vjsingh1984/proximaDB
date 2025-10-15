@@ -291,7 +291,7 @@ impl SharedSstFormatReader {
         // For now, try to deserialize as a single block
         // TODO: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
             vec![single_block]
         } else {
             // If single block fails, assume empty or corrupted file
@@ -325,7 +325,7 @@ impl SharedSstFormatReader {
         // Deserialize blocks
         // TODO: Implement multi-block file format
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
             vec![single_block]
         } else {
             Vec::new()
@@ -368,7 +368,7 @@ impl SharedSstFormatReader {
         // Deserialize blocks
         // TODO: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
             vec![single_block]
         } else {
             Vec::new()
@@ -392,7 +392,7 @@ impl SharedSstFormatReader {
 
         // Deserialize and filter blocks by range
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
             vec![single_block]
         } else {
             Vec::new()
@@ -426,7 +426,7 @@ impl SharedSstFormatReader {
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
             vec![single_block]
         } else {
             Vec::new()
@@ -455,7 +455,7 @@ impl SharedSstFormatReader {
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
             vec![single_block]
         } else {
             Vec::new()

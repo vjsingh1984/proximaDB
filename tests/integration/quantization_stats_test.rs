@@ -208,6 +208,8 @@ async fn run_quantization_test(
 
     // Flush vectors to SST
     let flush_start = Instant::now();
+    let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
+    let collection = test_env.create_test_collection();
     let flush_params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         force: false,
@@ -217,7 +219,7 @@ async fn run_quantization_test(
         vector_records: vectors.to_vec(),
         trigger_compaction: false,
         batch_ids: vec![],
-        collection_config: None,
+        collection_config: Some(collection.clone()),
         estimated_size: 0,
     };
 
@@ -234,8 +236,7 @@ async fn run_quantization_test(
         ..Default::default()
     });
 
-    let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
-    let collection = std::sync::Arc::new(test_env.create_test_collection());
+    let collection = std::sync::Arc::new(collection);
     let query_context = proximadb::storage::traits::StorageQueryContext {
         search_params,
         collection,

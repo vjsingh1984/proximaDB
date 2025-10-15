@@ -687,7 +687,7 @@ impl LeveledCompactor {
 
             // Deserialize block
             use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
-            let block = ProximaDataBlock::deserialize(&block_data)?;
+            let block = ProximaDataBlock::deserialize(&block_data, None)?;
 
             // Filter out expired records (physical delete during compaction)
             for record in block.records {

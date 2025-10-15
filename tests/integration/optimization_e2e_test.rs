@@ -56,14 +56,10 @@ fn ensure_test_directories() {
 
 /// Create diverse test vectors to validate all optimization paths
 fn create_optimization_test_vectors(count: usize) -> Vec<VectorRecord> {
+    const FIXED_DIMENSION: usize = 128; // Use consistent dimension for all vectors
     (0..count)
         .map(|i| {
-            let dimension = match i % 4 {
-                0 => 128,  // Small vectors
-                1 => 512,  // Medium vectors
-                2 => 1024, // Large vectors
-                _ => 2048, // Very large vectors
-            };
+            let dimension = FIXED_DIMENSION;
 
             let pattern = match i % 5 {
                 0 => "sparse",     // High compression potential
@@ -229,7 +225,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         id: "optimization_test".to_string(),
         config: Some(CollectionConfig {
             name: "optimization_test".to_string(),
-            dimension: 2048, // Max dimension in test
+            dimension: 128, // Fixed dimension matching vectors
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
             tags: vec![],
@@ -238,7 +234,14 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", temp_dir.path().display()),
+            backup_paths: vec![],
+            engine: StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: format!("{}", temp_dir.path().display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     };
 
     // Create test vectors
@@ -318,8 +321,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 
     // Test search on compressed SST data
     let sparse_query = {
-        let mut v = vec![0.0; 512];
-        for i in (0..512).step_by(10) {
+        let mut v = vec![0.0; 128]; // Match the dimension of test vectors
+        for i in (0..128).step_by(10) {
             v[i] = 10.0;
         }
         v
@@ -368,7 +371,14 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         stats: None,
         created_at: 0,
         updated_at: 0,
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", temp_dir.path().display()),
+            backup_paths: vec![],
+            engine: StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: format!("{}", temp_dir.path().display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     });
 
     let sst_query_context = proximadb::storage::traits::StorageQueryContext {
@@ -436,7 +446,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     };
 
     let viper_search_params = SearchParams {
-        query_vectors: Some(vec![vec![0.5; 1024]]), // Different query for VIPER
+        query_vectors: Some(vec![vec![0.5; 128]]), // Match the dimension of test vectors
         top_k: Some(20),
         filter_expression: Some(filter_expr),
         ..Default::default()
@@ -474,7 +484,14 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         stats: None,
         created_at: 0,
         updated_at: 0,
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", temp_dir.path().display()),
+            backup_paths: vec![],
+            engine: StorageEngine::Viper as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: format!("{}", temp_dir.path().display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     });
 
     let viper_query_context = proximadb::storage::traits::StorageQueryContext {

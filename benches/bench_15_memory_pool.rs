@@ -49,11 +49,11 @@ impl PoolTestConfig {
 fn benchmark_pool_sizes(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("pool_sizes_basic");
-    group.sample_size(50);
+    group.sample_size(64);
 
     let pool_sizes = vec![16, 64, 256, 1024];
     let dimension = 768;
-    let batch_size = 1000;
+    let batch_size = 1024;
 
     // Create test data
     let query: Vec<f32> = (0..dimension).map(|i| (i as f32).sin()).collect();
@@ -107,10 +107,10 @@ fn benchmark_pool_sizes(c: &mut Criterion) {
 fn benchmark_pool_config_matrix(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("pool_config_matrix");
-    group.sample_size(50);
+    group.sample_size(64);
 
     // Workload parameters
-    let batch_size = 1000;
+    let batch_size = 1024;
     let dimension = 768;
     let base_requirement = batch_size * dimension; // Number of f32 elements needed
 
@@ -330,7 +330,7 @@ fn benchmark_concurrent_access(c: &mut Criterion) {
 fn benchmark_hit_rates(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("hit_rate_analysis");
-    group.sample_size(50);
+    group.sample_size(64);
 
     let pool_sizes = vec![4, 8, 16, 32, 64, 128, 256];
 
@@ -499,7 +499,7 @@ fn benchmark_buffer_types(c: &mut Criterion) {
 fn benchmark_growth_strategies(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("growth_strategy");
-    group.sample_size(50);
+    group.sample_size(64);
 
     let growth_factors = vec![1.25, 1.5, 2.0, 3.0];
 
@@ -531,7 +531,7 @@ fn benchmark_growth_strategies(c: &mut Criterion) {
 
                     // Phase 3: Simulate work with random access
                     let mut seed = 54321u64;
-                    for _ in 0..50 {
+                    for _ in 0..64 {
                         seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
                         let idx = (seed as usize) % items.len();
                         black_box(&items[idx]);

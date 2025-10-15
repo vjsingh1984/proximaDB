@@ -388,7 +388,7 @@ pub fn create_test_search_context() -> SearchPlan {
             supports_range_requests: true,
             file_paths: None,
         },
-        metadata_filters: vec![],
+        filter_expression: None,
         query_vector: None,
         top_k: 10,
         min_score: None,

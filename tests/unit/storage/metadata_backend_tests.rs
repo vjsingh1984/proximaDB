@@ -188,7 +188,14 @@ async fn test_collection_service_dependency_injection() {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", temp_dir.path().display()),
+            backup_paths: vec![],
+            engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: format!("{}", temp_dir.path().display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     };
 
     // Test metadata backend operations directly
@@ -302,7 +309,14 @@ async fn test_metadata_backend_persistence() {
                 }),
                 created_at: 1000 + i as i64,
                 updated_at: 1000 + i as i64,
-                storage_assignment: None,
+                storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                    primary_path: format!("{}", temp_dir.path().display()),
+                    backup_paths: vec![],
+                    engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+                    engine_config: std::collections::HashMap::new(),
+                    base_location: format!("{}", temp_dir.path().display()),
+                    assigned_at: chrono::Utc::now().timestamp_micros(),
+                }),
             };
 
             metadata_backend.upsert_collection_record(record).await.unwrap();
@@ -430,7 +444,14 @@ async fn test_metadata_backend_deletion() {
             }),
             created_at: 2000 + i as i64,
             updated_at: 2000 + i as i64,
-            storage_assignment: None,
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: format!("{}", temp_dir.path().display()),
+                backup_paths: vec![],
+                engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: format!("{}", temp_dir.path().display()),
+                assigned_at: chrono::Utc::now().timestamp_micros(),
+            }),
         };
 
         metadata_backend
@@ -509,9 +530,13 @@ async fn test_concurrent_metadata_operations() {
     let mut write_handles = vec![];
     let mut read_handles = vec![];
 
+    // Capture temp_dir path as a string to avoid moving temp_dir itself
+    let temp_dir_path = format!("{}", temp_dir.path().display());
+
     // Create operations
     for i in 0..10 {
         let backend = metadata_backend.clone();
+        let temp_dir_path = temp_dir_path.clone();
         let handle = tokio::spawn(async move {
             let record = ProtoCollection {
                 id: format!("concurrent-uuid-{}", i),
@@ -538,7 +563,14 @@ async fn test_concurrent_metadata_operations() {
                 }),
                 created_at: 3000 + i as i64,
                 updated_at: 3000 + i as i64,
-                storage_assignment: None,
+                storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                    primary_path: temp_dir_path.clone(),
+                    backup_paths: vec![],
+                    engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+                    engine_config: std::collections::HashMap::new(),
+                    base_location: temp_dir_path,
+                    assigned_at: chrono::Utc::now().timestamp_micros(),
+                }),
             };
 
             backend.upsert_collection_record(record).await
@@ -631,7 +663,14 @@ async fn test_metadata_backend_updates() {
         }),
         created_at: 4000,
         updated_at: 4000,
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", temp_dir.path().display()),
+            backup_paths: vec![],
+            engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: format!("{}", temp_dir.path().display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     };
 
     metadata_backend
@@ -766,7 +805,66 @@ async fn test_metadata_backend_trait_implementation() {
                 },
             ],
             index_configs: vec![],
-            quantization: None,
+            quantization: Some(proximadb::proto::proximadb_v1::QuantizationConfig {
+                enabled: Some(true),
+                custom_levels: vec![
+                    proximadb::proto::proximadb_v1::QuantizationLevel {
+                        level_id: "L8".to_string(),
+                        r#type: proximadb::proto::proximadb_v1::quantization_level::QuantizationType::Product as i32,
+                        bits: 8,
+                        num_subvectors: 8,
+                        adaptive_subvectors: false,
+                        scale: 1.0,
+                        offset: 0.0,
+                        clamp_values: false,
+                        threshold: 0.0,
+                        sign_based: false,
+                        enable_in_storage: true,
+                        enable_in_index: true,
+                        search_priority: 1,
+                        min_recall: 0.9,
+                        ..Default::default()
+                    },
+                    proximadb::proto::proximadb_v1::QuantizationLevel {
+                        level_id: "L4".to_string(),
+                        r#type: proximadb::proto::proximadb_v1::quantization_level::QuantizationType::Product as i32,
+                        bits: 4,
+                        num_subvectors: 8,
+                        adaptive_subvectors: false,
+                        scale: 1.0,
+                        offset: 0.0,
+                        clamp_values: false,
+                        threshold: 0.0,
+                        sign_based: false,
+                        enable_in_storage: true,
+                        enable_in_index: true,
+                        search_priority: 2,
+                        min_recall: 0.85,
+                        ..Default::default()
+                    },
+                    proximadb::proto::proximadb_v1::QuantizationLevel {
+                        level_id: "L2".to_string(),
+                        r#type: proximadb::proto::proximadb_v1::quantization_level::QuantizationType::Product as i32,
+                        bits: 2,
+                        num_subvectors: 8,
+                        adaptive_subvectors: false,
+                        scale: 1.0,
+                        offset: 0.0,
+                        clamp_values: false,
+                        threshold: 0.0,
+                        sign_based: false,
+                        enable_in_storage: true,
+                        enable_in_index: true,
+                        search_priority: 3,
+                        min_recall: 0.75,
+                        ..Default::default()
+                    },
+                ],
+                enable_progressive_search: Some(true),
+                quality_threshold: Some(0.9),
+                training_sample_size: Some(10000),
+                ..Default::default()
+            }),
             embedding_models: vec![],
             primary_index: Some("default".to_string()),
             auto_index_selection: Some(false),
@@ -781,7 +879,14 @@ async fn test_metadata_backend_trait_implementation() {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", temp_dir.path().display()),
+            backup_paths: vec![],
+            engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: format!("{}", temp_dir.path().display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     };
 
     metadata_backend

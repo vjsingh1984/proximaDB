@@ -438,7 +438,7 @@ pub fn convert_search_params_to_plan(
             supports_range_requests: false,
             file_paths: None,
         },
-        metadata_filters: vec![],
+        filter_expression: params.filter_expression.clone(),
         query_vector: params.vector.clone(),
         top_k: params.top_k.unwrap_or(10),
         min_score: None,

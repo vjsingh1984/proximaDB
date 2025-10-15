@@ -128,7 +128,7 @@ fn bench_viper_flush(c: &mut Criterion) {
     for (config_name, quant_config) in configs {
         let mut group = c.benchmark_group(format!("viper_flush_{}", config_name));
 
-        for size in [1000, 5000, 10000].iter() {
+        for size in [1024, 5120, 10240].iter() {
             let vectors = generate_vectors(*size, 768);
 
             group.bench_with_input(BenchmarkId::new("flush", size), size, |b, _| {

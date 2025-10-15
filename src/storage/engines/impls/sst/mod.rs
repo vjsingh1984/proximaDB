@@ -1535,7 +1535,7 @@ mod block_utils {
 /// This eliminates duplication and ensures consistent block handling
 fn deserialize_uncompressed_block(data: &[u8]) -> anyhow::Result<ProximaDataBlock> {
     // FIXED: Delegate directly to ProximaDataBlock instead of duplicating logic
-    ProximaDataBlock::deserialize(data)
+    ProximaDataBlock::deserialize(data, None)
 }
 
 // Utility functions for ProximaDataBlock operations in SST

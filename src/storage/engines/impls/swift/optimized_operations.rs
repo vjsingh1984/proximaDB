@@ -326,7 +326,7 @@ impl OptimizedSwiftOperations {
         let block_data = mmap.slice(block_offset..block_offset + block_size)?;
 
         // Deserialize block (placeholder)
-        let block = ProximaDataBlock::deserialize(block_data)?;
+        let block = ProximaDataBlock::deserialize(block_data, None)?;
 
         Ok(block)
     }

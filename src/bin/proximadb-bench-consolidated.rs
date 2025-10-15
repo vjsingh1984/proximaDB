@@ -3586,7 +3586,7 @@ fn benchmark_encoding_statistical_with_compression(
     // Measure decode time using the pre-serialized data
     let transpose_field_decode_times = measure_function(
         || {
-            let _block = ProximaDataBlock::deserialize(&transpose_field_serialized).unwrap();
+            let _block = ProximaDataBlock::deserialize(&transpose_field_serialized, None).unwrap();
         },
         sample_size,
     );
@@ -3612,7 +3612,7 @@ fn benchmark_encoding_statistical_with_compression(
 
     let transpose_block_decode_times = measure_function(
         || {
-            let _block = ProximaDataBlock::deserialize(&transpose_block_serialized).unwrap();
+            let _block = ProximaDataBlock::deserialize(&transpose_block_serialized, None).unwrap();
         },
         sample_size,
     );
@@ -3641,7 +3641,7 @@ fn benchmark_encoding_statistical_with_compression(
     // Measure row-wise deserialization (decompression + decoding)
     let rowwise_decode_times = measure_function(
         || {
-            let _block = ProximaDataBlock::deserialize(&rowwise_serialized).unwrap();
+            let _block = ProximaDataBlock::deserialize(&rowwise_serialized, None).unwrap();
         },
         sample_size,
     );
@@ -3672,7 +3672,7 @@ fn benchmark_encoding_statistical_with_compression(
 
         grouped_field_decode_times = measure_function(
             || {
-                let _block = ProximaDataBlock::deserialize(&grouped_field_serialized).unwrap();
+                let _block = ProximaDataBlock::deserialize(&grouped_field_serialized, None).unwrap();
             },
             sample_size,
         );
@@ -3708,7 +3708,7 @@ fn benchmark_encoding_statistical_with_compression(
 
         grouped_block_decode_times = measure_function(
             || {
-                let _block = ProximaDataBlock::deserialize(&grouped_block_serialized).unwrap();
+                let _block = ProximaDataBlock::deserialize(&grouped_block_serialized, None).unwrap();
             },
             sample_size,
         );

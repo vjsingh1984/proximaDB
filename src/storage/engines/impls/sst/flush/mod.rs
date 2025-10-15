@@ -194,27 +194,47 @@ impl SstEngine {
             ..Default::default()
         };
 
-        eprintln!("DEBUG FLUSH: storage_url = {}", storage_url);
-        eprintln!("DEBUG FLUSH: filename = {}", filename);
+        tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");
 
         let atomic_op = self.atomic_coordinator()
             .begin_atomic_operation(&staging_config)
             .await
             .context("Failed to begin atomic flush operation")?;
 
-        eprintln!("DEBUG FLUSH: staging_url = {}", atomic_op.staging_url);
-        eprintln!("DEBUG FLUSH: final_url = {}", atomic_op.final_url);
+        tracing::debug!(staging_url = %atomic_op.staging_url, final_url = %atomic_op.final_url, "Atomic operation initialized");
 
         // Write to staging using SSTable writer
         let staging_url = format!("{}/{}", atomic_op.staging_url, filename);
-        eprintln!("DEBUG FLUSH: full staging path = {}", staging_url);
+        tracing::debug!(staging_path = %staging_url, "Full staging path constructed");
         let block_size = (self.config().block_size_kb * 1024) as usize;
+
+        // Extract compression config from collection config if available
+        let compression_config = params.collection_config.as_ref()
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| cfg.storage_config.as_ref())
+            .and_then(|sc| {
+                // Convert storage_config.compression to CompressionConfig
+                use crate::proto::proximadb_v1::{CompressionConfig, CompressionAlgorithm};
+                sc.compression.map(|compression_algo| {
+                    CompressionConfig {
+                        algorithm: compression_algo,
+                        level: Some(6), // Default level
+                        adaptive: false,
+                        min_ratio: None,
+                        enable_quantization: false,
+                        quantization_type: None,
+                        normalization_method: None,
+                        block_size_kb: self.config().block_size_kb,
+                        dynamic_block_sizing: false,
+                    }
+                })
+            });
 
         let writer = SstableWriter::with_compression(
             &staging_url,
             block_size,
             Arc::clone(self.filesystem()),
-            None, // No compression config in this path
+            compression_config,
         );
 
         // Count entries for writing
@@ -222,12 +242,12 @@ impl SstEngine {
 
         // Actually write vectors to SSTable file using the streaming writer
         // This writes to the staging location which will be moved to final location on commit
-        eprintln!("DEBUG WRITE: Writing {} vectors to SSTable", entries_written);
+        tracing::debug!(entries_written, "Writing vectors to SSTable");
         if entries_written > 0 {
             // Check first vector before writing
             let sorted_vec = sorted_vectors.clone();
             if let Some((id, rec)) = sorted_vec.first() {
-                eprintln!("DEBUG WRITE: First vector before write - id: {}, metadata: {:?}", id, rec.metadata);
+                tracing::trace!(vector_id = %id, metadata = ?rec.metadata, "First vector before write");
             }
         }
         writer.write_sorted_vector_records(
@@ -235,7 +255,7 @@ impl SstEngine {
             entries_written as usize,
         ).await
             .context("Failed to write vectors to SSTable")?;
-        eprintln!("DEBUG WRITE: Write completed");
+        tracing::debug!("Write operation completed");
 
         // Get actual bytes written from the filesystem
         let fs = self.filesystem().get_filesystem(&staging_url)?;
@@ -253,12 +273,12 @@ impl SstEngine {
         let bytes_written = file_metadata.size;
 
         // Commit the atomic operation
-        eprintln!("DEBUG FLUSH: Committing atomic operation {}", atomic_op.operation_id);
+        tracing::debug!(operation_id = %atomic_op.operation_id, "Committing atomic operation");
         self.atomic_coordinator()
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
             .context("Failed to commit atomic flush operation")?;
-        eprintln!("DEBUG FLUSH: Atomic operation committed - file should be at {}", atomic_op.final_url);
+        tracing::debug!(final_url = %atomic_op.final_url, "Atomic operation committed");
 
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;

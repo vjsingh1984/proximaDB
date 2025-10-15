@@ -390,6 +390,12 @@ impl Flush {
             max_row_group_size: 10000,   // Smaller for flush
         };
 
+        // Extract filterable columns from collection config to pass to writer
+        let filterable_columns_for_writer = collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|config| config.filterable_columns.clone());
+
         // Use HybridParquetWriter::write_with_cache like NOVA does
         let (stats, _metadata_collector) = match crate::storage::engines::core::formats::columnar::hybrid_writer::HybridParquetWriter::write_with_cache(
             &sorted_records,
@@ -397,7 +403,7 @@ impl Flush {
             hybrid_config,
             &final_url,
             &*self.filesystem_factory,
-            None, // No filterable columns for now
+            filterable_columns_for_writer, // Pass filterable columns from collection config
             None, // No metadata collector for VIPER
         ).await {
             Ok(result) => {

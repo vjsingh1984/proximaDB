@@ -652,11 +652,12 @@ impl HybridParquetWriter {
         // Initialize new writer if needed
         if new_mode == WriterMode::Streaming {
             let mut writer_lock = self.streaming_writer.lock().await;
-            *writer_lock = Some(StreamingParquetWriter::new(
+            *writer_lock = Some(StreamingParquetWriter::with_filesystem_factory(
                 &self.file_path,
                 self.dimension,
                 self.config.base_config.clone(),
-                None, // No filterable columns for hybrid writer
+                self.filterable_columns.as_ref().map(|v| v.as_slice()),  // Pass filterable columns!
+                self.filesystem_factory.clone(),
             )?);
         }
 
@@ -875,10 +876,10 @@ impl HybridParquetWriter {
 
         // Create writer with temp path - use default filesystem for temp files
         // Temp files are always local, so we don't need the passed filesystem_factory
-        // Force streaming mode to ensure file is written
+        // Force BATCH mode to defer StreamingParquetWriter creation until after filterable_columns are set
         let mut config = config;
-        config.initial_mode = WriterMode::Streaming;
-        trace!("write_with_cache - creating writer with streaming mode");
+        config.initial_mode = WriterMode::Batch;  // Don't create StreamingParquetWriter in constructor
+        trace!("write_with_cache - creating writer with batch mode (will switch to streaming)");
         let mut writer = HybridParquetWriter::new(
             &temp_path,
             dimension,
@@ -886,10 +887,14 @@ impl HybridParquetWriter {
         )?;
         trace!("write_with_cache - writer created");
 
-        // Set filterable columns if provided
+        // Set filterable columns BEFORE switching to streaming mode
         if let Some(cols) = filterable_columns {
             writer.set_filterable_columns(cols);
         }
+
+        // Now switch to streaming mode - this will create StreamingParquetWriter with filterable_columns
+        writer.force_mode(WriterMode::Streaming).await?;
+        trace!("write_with_cache - switched to streaming mode with filterable columns");
 
         // Set metadata collector if provided
         if let Some(collector) = metadata_collector {

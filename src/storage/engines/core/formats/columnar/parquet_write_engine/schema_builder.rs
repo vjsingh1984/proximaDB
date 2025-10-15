@@ -124,6 +124,7 @@ impl ParquetSchemaBuilder {
 
         // Filterable metadata columns (if specified)
         if let Some(ref columns) = self.filterable_columns {
+            tracing::debug!("Building schema with {} filterable columns", columns.len());
             for col_spec in columns {
                 let data_type_str = match col_spec.data_type() {
                     crate::proto::proximadb_v1::FilterableDataType::FilterableString => "STRING",
@@ -134,6 +135,8 @@ impl ParquetSchemaBuilder {
                     _ => "STRING", // Default to string for arrays and unknown types
                 };
                 let data_type = Self::sql_type_to_arrow_type(data_type_str);
+                tracing::debug!("  Filterable column '{}': data_type_i32={}, type_str='{}', arrow_type={:?}",
+                    col_spec.name, col_spec.data_type, data_type_str, data_type);
                 fields.push(Field::new(
                     &col_spec.name,
                     data_type,
@@ -166,9 +169,9 @@ impl ParquetSchemaBuilder {
     /// Convert SQL type string to Arrow DataType
     fn sql_type_to_arrow_type(sql_type: &str) -> DataType {
         match sql_type.to_uppercase().as_str() {
-            "INT" | "INTEGER" => DataType::Int32,
+            "INT" | "INTEGER" => DataType::Int64,  // Use Int64 to match SqlValue::Int64Value
             "BIGINT" | "LONG" => DataType::Int64,
-            "FLOAT" => DataType::Float32,
+            "FLOAT" => DataType::Float64,  // Use Float64 to match SqlValue::NumberValue (f64)
             "DOUBLE" => DataType::Float64,
             "BOOLEAN" | "BOOL" => DataType::Boolean,
             "TEXT" | "STRING" | "VARCHAR" => DataType::Utf8,

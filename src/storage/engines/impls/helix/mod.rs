@@ -1608,6 +1608,7 @@ impl UnifiedStorageEngine for HelixEngine {
                     &self.distance_compute,
                     filter_fn.clone(),
                     None, // No specific IDs to check
+                    Some(&*ctx.collection), // Pass collection for type-safe metadata
                 )
                 .await?;
 

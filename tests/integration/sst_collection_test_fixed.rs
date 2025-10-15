@@ -185,7 +185,15 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         stats: None,
         created_at: 0,
         updated_at: 0,
-        storage_assignment: None,
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("{}", env.persistent_dir.display()),
+            backup_paths: vec![],
+            engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
+            // base_location should point to the parent directory where collection directories are
+            base_location: format!("{}", env.persistent_base.display()),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
     });
 
     let query_context = proximadb::storage::traits::StorageQueryContext {

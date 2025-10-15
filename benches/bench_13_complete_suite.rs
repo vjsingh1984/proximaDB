@@ -160,7 +160,7 @@ fn bench_vector_operations(c: &mut Criterion) {
             );
 
             // Benchmark batch distance computation
-            if count <= 1000 {  // Limit for larger operations
+            if count <= 1024 {  // Limit for larger operations
                 let query = vec![0.5f32; dimension];
                 group.bench_with_input(
                     BenchmarkId::new("batch_distance", format!("dim_{}_count_{}", dimension, count)),
@@ -195,7 +195,7 @@ fn bench_hnsw_index(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // Use subset of standard dimensions for index tests
     let dimensions = vec![384, 768];  // MiniLM, BERT (smaller for index tests)
-    let vector_counts = vec![250, 1000];  // Smaller batch sizes for index operations
+    let vector_counts = vec![256, 1024];  // Smaller batch sizes for index operations (power of 2)
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -211,7 +211,7 @@ fn bench_hnsw_index(c: &mut Criterion) {
                             let config = AxisHnswConfig {
                                 m: 16,
                                 ef_construction: 200,
-                                ef: 100,
+                                ef: 128,
                                 max_layers: 16,
                                 distance_metric: DistanceMetric::Cosine,
                             };
@@ -232,7 +232,7 @@ fn bench_hnsw_index(c: &mut Criterion) {
             let config = AxisHnswConfig {
                 m: 16,
                 ef_construction: 200,
-                ef: 100,
+                ef: 128,
                 max_layers: 16,
                 distance_metric: DistanceMetric::Cosine,
             };
@@ -276,7 +276,7 @@ fn bench_lsh_index(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // Use subset of standard dimensions for index tests
     let dimensions = vec![384, 768];  // MiniLM, BERT (smaller for index tests)
-    let vector_counts = vec![250, 1000];  // Smaller batch sizes for index operations
+    let vector_counts = vec![256, 1024];  // Smaller batch sizes for index operations (power of 2)
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -357,7 +357,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
 
     let dimension = 768;  // BERT dimension
     let num_threads = vec![1, 2, 4, 8];
-    let operations_per_thread = 100;
+    let operations_per_thread = 128;
 
     for &threads in &num_threads {
         group.throughput(Throughput::Elements(

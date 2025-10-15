@@ -111,12 +111,12 @@ impl StreamingParquetWriter {
                 crate::proto::proximadb_v1::FilterableColumnSpec {
                     name: spec.name.clone(),
                     data_type: match spec.data_type {
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::String => 0,
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Integer => 1,
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Float => 2,
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Boolean => 3,
-                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Datetime => 4,
-                        _ => 0,
+                        crate::storage::engines::core::formats::columnar::schema::FilterableData::String => 1,   // FILTERABLE_STRING = 1
+                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Integer => 2,  // FILTERABLE_INTEGER = 2
+                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Float => 3,    // FILTERABLE_FLOAT = 3
+                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Boolean => 4,  // FILTERABLE_BOOLEAN = 4
+                        crate::storage::engines::core::formats::columnar::schema::FilterableData::Datetime => 5, // FILTERABLE_DATETIME = 5
+                        _ => 0,  // FILTERABLE_DATA_TYPE_UNSPECIFIED = 0
                     },
                     indexed: spec.indexed,
                     estimated_cardinality: spec.estimated_cardinality.map(|c| c as u32),  // Convert Option<usize> to Option<u32>
@@ -333,31 +333,128 @@ impl StreamingParquetWriter {
 
         // Add filterable column arrays if specified
         if !self.filterable_columns.is_empty() {
-            for col_spec in &self.filterable_columns {
-                // Extract values from metadata for this filterable column
-                let values: Vec<Option<String>> = records.iter()
-                    .map(|r| {
-                        // Look for this column in metadata
-                        r.metadata.get(&col_spec.name).and_then(|sql_value| {
-                            if let Some(value) = &sql_value.value {
-                                use crate::proto::proximadb_v1::sql_value::Value;
-                                match value {
-                                    Value::StringValue(s) => Some(s.clone()),
-                                    Value::NumberValue(f) => Some(f.to_string()),
-                                    Value::BoolValue(b) => Some(b.to_string()),
-                                    Value::Int64Value(i) => Some(i.to_string()),
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect();
+            use arrow_array::{BooleanArray, Int32Array, Int64Array, Float64Array};
+            use crate::storage::engines::core::formats::columnar::schema::FilterableData;
 
-                // Create array based on column data type
-                // For now, using String array for all types (can optimize later)
-                arrays.push(Arc::new(StringArray::from(values)));
+            debug!("Writing {} filterable columns for {} records", self.filterable_columns.len(), records.len());
+            for col_spec in &self.filterable_columns {
+                // Create array based on column data type with proper typing
+                let array: ArrayRef = match col_spec.data_type {
+                    FilterableData::String => {
+                        let values: Vec<Option<String>> = records.iter()
+                            .map(|r| {
+                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
+                                    if let Some(value) = &sql_value.value {
+                                        use crate::proto::proximadb_v1::sql_value::Value;
+                                        match value {
+                                            Value::StringValue(s) => Some(s.clone()),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        Arc::new(StringArray::from(values))
+                    },
+                    FilterableData::Integer => {
+                        let values: Vec<Option<i64>> = records.iter()
+                            .map(|r| {
+                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
+                                    if let Some(value) = &sql_value.value {
+                                        use crate::proto::proximadb_v1::sql_value::Value;
+                                        match value {
+                                            Value::Int64Value(i) => Some(*i),
+                                            Value::NumberValue(f) => Some(*f as i64),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        Arc::new(Int64Array::from(values))
+                    },
+                    FilterableData::Float => {
+                        let values: Vec<Option<f64>> = records.iter()
+                            .map(|r| {
+                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
+                                    if let Some(value) = &sql_value.value {
+                                        use crate::proto::proximadb_v1::sql_value::Value;
+                                        match value {
+                                            Value::NumberValue(f) => Some(*f),
+                                            Value::Int64Value(i) => Some(*i as f64),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        Arc::new(Float64Array::from(values))
+                    },
+                    FilterableData::Boolean => {
+                        let values: Vec<Option<bool>> = records.iter()
+                            .map(|r| {
+                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
+                                    if let Some(value) = &sql_value.value {
+                                        use crate::proto::proximadb_v1::sql_value::Value;
+                                        match value {
+                                            Value::BoolValue(b) => Some(*b),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        Arc::new(BooleanArray::from(values))
+                    },
+                    FilterableData::Datetime => {
+                        // Timestamp as Int64 (microseconds)
+                        let values: Vec<Option<i64>> = records.iter()
+                            .map(|r| {
+                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
+                                    if let Some(value) = &sql_value.value {
+                                        use crate::proto::proximadb_v1::sql_value::Value;
+                                        match value {
+                                            Value::Int64Value(i) => Some(*i),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        Arc::new(Int64Array::from(values))
+                    },
+                    _ => {
+                        // Default to string for unsupported types
+                        let values: Vec<Option<String>> = records.iter()
+                            .map(|r| {
+                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
+                                    if let Some(value) = &sql_value.value {
+                                        use crate::proto::proximadb_v1::sql_value::Value;
+                                        match value {
+                                            Value::StringValue(s) => Some(s.clone()),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        Arc::new(StringArray::from(values))
+                    },
+                };
+
+                arrays.push(array);
             }
         }
 
@@ -377,7 +474,14 @@ impl StreamingParquetWriter {
         let mut map_offsets = Vec::new();
         let mut current_offset = 0i32;
 
-        debug!("Writing metadata for {} records", records.len());
+        // Build set of filterable column names for exclusion
+        let filterable_names: std::collections::HashSet<String> = self.filterable_columns
+            .iter()
+            .map(|col| col.name.clone())
+            .collect();
+
+        debug!("Writing metadata for {} records (excluding {} filterable columns)",
+            records.len(), filterable_names.len());
 
         // Build the key-value pairs for each record's metadata
         for (idx, record) in records.iter().enumerate() {
@@ -389,8 +493,17 @@ impl StreamingParquetWriter {
                     idx, record.id, metadata_count);
             }
 
-            // Add all metadata entries for this record
+            // Add only non-filterable metadata entries for this record
+            // Filterable metadata is already in typed columns
             for (key, sql_value) in &record.metadata {
+                // Skip if this is a filterable column (already in typed column)
+                if filterable_names.contains(key) {
+                    if idx < 3 {
+                        trace!("  Skipping filterable column: {}", key);
+                    }
+                    continue;
+                }
+
                 all_keys.push(key.clone());
 
                 // Convert SqlValue to string representation

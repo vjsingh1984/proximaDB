@@ -67,7 +67,7 @@ fn bench_quantization_speed(c: &mut Criterion) {
 
     // Test different dimensions
     for dim in &[128, 256, 384, 512, 768, 1536] {
-        let vectors = generate_vectors(1000, *dim);
+        let vectors = generate_vectors(1024, *dim);
 
         // Create and train engine
         let engine = futures::executor::block_on(async {
@@ -113,7 +113,7 @@ fn bench_progressive_search(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     // Test different dataset sizes
-    for size in &[1000, 5000, 10000] {
+    for size in &[1024, 5120, 10240] {
         let vectors = generate_vectors(*size, 384);
 
         // Setup: Create engine, train, and quantize vectors
@@ -167,11 +167,11 @@ fn bench_memory_pool(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     let memory_pool = Arc::new(VectorMemoryPool::new());
-    let vectors = generate_vectors(100, 384);
+    let vectors = generate_vectors(128, 384);
 
     group.bench_function("with_pooling", |b| {
         b.iter(|| {
-            let mut buffer = Vec::with_capacity(100 * 384 * 4); // Simulate pooled buffer
+            let mut buffer = Vec::with_capacity(128 * 384 * 4); // Simulate pooled buffer
             // Simulate serialization
             for vec in &vectors {
                 for val in vec {
@@ -185,7 +185,7 @@ fn bench_memory_pool(c: &mut Criterion) {
 
     group.bench_function("without_pooling", |b| {
         b.iter(|| {
-            let mut buffer = Vec::with_capacity(100 * 384 * 4);
+            let mut buffer = Vec::with_capacity(128 * 384 * 4);
 
             // Simulate serialization
             for vec in &vectors {
@@ -210,7 +210,7 @@ fn bench_pq_distance_tables(c: &mut Criterion) {
 
     // Test different PQ configurations
     for (subvectors, bits) in &[(8, 8), (16, 8), (32, 8), (16, 4)] {
-        let vectors = generate_vectors(1000, 512);
+        let vectors = generate_vectors(1024, 512);
 
         // Setup: Create engine with PQ configuration
         let (engine, quantized) = futures::executor::block_on(async {
@@ -277,7 +277,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     for dim in &[256, 512, 768, 1536] {
-        let vectors = generate_vectors(1000, *dim);
+        let vectors = generate_vectors(1024, *dim);
         let original_size = vectors.len() * *dim * 4; // f32 = 4 bytes
 
         let engine = futures::executor::block_on(async {
@@ -322,7 +322,7 @@ fn bench_binary_filtering(c: &mut Criterion) {
     let mut group = c.benchmark_group("binary_filtering");
     group.measurement_time(Duration::from_secs(5));
 
-    for size in &[1000, 5000, 10000] {
+    for size in &[1024, 5120, 10240] {
         let vectors = generate_vectors(*size, 384);
 
         let (engine, quantized) = futures::executor::block_on(async {

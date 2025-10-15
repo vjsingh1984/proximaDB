@@ -151,30 +151,31 @@ impl UnifiedSWIFTReader {
         }
     }
 
-    /// Read vectors using the current strategy
+    /// Read vectors using the current strategy with optional collection config
     pub async fn read_with_strategy(
         &self,
         file_path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<VectorRecord>> {
         match &self.strategy {
             ReadAccessStrategy::DirectStream => {
-                self.read_direct_stream(file_path).await
+                self.read_direct_stream(file_path, collection).await
             }
             _ => {
-                self.read_with_cache(file_path).await
+                self.read_with_cache(file_path, collection).await
             }
         }
     }
 
     /// Direct streaming read (bypasses cache) - for compaction and full scans
     /// Similar to SST's CompactionFullRead strategy
-    async fn read_direct_stream(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    async fn read_direct_stream(&self, file_path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<VectorRecord>> {
         // Use filesystem factory directly for streaming reads to avoid cache pollution
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let data = fs.read(file_path).await?;
 
-        // Deserialize the SWIFT file
-        let swift_file = super::SwiftFile::deserialize(&data)?;
+        // Deserialize the SWIFT file with collection config
+        let swift_file = super::SwiftFile::deserialize(&data, collection)?;
 
         // Stream all records without filtering (full scan for compaction)
         let mut records = Vec::new();
@@ -189,7 +190,7 @@ impl UnifiedSWIFTReader {
 
     /// Cached read with predicate pushdown - for queries
     /// Similar to SST's SelectiveWithCache strategy
-    async fn read_with_cache(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    async fn read_with_cache(&self, file_path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<VectorRecord>> {
         let cached_fs = self.cached_filesystem.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Cached filesystem not initialized"))?;
 
@@ -198,8 +199,8 @@ impl UnifiedSWIFTReader {
         let data = cached_fs.read(file_path).await
             .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
 
-        // Deserialize the SWIFT file
-        let swift_file = super::SwiftFile::deserialize(&data)?;
+        // Deserialize the SWIFT file with collection config
+        let swift_file = super::SwiftFile::deserialize(&data, collection)?;
 
         // Apply predicate pushdown based on strategy
         let mut records = Vec::new();

@@ -81,7 +81,7 @@ async fn test_sstable_format_inspection() {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let temp_dir = TempDir::new().unwrap();
-    let sstable_path = temp_dir.path().join("inspect.sstable");
+    let sstable_path = temp_dir.path().join("inspect.sst");
 
     // Create filesystem factory with default config
     let fs_config = FilesystemConfig::default();
@@ -197,13 +197,14 @@ async fn test_sstable_format_inspection() {
         .expect("Failed to read vectors");
 
     // Should have at least the vectors we wrote
-    assert!(read_vectors.len() >= 1, "Should have read at least 1 vector");
+    assert!(read_vectors.len() >= 1, "Should have read at least 1 vector, got {}", read_vectors.len());
 
     // Verify first vector content
     let first_vector = read_vectors.iter().find(|v| v.id == "vec_0");
-    assert!(first_vector.is_some(), "Should find vec_0");
+    assert!(first_vector.is_some(), "Should find vec_0 in {} vectors", read_vectors.len());
     if let Some(vec) = first_vector {
-        assert_eq!(vec.vector.len(), 3);
-        assert_eq!(vec.vector, vec![1.0, 0.0, 0.0]);
+        assert_eq!(vec.vector.len(), 3, "Vector should have 3 dimensions");
+        // Note: the expected values are [0.0, 0.0, 0.0] because i=0, so all values are 0
+        assert_eq!(vec.vector, vec![0.0, 0.0, 0.0], "Vector values should match");
     }
 }

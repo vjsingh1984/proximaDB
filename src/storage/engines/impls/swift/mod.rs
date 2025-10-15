@@ -835,8 +835,8 @@ impl SwiftFile {
         Ok(bytes_written)
     }
 
-    /// Deserialize SwiftFile from bytes
-    pub fn deserialize(data: &[u8]) -> Result<Self> {
+    /// Deserialize SwiftFile from bytes with optional collection config for type-safe metadata
+    pub fn deserialize(data: &[u8], collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Self> {
         use std::io::{Cursor, Read};
         use bytes::Buf;
 
@@ -901,8 +901,8 @@ impl SwiftFile {
                 let mut block_data = vec![0u8; block_size];
                 cursor.read_exact(&mut block_data)?;
 
-                // Deserialize Proxima block
-                let block = ProximaDataBlock::deserialize(&block_data)?;
+                // Deserialize Proxima block with collection config for type-safe metadata
+                let block = ProximaDataBlock::deserialize(&block_data, collection)?;
                 superblock.blocks.push(block);
             }
 
@@ -937,6 +937,7 @@ impl SwiftFile {
     pub async fn read_from_disk(
         filesystem_factory: &crate::storage::persistence::filesystem::FilesystemFactory,
         path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Self> {
         // Get filesystem based on path (same pattern as SST reader)
         let path_str = path;
@@ -950,8 +951,8 @@ impl SwiftFile {
         let fs = filesystem_factory.get_filesystem(&fs_url)?;
         let data = fs.read(path).await?;
 
-        // Deserialize from data
-        Self::deserialize(&data)
+        // Deserialize from data with collection config
+        Self::deserialize(&data, collection)
     }
 
     /// Read SwiftFile using unified caching filesystem (for optimized queries)
@@ -959,6 +960,7 @@ impl SwiftFile {
         filesystem_factory: &crate::storage::persistence::filesystem::FilesystemFactory,
         path: &str,
         collection_id: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Self> {
         use crate::storage::persistence::filesystem::FileSystem;
 
@@ -976,8 +978,8 @@ impl SwiftFile {
         let data = unified_fs.read(path).await
             .map_err(|e| anyhow!("Failed to read file: {}", e))?;
 
-        // Deserialize from cached data
-        Self::deserialize(&data)
+        // Deserialize from cached data with collection config
+        Self::deserialize(&data, collection)
     }
 
     /// PROXIMA: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression

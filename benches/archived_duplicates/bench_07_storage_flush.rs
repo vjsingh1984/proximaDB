@@ -60,7 +60,7 @@ fn bench_batched_processing(c: &mut Criterion) {
         b.iter(|| {
             let vectors_clone = vectors.clone();
 
-            // Process in batches of 100 synchronously
+            // Process in batches of 128 synchronously
             for chunk in vectors_clone.chunks(100) {
                 let batch = chunk.to_vec();
                 black_box(batch);

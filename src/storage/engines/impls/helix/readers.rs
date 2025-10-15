@@ -69,6 +69,7 @@ pub async fn search_sstable(
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     filter: Option<Arc<dyn Fn(&HashMap<String, String>) -> bool + Send + Sync>>,
     candidate_ids: Option<&[String]>, // Optional IDs to check via bloom filter
+    collection: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> Result<Vec<OptimizedSearchRecord>> {
     // Check bloom filter if candidate IDs provided
     if let Some(ids) = candidate_ids {
@@ -97,6 +98,7 @@ pub async fn search_sstable(
         k,
         distance_metric,
         distance_compute,
+        collection, // Pass collection for type-safe metadata deserialization
     ).await?;
 
     // Convert the search results to OptimizedSearchRecord format
@@ -177,7 +179,7 @@ pub async fn find_vector_by_id(
 
         // Deserialize block
         use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
-        let block = ProximaDataBlock::deserialize(&block_data)?;
+        let block = ProximaDataBlock::deserialize(&block_data, None)?;
 
         let current_time = chrono::Utc::now().timestamp() as u64;
         for record in block.records {
@@ -260,6 +262,7 @@ pub async fn parallel_search(
                 &dist_compute,
                 filter_clone,
                 None, // No candidate IDs for now
+                None, // No collection available at this level
             )
             .await;
 
@@ -366,8 +369,9 @@ pub async fn search_with_stats(
             k,
             distance_metric,
             distance_compute,
-            None,
+            None, // filter
             None, // candidate_ids
+            None, // No collection available at this level
         )
         .await?;
 

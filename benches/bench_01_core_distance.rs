@@ -152,9 +152,9 @@ fn benchmark_memory_pool_effectiveness(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("memory_pool_effectiveness");
 
-    // Test with 1000 vectors of dimension 768
+    // Test with 1024 vectors of dimension 768
     let query: Vec<f32> = (0..768).map(|i| (i as f32).sin()).collect();
-    let vectors: Vec<Vec<f32>> = (0..1000)
+    let vectors: Vec<Vec<f32>> = (0..1024)
         .map(|j| (0..768).map(|i| ((i + j) as f32).cos()).collect())
         .collect();
     let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();

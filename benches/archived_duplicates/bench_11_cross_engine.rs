@@ -132,7 +132,7 @@ fn bench_engine_creation(c: &mut Criterion) {
 /// Tests write throughput and serialization overhead for each engine type.
 ///
 /// ## Test Parameters:
-/// - Vector count: 1000 vectors (increased for better throughput measurement)
+/// - Vector count: 1024 vectors (increased for better throughput measurement)
 /// - Dimension: 768 (typical for embeddings)
 /// - Force flush: Bypasses write buffering
 /// - Synchronous: Waits for completion
@@ -140,7 +140,7 @@ fn bench_engine_creation(c: &mut Criterion) {
 fn bench_engine_flush(c: &mut Criterion) {
     let setup = BenchmarkSetup::new();
 
-    // Generate 1000 vectors once and share across all engine benchmarks
+    // Generate 1024 vectors once and share across all engine benchmarks
     // This ensures fair comparison with identical data
     let shared_vectors = Arc::new(setup.generate_vectors(1000, 768));
 
@@ -194,9 +194,9 @@ fn bench_engine_flush(c: &mut Criterion) {
 /// - Memory efficiency of different storage formats
 ///
 /// ## Test Configurations:
-/// - Small batch: 1000 vectors (baseline for meaningful stats)
-/// - Medium batch: 5000 vectors (typical production workload)
-/// - Large batch: 10000 vectors (stress test)
+/// - Small batch: 1024 vectors (baseline for meaningful stats)
+/// - Medium batch: 5120 vectors (typical production workload)
+/// - Large batch: 10240 vectors (stress test)
 fn bench_engine_memory(c: &mut Criterion) {
     let setup = BenchmarkSetup::new();
 

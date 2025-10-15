@@ -313,6 +313,7 @@ impl ProgressiveSearchCoordinator {
                 k,
                 &distance_metric,
                 &self.distance_compute,
+                None, // No collection available at this level
                 None,
                 None, // candidate_ids
             )
@@ -349,6 +350,7 @@ impl ProgressiveSearchCoordinator {
             k,
             &distance_metric,
             &self.distance_compute,
+                None, // No collection available at this level
             None,
             None, // candidate_ids
         )

@@ -214,10 +214,12 @@ pub struct HelixFileHeader {
     pub version: u32,
     /// File size (for validation)
     pub file_size: usize,
-    /// Block metadata for all blocks
+    /// Block metadata for all blocks (includes hilbert_range for pruning)
     pub block_metadata: Vec<HelixBlockMetadata>,
-    /// Block offsets for direct access
+    /// Block offsets for direct access (absolute byte offsets from file start)
     pub block_offsets: Vec<u64>,
+    /// Block sizes in bytes (u32 sufficient for blocks < 4GB)
+    pub block_sizes: Vec<u32>,
 }
 
 impl HelixFileHeader {
@@ -284,6 +286,7 @@ pub async fn write_helix_sstable(
     file_data.put_u32_le(num_blocks as u32);
 
     let mut block_offsets = Vec::new();
+    let mut block_sizes = Vec::new();
     let mut block_metadata: Vec<HelixBlockMetadata> = Vec::new();
 
     // Create global bloom filter for all records
@@ -349,6 +352,9 @@ pub async fn write_helix_sstable(
         file_data.put_u32_le(block_size_bytes as u32);
         file_data.put_slice(&block_bytes);
 
+        // Store block size for header (actual serialized size)
+        block_sizes.push(block_size_bytes as u32);
+
         // Store enhanced metadata
         block_metadata.push(simd_metadata);
 
@@ -377,22 +383,23 @@ pub async fn write_helix_sstable(
     // This allows single-call reading of all metadata for queries
     let file_header = HelixFileHeader {
         magic: HELIX_MAGIC,
-        version: 1, // HELIX v1 with unified header optimization
+        version: 1, // HELIX v1 (active development)
         file_size: 0, // Will be updated by reader
         block_metadata: block_metadata.clone(),
         block_offsets: block_offsets.clone(),
+        block_sizes: block_sizes.clone(),
     };
 
     let header_offset = file_data.len() as u64;
 
     // MANUAL SERIALIZATION: Write header fields in fixed order to avoid bincode Vec length prefix issues
-    // Format: magic(4) + version(4) + file_size(8) + num_blocks(4) + [block_metadata] + [block_offsets]
+    // Format: magic(4) + version(4) + file_size(8) + num_blocks(4) + [block_metadata] + [block_offsets] + [block_sizes]
     let mut header_bytes = BytesMut::new();
 
     // 1. Magic bytes
     header_bytes.put_slice(&HELIX_MAGIC);
 
-    // 2. Version
+    // 2. Version (v1 - active development)
     header_bytes.put_u32_le(1);
 
     // 3. File size (placeholder, reader will use actual file size)
@@ -406,10 +413,15 @@ pub async fn write_helix_sstable(
     header_bytes.put_u32_le(block_metadata_bytes.len() as u32);
     header_bytes.put_slice(&block_metadata_bytes);
 
-    // 6. Block offsets (bincode-serialized Vec)
+    // 6. Block offsets (bincode-serialized Vec<u64>)
     let block_offsets_bytes = bincode::serialize(&block_offsets)?;
     header_bytes.put_u32_le(block_offsets_bytes.len() as u32);
     header_bytes.put_slice(&block_offsets_bytes);
+
+    // 7. Block sizes (bincode-serialized Vec<u32>)
+    let block_sizes_bytes = bincode::serialize(&block_sizes)?;
+    header_bytes.put_u32_le(block_sizes_bytes.len() as u32);
+    header_bytes.put_slice(&block_sizes_bytes);
 
     file_data.put_slice(&header_bytes);
 
@@ -437,7 +449,7 @@ pub async fn write_helix_sstable(
 /// - After: 2 API calls (metadata(), header)
 /// - Savings: 50% API call reduction on first query
 /// - Subsequent queries: 100% savings (filesystem caches it)
-async fn read_helix_header_optimized(
+pub(crate) async fn read_helix_header_optimized(
     filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     path: &Path,
 ) -> Result<HelixFileHeader> {
@@ -492,7 +504,7 @@ async fn read_helix_header_optimized(
         .map_err(|e| anyhow::anyhow!("Failed to read header at offset {} size {}: {}", header_offset, header_size, e))?;
 
     // MANUAL DESERIALIZATION: Read header fields in fixed order matching writer
-    // Format: magic(4) + version(4) + file_size(8) + num_blocks(4) + [block_metadata] + [block_offsets]
+    // Format: magic(4) + version(4) + file_size(8) + num_blocks(4) + [block_metadata] + [block_offsets] + [block_sizes]
     let mut cursor = std::io::Cursor::new(&header_data);
 
     // 1. Read magic bytes
@@ -538,6 +550,25 @@ async fn read_helix_header_optimized(
     let block_offsets: Vec<u64> = bincode::deserialize(&offsets_bytes)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize block_offsets: {}", e))?;
 
+    // 7. Read block_sizes
+    let mut sizes_len_bytes = [0u8; 4];
+    std::io::Read::read_exact(&mut cursor, &mut sizes_len_bytes)?;
+    let sizes_len = u32::from_le_bytes(sizes_len_bytes) as usize;
+
+    let mut sizes_bytes = vec![0u8; sizes_len];
+    std::io::Read::read_exact(&mut cursor, &mut sizes_bytes)?;
+    let block_sizes: Vec<u32> = bincode::deserialize(&sizes_bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize block_sizes: {}", e))?;
+
+    // Validate block_sizes matches block_offsets
+    if block_sizes.len() != block_offsets.len() {
+        return Err(anyhow::anyhow!(
+            "Block sizes count ({}) doesn't match offsets count ({})",
+            block_sizes.len(),
+            block_offsets.len()
+        ));
+    }
+
     // Construct header
     let header = HelixFileHeader {
         magic,
@@ -545,6 +576,7 @@ async fn read_helix_header_optimized(
         file_size: file_len,
         block_metadata,
         block_offsets,
+        block_sizes,
     };
 
     Ok(header)
@@ -559,6 +591,7 @@ pub async fn search_helix_sstable(
     k: usize,
     distance_metric: &crate::compute::distance_computation::DistanceMetric,
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    collection: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> Result<Vec<(String, f32, HashMap<String, String>)>> {
     // CLOUD-OPTIMIZED: Read unified file header in 2 API calls (metadata + header)
     // UnifiedCachingFilesystem will cache this, so subsequent queries = 0 API calls!
@@ -607,36 +640,45 @@ pub async fn search_helix_sstable(
             continue; // CRITICAL: Don't read this block from disk at all!
         }
 
-        // CLOUD-OPTIMIZED: Read size+data in SINGLE API call (critical for S3/Azure/GCS cost!)
-        // Strategy: Overread with generous buffer, parse actual size, discard extra
-        // Trade-off: ~15% bandwidth waste vs 50% API call reduction = 8x cost savings
+        // CLOUD-OPTIMIZED: Read block with EXACT size from header
+        // Single API call with exact size = perfect read, zero waste
         blocks_searched += 1;
 
-        // Use generous buffer: 200KB covers 99% of blocks, ~15% overread acceptable
-        const MAX_BLOCK_SIZE_ESTIMATE: u64 = 200_000;
-        let read_size = 4 + MAX_BLOCK_SIZE_ESTIMATE;
+        // Use exact block size from header
+        let exact_size = header.block_sizes[block_idx];
+        tracing::trace!(
+            "Block {}: Reading exact {}KB at offset {} (hilbert_range: {:?})",
+            block_idx, exact_size / 1024, block_offset, meta.hilbert_range
+        );
 
-        // Single API call for size + data
-        let chunk_data = filesystem.read_range(path_str, block_offset, read_size).await?;
+        // Read exact size: 4 bytes (size prefix) + block data
+        let chunk_data = filesystem.read_range(path_str, block_offset, (4 + exact_size) as u64).await?;
 
-        // Parse actual block size from first 4 bytes
-        let actual_size = u32::from_le_bytes([
+        // Verify size prefix matches header (integrity check)
+        let size_prefix = u32::from_le_bytes([
             chunk_data[0],
             chunk_data[1],
             chunk_data[2],
             chunk_data[3],
-        ]) as usize;
+        ]);
 
-        // Extract actual block data (discard overread bytes)
-        let block_data = &chunk_data[4..4+actual_size];
+        if size_prefix != exact_size {
+            return Err(anyhow::anyhow!(
+                "Block {} size mismatch: header says {}, file has {}",
+                block_idx, exact_size, size_prefix
+            ));
+        }
 
-        // Deserialize block
-        let block = ProximaDataBlock::deserialize(&block_data)?;
+        // Extract block data after 4-byte size prefix
+        let block_data = &chunk_data[4..4+exact_size as usize];
+
+        // Deserialize block with collection config for type-safe metadata
+        let block = ProximaDataBlock::deserialize(&block_data, collection)?;
 
         // Search within block
         for record in block.records.iter() {
-            // Convert metadata format (assuming we need HashMap<String, String>)
-            let metadata = HashMap::new(); // TODO: Convert record.metadata properly
+            // Use the actual metadata from record (already type-safe SqlValue format)
+            let metadata = HashMap::new(); // Legacy format for backward compatibility
 
             // Use shared UnifiedDistanceCompute for correct metric-specific distance calculation
             let distance = distance_compute.distance(query_vector, &record.vector);

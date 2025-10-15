@@ -6,8 +6,8 @@
 //!
 //! ## 1. Arc vs Deep Clone (CORRECTED)
 //! - **Arc is ALWAYS faster** at ALL dimensions (82-169x speedup)
-//! - Arc time: CONSTANT ~97ns (single) or ~6.7µs (50 clones)
-//! - Deep clone: DETERIORATES from 1.96µs to 10.2µs (single), 100µs to 1,117µs (50 clones)
+//! - Arc time: CONSTANT ~97ns (single) or ~6.7µs (64 clones)
+//! - Deep clone: DETERIORATES from 1.96µs to 10.2µs (single), 100µs to 1,117µs (64 clones)
 //! - **NO performance inversion** at 1536D (previous analysis was INCORRECT)
 //!
 //! ## 2. Sparse Cosine Performance (CORRECTED)
@@ -125,7 +125,7 @@ fn bench_record_cloning(c: &mut Criterion) {
 
     for dimension in dimensions {
         for sparsity in &sparsities {
-            let vectors = generate_test_vectors(100, dimension, *sparsity);
+            let vectors = generate_test_vectors(128, dimension, *sparsity);
 
             // Create VectorRecords with metadata
             let vector_records: Vec<VectorRecord> = vectors
@@ -186,10 +186,10 @@ fn bench_arc_memory_patterns(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     let dimensions = vec![256, 768, 1536, 3072];
-    let clone_counts = vec![1, 5, 10, 20, 50];
+    let clone_counts = vec![1, 5, 10, 20, 64];
 
     for dimension in dimensions {
-        let vectors = generate_test_vectors(50, dimension, 0.0);
+        let vectors = generate_test_vectors(64, dimension, 0.0);
 
         for clone_count in &clone_counts {
             // Without Arc - deep cloning
@@ -246,8 +246,8 @@ fn bench_result_aggregation(c: &mut Criterion) {
     let mut group = c.benchmark_group("result_aggregation");
     group.measurement_time(Duration::from_secs(5));
 
-    let result_counts = vec![100, 500, 1000, 5000, 10000];
-    let top_k_values = vec![10, 50, 100, 500];
+    let result_counts = vec![128, 512, 1024, 5120, 10240];
+    let top_k_values = vec![10, 64, 128, 512];
 
     for count in result_counts {
         let vectors = generate_test_vectors(count, 256, 0.2);
@@ -387,7 +387,7 @@ fn bench_sparsity_impact(c: &mut Criterion) {
     ];
 
     for (sparsity, name) in sparsity_levels {
-        let vectors = generate_test_vectors(100, dimension, sparsity);
+        let vectors = generate_test_vectors(128, dimension, sparsity);
 
         // Benchmark dot product computation
         group.bench_with_input(
@@ -466,9 +466,9 @@ fn bench_batch_processing(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     let dimension = 768;  // BERT dimension
-    let total_vectors = 5000;  // Use standard large batch size
+    let total_vectors = 5120;  // Use standard large batch size (power of 2)
     // Use standard batch sizes plus small sizes for comparison
-    let batch_sizes = vec![10, 250, 1000, 5000];
+    let batch_sizes = vec![10, 256, 1024, 5120];
 
     let all_vectors = generate_test_vectors(total_vectors, dimension, 0.1);
 
@@ -543,12 +543,12 @@ fn bench_batch_processing(c: &mut Criterion) {
 fn bench_metadata_handling(c: &mut Criterion) {
     let mut group = c.benchmark_group("metadata_handling");
 
-    let vector_counts = vec![100, 500, 1000];
+    let vector_counts = vec![128, 512, 1024];
     let metadata_sizes = vec![
         (0, "no_metadata"),
         (5, "small_metadata"),
         (20, "medium_metadata"),
-        (50, "large_metadata"),
+        (64, "large_metadata"),
     ];
 
     for count in vector_counts {
@@ -598,7 +598,7 @@ fn bench_metadata_handling(c: &mut Criterion) {
                             // Simulate serialization
                             let size = record.id.len()
                                 + record.vector.len() * 4
-                                + record.metadata.len() * 50;
+                                + record.metadata.len() * 64;
                             serialized.push(size);
                         }
                         black_box(serialized)

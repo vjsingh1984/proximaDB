@@ -40,7 +40,7 @@ fn create_vectors_with_sparsity(
     (0..count)
         .map(|i| {
             let mut vector = vec![0.0; dim];
-            let non_zero_count = dim * (100 - sparsity_percent) / 100;
+            let non_zero_count = dim * (128 - sparsity_percent) / 100;
 
             // Distribute non-zero values
             for j in 0..non_zero_count {
@@ -231,7 +231,7 @@ fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
                 b.iter(|| {
                     futures::executor::block_on(async move {
                     let temp_dir = TempDir::new().unwrap();
-                    let vectors = create_vectors_with_sparsity(500, 512, sparsity);
+                    let vectors = create_vectors_with_sparsity(512, 512, sparsity);
 
                     // Calculate theoretical size
                     let vector_size = vectors.len() * 512 * 4; // 4 bytes per f32

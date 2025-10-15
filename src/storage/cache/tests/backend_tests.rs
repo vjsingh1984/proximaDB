@@ -4,14 +4,16 @@ use crate::storage::cache::backend::{CacheTier, MemoryBackend, StorageBackend};
 // We make this a large array to trigger size checks
 #[derive(Clone, Debug)]
 struct TestBytes {
-    // Use a fixed large array to make size_of_val return the actual size
-    data: Box<[u8; 2 * 1024 * 1024]>, // 2MB
+    // Use boxed slice to avoid stack overflow during allocation
+    data: Box<[u8]>, // 2MB on heap
 }
 
 impl TestBytes {
     fn new_large() -> Self {
+        // Create directly on heap using vec! to avoid stack overflow
+        // Box::new([large_array]) would allocate on stack first, causing overflow
         TestBytes {
-            data: Box::new([0u8; 2 * 1024 * 1024]),
+            data: vec![0u8; 2 * 1024 * 1024].into_boxed_slice(),
         }
     }
 }

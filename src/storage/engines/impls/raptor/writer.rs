@@ -133,7 +133,8 @@ struct CompactRow {
     id: String,                       // VectorRecord.id (string)
     vector: Vec<f32>,                 // VectorRecord.vector (original FP32)
     quantized_vector: Vec<u8>,        // VectorRecord.quantized_vector (pre-quantized)
-    metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs)
+    // TODO: Migrate to HashMap<String, SqlValue> for typed metadata (requires refactoring encoding/decoding logic)
+    metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs as byte arrays)
 
     // Timestamp fields
     timestamp: u32,          // VectorRecord.timestamp
@@ -2567,7 +2568,8 @@ impl RaptorWriter {
             quantized.primary.map(|q| q.data).unwrap_or_else(Vec::new)
         };
 
-        // Extract metadata as key-value pairs
+        // Extract metadata as key-value pairs (byte arrays for custom binary format)
+        // TODO: Migrate to SqlValue when refactoring RAPTOR's encoding/decoding logic
         let metadata: Vec<(String, Vec<u8>)> = vector
             .metadata
             .iter()

@@ -357,15 +357,7 @@ impl BatchDistanceResults {
         self.distances
             .iter()
             .map(|&raw_distance| {
-                let normalized = self.compute.normalize_distance(raw_distance, &self.metric);
-                SimilarityResult {
-                    distance: raw_distance,
-                    raw_value: raw_distance,
-                    metric: self.metric,
-                    similarity_score: normalized,
-                    normalized_score: normalized,
-                    rank_value: raw_distance,
-                }
+                SimilarityResult::new(raw_distance, self.metric)
             })
             .collect()
     }
@@ -390,15 +382,7 @@ impl BatchDistanceResults {
         indexed[..k]
             .iter()
             .map(|&(_, raw_distance)| {
-                let normalized = self.compute.normalize_distance(raw_distance, &self.metric);
-                SimilarityResult {
-                    distance: raw_distance,
-                    raw_value: raw_distance,
-                    metric: self.metric,
-                    similarity_score: normalized,
-                    normalized_score: normalized,
-                    rank_value: raw_distance,
-                }
+                SimilarityResult::new(raw_distance, self.metric)
             })
             .collect()
     }
@@ -422,12 +406,15 @@ impl SimilarityResult {
 
     /// Normalize distance based on metric type
     /// Returns (distance, normalized_similarity) where normalized_similarity is [0,1], higher = more similar
+    /// distance is normalized so that LOWER = MORE SIMILAR for all metrics (for ranking consistency)
     fn normalize_distance(value: f32, metric: &DistanceMetric) -> (f32, f32) {
         match metric {
             DistanceMetric::DotProduct => {
-                // Dot product: higher = more similar, so normalize to [0,1] range
+                // Dot product: higher = more similar, so invert for distance semantics
+                // Return negated value as distance (lower = more similar)
+                let distance = -value;
                 let normalized_similarity = ((value + 1.0) / 2.0).min(1.0).max(0.0);
-                (value, normalized_similarity)
+                (distance, normalized_similarity)
             }
             DistanceMetric::Cosine => {
                 // Cosine distance: [0, 2] range, lower = more similar
@@ -1259,15 +1246,8 @@ impl UnifiedDistanceCompute {
         // Convert pooled buffer to owned vector with all fields
         let results: Vec<SimilarityResult> = pooled_results.iter()
             .map(|&raw_distance| {
-                let normalized = self.normalize_distance(raw_distance, metric);
-                SimilarityResult {
-                    distance: raw_distance,
-                    raw_value: raw_distance,
-                    metric: *metric,
-                    similarity_score: normalized,
-                    normalized_score: normalized,
-                    rank_value: raw_distance,  // For ranking, lower is better
-                }
+                // Use SimilarityResult::new to properly handle metric-specific normalization
+                SimilarityResult::new(raw_distance, *metric)
             })
             .collect();
 
@@ -1320,15 +1300,7 @@ impl UnifiedDistanceCompute {
 
         // Convert distances to results
         for &raw_distance in distances.iter() {
-            let normalized = self.normalize_distance(raw_distance, metric);
-            results.push(SimilarityResult {
-                distance: raw_distance,
-                raw_value: raw_distance,
-                metric: *metric,
-                similarity_score: normalized,
-                normalized_score: normalized,
-                rank_value: raw_distance,
-            });
+            results.push(SimilarityResult::new(raw_distance, *metric));
         }
     }
 
@@ -1346,19 +1318,21 @@ impl UnifiedDistanceCompute {
         // Process in cache-friendly batches
         for chunk in vectors.chunks(batch_size) {
             #[cfg(target_arch = "x86_64")]
-            if self.platform_capability.has_avx2 {
-                unsafe {
+            match self.platform_capability {
+                PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 => unsafe {
                     self.simd_batch_avx2(query, chunk, metric, distances);
                     continue;
-                }
+                },
+                _ => {}
             }
 
             #[cfg(target_arch = "aarch64")]
-            if true {  // NEON is always available on AArch64
-                unsafe {
+            match self.platform_capability {
+                PlatformCapability::ArmNeon | PlatformCapability::ArmSve => unsafe {
                     self.simd_batch_neon(query, chunk, metric, distances);
                     continue;
-                }
+                },
+                _ => {}
             }
 
             // Scalar fallback
@@ -1370,12 +1344,10 @@ impl UnifiedDistanceCompute {
     fn get_optimal_batch_size(&self) -> usize {
         #[cfg(target_arch = "x86_64")]
         {
-            if self.platform_capability.has_avx512 {
-                return 128;  // AVX-512: Process more vectors for better cache use
-            } else if self.platform_capability.has_avx2 {
-                return 64;   // AVX2: Good balance of cache and register use
-            } else {
-                return 32;   // SSE2: Smaller batches
+            match self.platform_capability {
+                PlatformCapability::X86Avx512 => return 128,  // AVX-512: Process more vectors for better cache use
+                PlatformCapability::X86Avx2 => return 64,     // AVX2: Good balance of cache and register use
+                _ => return 32,                                // SSE2: Smaller batches
             }
         }
 

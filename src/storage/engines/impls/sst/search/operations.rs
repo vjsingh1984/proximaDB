@@ -58,6 +58,7 @@ impl SearchOperations {
                 filter_expression.cloned(),
                 k,
                 distance_metric,
+                None, // No collection config available at this level
             )
             .await
             .context("Failed to search SSTable file")?;

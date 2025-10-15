@@ -624,56 +624,61 @@ impl SstableWriter {
         output_data.extend_from_slice(&bloom_bytes);
         debug!("✅ Wrote bloom filter: {} bytes", bloom_bytes.len());
 
-        // Write block index for random access
-        let mut index_data = Vec::new();
-        let mut current_offset = output_data.len() + 4; // After index length
-
-        for (i, block) in data_blocks.iter().enumerate() {
-            // Create index entry: block_id -> (offset, size, record_count)
-            let block_entry = BlockIndexEntry {
-                block_id: i as u32,
-                offset: current_offset as u64,
-                size: 0, // Will be updated
-                record_count: block.records.len() as u32,
-                min_id: block.records.first().map(|r| r.id.clone()).unwrap_or_default(),
-                max_id: block.records.last().map(|r| r.id.clone()).unwrap_or_default(),
-            };
-            let entry_bytes = bincode::serialize(&block_entry)?;
-            index_data.extend_from_slice(&entry_bytes);
-
-            // Update offset for next block
+        // Pre-serialize all blocks to calculate offsets accurately
+        let mut serialized_blocks = Vec::new();
+        for block in &data_blocks {
             let (serialized_block, _bloom_data) = block.serialize_with_bloom_sync()?;
-            current_offset += 4 + serialized_block.len(); // length prefix + data
+            serialized_blocks.push(serialized_block);
         }
 
+        // Calculate block offsets before writing index
+        // Blocks will be written after header + bloom + index
+        // First, calculate size of index to know where blocks start
+        let index_size_estimate: usize = index_entries
+            .iter()
+            .map(|e| 4 + e.serialize().unwrap().len()) // 4 bytes length prefix + entry data
+            .sum();
+
+        let blocks_start_offset = output_data.len() + 4 + index_size_estimate; // +4 for index length prefix
+
+        // Update offsets in index entries
+        let mut current_block_offset = blocks_start_offset as u64;
+        for (i, entry) in index_entries.iter_mut().enumerate() {
+            entry.offset = current_block_offset;
+
+            // Use pre-serialized block size
+            let serialized_block = &serialized_blocks[i];
+            let block_total_size = 4 + serialized_block.len(); // length prefix + data
+
+            // Account for cache line padding
+            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let padding = aligned_size - serialized_block.len();
+            let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {
+                block_total_size + padding
+            } else {
+                block_total_size
+            };
+
+            current_block_offset += total_with_padding as u64;
+        }
+
+        // Write index entries (IndexEntry format, not BlockIndexEntry)
+        let mut index_data = Vec::new();
+        for entry in &index_entries {
+            let entry_bytes = entry.serialize()?;
+            // Write length prefix + entry data
+            index_data.extend_from_slice(&(entry_bytes.len() as u32).to_le_bytes());
+            index_data.extend_from_slice(&entry_bytes);
+        }
         output_data.extend_from_slice(&(index_data.len() as u32).to_le_bytes());
         output_data.extend_from_slice(&index_data);
-        debug!("✅ Wrote block index: {} bytes for {} blocks", index_data.len(), data_blocks.len());
+        debug!("✅ Wrote index: {} bytes for {} entries", index_data.len(), index_entries.len());
         // Use shared Proxima serialization for data blocks with optimizations
         debug!("📦 Writing {} data blocks using Proxima serialization", data_blocks.len());
 
         // Use the constant defined at module level
 
-        for (i, block) in data_blocks.iter().enumerate() {
-            // Apply adaptive encoding based on data characteristics
-            let mut optimized_block = block.clone();
-
-            // For sorted data, use delta encoding for better compression
-            if i > 0 && block.records.len() > 10 {
-                // Check if records appear sorted by ID
-                let is_sorted = block.records.windows(2)
-                    .all(|w| w[0].id <= w[1].id);
-
-                if is_sorted {
-                    // Use delta encoding marker for sorted data
-                    optimized_block.encoding_marker = encoding_markers::DELTA;
-                    debug!("  📈 Block {}: Using delta encoding for sorted data", i);
-                }
-            }
-
-            // Serialize the block using the shared Proxima format
-            let (serialized_block, _bloom_data) = optimized_block.serialize_with_bloom_sync()?;
-
+        for (i, serialized_block) in serialized_blocks.iter().enumerate() {
             // Align to cache line boundaries for better CPU performance
             let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
             let padding = aligned_size - serialized_block.len();
@@ -689,55 +694,7 @@ impl SstableWriter {
                        i, serialized_block.len(), padding, aligned_size);
             }
         }
-        let data_blocks_size = output_data.len();
-        debug!("✅ Wrote {} bytes of Proxima-encoded vector data", data_blocks_size);
-
-        // Write index entries
-        for entry in &index_entries {
-            output_data.extend_from_slice(&entry.serialize()?);
-        }
-
-        // Write bloom filter
-        output_data.extend_from_slice(&combined_bloom_filter.serialize()?);
-
-        // Manually serialize metadata instead of using bincode
-        let mut footer_bytes = Vec::new();
-
-        // Serialize global header manually
-        footer_bytes.extend_from_slice(&global_header.file_size.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.num_blocks.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.bloom_filter_offset.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.bloom_filter_size.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.index_offset.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.index_size.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.total_records.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.min_timestamp.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.max_timestamp.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.compression_ratio.to_le_bytes());
-        footer_bytes.extend_from_slice(&global_header.reserved);
-
-        // Serialize block count
-        footer_bytes.extend_from_slice(&(block_headers.len() as u32).to_le_bytes());
-
-        // Serialize block headers manually
-        for header in &block_headers {
-            footer_bytes.extend_from_slice(&header.offset.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.compressed_size.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.uncompressed_size.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.record_count.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.bloom_offset.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.bloom_size.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.min_key_hash.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.max_key_hash.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.priority.to_le_bytes());
-            footer_bytes.extend_from_slice(&header.reserved);
-        }
-
-        // Serialize variable data size and data
-        footer_bytes.extend_from_slice(&0u32.to_le_bytes()); // No variable data
-        output_data.extend_from_slice(&footer_bytes);
-
-        // Header was already written at the beginning, no need to update
+        debug!("✅ Wrote {} bytes of total SSTable data", output_data.len());
 
         // Write all data atomically
         let write_path = self.path.to_string_lossy();

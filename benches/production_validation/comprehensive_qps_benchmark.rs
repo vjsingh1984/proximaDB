@@ -47,7 +47,7 @@ pub fn comprehensive_qps_benchmark(c: &mut Criterion) {
                 let benchmark_name = format!("qps_d{}_n{}_engine_{}", dim, size, engine);
 
                 let mut group = c.benchmark_group(format!("QPS_Validation_{}", engine));
-                group.throughput(Throughput::Elements(100)); // 100 queries per iteration
+                group.throughput(Throughput::Elements(100)); // 128 queries per iteration
 
                 group.bench_with_input(
                     BenchmarkId::new("vector_search_qps", &benchmark_name),
@@ -196,7 +196,7 @@ fn generate_realistic_metadata(index: usize) -> HashMap<String, String> {
     metadata.insert("tenant_id".to_string(), format!("tenant_{}", index % 10));
 
     // Add search-relevant metadata
-    metadata.insert("price_range".to_string(), format!("${}-${}", index % 100 * 10, (index % 100 + 1) * 10));
+    metadata.insert("price_range".to_string(), format!("${}-${}", index % 128 * 10, (index % 128 + 1) * 10));
     metadata.insert("rating".to_string(), format!("{:.1}", 1.0 + (index % 50) as f64 / 10.0));
 
     metadata

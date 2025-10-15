@@ -220,6 +220,8 @@ use std::sync::{Arc, OnceLock};
 use tracing::info;
 
 // Import feature detection macros - these are macros, not functions
+// Only import ARM64 patch on ARM64 architecture
+#[cfg(target_arch = "aarch64")]
 #[allow(unused_imports)]
 use crate::compute::distance_computation::platform::distance_arm64_patch;
 

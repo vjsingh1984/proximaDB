@@ -99,35 +99,96 @@ fn measure_directory_size(path: &str, runtime: &tokio::runtime::Runtime) -> std:
     })
 }
 
-/// Generate random float vectors for testing
+/// Generate normalized random vector for testing
 fn generate_random_vector(dimension: usize) -> Vec<f32> {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect()
+    let mut vec: Vec<f32> = (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect();
+
+    // Normalize for cosine similarity
+    let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for val in &mut vec {
+            *val /= norm;
+        }
+    }
+    vec
 }
 
-/// Generate vectors with rich metadata for testing
+/// Generate vectors with controlled similarity ranges for realistic benchmarking
+/// Creates clusters with varying distances from cluster centers
 fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
+    use rand::{Rng, SeedableRng};
+    use rand::rngs::StdRng;
+
+    let mut rng = StdRng::seed_from_u64(42); // Deterministic for reproducibility
+
+    // Create 10 cluster centers
+    let num_clusters = 10;
+    let mut cluster_centers: Vec<Vec<f32>> = Vec::new();
+
+    for _ in 0..num_clusters {
+        let mut center = vec![0.0f32; dimension];
+        for val in &mut center {
+            *val = rng.gen_range(-1.0..1.0);
+        }
+        // Normalize
+        let norm: f32 = center.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            for val in &mut center {
+                *val /= norm;
+            }
+        }
+        cluster_centers.push(center);
+    }
+
     (0..count)
         .map(|i| {
+            let cluster_id = i % num_clusters;
+            let center = &cluster_centers[cluster_id];
+
+            // Create vector at varying distances from cluster center
+            // Distance varies based on position within cluster
+            let position_in_cluster = (i / num_clusters) as f32;
+            let vectors_per_cluster = (count / num_clusters).max(1) as f32; // Avoid division by zero
+            let noise_level = ((position_in_cluster / vectors_per_cluster) * 0.5).min(0.5).max(0.0); // 0.0 to 0.5
+
+            let mut vector = center.clone();
+
+            // Add controlled noise (creates similarity range 0.5-1.0)
+            if noise_level > 0.0 {
+                for val in &mut vector {
+                    *val += rng.gen_range(-noise_level..noise_level);
+                }
+            }
+
+            // Normalize
+            let norm: f32 = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                for val in &mut vector {
+                    *val /= norm;
+                }
+            }
+
             let mut metadata = HashMap::new();
 
-            // Category for equality filtering
+            // Category matches cluster
             metadata.insert(
                 "category".to_string(),
                 proximadb::proto::proximadb_v1::SqlValue {
                     value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("cat_{}", i % 10)
+                        format!("cat_{}", cluster_id)
                     )),
                 },
             );
 
-            // Price for range filtering
+            // Price varies widely to ensure filter selectivity
+            // Use modulo to create price ranges that overlap with filter conditions
             metadata.insert(
                 "price".to_string(),
                 proximadb::proto::proximadb_v1::SqlValue {
                     value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
-                        (i as f64) * 10.0 % 1000.0
+                        (i as f64 * 10.0) % 1000.0  // Creates prices 0-990 across all categories
                     )),
                 },
             );
@@ -137,14 +198,14 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
                 "tags".to_string(),
                 proximadb::proto::proximadb_v1::SqlValue {
                     value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("tag_{},tag_{}", i % 5, i % 3)
+                        format!("tag_{},tag_{}", cluster_id % 5, i % 3)
                     )),
                 },
             );
 
             VectorRecord {
                 id: format!("vec_{}", i),
-                vector: generate_random_vector(dimension),
+                vector,
                 metadata,
                 ..Default::default()
             }
@@ -160,14 +221,12 @@ fn bench_compression_with_search(c: &mut Criterion) {
     init_hardware();
 
     let dimension = 768;
-    let count = 1000;
+    let count = 1024;
 
     eprintln!("\n📊 UNIFIED COMPRESSION + SEARCH BENCHMARK");
-    eprintln!("   Flush once → Search twice (pure + filtered)");
+    eprintln!("   Organized by compression level → Compare all engines per compression");
     eprintln!("   Dimension: {}, Vectors: {}", dimension, count);
-    eprintln!("\n{:<8} {:<8} {:>10} {:>10} {:>10} {:>10} {:>10}",
-             "Engine", "Compress", "Size(MB)", "Ratio%", "Flush(ms)", "Pure(ms)", "Filter(ms)");
-    eprintln!("{}", "-".repeat(80));
+
     let vectors = generate_test_vectors(count, dimension);
     // Use the first vector as query for deterministic results
     let query_vector = vectors.first()
@@ -188,17 +247,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
     let uncompressed_size = count * dimension * std::mem::size_of::<f32>();
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Test each engine - all engines are stateless and get collection info from parameters
-    let engines = vec![
-        ("sst", StorageEngineFactory::create_sst().unwrap()),
-        ("viper", StorageEngineFactory::create_viper().unwrap()),
-        ("nova", StorageEngineFactory::create_nova().unwrap()),
-        ("swift", StorageEngineFactory::create_swift().unwrap()),
-        ("raptor", StorageEngineFactory::create_raptor().unwrap()),
-        ("helix", StorageEngineFactory::create_helix().unwrap()),
-    ];
-
-    // Compression algorithms to test
+    // Compression algorithms to test (OUTER LOOP)
     let compressions = vec![
         ("none", 0),
         ("zstd", 1),
@@ -206,8 +255,30 @@ fn bench_compression_with_search(c: &mut Criterion) {
         ("snappy", 3),
     ];
 
-    for (engine_name, engine) in engines {
-        for (compress_name, compress_value) in &compressions {
+    // REORGANIZED: Iterate by compression first, then engines
+    for (compress_name, compress_value) in &compressions {
+        eprintln!("\n═══════════════════════════════════════════════════════════════════════════");
+        eprintln!("🔧 COMPRESSION: {} - Testing all engines", compress_name.to_uppercase());
+        eprintln!("═══════════════════════════════════════════════════════════════════════════");
+        eprintln!("\n{:<8} {:<8} {:>10} {:>10} {:>10} {:>10} {:>10}",
+                 "Engine", "Compress", "Size(MB)", "Ratio%", "Flush(ms)", "Pure(ms)", "Filter(ms)");
+        eprintln!("{}", "-".repeat(80));
+
+        // Test each engine with this compression (INNER LOOP)
+        // Create fresh engines for each compression to avoid state contamination
+        let engine_names = vec!["sst", "viper", "nova", "swift", "raptor", "helix"];
+
+        for engine_name in engine_names {
+            // Create fresh engine for each test to avoid state contamination between compressions
+            let engine = match engine_name {
+                "sst" => StorageEngineFactory::create_sst().unwrap(),
+                "viper" => StorageEngineFactory::create_viper().unwrap(),
+                "nova" => StorageEngineFactory::create_nova().unwrap(),
+                "swift" => StorageEngineFactory::create_swift().unwrap(),
+                "raptor" => StorageEngineFactory::create_raptor().unwrap(),
+                "helix" => StorageEngineFactory::create_helix().unwrap(),
+                _ => unreachable!(),
+            };
             // Collection ID format: {engine}-{compression} (use hyphen for URL compatibility)
             let collection_id = format!("{}-{}", engine_name, compress_name);
             // Base path: engines will append collection_id to this
@@ -394,6 +465,9 @@ fn bench_compression_with_search(c: &mut Criterion) {
             let query_clone = query_vector.clone();
             let compress_val = *compress_value;  // Capture for closure
 
+            // Track if we've logged results for this engine+compression (only log once)
+            let mut pure_results_logged = false;
+
             pure_group.bench_function("search", |b| {
                 b.iter(|| {
                     let start = std::time::Instant::now();
@@ -468,65 +542,24 @@ fn bench_compression_with_search(c: &mut Criterion) {
                     });
                     pure_time_ms = start.elapsed().as_millis();
 
-                    // Validate and log search results with detailed metrics
-                    if let Ok(ref results) = result {
-                        if results.is_empty() {
-                            // Only log first warning to avoid spam
-                            static mut PURE_EMPTY_LOGGED: bool = false;
-                            unsafe {
-                                if !PURE_EMPTY_LOGGED {
-                                    eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {} (expected to find vec_0)",
-                                             engine_name, compress_name);
-                                    eprintln!("       Debug: Searched with vector starting with {:?}", &query_clone[..5.min(query_clone.len())]);
-                                    eprintln!("       Debug: Collection={}, Collection path={}", collection_id, collection_path);
-                                    eprintln!("       Debug: Search took {}ms", pure_time_ms);
-                                    PURE_EMPTY_LOGGED = true;
+                    // Validate and log search results ONCE per engine+compression
+                    if !pure_results_logged {
+                        if let Ok(ref results) = result {
+                            if results.is_empty() {
+                                eprintln!("    ⚠️  Pure search: NO RESULTS for {} (expected vec_0)", engine_name);
+                                eprintln!("       Query: {:?}", &query_clone[..5.min(query_clone.len())]);
+                            } else {
+                                eprintln!("    ✅ Pure search: Found {} results for {} in {}ms", results.len(), engine_name, pure_time_ms);
+                                // Print first 3 results with scores
+                                for (i, r) in results.iter().take(3).enumerate() {
+                                    eprintln!("       [{}] ID={}, score={:.4}, sim={:.4}",
+                                        i+1, r.id, r.score, r.similarity.unwrap_or(0.0));
                                 }
                             }
-                        } else {
-                            trace!("    ✅ FOUND: Pure search returned {} results for {} with {} in {}ms",
-                                     results.len(), engine_name, compress_name, pure_time_ms);
-                            // Log detailed results with debug tracing (distance=0.0 means exact match)
-                            for (i, result) in results.iter().take(5).enumerate() {
-                                debug!("Result {}: ID={}, distance={:.6}, similarity={:.6}, metadata_keys={}",
-                                      i+1, result.id, result.score,
-                                      result.similarity.unwrap_or(0.0),
-                                      result.metadata.len());
-
-                                // Log metadata if present
-                                if !result.metadata.is_empty() {
-                                    for (key, val) in result.metadata.iter().take(3) {
-                                        debug!("  - {}: {:?}", key, val);
-                                    }
-                                }
-                            }
-                            // Only log warnings once to avoid spam
-                            static mut VEC_0_WARNING_LOGGED: bool = false;
-                            static mut RESULT_SIZE_WARNING_LOGGED: bool = false;
-
-                            unsafe {
-                                if results.len() > 10 && !RESULT_SIZE_WARNING_LOGGED {
-                                    eprintln!("      ⚠️  WARNING: Expected <= 10 results, got {} (further size warnings suppressed)", results.len());
-                                    RESULT_SIZE_WARNING_LOGGED = true;
-                                }
-
-                                // Verify we found the expected vector
-                                if !results.iter().any(|r| r.id == "vec_0") && !VEC_0_WARNING_LOGGED {
-                                    eprintln!("      ⚠️  WARNING: Did not find expected vec_0 in results! (further warnings suppressed)");
-                                    VEC_0_WARNING_LOGGED = true;
-                                }
-                            }
+                        } else if let Err(ref e) = result {
+                            eprintln!("    ❌ Pure search FAILED for {}: {:?}", engine_name, e);
                         }
-                    } else if let Err(ref e) = result {
-                        // Only log first error to avoid spam
-                        static mut SEARCH_ERROR_LOGGED: bool = false;
-                        unsafe {
-                            if !SEARCH_ERROR_LOGGED {
-                                eprintln!("    ❌ Pure search failed for {} with {}: {:?}",
-                                         engine_name, compress_name, e);
-                                SEARCH_ERROR_LOGGED = true;
-                            }
-                        }
+                        pure_results_logged = true;
                     }
 
                     black_box(result)
@@ -543,6 +576,9 @@ fn bench_compression_with_search(c: &mut Criterion) {
             let mut filter_time_ms = 0u128;
             let query_clone = query_vector.clone();
             let compress_val = *compress_value;  // Capture for closure
+
+            // Track if we've logged results for this engine+compression (only log once)
+            let mut filter_results_logged = false;
 
             filtered_group.bench_function("search", |b| {
                 b.iter(|| {
@@ -632,50 +668,23 @@ fn bench_compression_with_search(c: &mut Criterion) {
                     });
                     filter_time_ms = start.elapsed().as_millis();
 
-                    // Validate and log filtered search results
-                    if let Ok(ref results) = result {
-                        if results.is_empty() {
-                            // Only log first warning to avoid spam
-                            static mut EMPTY_RESULTS_LOGGED: bool = false;
-                            unsafe {
-                                if !EMPTY_RESULTS_LOGGED {
-                                    eprintln!("    ⚠️  WARNING: Filtered search returned no results for {} with {} (expected vec_0 with category=cat_0)",
-                                             engine_name, compress_name);
-                                    eprintln!("       Debug: Filter was category='cat_0', searched with vector starting with {:?}", &query_clone[..5.min(query_clone.len())]);
-                                    EMPTY_RESULTS_LOGGED = true;
+                    // Validate and log filtered search results ONCE per engine+compression
+                    if !filter_results_logged {
+                        if let Ok(ref results) = result {
+                            if results.is_empty() {
+                                eprintln!("    ⚠️  Filtered search: NO RESULTS for {} (expected vectors with category=cat_5, price<500)", engine_name);
+                            } else {
+                                eprintln!("    ✅ Filtered search: Found {} results for {} in {}ms", results.len(), engine_name, filter_time_ms);
+                                // Print first 3 results with scores
+                                for (i, r) in results.iter().take(3).enumerate() {
+                                    eprintln!("       [{}] ID={}, score={:.4}, sim={:.4}",
+                                        i+1, r.id, r.score, r.similarity.unwrap_or(0.0));
                                 }
                             }
-                        } else {
-                            trace!("    ✅ FOUND: Filtered search returned {} results for {} with {}",
-                                     results.len(), engine_name, compress_name);
-                            // Log top 3 results with debug tracing
-                            for (i, result) in results.iter().take(3).enumerate() {
-                                debug!("Result {}: ID={}, distance={:.6}, similarity={:.6}",
-                                      i+1, result.id, result.score, result.similarity.unwrap_or(0.0));
-                            }
-                            if results.len() > 10 {
-                                eprintln!("      ⚠️  WARNING: Expected <= 10 results, got {}", results.len());
-                            }
-                            // Verify filter was applied (results should have category=cat_5)
-                            let correctly_filtered = results.iter().all(|_r| {
-                                // Note: actual filter validation would check metadata
-                                true  // Simplified for now
-                            });
-                            if !correctly_filtered {
-                                eprintln!("    ⚠️  WARNING: Filter not correctly applied for {} with {}",
-                                         engine_name, compress_name);
-                            }
+                        } else if let Err(ref e) = result {
+                            eprintln!("    ❌ Filtered search FAILED for {}: {:?}", engine_name, e);
                         }
-                    } else if let Err(ref e) = result {
-                        // Only log first error to avoid spam
-                        static mut FILTERED_ERROR_LOGGED: bool = false;
-                        unsafe {
-                            if !FILTERED_ERROR_LOGGED {
-                                eprintln!("    ❌ Filtered search failed for {} with {}: {:?}",
-                                         engine_name, compress_name, e);
-                                FILTERED_ERROR_LOGGED = true;
-                            }
-                        }
+                        filter_results_logged = true;
                     }
 
                     black_box(result)
@@ -965,7 +974,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
         // Clean up all {engine}-{compression}-{batchsize} directories
         for engine in ["sst", "viper", "nova", "swift", "raptor", "helix"] {
             for compression in ["none", "zstd", "lz4", "snappy", "gzip"] {
-                for batch_size in ["250", "1000", "5000"] {
+                for batch_size in ["256", "1024", "5120"] {
                     let test_path = format!("{}/{}-{}-{}", base_path, engine, compression, batch_size);
                     let _ = fs.remove_dir_all(&test_path).await;
                 }
@@ -987,7 +996,7 @@ fn bench_insertion_performance(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
 
     let dimension = 768;
-    let count = 1000;
+    let count = 1024;
     let vectors = generate_test_vectors(count, dimension);
     let runtime = tokio::runtime::Runtime::new().unwrap();
 

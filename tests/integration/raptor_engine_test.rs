@@ -78,6 +78,29 @@ async fn test_raptor_engine_creation_and_insertion() {
 
     let vectors = create_test_vectors(100);
     let batch_ids: Vec<BatchId> = (0..100).map(|_i| BatchId::new()).collect();
+
+    // Create a proper collection structure with all required fields
+    use proximadb::proto::proximadb_v1::{Collection, CollectionStats, StorageAssignment};
+    let collection = Collection {
+        id: "raptor_test_collection".to_string(),
+        config: Some(config.clone()),
+        stats: Some(CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        created_at: chrono::Utc::now().timestamp(),
+        updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: _temp_dir.path().to_str().unwrap().to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Raptor as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: _temp_dir.path().to_str().unwrap().to_string(),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
+    };
+
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("raptor_test_collection".to_string()),
         vector_records: vectors,
@@ -87,7 +110,7 @@ async fn test_raptor_engine_creation_and_insertion() {
         hints: std::collections::HashMap::new(),
         timeout_ms: Some(30000),
         trigger_compaction: false,
-        collection_config: None, // Will be set after creating collection
+        collection_config: Some(collection),
         estimated_size: 1024 * 1024,
     };
 

@@ -334,6 +334,7 @@ impl SwiftEngine {
         &self,
         collection_id: &str,
         storage_path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<SwiftFile>> {
         use tracing::debug;
 
@@ -367,19 +368,27 @@ impl SwiftEngine {
             .map(|entry| format!("{}/{}", data_dir, entry.name))
             .collect();
 
-        debug!("📂 SWIFT: Found {} .swift files", swift_file_paths.len());
+        let total_files = swift_file_paths.len();
+        debug!("📂 SWIFT: Found {} .swift files", total_files);
 
-        // TODO: For now, we need to actually implement loading SwiftFile from disk
-        // SwiftFile doesn't currently have a from_disk method, so we return empty
-        // This is a partial fix - files are discovered but not loaded
-        // Future work: Implement SwiftFile::from_disk() to deserialize the file structure
+        // Load each SwiftFile from disk using the read_from_disk method
+        let mut loaded_files = Vec::new();
 
-        if !swift_file_paths.is_empty() {
-            debug!("⚠️  SWIFT: File loading not yet implemented. Found {} files but cannot load them.", swift_file_paths.len());
-            debug!("    Files: {:?}", swift_file_paths);
+        for file_path in swift_file_paths {
+            match SwiftFile::read_from_disk(&self.filesystem, &file_path, collection).await {
+                Ok(swift_file) => {
+                    debug!("✅ SWIFT: Successfully loaded file: {}", file_path);
+                    loaded_files.push(swift_file);
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️  SWIFT: Failed to load file {}: {}", file_path, e);
+                    // Continue loading other files even if one fails
+                }
+            }
         }
 
-        Ok(Vec::new())
+        debug!("📦 SWIFT: Loaded {} out of {} files", loaded_files.len(), total_files);
+        Ok(loaded_files)
     }
 
     /// Update global statistics file for collection
@@ -960,21 +969,21 @@ impl UnifiedStorageEngine for SwiftEngine {
 
     async fn search_vectors_unified(
         &self,
-        _ctx: &crate::storage::traits::StorageQueryContext,
+        ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let search_start = std::time::Instant::now();
 
         // Extract all parameters from context (pre-computed)
-        let collection_id = _ctx.collection_id();
-        let storage_path = _ctx.storage_path();
-        let query_vector = _ctx
+        let collection_id = ctx.collection_id();
+        let storage_path = ctx.storage_path();
+        let query_vector = ctx
             .query_vector()
             .ok_or_else(|| anyhow!("No query vector in context"))?;
-        let top_k = _ctx.top_k();
-        let distance_metric = _ctx.distance_metric();
-        let dimension = _ctx.dimension();
-        let filter_expression = _ctx.search_params.filter_expression.as_ref();
-        let _search_params = _ctx.search_params.custom_hints.clone();
+        let top_k = ctx.top_k();
+        let distance_metric = ctx.distance_metric();
+        let dimension = ctx.dimension();
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
+        let _search_params = ctx.search_params.custom_hints.clone();
         let mut timer = self.start_operation_timer("search");
 
         info!(
@@ -1021,7 +1030,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         // Current blocker: Service infrastructure for AXIS and cost estimation
         //
         // Check if orchestration should be used based on context metadata
-        let use_orchestration = _ctx.metadata.use_axis_indexes || _ctx.metadata.has_quantization;
+        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
 
         if use_orchestration {
             info!("🎯 SWIFT: Orchestration requested - using direct Proxima search until AdvancedSearchOptimizer integrated");
@@ -1029,7 +1038,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             // For now, fall back to direct search
             return self
                 .fallback_to_direct_search(
-                    _ctx,
+                    ctx,
                     collection_id,
                     storage_path,
                     query_vector,
@@ -1048,55 +1057,54 @@ impl UnifiedStorageEngine for SwiftEngine {
 
         // Load files from storage
         let files = self
-            .load_collection_files(collection_id, storage_path)
+            .load_collection_files(collection_id, storage_path, Some(&*ctx.collection))
             .await?;
-
-        let mut all_results = Vec::new();
-
-        // Search each SWIFT file
-        for swift_file in files.iter() {
-            let config = progressive_search::ProgressiveSearchConfig::default();
-            let results = self
-                .optimized_ops
-                .search_optimized(swift_file, query_vector, top_k, config)
-                .await?;
-
-            // Convert to search results
-            for record in results {
-                // Would compute actual distance
-                all_results.push((record, 0.0f32));
-            }
-        }
 
         // Use bounded priority queue for efficient top-k selection
         let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        // Convert to OptimizedSearchRecord format and insert into bounded queue
-        for (record, distance) in all_results {
-            // Convert distance to score (higher is better)
-            let score = 1.0 / (1.0 + distance);
+        // Search each SWIFT file by iterating through superblocks and blocks
+        for swift_file in files.iter() {
+            // Iterate through all superblocks -> blocks -> records
+            for superblock in &swift_file.superblocks {
+                for block in &superblock.blocks {
+                    for record in &block.records {
+                        // Apply metadata filter if present
+                        if let Some(filter_expr) = filter_expression {
+                            let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
+                            if !matches {
+                                continue; // Skip records that don't match filter
+                            }
+                        }
 
-            let search_record = OptimizedSearchRecord {
-                id: record.id.clone(),
-                vector_id: Some(record.id.clone()),
-                score,
-                similarity: Some(distance),
-                vector: Some(Arc::new(record.vector.clone())),
-                metadata: record.metadata.clone(),
-                debug_info: None,
-                version: None,
-                timestamp: None,
-                updated_at: None,
-                expires_at: None,
-                source: None,
-                expanded_context: vec![],
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
-            };
+                        // Compute actual distance using distance engine
+                        let distance_result = self.distance_engine.calculate_distance(
+                            query_vector,
+                            &record.vector,
+                            &distance_metric,
+                        );
 
-            priority_queue.try_insert(search_record);
+                        let id = if record.id.is_empty() {
+                            format!("unknown_{:?}", record.timestamp)
+                        } else {
+                            record.id.clone()
+                        };
+
+                        let mut search_record =
+                            OptimizedSearchRecord::new(id, distance_result.normalized_score)
+                                .with_similarity(distance_result.normalized_score)
+                                .add_vector(record.vector.clone())
+                                .with_metadata(record.metadata.clone());
+
+                        if let Some(version) = record.version {
+                            search_record = search_record.with_version_info(version, record.timestamp.unwrap_or(0));
+                        }
+
+                        // Try to insert into bounded queue - only keeps top-k
+                        priority_queue.try_insert(search_record);
+                    }
+                }
+            }
         }
 
         // Get sorted results from bounded queue
@@ -1249,7 +1257,7 @@ impl SwiftEngine {
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(
         &self,
-        _ctx: &crate::storage::traits::StorageQueryContext,
+        ctx: &crate::storage::traits::StorageQueryContext,
         collection_id: &str,
         storage_path: &str,
         query_vector: &[f32],
@@ -1262,50 +1270,53 @@ impl SwiftEngine {
         // Use the existing search implementation
         // Load files from storage
         let files = self
-            .load_collection_files(collection_id, storage_path)
+            .load_collection_files(collection_id, storage_path, Some(&*ctx.collection))
             .await?;
 
         // Use bounded priority queue to maintain only top-k results
         let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        // Search each SWIFT file
+        // Search each SWIFT file by iterating through superblocks and blocks
         for swift_file in files.iter() {
-            let config = progressive_search::ProgressiveSearchConfig::default();
-            let results = self
-                .optimized_ops
-                .search_optimized(swift_file, query_vector, top_k, config)
-                .await?;
+            // Iterate through all superblocks -> blocks -> records
+            for superblock in &swift_file.superblocks {
+                for block in &superblock.blocks {
+                    for record in &block.records {
+                        // Apply metadata filter if present
+                        if let Some(filter_expr) = _filter_expression {
+                            let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
+                            if !matches {
+                                continue; // Skip records that don't match filter
+                            }
+                        }
 
-            // Convert to search results and insert into bounded queue
-            for record in results {
-                // Compute actual distance
-                let distance = 0.0f32; // Would compute actual distance
+                        // Compute actual distance using distance engine
+                        let distance_result = self.distance_engine.calculate_distance(
+                            query_vector,
+                            &record.vector,
+                            &distance_metric,
+                        );
 
-                // Create SimilarityResult based on distance metric
-                let similarity_result =
-                    crate::compute::distance_computation::engine::SimilarityResult::new(
-                        distance,
-                        distance_metric,
-                    );
+                        let id = if record.id.is_empty() {
+                            format!("unknown_{:?}", record.timestamp)
+                        } else {
+                            record.id.clone()
+                        };
 
-                let id = if record.id.is_empty() {
-                    format!("unknown_{:?}", record.timestamp)
-                } else {
-                    record.id.clone()
-                };
+                        let mut search_record =
+                            OptimizedSearchRecord::new(id, distance_result.normalized_score)
+                                .with_similarity(distance_result.normalized_score)
+                                .add_vector(record.vector.clone())
+                                .with_metadata(record.metadata.clone());
 
-                let mut search_record =
-                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                        .with_similarity(similarity_result.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(record.metadata.clone());
+                        if let Some(version) = record.version {
+                            search_record = search_record.with_version_info(version, record.timestamp.unwrap_or(0));
+                        }
 
-                if let Some(version) = record.version {
-                    search_record = search_record.with_version_info(version, record.timestamp.unwrap_or(0));
+                        // Try to insert into bounded queue - only keeps top-k
+                        priority_queue.try_insert(search_record);
+                    }
                 }
-
-                // Try to insert into bounded queue - only keeps top-k
-                priority_queue.try_insert(search_record);
             }
         }
 

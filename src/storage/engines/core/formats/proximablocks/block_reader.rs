@@ -330,7 +330,7 @@ impl ProximaBlockReader {
 
         // Try to deserialize as a single block first
         // If that fails, try as multiple blocks
-        match ProximaDataBlock::deserialize(data) {
+        match ProximaDataBlock::deserialize(data, None) {
             Ok(single_block) => Ok(vec![single_block]),
             Err(_) => {
                 // Try deserializing as multiple blocks
