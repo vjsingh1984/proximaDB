@@ -56,6 +56,7 @@ mod edge_tests {
             level: 0,
             creation_time: Utc::now(),
             io_optimization_hints: None,
+        collection: None,
         }
     }
 
@@ -71,6 +72,7 @@ mod edge_tests {
             level: 0,
             creation_time: Utc::now(),
             io_optimization_hints: None,
+        collection: None,
         };
 
         let params = SearchParams {
@@ -687,6 +689,7 @@ mod edge_tests {
             level: 0,
             creation_time: chrono::Utc::now(),
             io_optimization_hints: None,
+        collection: None,
         });
 
         // Spawn multiple concurrent searches - reduced from 50 to 20 for stability
@@ -964,6 +967,7 @@ mod edge_tests {
                 level: 0,
                 creation_time: Utc::now(),
                 io_optimization_hints: None,
+        collection: None,
             };
 
             // Should handle gracefully without panicking

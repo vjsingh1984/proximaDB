@@ -474,6 +474,7 @@ pub fn create_test_collection_context() -> CollectionContext {
         level: 0,
         creation_time: chrono::Utc::now(),
         io_optimization_hints: None,
+        collection: None,
     }
 }
 

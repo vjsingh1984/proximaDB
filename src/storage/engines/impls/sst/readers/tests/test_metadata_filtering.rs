@@ -152,6 +152,7 @@ async fn test_metadata_filtering_basic() {
         level: 0,
         creation_time: chrono::Utc::now(),
         io_optimization_hints: None,
+        collection: None,
     };
 
     // Test 1: Filter by category = A
@@ -376,6 +377,7 @@ async fn test_metadata_bloom_filter_optimization() {
         level: 0,
         creation_time: chrono::Utc::now(),
         io_optimization_hints: None,
+        collection: None,
     };
 
     // Test 1: Filter by category = even (10 records)

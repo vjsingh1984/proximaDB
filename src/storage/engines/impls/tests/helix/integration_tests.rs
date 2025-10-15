@@ -1161,6 +1161,8 @@ async fn test_proxima_integration() {
         5,
         &ComputeDistanceMetric::Euclidean,
         &distance_compute,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -1401,6 +1403,8 @@ async fn test_block_sizes_serialization_roundtrip() {
             10,
             &ComputeDistanceMetric::Euclidean,
             &distance_compute,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1523,6 +1527,8 @@ async fn test_block_sizes_serialization_roundtrip() {
             5,
             &ComputeDistanceMetric::Euclidean,
             &distance_compute,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1822,6 +1828,8 @@ async fn test_block_sizes_serialization_roundtrip() {
             10,
             &ComputeDistanceMetric::Euclidean,
             &distance_compute,
+            None,
+            None,
         )
         .await
         .unwrap();
