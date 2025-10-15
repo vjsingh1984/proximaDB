@@ -144,8 +144,11 @@ src/storage/engines/impls/swift/
 **Purpose**: Individual vector storage with full metadata
 
 **Features**:
-* SIMD-optimized vector encoding
-* Complete metadata preservation
+* SIMD-optimized vector encoding (ProximaBlock format)
+* Type-safe metadata preservation with compression markers
+* Filterable metadata: String, Int64, Float, Boolean support
+* FilterExpression evaluation using sql_value_filter
+* Collection config for type resolution during deserialization
 * Compression with quality control
 * Fast point lookups
 

@@ -211,8 +211,15 @@ Zone maps track min/max values per dimension for each data block, enabling early
 
 1. **Hilbert Range Pruning**: Skip 90%+ of files using spatial ranges
 2. **Zone Map Filtering**: Skip blocks within files using dimension ranges
-3. **Bloom Filter**: Quick ID existence checks
-4. **Final Scan**: SIMD-optimized vector comparison
+3. **Metadata Filtering**: Type-safe FilterExpression evaluation on typed metadata (String, Int64, Float, Boolean)
+4. **Bloom Filter**: Quick ID existence checks
+5. **Final Scan**: SIMD-optimized vector comparison
+
+**Metadata Filtering** (NEW):
+* Uses FilterExpression with sql_value_filter::evaluate_filter
+* Collection config (filterable_columns) provides type information
+* ProximaBlock format with compression markers
+* Supports all comparison and logical operators
 
 **Implementation**: `zone_maps.rs` - Dimension statistics and pruning
 

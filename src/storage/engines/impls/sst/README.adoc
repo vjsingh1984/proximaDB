@@ -8,7 +8,15 @@ Hybrid columnar storage engine with write optimization and three-stage filtering
 
 == Overview
 
-The SST (Sorted String Table) engine is ProximaDB's hybrid columnar storage engine optimized for write-heavy workloads with real-time query requirements. It uses ProximaBlocks format where all metadata fields are stored columnar (id, timestamp, version, metadata) and vectors use configurable encoding strategies (TransposeFieldEncoded, GroupedFieldEncoded, or FullVector).
+The SST (Sorted String Table) engine is ProximaDB's hybrid columnar storage engine optimized for write-heavy workloads with real-time query requirements. It uses ProximaBlocks format where all fields are stored columnar (id, timestamp, version, metadata, vectors).
+
+**Metadata Storage**: Type-safe columnar storage with compression markers
+* Filterable metadata stored as typed columns (String, Int64, Float, Boolean)
+* Collection config (filterable_columns) defines types at flush time
+* Compression algorithm markers enable independent column decompression
+* Uses ProximaDB standard compression markers (consistent with ProximaCodec)
+
+**Vector Encoding**: Configurable strategies (TransposeFieldEncoded, GroupedFieldEncoded, or FullVector) with automatic SIMD optimization.
 
 **Key Features**:
 
@@ -92,16 +100,28 @@ src/storage/engines/impls/sst/
 
 The SST engine uses a three-stage filter to minimize I/O:
 
-=== Stage 1: Metadata Filter
+=== Stage 1: Metadata Filter (Type-Safe)
 
-**Purpose**: Fast elimination using metadata indices
+**Purpose**: Fast elimination using type-safe FilterExpression evaluation
 
-**Filters**:
-* Collection ID match
-* Timestamp ranges
-* Metadata key-value lookups
+**Supported Data Types**:
+* String (StringValue)
+* Integer (Int64Value)
+* Float (NumberValue)
+* Boolean (BoolValue)
+* DateTime (Int64Value timestamp)
 
-**Performance**: O(log n) lookup, ~1-10 μs
+**Supported Operators**:
+* Comparison: =, !=, <, <=, >, >=
+* Logical: AND, OR, NOT
+* Complex nested expressions
+
+**Type Resolution**:
+* Uses Collection.config.filterable_columns as source of truth
+* Eliminates type ambiguity (Int64 vs Float64)
+* Collection config passed through StorageQueryContext
+
+**Performance**: O(1) per record, evaluated using sql_value_filter::evaluate_filter
 
 === Stage 2: Bloom Filter
 
