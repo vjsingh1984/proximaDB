@@ -4,604 +4,433 @@
 :icons: font
 :source-highlighter: highlight.js
 
-image:https://img.shields.io/badge/version-0.1.4-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust] image:https://img.shields.io/badge/platform-Linux%20|%20macOS%20|%20Docker-lightgrey[Platform]
+image:https://img.shields.io/badge/version-0.1.4-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust] image:https://img.shields.io/badge/platform-Linux%20|%20macOS-lightgrey[Platform]
 
 [.lead]
-*High-performance vector database built in Rust with adaptive storage engines, hardware acceleration, and zero-configuration deployment.*
+*Production-ready vector database built in Rust with adaptive storage, hardware acceleration, and type-safe metadata filtering.*
+
+== Why ProximaDB?
+
+**Built for Real AI Applications**: ProximaDB solves the core challenges of production vector search - fast writes, complex filtering, storage costs, and query performance - without forcing you to choose between them.
+
+**Key Differentiators:**
+
+* **6 Specialized Storage Engines**: Automatically choose the right engine for your workload (write-heavy, read-heavy, balanced, low-latency)
+* **Type-Safe Metadata Filtering**: Filter on String, Integer, Float, Boolean fields with full type safety and collection-level configuration
+* **Hardware Acceleration**: Production SIMD (AVX2, AVX512, NEON) for 5-10x faster vector operations
+* **Advanced Compression**: 4-32x storage reduction with Binary, INT8, and Product Quantization
+* **Single Binary Deployment**: No external dependencies, containerized or standalone
 
 == Quick Start
 
-=== Run with Docker
+=== Run Locally
 
 [source,bash]
 ----
-# Start ProximaDB server
-docker run -d -p 5678:5678 -p 5679:5679 proximadb/proximadb:latest
+# Option 1: Docker (recommended)
+docker run -d -p 5678:5678 proximadb/proximadb:latest
 
-# Verify server is running
-curl http://localhost:5678/health
-
-# Create your first collection
-curl -X POST http://localhost:5678/v1/collections \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my_vectors", "dimension": 768}'
-----
-
-=== Build from Source
-
-[source,bash]
-----
-# Requirements: Rust 1.88+
+# Option 2: Build from source (Rust 1.88+)
 git clone https://github.com/vjsingh1984/proximaDB
 cd proximaDB
-cargo build --release
-./target/release/proximadb-server
+cargo run --release --bin proximadb-server
+
+# Verify server
+curl http://localhost:5678/health
 ----
 
-**Server endpoints:**
-
-* REST API: http://localhost:5678
-* gRPC API: localhost:5679
-
-== What is ProximaDB?
-
-ProximaDB is a vector database designed for production AI applications. Built from the ground up in Rust, it provides:
-
-* **6 specialized storage engines** that automatically optimize for different workload patterns
-* **Hardware acceleration** with SIMD (AVX2, AVX512, NEON) for vector operations
-* **Advanced compression** (Binary, INT8, Product Quantization) reducing storage by 4-32x
-* **Real-time performance** with write-optimized and read-optimized engines
-* **Single binary deployment** - no external dependencies
-
-=== Core Capabilities
-
-**Adaptive Storage Architecture**
-
-ProximaDB automatically selects the optimal storage engine based on your data and access patterns:
-
-[cols="1,2,2"]
-|===
-|Engine |Optimized For |Use When
-
-|*SST*
-|Hybrid columnar, write-optimized
-|Frequent insertions, real-time updates
-
-|*VIPER*
-|Analytics, batch operations
-|Large scans, high compression needs
-
-|*NOVA*
-|Balanced read/write
-|Mixed workloads, progressive search
-
-|*SWIFT*
-|Ultra-low latency
-|Cache-friendly, small datasets
-
-|*RAPTOR*
-|Adaptive workloads
-|Unpredictable access patterns
-
-|*HELIX*
-|Spatial locality
-|Image embeddings, spatial data
-|===
-
-**Hardware Acceleration**
-
-Production-ready SIMD acceleration for vector operations:
-
-* **Distance Computation**: Optimized implementations for various dimensions
-* **CPU SIMD**: AVX2, AVX512 (x86_64), NEON (ARM64)
-* **Automatic Detection**: Runtime CPU feature detection
-* **Graceful Fallback**: Scalar implementations when SIMD unavailable
-
-NOTE: GPU acceleration infrastructure exists (kernels, API layer) but real GPU compilation and execution is not yet enabled. Currently using CPU/SIMD fallbacks. Full GPU support planned for 2025 roadmap.
-
-**Compression & Quantization**
-
-Multiple quantization levels for storage/performance trade-offs:
-
-* **Binary**: 32x compression, 100x faster filtering
-* **INT8**: 4x compression, 10x faster search
-* **PQ8/16/32**: Variable compression with accuracy control
-* **Lossless modes**: Preserve full f32 precision when needed
-
-== Architecture
-
-[source,mermaid]
-----
-%%{init: {"theme": "neutral"}}%%
-graph TB
-    subgraph API["Client APIs"]
-        A[REST API<br/>Port 5678]
-        B[gRPC API<br/>Port 5679]
-    end
-
-    subgraph ENGINE["Storage Engine Layer"]
-        C[SST<br/>Write-Optimized]
-        D[VIPER<br/>Columnar]
-        E[NOVA<br/>Progressive]
-        F[SWIFT<br/>Low-Latency]
-    end
-
-    subgraph CORE["Core Systems"]
-        G[SIMD Distance<br/>AVX2/NEON]
-        H[Quantization<br/>Binary/INT8/PQ]
-        I[Unified Cache<br/>Smart Eviction]
-    end
-
-    A --> C
-    A --> D
-    A --> E
-    A --> F
-    B --> C
-    B --> D
-    B --> E
-    B --> F
-    C --> G
-    D --> G
-    E --> G
-    F --> G
-    G --> H
-    G --> I
-
-    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style C fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style G fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-----
-
-== Usage Examples
-
-=== Python SDK
-
-[source,python]
-----
-from proximadb import ProximaDB
-
-# Connect to ProximaDB
-client = ProximaDB(url="http://localhost:5678")
-
-# Create collection with automatic engine selection
-collection = client.create_collection(
-    name="documents",
-    dimension=768,
-    engine="auto"  # ProximaDB selects optimal engine
-)
-
-# Insert vectors with metadata
-collection.insert([
-    {
-        "id": "doc_1",
-        "vector": [0.1, 0.2, ...],  # 768D embedding
-        "metadata": {
-            "title": "Introduction to Vector Databases",
-            "category": "technology",
-            "timestamp": "2024-01-15"
-        }
-    }
-])
-
-# Search with metadata filtering
-results = collection.search(
-    query_vector=[0.15, 0.25, ...],
-    top_k=10,
-    filter={"category": "technology"}
-)
-
-for result in results:
-    print(f"ID: {result.id}, Distance: {result.distance}")
-----
-
-=== REST API
+=== Create Your First Collection
 
 [source,bash]
 ----
-# Create collection
 curl -X POST http://localhost:5678/v1/collections \
   -H "Content-Type: application/json" \
   -d '{
     "name": "products",
-    "dimension": 1536,
-    "storage_engine": "SST",
-    "distance_metric": "COSINE"
+    "dimension": 768,
+    "distance_metric": "COSINE",
+    "storage_engine": "AUTO",
+    "filterable_columns": [
+      {"name": "category", "data_type": "STRING"},
+      {"name": "price", "data_type": "FLOAT"},
+      {"name": "in_stock", "data_type": "BOOLEAN"}
+    ]
   }'
+----
 
-# Insert vectors
+=== Insert Vectors with Metadata
+
+[source,bash]
+----
 curl -X POST http://localhost:5678/v1/collections/products/vectors \
   -H "Content-Type: application/json" \
   -d '{
     "vectors": [
       {
-        "id": "product_123",
-        "values": [0.1, 0.2, ...],
-        "metadata": {"category": "electronics", "price": 299}
+        "id": "prod_001",
+        "values": [0.1, 0.2, ..., 0.768],
+        "metadata": {
+          "category": "electronics",
+          "price": 299.99,
+          "in_stock": true
+        }
       }
     ]
   }'
+----
 
-# Search vectors
+=== Search with Type-Safe Filters
+
+[source,bash]
+----
 curl -X POST http://localhost:5678/v1/collections/products/search \
   -H "Content-Type: application/json" \
   -d '{
-    "query_vector": [0.15, 0.25, ...],
-    "top_k": 5,
-    "filter": {"category": "electronics"}
+    "query_vector": [0.15, 0.22, ..., 0.801],
+    "top_k": 10,
+    "filter_expression": {
+      "operator": "AND",
+      "expressions": [
+        {"field": "category", "operator": "EQUALS", "value": "electronics"},
+        {"field": "price", "operator": "LESS_THAN", "value": 500},
+        {"field": "in_stock", "operator": "EQUALS", "value": true}
+      ]
+    }
   }'
 ----
 
-== Performance Benchmarks
+== Core Capabilities
 
-**Measured on Intel Xeon with AVX2:**
+=== Adaptive Storage Engines
 
-[cols="2,1,2"]
+ProximaDB provides 6 specialized engines that optimize for different access patterns:
+
+[cols="1,2,2,1"]
 |===
-|Operation |Performance |Configuration
+|Engine |Storage Format |Best For |Status
 
-|*Distance Computation*
-|
-|
+|*SST*
+|ProximaBlock (Columnar)
+|Frequent writes, real-time updates
+|✅ Production
 
-|128D Cosine Similarity
-|20.8M ops/sec
-|AVX2 SIMD
+|*VIPER*
+|Apache Parquet
+|Analytics, large scans, high compression
+|✅ Production
 
-|512D Euclidean
-|3.8M ops/sec
-|AVX2 SIMD
+|*NOVA*
+|Hybrid Parquet
+|Balanced read/write, progressive search
+|✅ Production
 
-|1536D Dot Product
-|1.2M ops/sec
-|AVX2 SIMD
+|*SWIFT*
+|Hierarchical ProximaBlock
+|Ultra-low latency, cache-friendly
+|✅ Production
 
-|*Storage Operations*
-|
-|
+|*RAPTOR*
+|Matrix-optimized
+|Adaptive workloads, unpredictable access
+|✅ Production
 
-|Vector Insertion
-|100K+ vectors/sec
-|SST engine
-
-|Batch Flush (10K vectors)
-|100ms
-|All engines
-
-|Search Latency (cached)
-|<1ms
-|SWIFT engine
-
-|*Encoding Performance*
-|
-|
-
-|Parallel Analysis
-|5x speedup
-|Rayon
-
-|SIMD Min/Max
-|9.6x speedup
-|ARM64 NEON
-
-|*Compression*
-|
-|
-
-|Binary Quantization
-|32x reduction
-|1 bit/dimension
-
-|INT8 Quantization
-|4x reduction
-|8 bits/dimension
-
-|Parquet + Zstd
-|22-25%
-|VIPER engine
+|*HELIX*
+|PCA-compressed ProximaBlock
+|Image embeddings, spatial locality
+|✅ Production
 |===
 
-**Real-world implications:**
+**Engine Selection**: Use `"storage_engine": "AUTO"` for automatic selection based on collection size, workload pattern, and access frequency.
 
-* Process 1M 768D vectors in <10 seconds
-* Sub-millisecond queries on cached data
-* 4-32x storage cost reduction
-* Scales horizontally when needed
+=== Type-Safe Metadata Filtering
+
+**NEW in v0.1.4**: Full type safety for metadata filtering across all engines.
+
+**Supported Data Types:**
+* `STRING`: Text values
+* `INTEGER`: 64-bit signed integers (Int64Value)
+* `FLOAT`: 64-bit floating point (NumberValue)
+* `BOOLEAN`: True/false values
+* `DATETIME`: Timestamp values (Int64)
+
+**Supported Operators:**
+* Comparison: `=`, `!=`, `<`, `<=`, `>`, `>=`
+* Logical: `AND`, `OR`, `NOT`
+* Complex nested expressions
+
+**How It Works:**
+1. Define filterable columns in collection config with explicit types
+2. Collection config acts as single source of truth
+3. Zero storage overhead - types stored in config, not data files
+4. All 6 engines support type-safe filtering
+
+**Example:**
+
+[source,python]
+----
+# Define filterable metadata with types
+collection = client.create_collection(
+    name="products",
+    dimension=768,
+    filterable_columns=[
+        {"name": "price", "data_type": "FLOAT"},
+        {"name": "inventory_count", "data_type": "INTEGER"},
+        {"name": "featured", "data_type": "BOOLEAN"},
+        {"name": "category", "data_type": "STRING"}
+    ]
+)
+
+# Filter with full type safety
+results = collection.search(
+    query_vector=embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "inventory_count", "operator": "GREATER_THAN", "value": 10},
+            {"field": "featured", "operator": "EQUALS", "value": true}
+        ]
+    }
+)
+----
+
+=== Hardware Acceleration
+
+**SIMD Acceleration** (Production-Ready):
+* **x86_64**: AVX2, AVX512 with runtime detection
+* **ARM64**: NEON with runtime detection
+* **Performance**: 5-20x speedup over scalar implementations
+* **Coverage**: Distance computation, encoding, min/max operations
+
+**Measured Performance**:
+* 128D Cosine: 20.8M ops/sec (AVX2)
+* 512D Euclidean: 3.8M ops/sec (AVX2)
+* 1536D Dot Product: 1.2M ops/sec (AVX2)
+
+**GPU Acceleration** (Infrastructure Only):
+* CUDA, Metal, ROCm kernels implemented
+* API layer and kernel code exists
+* Real GPU compilation/execution: Planned for 2025
+
+=== Compression & Quantization
+
+**Reduce storage costs by 4-32x** while maintaining query performance:
+
+[cols="1,1,2"]
+|===
+|Method |Compression |Best For
+
+|Binary (1-bit)
+|32x
+|Fastest filtering, coarse similarity
+
+|INT8 (8-bit)
+|4x
+|Balanced compression and accuracy
+
+|PQ8/16/32
+|8-16x
+|Tunable accuracy, analytical workloads
+
+|Full Precision
+|1x (lossless)
+|Maximum accuracy requirements
+|===
+
+**ProximaCodec** (Lossless f32 Encoding):
+* 15 encoding schemes (PForDelta, BitPacking, RLE, Dictionary, etc.)
+* Automatic scheme selection based on data patterns
+* SIMD-accelerated encoding/decoding
+* IEEE 754 bit pattern preservation
 
 == Production Deployment
 
-=== Docker Compose
+=== Docker
 
-[source,yaml]
+[source,bash]
 ----
-version: '3.8'
-services:
-  proximadb:
-    image: proximadb/proximadb:latest
-    ports:
-      - "5678:5678"  # REST API
-      - "5679:5679"  # gRPC API
-    volumes:
-      - proximadb_data:/data
-    environment:
-      - RUST_LOG=info
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: '2'
-
-volumes:
-  proximadb_data:
-    driver: local
+docker run -d \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -v proximadb_data:/data \
+  -e RUST_LOG=info \
+  proximadb/proximadb:latest
 ----
 
 === Configuration
 
-Basic configuration in `config/config.toml`:
+Minimal production configuration (`config/config.toml`):
 
 [source,toml]
 ----
 [server]
 http_port = 5678
 grpc_port = 5679
-data_dir = "/data"
 
 [storage]
-# Auto-select best engine (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX)
-default_engine = "auto"
+data_dir = "/data"
+default_engine = "auto"  # Automatic engine selection
 
 [storage.write_buffer]
 flush_threshold_mb = 256
 flush_interval_secs = 300
 
-[compute.quantization]
-default_level = "INT8"  # Binary, INT8, PQ8, None
-
-[compute.distance]
-simd_enabled = true  # Auto-detects AVX2/NEON
+[compute]
+simd_enabled = true  # Auto-detect AVX2/NEON
 ----
 
-See link:config/config.toml[config.toml] for all options.
+See link:config/config.toml[complete configuration] for all options.
 
-=== Cloud Storage
+=== Cloud Storage Support
 
-Native support for cloud backends:
+Native cloud backend integration (S3, Azure Blob, GCS):
 
 [source,toml]
 ----
-[storage.cloud]
-# AWS S3
 [storage.cloud.s3]
 bucket = "my-vectors"
 region = "us-west-2"
 
-# Azure Blob Storage
 [storage.cloud.azure]
 container = "vectors"
 account = "myaccount"
 
-# Google Cloud Storage
 [storage.cloud.gcs]
 bucket = "my-vectors"
 project = "my-project"
 ----
 
-== Key Features
+== Performance
 
-=== Compression & Quantization
+**Real-World Benchmarks** (Intel Xeon, AVX2):
 
-**Multiple Quantization Levels:**
+* **Write Throughput**: 100K+ vectors/sec (SST engine)
+* **Search Latency**: <1ms cached (SWIFT engine)
+* **Batch Flush**: 100ms for 10K vectors (all engines)
+* **Compression**: 22-25% of original size (VIPER with Parquet+Zstd)
 
-* **Binary (1-bit)**: 32x compression, fastest filtering
-* **INT8 (8-bit)**: 4x compression, balanced performance
-* **PQ4/8/16/32**: Product quantization with tunable accuracy
-* **Full Precision**: Lossless f32 storage when needed
-
-**Lossless Guarantees:**
-
-ProximaDB ensures lossless encoding for f32 embeddings:
-
-* IEEE 754 bit pattern preservation
-* Automatic scheme upgrade (PForDelta → PForDoubleDelta)
-* Dynamic lossy detection and fallback
-* 15 encoding schemes optimized per data pattern
-
-See link:docs/technical/proximacodec_technical_guide.adoc[ProximaCodec Technical Guide]
-
-=== Metadata Filtering
-
-Combine vector similarity with business logic:
-
-[source,python]
-----
-# SQL-like filtering
-results = collection.search(
-    query_vector=embedding,
-    top_k=10,
-    filter={
-        "category": "electronics",
-        "price": {"$lt": 500},
-        "in_stock": True,
-        "tags": {"$contains": "wireless"}
-    }
-)
-----
-
-**Supported Operators:**
-
-* Equality: `category = "tech"`
-* Comparison: `price < 100`, `rating >= 4.5`
-* Range: `timestamp BETWEEN start AND end`
-* Arrays: `tags CONTAINS "featured"`
-* Boolean: `in_stock = true`
-
-=== Graph Integration
-
-Native graph database capabilities:
-
-* Store relationships alongside vectors
-* Graph traversal with vector filtering
-* Hybrid graph-vector queries
-* PageRank, BFS, DFS algorithms
-
-[source,python]
-----
-# Create nodes with embeddings
-collection.insert_node({
-    "id": "person_1",
-    "vector": embedding,
-    "properties": {"name": "Alice", "age": 30}
-})
-
-# Create relationships
-collection.create_edge(
-    from_id="person_1",
-    to_id="person_2",
-    edge_type="knows",
-    properties={"since": "2020"}
-)
-
-# Hybrid graph-vector query
-results = collection.graph_search(
-    query_vector=embedding,
-    traversal="BFS",
-    max_depth=3,
-    filter={"age": {"$gte": 25}}
-)
-----
+**Scalability**:
+* Single node: Millions of vectors
+* Tested with: 768D, 1536D embeddings (OpenAI, Cohere models)
+* Storage: 4-32x reduction with quantization
 
 == Development Status
 
-**✅ Currently Available (v0.1.4):**
+**✅ Production-Ready (v0.1.4):**
 
-* 6 specialized storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX)
-* REST and gRPC APIs
-* Python SDK (`pip install proximadb`)
+* 6 specialized storage engines
+* REST and gRPC APIs with proto-first architecture
 * SIMD acceleration (AVX2, AVX512, NEON)
+* Type-safe metadata filtering across all data types
 * Multi-level quantization (Binary, INT8, PQ)
-* Cloud storage (S3, Azure, GCS)
-* Metadata filtering and indexing
-* Graph database capabilities
-* Docker and Kubernetes deployment
-* ProximaCodec with 15 encoding schemes
+* Cloud storage support (S3, Azure Blob, GCS)
+* ProximaCodec with 15 lossless encoding schemes
 * Automatic engine selection
+* Single binary deployment
+* Comprehensive test coverage (47 filter tests across all engines)
 
-**🚧 Active Development:**
+**🚧 In Active Development:**
 
+* Multi-node clustering and distribution
 * JavaScript/TypeScript SDK
-* Multi-node clustering
-* Web dashboard for monitoring
-* Additional security features
+* Web-based monitoring dashboard
 
-**📋 Planned (2025 Roadmap):**
+**📋 Roadmap (2025):**
 
-* GPU acceleration (CUDA, Metal, ROCm)
-* Advanced ML algorithms for AutoML
+* GPU acceleration (CUDA, Metal, ROCm) - kernel infrastructure exists
+* Advanced AutoML optimization
 * Multi-modal search capabilities
+* Enhanced security features
 
-**📅 Roadmap:**
-
-See link:docs/09-roadmap/MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] for detailed roadmap and implementation status.
+See link:docs/09-roadmap/MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] for detailed roadmap.
 
 == Documentation
 
 **Getting Started:**
+* link:CLAUDE.md[Development Guide] - Complete development workflow
+* link:docs/reference/rest-api-specification.adoc[REST API Reference]
 
-* link:docs/quickstart/getting_started.adoc[Quick Start Guide] - Build your first app
-* link:docs/reference/rest-api-specification.adoc[REST API Reference] - Complete API docs
-* link:CLAUDE.md[Development Guide] - Contributing to ProximaDB
+**Architecture:**
+* link:docs/technical/platform_architecture.adoc[Platform Architecture]
+* link:docs/technical/proximacodec_technical_guide.adoc[ProximaCodec Technical Guide]
+* link:docs/storage/sst-engine-deep-dive.adoc[SST Engine Deep Dive]
+* link:docs/storage/viper-engine-deep-dive.adoc[VIPER Engine Deep Dive]
 
-**Architecture & Design:**
+**Engine Documentation:**
+* link:src/storage/engines/impls/sst/README.adoc[SST] - Write-optimized hybrid columnar
+* link:src/storage/engines/impls/viper/README.adoc[VIPER] - Analytics columnar Parquet
+* link:src/storage/engines/impls/nova/README.adoc[NOVA] - Progressive search
+* link:src/storage/engines/impls/swift/README.adoc[SWIFT] - Ultra-low latency
+* link:src/storage/engines/impls/helix/README.adoc[HELIX] - Spatial locality
+* link:src/storage/engines/impls/raptor/README.adoc[RAPTOR] - Adaptive workloads
 
-* link:docs/technical/platform_architecture.adoc[Platform Architecture] - System overview
-* link:docs/storage/sst-engine-deep-dive.adoc[SST Engine] - Write-optimized storage
-* link:docs/storage/viper-engine-deep-dive.adoc[VIPER Engine] - Columnar analytics
-* link:docs/storage/nova-engine-deep-dive.adoc[NOVA Engine] - Progressive search
-* link:src/storage/engines/impls/sst/README.adoc[SST Module] - In-code documentation
-* link:src/storage/engines/impls/viper/README.adoc[VIPER Module] - In-code documentation
-* link:src/storage/engines/impls/nova/README.adoc[NOVA Module] - In-code documentation
+**Performance:**
+* link:docs/performance/PERFORMANCE_COMPREHENSIVE.adoc[Performance Guide]
+* link:docs/performance/encoding_optimization.adoc[Encoding Optimization]
 
-**Performance & Optimization:**
+== Use Cases
 
-* link:docs/performance/encoding_optimization.adoc[Encoding Optimization] - Parallel & SIMD
-* link:docs/technical/proximacodec_technical_guide.adoc[ProximaCodec Guide] - Compression schemes
-* link:docs/technical/gpu_acceleration.adoc[GPU Acceleration] - CUDA, Metal, ROCm
-* link:docs/performance/PERFORMANCE_COMPREHENSIVE.adoc[Performance Guide] - Benchmarks
-* link:docs/technical/unified-quantization-guide.adoc[Quantization Guide] - Compression strategies
+**Semantic Search & RAG**:
+* Document retrieval with metadata filtering
+* Question answering with source attribution
+* Hybrid keyword + vector search
 
-**Operations:**
+**E-Commerce Recommendations**:
+* Product similarity with price/category filters
+* Personalized recommendations at scale
+* Real-time inventory integration
 
-* link:docs/operations/PRODUCTION_RUNBOOK.adoc[Production Runbook] - Deployment guide
-* link:docs/enterprise/production_deployment_guide.adoc[Enterprise Deployment] - Best practices
-* link:docs/operations/benchmark_logging_guide.adoc[Benchmarking Guide] - Performance testing
+**Image & Video Search**:
+* Visual similarity with HELIX spatial optimization
+* Multi-modal search capabilities
+* High-dimensional CNN embeddings
+
+**Chatbot & Agent Memory**:
+* Conversation history search
+* Long-term memory with metadata context
+* Fast retrieval for real-time interactions
 
 == Contributing
 
-We welcome contributions! ProximaDB is built with:
+ProximaDB is open source and welcomes contributions!
 
-* **Rust 2024 Edition** (minimum 1.88)
-* **Apache Parquet** for columnar storage
-* **Tokio** for async runtime
-* **Tonic** for gRPC
-* **Axum** for REST API
+**Technology Stack:**
+* Rust 2024 Edition (minimum 1.88)
+* Apache Parquet for columnar storage
+* Tokio async runtime
+* Tonic (gRPC) + Axum (REST)
 
 **Development Setup:**
 
 [source,bash]
 ----
-# Clone repository
 git clone https://github.com/vjsingh1984/proximaDB
 cd proximaDB
-
-# Build and test
 cargo build
 cargo test
-
-# Run server locally
 cargo run --bin proximadb-server
-
-# Run benchmarks
-cargo bench
 ----
 
-**Key Development Commands:**
-
+**Quality Standards:**
 [source,bash]
 ----
-# Format code
-cargo fmt
-
-# Lint
-cargo clippy
-
-# Run specific tests
-cargo test --lib storage::engines::impls::sst
-
-# Build documentation
-cargo doc --open
+cargo fmt      # Format code
+cargo clippy   # Lint
+cargo test     # Run all tests
 ----
 
-See link:CLAUDE.md[CLAUDE.md] for complete development guidelines.
+See link:CLAUDE.md[CLAUDE.md] for complete development guidelines and architecture details.
 
-== Community & Support
+== Community
 
 * **GitHub**: https://github.com/vjsingh1984/proximaDB
 * **Issues**: Report bugs and request features
 * **Discussions**: Ask questions and share use cases
-* **Documentation**: link:docs/README.adoc[Complete documentation]
 
 == License
 
-Licensed under the Apache License, Version 2.0. See link:LICENSE[LICENSE] for details.
+Licensed under the Apache License, Version 2.0. See link:LICENSE[LICENSE] file.
 
 ---
 
-**Built with Rust for production AI applications** +
-_High performance, adaptive storage, zero configuration_
+*Built with Rust for production AI applications* +
+_Adaptive storage • Hardware acceleration • Type-safe filtering_
