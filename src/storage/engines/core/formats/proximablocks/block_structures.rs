@@ -4239,7 +4239,7 @@ mod tests {
 
         // Serialize and deserialize
         let serialized = block_auto.serialize().unwrap();
-        let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+        let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
         // Verify records match
         assert_eq!(deserialized.records.len(), vector_count);
@@ -4262,7 +4262,7 @@ mod tests {
         );
 
         let serialized_grouped = block_grouped.serialize().unwrap();
-        let deserialized_grouped = ProximaDataBlock::deserialize(&serialized_grouped).unwrap();
+        let deserialized_grouped = ProximaDataBlock::deserialize(&serialized_grouped, None).unwrap();
 
         assert_eq!(deserialized_grouped.records.len(), vector_count);
         // Verify all dimensions are preserved
@@ -4325,7 +4325,7 @@ mod tests {
         assert!(compression_ratio > 10.0, "Constant data should compress well: {:.2}x", compression_ratio);
 
         // Verify round-trip
-        let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+        let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
         assert_eq!(deserialized.records.len(), count);
 
         // Verify data integrity
@@ -4385,7 +4385,7 @@ mod tests {
         assert!(compression_ratio > 0.1, "Should produce some output: {:.2}x", compression_ratio);
 
         // Verify round-trip - handle potential error gracefully
-        match ProximaDataBlock::deserialize(&serialized) {
+        match ProximaDataBlock::deserialize(&serialized, None) {
             Ok(deserialized) => {
                 assert_eq!(deserialized.records.len(), count, "Expected {} records, got {}", count, deserialized.records.len());
 
@@ -4459,7 +4459,7 @@ mod tests {
             "Mixed data should have moderate compression: {:.2}x", compression_ratio);
 
         // Verify round-trip - handle potential error gracefully
-        match ProximaDataBlock::deserialize(&serialized) {
+        match ProximaDataBlock::deserialize(&serialized, None) {
             Ok(deserialized) => {
                 assert_eq!(deserialized.records.len(), count);
 
@@ -4561,7 +4561,7 @@ mod tests {
         assert!(!bloom_data.unwrap().is_empty());
 
         // Verify block can be deserialized
-        let deserialized_block = ProximaDataBlock::deserialize(&serialized_block);
+        let deserialized_block = ProximaDataBlock::deserialize(&serialized_block, None);
         if let Err(e) = &deserialized_block {
             panic!("Deserialization failed: {}", e);
         }
@@ -4697,7 +4697,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4714,7 +4714,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4733,7 +4733,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0);
         }
@@ -4752,7 +4752,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4769,7 +4769,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4786,7 +4786,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0);
         }
@@ -4809,7 +4809,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4826,7 +4826,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4843,7 +4843,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4862,7 +4862,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4879,7 +4879,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4896,7 +4896,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4919,7 +4919,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -4939,7 +4939,7 @@ mod tests {
             };
             let transpose_block = ProximaDataBlock::new(vectors.clone(), transpose_config);
             let transpose_serialized = transpose_block.serialize().unwrap();
-            let transpose_deserialized = ProximaDataBlock::deserialize(&transpose_serialized).unwrap();
+            let transpose_deserialized = ProximaDataBlock::deserialize(&transpose_serialized, None).unwrap();
 
             let grouped_config = BlockCompressionConfig {
                 vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
@@ -4947,7 +4947,7 @@ mod tests {
             };
             let grouped_block = ProximaDataBlock::new(vectors.clone(), grouped_config);
             let grouped_serialized = grouped_block.serialize().unwrap();
-            let grouped_deserialized = ProximaDataBlock::deserialize(&grouped_serialized).unwrap();
+            let grouped_deserialized = ProximaDataBlock::deserialize(&grouped_serialized, None).unwrap();
 
             // Both should decode to identical results
             verify_roundtrip(&vectors, &transpose_deserialized.records, 0.0001);
@@ -5016,7 +5016,7 @@ mod tests {
 
                 let block = ProximaDataBlock::new(vectors.clone(), config);
                 let serialized = block.serialize().unwrap();
-                let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+                let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
                 verify_roundtrip(&vectors, &deserialized.records, 0.0001);
             }
@@ -5038,7 +5038,7 @@ mod tests {
 
                 let block = ProximaDataBlock::new(vectors.clone(), config);
                 let serialized = block.serialize().unwrap();
-                let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+                let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
                 verify_roundtrip(&vectors, &deserialized.records, 0.0001);
             }
@@ -5056,7 +5056,7 @@ mod tests {
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
             let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -5079,7 +5079,7 @@ mod tests {
 
                 let block = ProximaDataBlock::new(vectors.clone(), config);
                 let serialized = block.serialize().unwrap();
-                let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+                let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
                 // Use very tight tolerance to verify lossless encoding
                 verify_roundtrip(&vectors, &deserialized.records, 1e-6);
