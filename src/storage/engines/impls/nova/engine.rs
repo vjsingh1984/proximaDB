@@ -1535,7 +1535,7 @@ impl NovaEngine {
                 id: record.id.clone(),
                 vector_id: Some(record.id.clone()),
                 score,
-                similarity: Some(distance),
+                similarity: Some(similarity_result.normalized_score), // Use normalized similarity, not raw distance
                 vector: Some(Arc::new(record.vector.clone())),
                 metadata: record.metadata.clone(),
                 debug_info: None,

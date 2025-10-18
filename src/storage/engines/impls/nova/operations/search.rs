@@ -197,7 +197,7 @@ impl NovaSearchOperations {
                     id: record.id.clone(),
                     vector_id: Some(record.id),
                     score: 1.0 - distance, // Convert distance to similarity score
-                    similarity: Some(distance),
+                    similarity: Some(1.0 - distance), // Similarity (not distance) for consistency
                     vector: Some(Arc::new(vector.clone())),
                     metadata: record.metadata,
                     debug_info: None,
