@@ -187,7 +187,7 @@ impl NovaSearchOperations {
             // Compute distances and insert into bounded queue
             for record in records {
                 let vector = &record.vector;
-                let distance = self.distance_engine.distance_with_metric(
+                let similarity_result = self.distance_engine.calculate_distance(
                     query_vector,
                     vector,
                     &ctx.distance_metric(),
@@ -196,8 +196,8 @@ impl NovaSearchOperations {
                 let search_record = OptimizedSearchRecord {
                     id: record.id.clone(),
                     vector_id: Some(record.id),
-                    score: 1.0 - distance, // Convert distance to similarity score
-                    similarity: Some(1.0 - distance), // Similarity (not distance) for consistency
+                    score: similarity_result.normalized_score, // Use normalized score from distance engine
+                    similarity: Some(similarity_result.normalized_score), // Consistent with all other engines
                     vector: Some(Arc::new(vector.clone())),
                     metadata: record.metadata,
                     debug_info: None,

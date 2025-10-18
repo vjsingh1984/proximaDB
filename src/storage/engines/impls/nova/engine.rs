@@ -1523,9 +1523,7 @@ impl NovaEngine {
 
         // Insert all results into bounded queue
         for (record, distance) in all_results {
-            // Convert distance to score (higher is better)
-            let score = 1.0 / (1.0 + distance);
-
+            // Use SimilarityResult for proper normalization
             let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
                 distance,
                 distance_metric,
@@ -1534,8 +1532,8 @@ impl NovaEngine {
             let search_record = OptimizedSearchRecord {
                 id: record.id.clone(),
                 vector_id: Some(record.id.clone()),
-                score,
-                similarity: Some(similarity_result.normalized_score), // Use normalized similarity, not raw distance
+                score: similarity_result.normalized_score, // Use normalized score from distance engine
+                similarity: Some(similarity_result.normalized_score), // Consistent similarity scoring
                 vector: Some(Arc::new(record.vector.clone())),
                 metadata: record.metadata.clone(),
                 debug_info: None,
