@@ -20,28 +20,21 @@ use crate::proto::proximadb_v1::SqlValue;
 /// Example: VIPER engine using optimized columnar infrastructure
 pub async fn viper_optimization_example() -> Result<()> {
     eprintln!("=== VIPER Engine Optimization Example ===");
-    eprintln!("DEBUG: Step 1 - Starting example");
 
     // Initialize hardware capabilities
-    eprintln!("DEBUG: Step 2 - Initializing hardware capabilities");
     let _ = HardwareCapabilities::detect_with_config(Default::default());
-    eprintln!("DEBUG: Step 3 - Hardware capabilities initialized");
 
     // Setup
-    eprintln!("DEBUG: Step 4 - Creating temp dir");
     let temp_dir = tempdir()?;
     let file_path = temp_dir.path().join("viper_optimized.parquet");
-    eprintln!("DEBUG: Step 5 - Temp file path: {:?}", file_path);
 
     // Get optimization recommendations for a large dataset
-    eprintln!("DEBUG: Step 6 - Getting optimization recommendations");
     let recommendations = OptimizationRecommendations::for_dataset(
         5_000_000, // 5M vectors
         768,       // OpenAI embedding dimension
         QueryPattern::SimilaritySearchHeavy,
         StorageBudget::Balanced,
     );
-    eprintln!("DEBUG: Step 7 - Got recommendations");
 
     eprintln!("📊 Optimization Recommendations:");
     eprintln!("  - Bloom filters: {}", recommendations.use_bloom_filters);
@@ -72,10 +65,8 @@ pub async fn viper_optimization_example() -> Result<()> {
     // Write data using HybridParquetWriter
     {
         eprintln!("✍️  Writing 10,000 vectors with optimizations...");
-        eprintln!("DEBUG: Step 8 - Starting write section");
 
         // Generate sample vectors
-        eprintln!("DEBUG: Step 9 - Generating sample vectors");
         let mut records = Vec::new();
         for i in 0..10_000 {
             let vector: Vec<f32> = (0..768).map(|j| ((i + j) as f32) * 0.001).collect();
@@ -111,12 +102,9 @@ pub async fn viper_optimization_example() -> Result<()> {
 
             records.push(record);
         }
-        eprintln!("DEBUG: Step 10 - Generated {} records", records.len());
 
         // Use HybridParquetWriter to write data
-        eprintln!("DEBUG: Step 11 - Creating FilesystemFactory");
         let filesystem_factory = FilesystemFactory::create(FilesystemConfig::default()).await?;
-        eprintln!("DEBUG: Step 12 - FilesystemFactory created");
         let hybrid_config = super::hybrid_writer::HybridWriterConfig {
             base_config: ParquetWriterConfig {
                 enable_bloom_filters: recommendations.use_bloom_filters,
@@ -140,7 +128,6 @@ pub async fn viper_optimization_example() -> Result<()> {
             min_row_group_size: 5000,
             max_row_group_size: 50000,
         };
-        eprintln!("DEBUG: Step 13 - Config created, calling write_with_cache");
 
         let (stats, _collector) = super::hybrid_writer::HybridParquetWriter::write_with_cache(
             &records,
@@ -609,13 +596,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_viper_optimization_example() {
-        eprintln!("DEBUG TEST: Starting test_viper_optimization_example");
-        eprintln!("DEBUG TEST: About to call viper_optimization_example");
         // Test that the example runs without errors
         let result = viper_optimization_example().await;
-        eprintln!("DEBUG TEST: viper_optimization_example returned: {:?}", result.is_ok());
         assert!(result.is_ok(), "VIPER example failed: {:?}", result.err());
-        eprintln!("DEBUG TEST: Test completed successfully");
     }
 
     #[tokio::test]

@@ -1539,11 +1539,8 @@ impl UnifiedSstableReader {
         // This delegates all I/O to the shared infrastructure
         let blocks = self.apply_strategy(&strategy, &params, &context).await?;
         trace!("SST Reader: apply_strategy returned {} blocks", blocks.len());
-        eprintln!("DEBUG READ: Got {} blocks from file", blocks.len());
         if let Some(first_block) = blocks.first() {
-            eprintln!("DEBUG READ: First block has {} records", first_block.records.len());
             if let Some(first_rec) = first_block.records.first() {
-                eprintln!("DEBUG READ: First record - id: {}, metadata: {:?}", first_rec.id, first_rec.metadata);
             }
         }
 
@@ -1558,11 +1555,7 @@ impl UnifiedSstableReader {
                 // Apply metadata filtering at record level (type-safe, no conversion)
                 // Uses centralized SqlValue filtering from core::search::sql_value_filter
                 if let Some(filter_expr) = &filter {
-                    eprintln!("DEBUG FILTER: Evaluating record {}", record.id);
-                    eprintln!("DEBUG FILTER:   Metadata: {:?}", record.metadata);
-                    eprintln!("DEBUG FILTER:   Filter: {:?}", filter_expr);
                     let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
-                    eprintln!("DEBUG FILTER:   Matches: {}", matches);
                     trace!("Filter evaluation: record {} metadata={:?} matches={}", record.id, record.metadata, matches);
                     if !matches {
                         // Record doesn't match filter, skip it
