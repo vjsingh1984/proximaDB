@@ -234,7 +234,7 @@ fn test_data_block_zstd_compression() {
     let serialized = data_block
         .serialize_with_config(&compression_config)
         .unwrap();
-    let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+    let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
 
     // Verify block metadata
     assert_eq!(data_block.block_id, deserialized.block_id);
