@@ -152,7 +152,7 @@ fn test_pattern(pattern_name: &str, vectors: Vec<VectorRecord>) {
                 println!("     → {} bytes ({:.1}x compression)", serialized.len(), compression_ratio);
 
                 // Test deserialization
-                match ProximaDataBlock::deserialize(&serialized) {
+                match ProximaDataBlock::deserialize(&serialized, None) {
                     Ok(_) => {
                         println!("     ✅ Round-trip successful");
                     }

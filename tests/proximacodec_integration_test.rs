@@ -136,7 +136,7 @@ fn test_proximadatablock_with_proximacodec() {
         println!("Serialized size: {} bytes", serialized.len());
 
         // Deserialize
-        let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
+        let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
         println!("Deserialized block has {} records", deserialized.records.len());
 
         // Verify round-trip

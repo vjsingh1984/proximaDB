@@ -71,7 +71,7 @@ fn main() {
             println!("   Compression ratio: {:.2}x", ratio_no_compression);
 
             // Test round-trip deserialization
-            match ProximaDataBlock::deserialize(&encoded_no_compression) {
+            match ProximaDataBlock::deserialize(&encoded_no_compression, None) {
                 Ok(decoded_block) => {
                     println!("   ✅ Round-trip deserialization successful");
                     println!("   📊 Decoded {} vectors", decoded_block.records.len());
@@ -94,7 +94,7 @@ fn main() {
             println!("   Compression ratio: {:.2}x", ratio_with_compression);
 
             // Test round-trip deserialization
-            match ProximaDataBlock::deserialize(&encoded_with_compression) {
+            match ProximaDataBlock::deserialize(&encoded_with_compression, None) {
                 Ok(decoded_block) => {
                     println!("   ✅ Round-trip deserialization successful");
                     println!("   📊 Decoded {} vectors", decoded_block.records.len());

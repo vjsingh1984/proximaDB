@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     let encoded = block.serialize_with_config(&config)?;
     println!("Encoded size: {} bytes", encoded.len());
     
-    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded, None)?;
     let decoded = &decoded_block.records[0].vector;
     
     // Check values

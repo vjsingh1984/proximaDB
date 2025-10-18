@@ -176,7 +176,7 @@ fn test_round_trip(
     let compression_ratio = original_size as f64 / serialized_size as f64;
 
     // Deserialize
-    let deserialized_block = ProximaDataBlock::deserialize(&serialized)
+    let deserialized_block = ProximaDataBlock::deserialize(&serialized, None)
         .map_err(|e| format!("Deserialization failed: {}", e))?;
 
     // Verify

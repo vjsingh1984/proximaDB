@@ -75,7 +75,7 @@ fn test_round_trip(
     let compression_ratio = original_size as f64 / encoded_size as f64;
 
     // Test decoding
-    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded, None)?;
 
     // Verify data integrity
     if decoded_block.records.len() != vectors.len() {

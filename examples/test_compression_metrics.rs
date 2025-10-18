@@ -101,7 +101,7 @@ fn test_compression(
 
     // Measure decoding time
     let decode_start = Instant::now();
-    let _decoded_block = ProximaDataBlock::deserialize(&encoded)?;
+    let _decoded_block = ProximaDataBlock::deserialize(&encoded, None)?;
     let decode_time_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
     Ok(CompressionResult {

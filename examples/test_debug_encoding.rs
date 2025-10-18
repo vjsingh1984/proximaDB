@@ -65,7 +65,7 @@ fn main() -> anyhow::Result<()> {
     debug!("First 32 bytes of encoded data: {:02X?}", &encoded[..encoded.len().min(32)]);
 
     info!("Deserializing block");
-    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded, None)?;
 
     info!("Comparing vectors");
     for (i, (orig, dec)) in vectors.iter().zip(decoded_block.records.iter()).enumerate() {

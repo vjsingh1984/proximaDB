@@ -89,7 +89,7 @@ fn test_configuration(
     println!("   Ratio:    {:.2}x", compression_ratio);
 
     // Test round-trip decoding
-    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded, None)?;
     let round_trip_success = decoded_block.records.len() == vectors.len();
 
     if round_trip_success {
