@@ -529,45 +529,834 @@ graph TD
 
 ---
 
-== Use Cases (Validated)
+== Real-World Use Cases
 
-=== Semantic Search & RAG
+=== 1. Retrieval-Augmented Generation (RAG)
 
-**Requirements**: <5ms latency, metadata filtering (source, date, category)
+**Problem**: LLMs hallucinate without access to current/proprietary data
 
-**Recommendation**: SWIFT (2.50ms) or SST-LZ4 (2.98ms)
+**ProximaDB Solution**: Fast semantic search with source attribution
 
-**Example**: Document retrieval with type-safe filters
-```python
+**Engine**: SWIFT (2.50ms) or SST-LZ4 (2.98ms)
+
+**Example**: Customer support knowledge base
+[source,python]
+----
+# Store company docs with metadata
+collection.insert([
+    {
+        "vector": doc_embedding,
+        "metadata": {
+            "source": "kb_article_123",
+            "category": "billing",
+            "last_updated": 1729123200,  # Unix timestamp
+            "verified": True
+        }
+    }
+])
+
+# RAG query with filters
 results = collection.search(
     query_vector=question_embedding,
     filter_expression={
-        "field": "doc_type",
-        "operator": "EQUALS",
-        "value": "technical"
+        "operator": "AND",
+        "expressions": [
+            {"field": "category", "operator": "EQUALS", "value": "billing"},
+            {"field": "verified", "operator": "EQUALS", "value": True},
+            {"field": "last_updated", "operator": "GREATER_THAN", "value": 1727000000}
+        ]
     }
 )
-```
+# Returns only verified, recent billing docs - feeds LLM context
+----
+
+**Why ProximaDB**:
+- Type-safe date filtering (Int64 timestamps)
+- Boolean verification flags
+- 20% faster with filtering (measured)
+- Source tracking in metadata
 
 ---
 
-=== E-Commerce Recommendations
+=== 2. E-Commerce Product Recommendations
 
-**Requirements**: Price/inventory filters, product similarity
+**Problem**: Find similar products with business rule constraints (price, inventory)
 
-**Recommendation**: HELIX (1.43ms) if products cluster by category
+**ProximaDB Solution**: Product embedding similarity with real-time filters
 
-**Benefit**: 5x faster than columnar alternatives
+**Engine**: HELIX (1.43ms) - products cluster by category naturally
+
+**Example**: "Customers who viewed this also viewed..."
+[source,python]
+----
+# Store product catalog
+collection.insert([
+    {
+        "id": "prod_laptop_15",
+        "vector": product_embedding,  # From product image + description
+        "metadata": {
+            "price": 1299.99,
+            "category": "electronics",
+            "in_stock": True,
+            "inventory_count": 47,
+            "brand": "TechCorp",
+            "rating": 4.5
+        }
+    }
+])
+
+# Find similar products with business rules
+similar = collection.search(
+    query_vector=current_product_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "in_stock", "operator": "EQUALS", "value": True},
+            {"field": "price", "operator": "LESS_THAN_OR_EQUAL", "value": 1500},
+            {"field": "rating", "operator": "GREATER_THAN_OR_EQUAL", "value": 4.0}
+        ]
+    },
+    top_k=10
+)
+----
+
+**Why ProximaDB**:
+- 1.43ms latency (instant recommendations)
+- Type-safe price/rating filters (Float)
+- Inventory checks (Boolean, Integer)
+- 5x faster than alternatives
+
+**Business Impact**: Sub-2ms response enables real-time personalization
 
 ---
 
-=== Image/Video Search
+=== 3. Conversational AI & Chatbot Memory
 
-**Requirements**: High-dimensional embeddings (1536D+), spatial locality
+**Problem**: Long-term conversation context, instant recall, temporal search
 
-**Recommendation**: HELIX (1.43ms)
+**ProximaDB Solution**: Fast retrieval of relevant conversation history
 
-**Why**: Hilbert curve indexing + PCA compression optimized for visual embeddings
+**Engine**: SWIFT (2.50ms + 28ms writes) - frequent updates, low latency
+
+**Example**: AI assistant with long-term memory
+[source,python]
+----
+# Store conversation turns
+collection.insert([
+    {
+        "id": f"turn_{session_id}_{turn_num}",
+        "vector": turn_embedding,
+        "metadata": {
+            "user_id": "user_456",
+            "session_id": "session_789",
+            "timestamp": 1729123456,
+            "intent": "technical_support",
+            "resolved": False,
+            "sentiment_score": 0.75
+        }
+    }
+])
+
+# Find relevant past conversations
+context = collection.search(
+    query_vector=current_query_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "user_id", "operator": "EQUALS", "value": "user_456"},
+            {"field": "intent", "operator": "EQUALS", "value": "technical_support"},
+            {"field": "timestamp", "operator": "GREATER_THAN", "value": 1727000000}  # Last 30 days
+        ]
+    },
+    top_k=5
+)
+----
+
+**Why ProximaDB**:
+- SWIFT 28ms writes (real-time conversation updates)
+- 2.50ms search (instant context retrieval)
+- Temporal filtering (timestamp range queries)
+- Session/user isolation via filters
+
+---
+
+=== 4. Content Discovery & Recommendation
+
+**Problem**: Personalized content feeds, similar articles, topic clustering
+
+**ProximaDB Solution**: Semantic similarity with engagement metrics
+
+**Engine**: SST-LZ4 (2.98ms) - balanced read/write with compression
+
+**Example**: News/blog recommendation engine
+[source,python]
+----
+# Store articles with engagement metrics
+collection.insert([
+    {
+        "id": "article_tech_ai_2024_10",
+        "vector": article_embedding,
+        "metadata": {
+            "category": "technology",
+            "subcategory": "artificial_intelligence",
+            "publish_date": 1729000000,
+            "author_id": "author_123",
+            "view_count": 15420,
+            "avg_read_time_sec": 180,
+            "quality_score": 8.5
+        }
+    }
+])
+
+# Personalized recommendations
+articles = collection.search(
+    query_vector=user_interest_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "category", "operator": "EQUALS", "value": "technology"},
+            {"field": "publish_date", "operator": "GREATER_THAN", "value": 1727000000},  # Recent
+            {"field": "quality_score", "operator": "GREATER_THAN_OR_EQUAL", "value": 7.0},
+            {"field": "view_count", "operator": "GREATER_THAN", "value": 1000}  # Popular
+        ]
+    },
+    top_k=20
+)
+----
+
+**Why ProximaDB**:
+- LZ4 compression (50% storage for large article corpus)
+- Integer filters (view_count, read_time)
+- Float filters (quality_score)
+- Date range queries (recent articles)
+
+---
+
+=== 5. Image & Video Search (Computer Vision)
+
+**Problem**: Find visually similar images, face recognition, object detection
+
+**ProximaDB Solution**: Spatial indexing for high-dimensional visual embeddings
+
+**Engine**: HELIX (1.43ms) - optimized for CNN embeddings
+
+**Example**: Visual search for e-commerce
+[source,python]
+----
+# Store product images with attributes
+collection.insert([
+    {
+        "id": "img_dress_floral_42",
+        "vector": resnet50_embedding,  # 2048D visual features
+        "metadata": {
+            "product_type": "dress",
+            "color_primary": "blue",
+            "color_secondary": "white",
+            "pattern": "floral",
+            "price_range": "mid",  # Budget/mid/premium
+            "season": "summer",
+            "has_inventory": True
+        }
+    }
+])
+
+# Visual search: "Find similar dresses in stock"
+similar_images = collection.search(
+    query_vector=uploaded_image_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "product_type", "operator": "EQUALS", "value": "dress"},
+            {"field": "has_inventory", "operator": "EQUALS", "value": True},
+            {"field": "price_range", "operator": "IN", "value": ["mid", "budget"]}
+        ]
+    },
+    top_k=50
+)
+----
+
+**Why ProximaDB**:
+- HELIX 1.43ms (Hilbert curves for visual similarity)
+- PCA compression (70% savings for image embeddings)
+- High-dimensional support (1536D, 2048D CNN features)
+
+---
+
+=== 6. Fraud Detection & Anomaly Detection
+
+**Problem**: Real-time pattern matching against known fraud vectors
+
+**ProximaDB Solution**: Fast similarity search with threshold filtering
+
+**Engine**: SWIFT (2.50ms) - real-time detection requirements
+
+**Example**: Transaction fraud detection
+[source,python]
+----
+# Store known fraud patterns
+fraud_patterns.insert([
+    {
+        "id": "fraud_pattern_cc_stolen_42",
+        "vector": transaction_behavior_embedding,
+        "metadata": {
+            "fraud_type": "credit_card_stolen",
+            "severity": 9,
+            "min_amount": 500.0,
+            "time_pattern": "night",
+            "confidence": 0.95
+        }
+    }
+])
+
+# Check new transaction
+similar_patterns = fraud_patterns.search(
+    query_vector=current_transaction_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "severity", "operator": "GREATER_THAN_OR_EQUAL", "value": 7},
+            {"field": "confidence", "operator": "GREATER_THAN", "value": 0.90}
+        ]
+    },
+    top_k=5
+)
+
+if similar_patterns and similar_patterns[0].score > 0.85:
+    flag_for_review(transaction)
+----
+
+**Why ProximaDB**:
+- 2.50ms latency (real-time fraud checks)
+- Severity thresholds (Integer filters)
+- Confidence scoring (Float filters)
+- Fast writes (28ms for pattern updates)
+
+---
+
+=== 7. Customer Support Ticket Routing
+
+**Problem**: Automatically route support tickets to right team based on similarity
+
+**ProximaDB Solution**: Semantic understanding of issues with team/priority filters
+
+**Engine**: SST-LZ4 (2.98ms) - balanced, frequent updates
+
+**Example**: Intelligent ticket routing
+[source,python]
+----
+# Historical tickets with resolutions
+tickets.insert([
+    {
+        "id": "ticket_2024_10_1234",
+        "vector": ticket_description_embedding,
+        "metadata": {
+            "team": "backend_engineering",
+            "priority": 3,  # 1=low, 5=critical
+            "resolution_time_hours": 4,
+            "customer_tier": "enterprise",
+            "resolved": True,
+            "satisfaction_score": 4.5
+        }
+    }
+])
+
+# Route new ticket
+similar_tickets = tickets.search(
+    query_vector=new_ticket_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "resolved", "operator": "EQUALS", "value": True},
+            {"field": "satisfaction_score", "operator": "GREATER_THAN", "value": 4.0},
+            {"field": "customer_tier", "operator": "EQUALS", "value": "enterprise"}
+        ]
+    },
+    top_k=10
+)
+
+recommended_team = similar_tickets[0].metadata["team"]
+----
+
+**Why ProximaDB**:
+- Type-safe priority levels (Integer)
+- Resolution tracking (Boolean)
+- Satisfaction scores (Float)
+- Fast search for real-time routing
+
+---
+
+=== 8. Code Search & Developer Tools
+
+**Problem**: Find similar code snippets, detect duplicates, code review assistance
+
+**ProximaDB Solution**: Code embedding search with language/framework filters
+
+**Engine**: VIPER (7.72ms) - large codebases, analytical queries
+
+**Example**: Code snippet search
+[source,python]
+----
+# Index codebase
+code_collection.insert([
+    {
+        "id": "file_src_auth_oauth.py_L45-67",
+        "vector": code_embedding,  # CodeBERT/GraphCodeBERT
+        "metadata": {
+            "language": "python",
+            "framework": "fastapi",
+            "file_path": "src/auth/oauth.py",
+            "function_name": "validate_token",
+            "lines_of_code": 23,
+            "complexity": 5,  # Cyclomatic complexity
+            "last_modified": 1729000000
+        }
+    }
+])
+
+# Find similar implementations
+similar_code = code_collection.search(
+    query_vector=search_snippet_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "language", "operator": "EQUALS", "value": "python"},
+            {"field": "framework", "operator": "EQUALS", "value": "fastapi"},
+            {"field": "complexity", "operator": "LESS_THAN_OR_EQUAL", "value": 10}
+        ]
+    },
+    top_k=20
+)
+----
+
+**Why ProximaDB**:
+- VIPER Parquet (efficient for large codebases)
+- Integer filters (complexity, LOC)
+- Timestamp filters (recent changes)
+- Analytical queries (code pattern analysis)
+
+---
+
+=== 9. Multi-Modal Search (Text + Image + Metadata)
+
+**Problem**: Search across different modalities with unified filters
+
+**ProximaDB Solution**: Store multiple embedding types with shared metadata
+
+**Engine**: HELIX (1.43ms) for each modality
+
+**Example**: Product search with image + text
+[source,python]
+----
+# Text embeddings collection
+text_collection.create({
+    "filterable_columns": [
+        {"name": "product_id", "data_type": "STRING"},
+        {"name": "price", "data_type": "FLOAT"},
+        {"name": "in_stock", "data_type": "BOOLEAN"}
+    ]
+})
+
+# Image embeddings collection (same metadata structure)
+image_collection.create({
+    "filterable_columns": [
+        {"name": "product_id", "data_type": "STRING"},
+        {"name": "price", "data_type": "FLOAT"},
+        {"name": "in_stock", "data_type": "BOOLEAN"}
+    ]
+})
+
+# Hybrid search
+text_results = text_collection.search(query_text_emb, filters=common_filters)
+image_results = image_collection.search(query_image_emb, filters=common_filters)
+
+# Fusion ranking
+combined = fuse_results(text_results, image_results, weights=[0.6, 0.4])
+----
+
+**Why ProximaDB**:
+- Consistent metadata across modalities
+- Type-safe filters work identically
+- Fast enough for hybrid search (<3ms per modality)
+- Independent engine selection per modality
+
+---
+
+=== 10. Temporal Search & Version Control
+
+**Problem**: Search embeddings across time, version history, A/B testing
+
+**ProximaDB Solution**: Timestamp-based filtering with version tracking
+
+**Engine**: SST-LZ4 (2.98ms) - frequent version updates
+
+**Example**: Document versioning
+[source,python]
+----
+# Store document versions
+docs.insert([
+    {
+        "id": "doc_contract_template_v5",
+        "vector": document_embedding,
+        "metadata": {
+            "doc_id": "contract_template",  # Logical ID
+            "version": 5,  # Version number
+            "created_at": 1729000000,
+            "author_id": "legal_team_jane",
+            "approved": True,
+            "active": True
+        }
+    }
+])
+
+# Find latest approved version
+latest = docs.search(
+    query_vector=search_query_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "doc_id", "operator": "EQUALS", "value": "contract_template"},
+            {"field": "approved", "operator": "EQUALS", "value": True},
+            {"field": "active", "operator": "EQUALS", "value": True}
+        ]
+    },
+    top_k=1
+)
+----
+
+**Why ProximaDB**:
+- Integer version tracking
+- Boolean approval flags
+- Timestamp queries (created_at ranges)
+- Fast writes for frequent version updates
+
+---
+
+=== 11. Duplicate Detection & Deduplication
+
+**Problem**: Find near-duplicate content, plagiarism detection, data quality
+
+**ProximaDB Solution**: Similarity threshold search with metadata deduplication
+
+**Engine**: VIPER (7.72ms) - batch deduplication jobs
+
+**Example**: News article deduplication
+[source,python]
+----
+# Check for duplicates before insertion
+potential_duplicates = articles.search(
+    query_vector=new_article_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "category", "operator": "EQUALS", "value": "technology"},
+            {"field": "publish_date", "operator": "GREATER_THAN",
+             "value": 1728900000}  # Last 3 days
+        ]
+    },
+    top_k=10
+)
+
+if potential_duplicates and potential_duplicates[0].score > 0.95:
+    # >95% similar - likely duplicate
+    mark_as_duplicate(new_article, similar_to=potential_duplicates[0].id)
+else:
+    articles.insert(new_article)
+----
+
+**Why ProximaDB**:
+- Categorical filtering (news category)
+- Date range (recent articles only)
+- Batch operations (VIPER for bulk deduplication)
+
+---
+
+=== 12. Anomaly Detection in IoT/Monitoring
+
+**Problem**: Detect unusual patterns in sensor data, system metrics
+
+**ProximaDB Solution**: Baseline pattern vectors with threshold queries
+
+**Engine**: SWIFT (2.50ms) - real-time monitoring
+
+**Example**: Server health monitoring
+[source,python]
+----
+# Store normal behavior patterns
+baselines.insert([
+    {
+        "id": "pattern_normal_cpu_weekday",
+        "vector": metrics_embedding,  # CPU, memory, disk, network as vector
+        "metadata": {
+            "server_id": "prod-api-01",
+            "time_of_day": "business_hours",
+            "day_type": "weekday",
+            "is_normal": True,
+            "severity": 0
+        }
+    }
+])
+
+# Check current metrics
+similar_patterns = baselines.search(
+    query_vector=current_metrics_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "server_id", "operator": "EQUALS", "value": "prod-api-01"},
+            {"field": "is_normal", "operator": "EQUALS", "value": True},
+            {"field": "time_of_day", "operator": "EQUALS", "value": "business_hours"}
+        ]
+    },
+    top_k=5
+)
+
+if similar_patterns[0].score < 0.70:  # <70% similar to normal
+    alert_anomaly(current_metrics)
+----
+
+**Why ProximaDB**:
+- Real-time detection (2.50ms)
+- Fast writes (28ms for pattern updates)
+- Contextual filtering (time of day, server)
+
+---
+
+=== 13. Legal Document Search & Analysis
+
+**Problem**: Find relevant case law, contract clauses, compliance documents
+
+**ProximaDB Solution**: Legal text embeddings with jurisdictional filters
+
+**Engine**: VIPER (7.72ms) - large legal corpus, analytical
+
+**Example**: Case law research
+[source,python]
+----
+# Legal document corpus
+cases.insert([
+    {
+        "id": "case_smith_v_jones_2024",
+        "vector": legal_text_embedding,
+        "metadata": {
+            "jurisdiction": "california",
+            "case_type": "contract_dispute",
+            "year": 2024,
+            "precedential": True,
+            "citation_count": 47,
+            "outcome": "plaintiff"
+        }
+    }
+])
+
+# Research similar cases
+relevant_cases = cases.search(
+    query_vector=current_case_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "jurisdiction", "operator": "EQUALS", "value": "california"},
+            {"field": "case_type", "operator": "EQUALS", "value": "contract_dispute"},
+            {"field": "precedential", "operator": "EQUALS", "value": True},
+            {"field": "year", "operator": "GREATER_THAN_OR_EQUAL", "value": 2020}
+        ]
+    }
+)
+----
+
+**Why ProximaDB**:
+- Jurisdictional filtering (String, exact match critical)
+- Precedential flags (Boolean)
+- Citation analysis (Integer)
+- Large corpus support (VIPER analytics)
+
+---
+
+=== 14. Recruitment & Candidate Matching
+
+**Problem**: Match candidates to job descriptions, resume search
+
+**ProximaDB Solution**: Skills/experience embeddings with requirement filters
+
+**Engine**: SST-LZ4 (2.98ms) - frequent updates, compression
+
+**Example**: Job matching
+[source,python]
+----
+# Candidate database
+candidates.insert([
+    {
+        "id": "candidate_engineer_sr_jane_doe",
+        "vector": skills_embedding,  # Skills + experience as vector
+        "metadata": {
+            "years_experience": 8,
+            "current_title": "senior_engineer",
+            "location": "san_francisco",
+            "willing_to_relocate": True,
+            "salary_expectation": 180000,
+            "clearance": "secret",
+            "available": True
+        }
+    }
+])
+
+# Match to job requirements
+matches = candidates.search(
+    query_vector=job_requirements_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "years_experience", "operator": "GREATER_THAN_OR_EQUAL", "value": 5},
+            {"field": "available", "operator": "EQUALS", "value": True},
+            {"field": "salary_expectation", "operator": "LESS_THAN_OR_EQUAL", "value": 200000},
+            {"field": "clearance", "operator": "IN", "value": ["secret", "top_secret"]}
+        ]
+    }
+)
+----
+
+**Why ProximaDB**:
+- Integer range queries (experience, salary)
+- Boolean flags (available, willing to relocate)
+- String matching (clearance level, location)
+- LZ4 compression (large candidate database)
+
+---
+
+=== 15. Personalized Learning & Education
+
+**Problem**: Adaptive learning paths, similar exercise recommendation
+
+**ProximaDB Solution**: Learning objective embeddings with progress tracking
+
+**Engine**: HELIX (1.43ms) - learning materials cluster by topic
+
+**Example**: Adaptive quiz system
+[source,python]
+----
+# Question bank
+questions.insert([
+    {
+        "id": "q_calculus_derivatives_42",
+        "vector": question_embedding,
+        "metadata": {
+            "subject": "mathematics",
+            "topic": "calculus",
+            "subtopic": "derivatives",
+            "difficulty": 7,  # 1-10 scale
+            "average_score": 0.65,
+            "time_limit_sec": 300,
+            "requires_calculator": True
+        }
+    }
+])
+
+# Adaptive question selection
+next_questions = questions.search(
+    query_vector=student_understanding_embedding,
+    filter_expression={
+        "operator": "AND",
+        "expressions": [
+            {"field": "subject", "operator": "EQUALS", "value": "mathematics"},
+            {"field": "difficulty", "operator": "GREATER_THAN_OR_EQUAL", "value": 5},
+            {"field": "difficulty", "operator": "LESS_THAN_OR_EQUAL", "value": 8},
+            {"field": "average_score", "operator": "LESS_THAN", "value": 0.80}  # Challenging but achievable
+        ]
+    },
+    top_k=5
+)
+----
+
+**Why ProximaDB**:
+- Difficulty range queries (Integer)
+- Performance metrics (Float: average_score)
+- Requirement flags (Boolean: calculator, diagram)
+- Fast retrieval for interactive learning
+
+---
+
+== Use Case Summary
+
+[cols="2,2,1,2"]
+|===
+|Use Case |Key Features |Engine |Performance
+
+|**RAG Systems**
+|Source tracking, date filters
+|SWIFT/SST
+|2.50-2.98ms
+
+|**E-Commerce**
+|Price, inventory, ratings
+|HELIX
+|1.43ms
+
+|**Chatbots**
+|Session context, temporal
+|SWIFT
+|2.50ms + 28ms writes
+
+|**Content Discovery**
+|Engagement metrics, quality
+|SST-LZ4
+|2.98ms + compression
+
+|**Visual Search**
+|High-dimensional images
+|HELIX
+|1.43ms (2048D)
+
+|**Fraud Detection**
+|Real-time, severity
+|SWIFT
+|2.50ms
+
+|**Support Routing**
+|Team, priority, resolution
+|SST-LZ4
+|2.98ms
+
+|**Code Search**
+|Language, complexity
+|VIPER
+|7.72ms
+
+|**Multi-Modal**
+|Unified metadata
+|HELIX
+|1.43ms per modality
+
+|**Versioning**
+|Version, approval, temporal
+|SST
+|2.98ms
+
+|**Deduplication**
+|Similarity threshold
+|VIPER
+|Batch 7.72ms
+
+|**Anomaly Detection**
+|Pattern matching
+|SWIFT
+|2.50ms real-time
+
+|**Legal Search**
+|Jurisdiction, precedent
+|VIPER
+|7.72ms (large corpus)
+
+|**Recruitment**
+|Experience, salary range
+|SST-LZ4
+|2.98ms
+
+|**Education**
+|Difficulty, performance
+|HELIX
+|1.43ms
+|===
+
+**Common Thread**: Type-safe metadata filtering (Integer, Float, Boolean, String) enables business logic integration across all use cases.
 
 ---
 
