@@ -389,7 +389,7 @@ impl Default for SwiftHeader {
             deleted_records: 0,
             superblock_count: 0,
             blocks_per_superblock: 10,
-            records_per_block: 1000,
+            records_per_block: 512, // Reduced from 1000 for better granularity
             superblock_offset: 4096, // After header
             id_index_offset: 0,
             quantized_index_offset: 0,
@@ -691,7 +691,7 @@ impl SwiftFile {
             deleted_records: 0,
             superblock_count: 0,
             blocks_per_superblock: 64,
-            records_per_block: 2000,
+            records_per_block: 512, // Reduced from 2000 for better granularity
             superblock_offset: 0,
             id_index_offset: 0,
             quantized_index_offset: 0,
@@ -875,7 +875,7 @@ impl SwiftFile {
             quantization: QuantizationConfig::default(),
             deleted_records: 0,
             blocks_per_superblock: 64,
-            records_per_block: 2000,
+            records_per_block: 512, // Reduced from 2000 for better granularity
             superblock_offset: 0,
             id_index_offset: 0,
             quantized_index_offset: 0,

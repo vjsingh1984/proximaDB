@@ -989,7 +989,7 @@ impl Default for SstConfig {
             level_count: 7,
             compaction_threshold: 5,
             compaction_config: None, // Use common config by default
-            block_size_kb: 2048, // 2MB default (2048 KB) - optimal balance for disk IOPS and cloud storage
+            block_size_kb: 1024, // 1MB default - balanced for random access and sequential scans
             compaction_strategy: "leveled".to_string(),
             compression: "none".to_string(), // No compression for server default
             compression_level: 0,            // No compression level
@@ -1030,55 +1030,53 @@ impl SstConfig {
                 "block_size_kb must be at least 256KB for reasonable I/O performance".to_string(),
             );
         }
-        if self.block_size_kb > 16384 {
-            return Err("block_size_kb should not exceed 16384KB (16MB) to avoid excessive memory usage per block".to_string());
+        if self.block_size_kb > 4096 {
+            return Err("block_size_kb should not exceed 4096KB (4MB) to avoid excessive memory usage per block".to_string());
         }
 
         // Performance recommendations for common deployment scenarios
         match self.block_size_kb {
             256..=512 => {
-                // 256-512KB - Good for disk IOPS optimization and memory-constrained environments
+                // 256-512KB - Optimized for random access and point queries
                 info!(
-                    "block_size_kb={}KB - Optimized for disk IOPS and memory-constrained deployments",
+                    "block_size_kb={}KB - Optimized for random access and NVMe alignment",
+                    self.block_size_kb
+                );
+            }
+            513..=1023 => {
+                // 512KB-1MB range
+                info!(
+                    "block_size_kb={}KB - Balanced for mixed random/sequential access",
                     self.block_size_kb
                 );
             }
             1024 => {
-                // 1MB - Good for standard disk deployments
+                // 1MB - New default for balanced workloads
                 info!(
-                    "block_size_kb=1024KB (1MB) - Good for standard disk deployments with moderate mem"
+                    "block_size_kb=1024KB (1MB) - Default balanced configuration"
                 );
             }
-            2048 => {
-                // 2MB - Optimal balance for both disk and cloud
+            1025..=2047 => {
+                // 1-2MB range
                 info!(
-                    "block_size_kb=2048KB (2MB) - Optimal balance for disk IOPS and cloud storage patterns"
+                    "block_size_kb={}KB - Good for cloud storage patterns",
+                    self.block_size_kb
                 );
             }
-            3072 => {
-                // 3MB - Optimal for all cloud providers (AWS EBS gp3/st1, Azure Premium SSD, GCS Standard)
+            2048..=4096 => {
+                // 2-4MB - Maximum allowed, optimized for sequential scans
                 info!(
-                    "block_size_kb=3072KB (3MB) - Optimal for cloud storage IOPS patterns (AWS/Azure/GCS)"
-                );
-            }
-            4096..=8192 => {
-                // 4-8MB - Good for high-throughput cloud scenarios
-                info!(
-                    "block_size_kb={}KB ({}MB) - Optimized for high-throughput cloud workloads",
-                    self.block_size_kb,
-                    self.block_size_kb / 1024
-                );
-            }
-            8193..=16384 => {
-                // Large blocks for very high-throughput workloads
-                info!(
-                    "block_size_kb={}KB ({}MB) - Large blocks for very high-throughput workloads",
+                    "block_size_kb={}KB ({}MB) - Optimized for sequential scans and large transfers",
                     self.block_size_kb,
                     self.block_size_kb / 1024
                 );
             }
             _ => {
-                // Any other size is fine
+                // Should not reach here due to validation
+                info!(
+                    "block_size_kb={}KB - Out of recommended range",
+                    self.block_size_kb
+                );
             }
         }
 

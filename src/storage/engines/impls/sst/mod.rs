@@ -938,7 +938,7 @@ impl IndexEntry {
 // Default function for serde when reading existing SSTable headers
 // This preserves backward compatibility with existing SSTable files
 fn default_block_size() -> u32 {
-    3 * 1024 * 1024 // 3MB default for optimal cloud IOPS and compression balance
+    1024 * 1024 // 1MB default - balanced for random access and sequential scans
 }
 
 /// Hierarchical block metadata for serialization
