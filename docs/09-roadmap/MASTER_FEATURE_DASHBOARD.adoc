@@ -58,17 +58,17 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | 009 | Vector Operations Service | Core | ✅ | Vector CRUD ops
 | 010 | Unified Metrics System | Core | ✅ | Comprehensive metrics
 
-| 011 | SST Storage Engine | Storage | ✅ | Hybrid columnar, 5,128 LOC
-| 012 | VIPER Storage Engine | Storage | ✅ | Columnar Parquet
-| 013 | NOVA Storage Engine | Storage | ✅ | Progressive columnar
-| 014 | SWIFT Storage Engine | Storage | ✅ | Fast traversal
-| 015 | RAPTOR Storage Engine | Storage | ✅ | Matrix Trinity arch
-| 016 | HELIX Storage Engine | Storage | ✅ | PCA + Hilbert
+| 011 | SST Storage Engine | Storage | ✅ | Hybrid columnar; `src/storage/engines/impls/sst/`
+| 012 | VIPER Storage Engine | Storage | ✅ | Columnar Parquet; `src/storage/engines/impls/viper/`
+| 013 | NOVA Storage Engine | Storage | ✅ | Progressive columnar; `src/storage/engines/impls/nova/`
+| 014 | SWIFT Storage Engine | Storage | ✅ | Fast traversal; `src/storage/engines/impls/swift/`
+| 015 | RAPTOR Storage Engine | Storage | ✅ | Matrix-optimized; `src/storage/engines/impls/raptor/`
+| 016 | HELIX Storage Engine | Storage | ✅ | PCA + Hilbert; `src/storage/engines/impls/helix/`
 
-| 017 | HNSW Index Algorithm | Search | ✅ | 1,037 lines, graph-based
-| 018 | IVF Index Algorithm | Search | ✅ | 500+ lines, clustering
-| 019 | LSH Index Algorithm | Search | ✅ | 400+ lines, hashing
-| 020 | Annoy Index Algorithm | Search | ✅ | 300+ lines, trees
+| 017 | HNSW Index Algorithm | Search | ✅ | `src/index/axis/indexes/hnsw_index.rs`
+| 018 | IVF Index Algorithm | Search | ✅ | `src/index/axis/indexes/ivf_unified.rs`
+| 019 | LSH Index Algorithm | Search | ✅ | `src/index/axis/indexes/lsh_index.rs`
+| 020 | Annoy Index Algorithm | Search | ✅ | `src/index/axis/indexes/annoy_index.rs`
 | 021 | Global ID Index | Search | ✅ | O(1) lookup
 | 022 | AXIS Framework | Search | ✅ | Adaptive selection
 | 023 | EventLog Integration | Search | ✅ | Async indexing
@@ -79,16 +79,16 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | 027 | Binary Quantization | Performance | ✅ | File-level quantization columns implemented
 | 028 | INT8 Quantization | Performance | ✅ | File-level quantization columns implemented
 | 029 | PQ4/8/16/32 Quantization | Performance | ✅ | Full PQ suite with file-level columns
-| 030 | Hardware Acceleration | Performance | ⚠️ Partial | SIMD complete; GPU feature-gated (CUDA/Metal/OpenCL)
-| 031 | Progressive Cascade Search | Performance | ✅ | Progressive pipeline + benches present
-| 032 | Codebook Caching | Performance | ✅ | GlobalQuantizationCache implemented
+| 030 | Hardware Acceleration | Performance | ⚠️ Partial | SIMD complete; GPU feature-gated; `src/compute/distance_computation/`, `src/compute/gpu/`
+| 031 | Progressive Cascade Search | Performance | ✅ | `src/core/search/integrated_search_optimization.rs`; benches: `bench_10_query_progressive.rs`
+| 032 | Codebook Caching | Performance | ✅ | `src/compute/quantization/global_cache.rs`
 | 033 | k-means++ Clustering | Performance | ❌ | Not found
-| 034 | SIMD Distance Compute | Performance | ❌ | No SIMD code
+| 034 | SIMD Distance Compute | Performance | ✅ | AVX2/AVX512/NEON in `src/compute/distance_computation/` + benches
 | 035 | Bloom Filters | Performance | ✅ | Found in SSTable
 
-| 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR engine
-| 037 | PULSAR Graph Engine | Graph | ⚠️ Partial | Distributed engine present; wiring pending
-| 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine present; wiring pending
+| 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR; `src/graph/engines/orion/`
+| 037 | PULSAR Graph Engine | Graph | ⚠️ Partial | Distributed engine; `src/graph/engines/pulsar/` (wiring pending)
+| 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine; `src/graph/engines/quasar/` (wiring pending)
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
 
 | 040 | UnifiedAuthService | Security | ⚠️ Partial | Basic auth only
@@ -123,7 +123,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 
 | 067 | Cloud Storage Support | Platform | ✅ | S3/Azure/GCS
 | 068 | Python SDK | Platform | ✅ | Full client library
-| 069 | Dashboard UI | Platform | ⚠️ Partial | UI present; functionality limited
+| 069 | Dashboard UI | Platform | ⚠️ Partial | UI present; `ui/` (functionality limited)
 | 070 | Docker Support | Platform | ✅ | Container deployment
 
 | 071 | README Documentation | Docs | ✅ | Basic readme
