@@ -84,6 +84,39 @@ graph LR
 
 **Key Insight**: Choose the right engine for your latency requirement - performance varies 5x!
 
+=== Scaling to Production (10K Vectors, 30MB Corpus)
+
+[cols="2,1,1,1"]
+|===
+|Engine |1K Vectors |10K Vectors |Scaling
+
+|*HELIX-LZ4*
+|1.46 ms
+|*9.36 ms*
+|6.4x ⭐ Sub-linear
+
+|*SST-LZ4*
+|3.27 ms
+|*5.32 ms*
+|1.6x ⭐ Excellent
+
+|*VIPER*
+|8.03 ms
+|89.5 ms
+|11x (Linear)
+
+|*SWIFT*
+|3.12 ms
+|95 ms
+|30x ⚠️ Cache limit
+|===
+
+**Production Insights**:
+- HELIX maintains sub-linear scaling (6.4x for 10x data)
+- SST excels at scale (1.6x for 10x data)
+- SWIFT optimized for <5K vectors (degrades at 10K)
+- Compression benefit increases with scale (LZ4: -11% at 10K)
+
 ---
 
 === Type-Safe Filtering: A Performance Feature
