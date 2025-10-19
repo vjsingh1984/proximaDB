@@ -33,11 +33,12 @@ mod tests {
         assert_eq!(config.block_size_kb, 1024); // 1MB blocks (new default)
         assert_eq!(config.block_size_bytes(), 1024 * 1024);
 
-        // Test compression - server default is none (no compression)
+        // Test compression - server default is lz4 (faster than no compression)
         assert_eq!(
             config.compression,
-            "none"
+            "lz4"
         );
+        assert_eq!(config.compression_level, 3);
     }
 
     #[test]
