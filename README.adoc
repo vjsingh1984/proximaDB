@@ -301,17 +301,52 @@ project = "my-project"
 
 == Performance
 
-**Real-World Benchmarks** (Intel Xeon, AVX2):
+**Measured Benchmarks** (Linux x86_64, AVX-512, 768D embeddings, 1K vectors):
 
-* **Write Throughput**: 100K+ vectors/sec (SST engine)
-* **Search Latency**: <1ms cached (SWIFT engine)
-* **Batch Flush**: 100ms for 10K vectors (all engines)
-* **Compression**: 22-25% of original size (VIPER with Parquet+Zstd)
+[cols="2,1,1,2"]
+|===
+|Engine |Search Latency |Flush Time |Best For
 
-**Scalability**:
-* Single node: Millions of vectors
-* Tested with: 768D, 1536D embeddings (OpenAI, Cohere models)
-* Storage: 4-32x reduction with quantization
+|*HELIX*
+|1.6 ms
+|41 ms
+|⚡ Fastest search (spatial/clustered data)
+
+|*SWIFT*
+|2.9 ms
+|28 ms
+|🚀 Fastest writes + low latency
+
+|*SST*
+|5.0 ms
+|110 ms
+|⚖️ Balanced real-time workloads
+
+|*VIPER*
+|8.0 ms
+|48 ms
+|📊 Analytical queries
+
+|*NOVA*
+|8.4 ms
+|59 ms
+|🔄 Progressive refinement
+|===
+
+**Type-Safe Filtering Overhead**: -18% to +3% (filtering often improves performance!)
+
+**Key Findings**:
+* HELIX fastest search (1.6ms) via Hilbert spatial indexing
+* SWIFT fastest writes (28ms) with hierarchical caching
+* Filtering adds <3% overhead across all engines
+* ProximaCodec SIMD: 7.6x encoding speedup (measured)
+
+**Compression Trade-offs**:
+* Effective at >10K vectors (Parquet metadata amortized)
+* Adds 13-71% query latency for decompression
+* Recommended for cloud storage cost optimization
+
+*See link:docs/performance/BENCHMARK_RESULTS_ANALYSIS.md[detailed analysis] for complete results*
 
 == Development Status
 
