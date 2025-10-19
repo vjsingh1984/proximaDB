@@ -588,22 +588,67 @@ compression = "none"            # 28ms flush
 
 ---
 
+== Production Scale Performance (10K Vectors, 30MB)
+
+=== Scaling Characteristics
+
+[cols="2,1,1,1,2"]
+|===
+|Engine |1K |10K |Factor |Analysis
+
+|*HELIX-LZ4*
+|1.46ms
+|*9.36ms*
+|6.4x
+|⭐ Sub-linear (Hilbert pruning)
+
+|*SST-LZ4*
+|3.27ms
+|*5.32ms*
+|1.6x
+|⭐ Excellent (bloom filters)
+
+|*VIPER*
+|8.03ms
+|89.5ms
+|11x
+|Linear O(n) columnar scan
+
+|*SWIFT*
+|3.12ms
+|95ms
+|30x
+|⚠️ Cache limit (<5K optimal)
+
+|*NOVA*
+|8.33ms
+|102ms
+|12x
+|Linear (benefits at >100K)
+|===
+
+**Key Insights**:
+- HELIX/SST have indexing → sub-linear scaling
+- VIPER/NOVA full scan → linear scaling
+- SWIFT has cache limit → use for <5K vectors
+- Compression benefit increases with scale
+
+---
+
 == Related Documentation
 
-**Detailed Analyses**:
-
-- link:BENCHMARK_2024-10-19_DETAILED_ANALYSIS.adoc[Oct 19 Benchmark Analysis] - Per-engine deep dive
-- link:BLOCK_SIZE_OPTIMIZATION_IMPACT.adoc[Block Size Impact] - Before/after comparison
-- link:../technical/VECTOR_DB_FORMAT_COMPARISON.adoc[Vector DB Comparison] - Lance, Nimble analysis
-
-**Testing**:
-
-- link:../testing/IGNORED_TESTS_ANALYSIS.adoc[Test Coverage] - All 47 filter tests
-
 **Configuration**:
+- link:../../config/config.toml[Validated Defaults] - 1MB blocks, LZ4 for SST
+- link:../../CLAUDE.md[Development Guide] - Optimized defaults section
 
-- link:../../config/config.toml[Default Config]
-- link:../../CLAUDE.md[Development Guide]
+**Technical Details**:
+- link:PRODUCTION_SCALE_ANALYSIS.adoc[10K Vector Analysis] - Scaling study
+- link:../technical/VECTOR_DB_FORMAT_COMPARISON.adoc[Vector DB Comparison] - Lance, Nimble
+- link:../testing/IGNORED_TESTS_ANALYSIS.adoc[Test Coverage] - 47 filter tests
+
+**Archive** (Historical):
+- `docs/performance/archive/` - Detailed Oct 18-19 benchmarks
+- `docs/05-performance/` - Pre-optimization documentation
 
 ---
 
