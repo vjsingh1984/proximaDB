@@ -308,19 +308,19 @@ project = "my-project"
 |Engine |Search Latency |Flush Time |Best For
 
 |*HELIX*
-|1.6 ms
+|1.43 ms
 |41 ms
 |⚡ Fastest search (spatial/clustered data)
 
 |*SWIFT*
-|2.9 ms
+|2.50 ms (filtered)
 |28 ms
 |🚀 Fastest writes + low latency
 
 |*SST*
-|5.0 ms
+|2.98 ms (LZ4)
 |110 ms
-|⚖️ Balanced real-time workloads
+|⚖️ Balanced + compression benefit
 
 |*VIPER*
 |8.0 ms
@@ -333,20 +333,22 @@ project = "my-project"
 |🔄 Progressive refinement
 |===
 
-**Type-Safe Filtering Overhead**: -18% to +3% (filtering often improves performance!)
+**Type-Safe Filtering**: -20% to +3% overhead (filtering often improves performance!)
 
-**Key Findings**:
-* HELIX fastest search (1.6ms) via Hilbert spatial indexing
-* SWIFT fastest writes (28ms) with hierarchical caching
-* Filtering adds <3% overhead across all engines
+**Key Findings** (Validated Oct 2024):
+* HELIX fastest: 1.43ms (10% faster with 1MB blocks)
+* SWIFT filtering speedup: -20% (reduces result set processing)
+* SST-LZ4: 7% faster than no compression (I/O savings > CPU cost)
+* Block optimization: 34% average improvement (2-3MB → 1MB)
 * ProximaCodec SIMD: 7.6x encoding speedup (measured)
 
-**Compression Trade-offs**:
-* Effective at >10K vectors (Parquet metadata amortized)
-* Adds 13-71% query latency for decompression
-* Recommended for cloud storage cost optimization
+**Compression Recommendations**:
+* SST: Use LZ4 (default, 7% faster!)
+* HELIX: Use any (no penalty)
+* SWIFT: Avoid (latency-focused)
+* VIPER/NOVA: LZ4 optional (+6-8% acceptable for storage)
 
-*See link:docs/performance/BENCHMARK_RESULTS_ANALYSIS.md[detailed analysis] for complete results*
+*See link:docs/performance/README.adoc[performance guide] for complete analysis*
 
 == Development Status
 
