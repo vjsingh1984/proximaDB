@@ -12,7 +12,45 @@
 
 == Quick Reference
 
-=== Measured Performance (768D, 1K Vectors, Oct 2024)
+=== Measured Performance — 10K Vectors (Batch 10,240)
+
+[cols="2,2,2,2", options="header"]
+|===
+|Engine (compression) | Median Search | Note | Source
+
+|SST (lz4)
+|*5.32 ms*
+|Best performer at 10K
+|bench_output-20251019.log
+
+|HELIX (gzip)
+|*13.17 ms*
+|Compression-neutral; small variance
+|bench_output-20251019.log
+
+|RAPTOR (lz4)
+|*9.36 ms*
+|Adaptive, slower writes
+|bench_output-20251019.log
+
+|SWIFT (lz4)
+|*94.06 ms*
+|Similar to none; zstd slower
+|bench_output-20251019.log
+
+|VIPER (lz4)
+|*89.46 ms*
+|Columnar scan dominated
+|bench_output-20251019.log
+
+|NOVA (none)
+|*101.63 ms*
+|Progressive path overhead
+|bench_output-20251019.log
+|===
+
+[TIP]
+At 10K scale, SST-lz4 leads search latency. HELIX remains strong at small scale (≈1.43ms at 1K), but trends higher at 10K.
 
 [cols="2,1,1,3"]
 |===
@@ -62,12 +100,12 @@ flowchart TD
     Start([Select Storage Engine]) --> Latency{Latency Requirement?}
 
     Latency -->|"< 2ms"| CheckClustering{Data Clustered?}
-    CheckClustering -->|Yes| HELIX[🥇 HELIX<br/>1.43ms<br/>Hilbert indexing]
+    CheckClustering -->|Yes| HELIX[🥇 HELIX<br/>1.43ms (1K)<br/>13.2ms (10K)]
     CheckClustering -->|No| TooStrict[❌ Requirement too strict<br/>Use SWIFT 2.50ms]
 
     Latency -->|"< 5ms"| CheckWrites{Write Heavy?}
-    CheckWrites -->|Yes| SWIFT[🥈 SWIFT<br/>2.50ms + 28ms flush<br/>No compression]
-    CheckWrites -->|No| SST[🥉 SST<br/>2.98ms with LZ4<br/>7% faster than uncompressed!]
+    CheckWrites -->|Yes| SWIFT[🥈 SWIFT<br/>2.50ms (1K) · 94ms (10K)<br/>LZ4≈none]
+    CheckWrites -->|No| SST[🥉 SST<br/>2.98ms (1K) · 5.32ms (10K)<br/>LZ4 ≈ 11% faster vs none]
 
     Latency -->|"5-10ms OK"| CheckWorkload{Workload Type?}
     CheckWorkload -->|Analytics| VIPER[📊 VIPER<br/>7.72ms<br/>Columnar Parquet]
@@ -84,7 +122,7 @@ flowchart TD
 
 ---
 
-== Compression Decision Tree
+== Compression Decision Tree (Updated)
 
 [source,mermaid]
 ----
@@ -92,15 +130,15 @@ flowchart TD
 flowchart TD
     Start([Choose Compression]) --> Engine{Which Engine?}
 
-    Engine -->|SST| SSTLZ4[✅ LZ4 Default<br/>7% FASTER than none<br/>+ 50% storage savings]
-    Engine -->|HELIX| HELIXANY[✅ Any Algorithm<br/>No penalty measured<br/>Recommend Zstd for max compression]
+    Engine -->|SST| SSTLZ4[✅ LZ4 Default<br/>~11% faster vs none (10K)<br/>+ storage savings]
+    Engine -->|HELIX| HELIXANY[✅ Near-neutral<br/>Gzip/LZ4 ±1–3% (10K)]
     Engine -->|SWIFT| Priority{Priority?}
-    Priority -->|Latency| SWIFTNONE[✅ No Compression<br/>2.50ms optimal<br/>LZ4 adds +34%]
-    Priority -->|Storage| SWIFTLZ4[⚠️ LZ4 Acceptable<br/>3.49ms<br/>If storage critical]
+    Priority -->|Latency| SWIFTNONE[✅ None or LZ4<br/>≈94–95ms (10K)]
+    Priority -->|Storage| SWIFTLZ4[✅ LZ4 acceptable<br/>Similar latency; better storage]
 
     Engine -->|VIPER/NOVA| Analytics{Use Case?}
-    Analytics -->|Real-time| VNONE[No Compression<br/>8ms baseline]
-    Analytics -->|Batch| VLZ4[✅ LZ4 Recommended<br/>+6-8% acceptable<br/>Storage savings]
+    Analytics -->|Real-time| VNONE[No Compression<br/>≈89–90ms (10K)]
+    Analytics -->|Batch| VLZ4[✅ LZ4 OK<br/>Latency similar; gains in storage]
 
     Engine -->|RAPTOR| RNONE[No Compression<br/>Already slow writes]
 
@@ -111,7 +149,7 @@ flowchart TD
 
 ---
 
-== Performance Comparison Matrix
+== Performance Comparison Matrix (legacy small-scale)
 
 === Search Latency by Engine and Compression
 
@@ -119,21 +157,21 @@ flowchart TD
 ----
 %%{init: {"theme": "default"}}%%
 graph TB
-    subgraph FAST["⚡ Fast Tier: <3ms"]
-        H1["HELIX-Any<br/>1.43-1.46ms<br/>✅ No compression penalty"]
-        S1["SWIFT-None<br/>2.50ms filtered<br/>✅ -20% from filtering"]
-        S2["SST-LZ4<br/>2.98ms<br/>✅ 7% faster than uncompressed"]
+    subgraph FAST["⚡ Fast Tier (small scale)"]
+        H1["HELIX-Any<br/>(small scale)"]
+        S1["SWIFT-None<br/>(small scale)"]
+        S2["SST-LZ4<br/>(small scale)"]
     end
 
-    subgraph MED["📊 Medium Tier: 3-5ms"]
-        ST1["SST-None<br/>3.32ms filtered"]
-        ST2["SWIFT-LZ4<br/>3.49ms<br/>⚠️ +34% overhead"]
+    subgraph MED["📊 Medium Tier (small scale)"]
+        ST1["SST-None<br/>(small scale)"]
+        ST2["SWIFT-LZ4<br/>(small scale)"]
     end
 
-    subgraph SLOW["🔄 Analytical Tier: 7-9ms"]
-        V1["VIPER-None<br/>7.72ms filtered<br/>Columnar scan"]
-        R1["RAPTOR-None<br/>7.97ms<br/>⚠️ 1574ms writes"]
-        N1["NOVA-None<br/>8.33ms<br/>Progressive >100K"]
+    subgraph SLOW["🔄 Analytical Tier (small scale)"]
+        V1["VIPER-None<br/>(small scale)"]
+        R1["RAPTOR-None<br/>(small scale)"]
+        N1["NOVA-None<br/>(small scale)"]
     end
 
     style H1 fill:#90EE90,stroke:#006400,stroke-width:2px
@@ -191,32 +229,35 @@ graph LR
 [source,toml]
 ----
 [storage.sst_config]
-# SST: Balanced engine (2.98ms with LZ4)
+# SST: Balanced engine (LZ4 recommended at 10K)
 block_size_kb = 1024      # 1MB - 34% faster than 2MB
-compression = "lz4"        # 7% faster than no compression!
+compression = "lz4"        # ~11% faster than none at 10K; storage savings
 compression_level = 3      # Balanced
 vector_encoding_strategy = "FullVector"
 
 [storage.swift]
-# SWIFT: Low-latency engine (2.50ms)
+# SWIFT: Low-latency writes (small scale)
 records_per_block = 512    # Reduced from 2000 (11% faster)
 blocks_per_superblock = 64 # Hierarchical structure
-compression = "none"        # Latency-focused (LZ4 adds +34%)
+compression = "none"        # Latency-focused; at 10K, none≈lz4 latency
 
 [storage.viper_config]
-# VIPER: Analytics engine (7.72ms)
+# VIPER: Analytics engine (columnar scan)
 row_group_size = 100_000   # Parquet optimal
 compression = "lz4"         # Optional (+8% query, storage savings)
 compression_level = 3
 
-# HELIX: Fastest engine (1.43ms)
-# Compression: Use Zstd (no penalty, max storage)
+# HELIX: Spatial indexing (fastest at small scale)
+# Compression: Near-neutral at 10K (±1–3%)
 # Block size: Auto-tuned based on clustering
 ----
 
 ---
 
 == Compression Impact
+
+[NOTE]
+Figures below reflect earlier small-scale runs. For 10K vectors, see the updated decision tree above.
 
 === Latency vs Storage Trade-off
 
@@ -656,7 +697,7 @@ compression = "none"            # 28ms flush
 
 === Enable LZ4 Compression for SST
 
-**Impact**: 7% faster queries + 50% storage savings
+**Impact**: ~11% faster queries at 10K + storage savings
 
 [source,toml]
 ----
@@ -668,7 +709,7 @@ compression = "lz4"  # Already default in v0.1.4
 
 === Use HELIX for Clustered Data
 
-**Impact**: 5x faster than columnar engines (1.43ms vs 8ms)
+**Impact**: Fastest at small scale; at 10K, HELIX ≈13.2ms vs columnar ≈89–102ms
 
 **Applies to**:
 - Semantic search (embeddings cluster by topic)
@@ -699,3 +740,27 @@ compression = "lz4"  # Already default in v0.1.4
 
 _All performance numbers measured on Linux x86_64 AVX-512, October 2024_ +
 _See detailed analyses for complete benchmark methodology and results_
+ 
+== Reproduce 10K Benchmarks
+
+[source,bash]
+----
+# Build release and run all benches
+cargo build --release
+cargo bench
+
+# Filter Criterion benches to 10,240 batch search results
+cargo bench '.*-10240/top10'
+
+# Examples:
+# SST (lz4) 10,240 batch
+cargo bench 'search_sst-lz4-10240/top10'
+
+# HELIX (zstd) 10,240 batch
+cargo bench 'search_helix-zstd-10240/top10'
+
+# Progressive search and quantization benches
+cargo bench 'progressive_search|quantization_speed'
+----
+
+Results appear under target/criterion and in bench_output-YYYYMMDD.log if you tee output.

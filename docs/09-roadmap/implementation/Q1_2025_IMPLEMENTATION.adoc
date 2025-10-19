@@ -22,17 +22,17 @@ This separation ensures:
 
 == Prerequisites & Dependencies
 
-=== Existing Components to Leverage
-* `src/index/axis/management/manager.rs` - AxisManager for index management
-* `src/compute/quantization/unified.rs` - UnifiedQuantizationEngine
-* `src/compute/quantization/global_cache.rs` - GlobalQuantizationCache
-* `src/storage/engines/traits.rs` - UnifiedStorageEngine trait
-* `src/storage/cache/orchestrator.rs` - CacheOrchestrator for cache statistics
+=== Existing Components to Leverage (current codebase)
+* `src/index/axis/management/manager.rs` — AXIS index manager
+* `src/compute/quantization/unified.rs` — UnifiedQuantizationEngine
+* `src/compute/quantization/global_cache.rs` — GlobalQuantizationCache
+* `src/storage/traits.rs` — UnifiedStorageEngine trait
+* `src/storage/cache/orchestrator.rs` — CrossCacheOrchestrator
+* `src/core/search/integrated_search_optimization.rs` — AdvancedSearchOptimizer (integrated pipeline)
 
-=== New Components to Create
-* `src/search/optimizer/` - Search optimization module
-* `src/compute/quantization/precompute.rs` - Precomputation service
-* `src/storage/formats/quantized.rs` - Quantized vector storage format
+=== Refinements to Add
+* `src/compute/quantization/precompute.rs` — Background precomputation hooks (extend existing module)
+* `src/storage/formats/quantized.rs` — Consolidate quantized on‑disk layout docs (implementation references exist per engine)
 
 == Part 1: Advanced Search Optimization
 
@@ -40,7 +40,7 @@ This separation ensures:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}%%
+%%{init: {"theme": "default"}}%%
 graph TB
     subgraph "Search Request Flow"
         A[SearchRequest] --> B[AdvancedSearchOptimizer]
@@ -57,10 +57,10 @@ graph TB
         J --> K[SearchResponse]
     end
 
-    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style J fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style K fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style A fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#000
+    style B fill:#BBDEFB,stroke:#1565C0,stroke-width:2px,color:#000
+    style J fill:#C8E6C9,stroke:#2E7D32,stroke-width:2px,color:#000
+    style K fill:#DCEDC8,stroke:#558B2F,stroke-width:2px,color:#000
 ----
 
 === Detailed Implementation

@@ -32,11 +32,11 @@ test-integration:
 
 test-python:
 	@echo "🐍 Running Python tests..."
-	cd tests/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=/workspace/clients/python/src python3 -m pytest -v
+	cd clients/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=$(PWD)/clients/python/src python3 -m pytest -v
 
 test-python-install:
 	@echo "📦 Installing Python test dependencies..."
-	cd tests/python && pip install -r requirements.txt
+	cd clients/python && pip install -r tests/requirements.txt
 
 # Benchmark targets
 benchmark:

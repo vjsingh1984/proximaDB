@@ -27,14 +27,14 @@ See link:DOCUMENTATION_ARCHITECTURE.adoc[Documentation Architecture] for complet
 | **Choose Engine** | Select optimal storage engine | link:02-guides/engine_selection_optimization_guide.adoc[Engine Selection]
 | **API Reference** | REST and gRPC APIs | link:03-reference/rest-api-specification.adoc[REST API]
 | **Deploy** | Production deployment | link:04-operations/PRODUCTION_RUNBOOK.adoc[Production Runbook]
-| **Optimize** | Performance tuning | link:05-performance/README.adoc[Performance]
+| **Optimize** | Performance tuning | link:performance/README.adoc[Performance]
 |===
 
 == Documentation Tiers
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}%%
+%%{init: {"theme": "default"}}%%
 graph TB
     T1[01 Getting Started<br/>Quickstart, Installation]
     T2[02 Guides<br/>How-to, Usage]
@@ -74,49 +74,52 @@ docs/
 ├── README.adoc                      # This file
 │
 ├── 01-getting-started/              # TIER 1: New users
-│   ├── quickstart.adoc
-│   ├── installation.adoc
-│   └── first-collection.adoc
+│   └── getting_started.adoc
 │
 ├── 02-guides/                       # TIER 2: Usage guides
-│   ├── engine-selection.adoc
-│   ├── search-optimization.adoc
-│   └── python-sdk-guide.adoc
+│   └── engine_selection_optimization_guide.adoc
 │
 ├── 03-reference/                    # TIER 3: API reference
-│   ├── rest-api.adoc
-│   ├── grpc-api.adoc
-│   └── configuration.adoc
+│   ├── rest-api-specification.adoc
+│   ├── graph_api_reference.adoc
+│   └── configuration-reference.adoc
 │
 ├── 04-operations/                   # TIER 4: Operations
-│   ├── deployment.adoc
-│   ├── monitoring.adoc
-│   └── production-runbook.adoc
+│   ├── PRODUCTION_RUNBOOK.adoc
+│   └── benchmark_logging_guide.adoc
 │
-├── 05-performance/                  # TIER 5: Performance (consolidated)
+├── enterprise/
+│   └── production_deployment_guide.adoc
+│
+├── performance/                     # TIER 5: Performance (hub)
 │   ├── README.adoc                  # Performance hub
-│   ├── benchmark-results.adoc
-│   └── optimization-guide.adoc
+│   └── PRODUCTION_SCALE_ANALYSIS.adoc
+│
+├── 05-performance/                  # TIER 5: Deep dives
+│   ├── OPTIMIZATION_GUIDE.adoc
+│   └── PERFORMANCE_COMPREHENSIVE.adoc
 │
 ├── 06-security/                     # TIER 6: Security
-│   ├── authentication.adoc
-│   └── best-practices.adoc
+│   ├── README.adoc
+│   └── unified_authentication_flow.adoc
 │
 ├── 07-architecture/                 # TIER 7: Architecture
-│   ├── system-overview.adoc
-│   └── storage-layer.adoc           # References src/storage/engines/
+│   └── storage-layer.adoc           # References storage engines
+├── architecture/
+│   ├── CACHE_ARCHITECTURE.adoc
+│   └── proxima_capabilities.adoc
 │
 ├── 08-development/                  # TIER 8: Development
 │   ├── contributing.adoc
 │   └── testing-guide.adoc
 │
 ├── 09-roadmap/                      # TIER 9: Roadmap
-│   ├── feature-dashboard.adoc
-│   └── implementation/              # Implementation plans (consolidated)
+│   ├── MASTER_FEATURE_DASHBOARD.adoc
+│   ├── README.adoc
+│   └── implementation/
 │
 └── 10-business/                     # TIER 10: Business
-    ├── product-overview.adoc
-    └── competitive-analysis.adoc
+    └── competitive_advantages.adoc
 ----
 
 == Tier Descriptions
@@ -153,9 +156,9 @@ docs/
 **Goal**: Complete technical reference
 
 **Docs**:
-- link:03-reference/rest-api.adoc[REST API Reference]
-- link:03-reference/grpc-api.adoc[gRPC API Reference]
-- link:03-reference/configuration.adoc[Configuration Reference]
+- link:03-reference/rest-api-specification.adoc[REST API Reference]
+- link:03-reference/graph_api_reference.adoc[gRPC/Graph API Reference]
+- link:03-reference/configuration-reference.adoc[Configuration Reference]
 
 === Tier 4: Operations
 
@@ -166,9 +169,9 @@ docs/
 **Goal**: Run ProximaDB in production
 
 **Docs**:
-- link:04-operations/deployment.adoc[Production Deployment]
-- link:04-operations/monitoring.adoc[Monitoring Guide]
-- link:04-operations/production-runbook.adoc[Production Runbook]
+- link:enterprise/production_deployment_guide.adoc[Production Deployment]
+- link:04-operations/benchmark_logging_guide.adoc[Monitoring & Logging]
+- link:04-operations/PRODUCTION_RUNBOOK.adoc[Production Runbook]
 
 === Tier 5: Performance
 
@@ -179,9 +182,9 @@ docs/
 **Goal**: Maximize performance
 
 **Docs**:
-- link:05-performance/README.adoc[Performance Hub] - Start here
-- link:05-performance/benchmark-results.adoc[Benchmark Results]
-- link:05-performance/optimization-guide.adoc[Optimization Guide]
+- link:performance/README.adoc[Performance Hub]
+- link:05-performance/OPTIMIZATION_GUIDE.adoc[Optimization Guide]
+- link:05-performance/PERFORMANCE_COMPREHENSIVE.adoc[Comprehensive Benchmarks]
 
 [NOTE]
 ====
@@ -197,9 +200,8 @@ docs/
 **Goal**: Secure ProximaDB deployments
 
 **Docs**:
-- link:06-security/authentication.adoc[Authentication]
-- link:06-security/encryption.adoc[Encryption]
-- link:06-security/best-practices.adoc[Security Best Practices]
+- link:06-security/README.adoc[Security Overview]
+- link:06-security/unified_authentication_flow.adoc[Authentication Flows]
 
 === Tier 7: Architecture
 
@@ -210,10 +212,9 @@ docs/
 **Goal**: Understand ProximaDB architecture
 
 **Docs**:
-- link:07-architecture/system-overview.adoc[System Overview]
-- link:07-architecture/storage-layer.adoc[Storage Layer Architecture]
-- link:07-architecture/compute-layer.adoc[Compute Layer]
-- link:07-architecture/index-layer.adoc[Index Layer (AXIS)]
+- link:07-architecture/storage-layer.adoc[Storage Layer]
+- link:architecture/CACHE_ARCHITECTURE.adoc[Cache Architecture]
+- link:architecture/proxima_capabilities.adoc[Capabilities]
 
 [NOTE]
 ====
@@ -242,8 +243,9 @@ docs/
 **Goal**: Understand ProximaDB direction
 
 **Docs**:
-- link:09-roadmap/feature-dashboard.adoc[Feature Dashboard]
-- link:09-roadmap/implementation/[Implementation Plans]
+- link:09-roadmap/MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard]
+- link:09-roadmap/README.adoc[Roadmap Overview]
+- link:09-roadmap/implementation/README.adoc[Implementation Plans]
 
 [NOTE]
 ====
@@ -259,9 +261,7 @@ docs/
 **Goal**: Evaluate ProximaDB for business needs
 
 **Docs**:
-- link:10-business/product-overview.adoc[Product Overview]
-- link:10-business/competitive-analysis.adoc[Competitive Analysis]
-- link:10-business/enterprise-features.adoc[Enterprise Features]
+- link:10-business/competitive_advantages.adoc[Competitive Advantages]
 
 == Implementation Documentation
 

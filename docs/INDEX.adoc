@@ -46,9 +46,9 @@
 - link:technical/VECTOR_DB_FORMAT_COMPARISON.adoc[Vector DB Comparison]
 
 **Storage Engines**:
-- link:../src/storage/engines/impls/sst/README.adoc[SST] - 2.98ms with LZ4
-- link:../src/storage/engines/impls/helix/README.adoc[HELIX] - 1.43ms fastest
-- link:../src/storage/engines/impls/swift/README.adoc[SWIFT] - 2.50ms low-latency
+- link:../src/storage/engines/impls/sst/README.adoc[SST] - ~5.32ms (10K, LZ4)
+- link:../src/storage/engines/impls/helix/README.adoc[HELIX] - ~13.2ms (10K), fastest at small scale
+- link:../src/storage/engines/impls/swift/README.adoc[SWIFT] - ~95ms (10K), optimized for low-latency writes at small scale
 - link:../src/storage/engines/impls/viper/README.adoc[VIPER] - Analytics
 - link:../src/storage/engines/impls/nova/README.adoc[NOVA] - Progressive
 - link:../src/storage/engines/impls/raptor/README.adoc[RAPTOR] - Adaptive

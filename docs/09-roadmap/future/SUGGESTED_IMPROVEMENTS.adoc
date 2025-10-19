@@ -4,9 +4,9 @@
 :icons: font
 
 [.lead]
-**Suggested improvements for ProximaDB documentation based on codebase analysis**
+**Actionable documentation improvements aligned to current codebase**
 
-== Immediate Priorities
+== Immediate Priorities (Code-Aligned)
 
 === Missing Core Documentation
 
@@ -49,6 +49,7 @@ Create detailed technical documentation for each storage engine:
   - Hardware acceleration (AVX2/AVX512/NEON)
   - Codebook management and persistence
   - Quality vs. performance tradeoffs
+  - Cross-reference existing code: `src/compute/quantization/unified.rs`, `src/compute/quantization/global_cache.rs`
 
 ==== API Complete Reference
 * **REST API Specification** (`docs/api/rest_api_spec.adoc`)
@@ -64,6 +65,12 @@ Create detailed technical documentation for each storage engine:
   - Client implementation guide
 
 == Developer Documentation
+
+=== Correctness Fixes (reflect actual paths)
+* Update references from `src/storage/engines/traits.rs` → `src/storage/traits.rs` (single trait module)
+* Reference integrated optimizer at `src/core/search/integrated_search_optimization.rs` (not `src/search/optimizer/`)
+* Python SDK tests live in `clients/python/tests/` (Makefile target `test-python` should be adjusted in code; document correct path here)
+* GPU backends are feature-gated (no default CUDA/Metal/OpenCL deps). Document feature flags and expectations.
 
 === Migration Guides
 * **From Pinecone** (`docs/migration/from_pinecone.adoc`)
@@ -140,6 +147,7 @@ Create detailed technical documentation for each storage engine:
   - TLS configuration
   - Key management
   - Compliance considerations
+  - Current status: SSO scaffolding present (placeholders), MFA/Rate limiting not implemented yet
 
 == Documentation Infrastructure
 
@@ -194,9 +202,26 @@ Create detailed technical documentation for each storage engine:
 
 === Regular Updates
 * **Quarterly Reviews**: Accuracy verification
-* **Performance Updates**: Latest benchmark results
+* **Performance Updates**: Latest benchmark results (include dataset size/hardware)
 * **API Changes**: Version compatibility matrix
 * **Security Updates**: CVE notifications
+
+== Roadmap Diagrams (Mermaid Style)
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+flowchart LR
+  A[Roadmap Sources] --> B[Code Paths]
+  A --> C[Bench Results]
+  B --> D[Docs/09-roadmap Updates]
+  C --> D
+  D --> E[README Highlights]
+  style D fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+  style E fill:#DCEDC8,stroke:#558B2F,stroke-width:2px
+----
+
+Tip: Prefer links to canonical tech docs over repeating large blocks; keep roadmap pages short and status-focused.
 
 === Quality Metrics
 * **Coverage**: Document all public APIs

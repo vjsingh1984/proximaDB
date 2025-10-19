@@ -7,13 +7,9 @@
 [.lead]
 **Feature-based roadmap organization with priority rankings and completion tracking**
 
-== 📊 Quick Stats
+== 📊 Status Overview
 
-[cols="1,1,1,1", options="header", width="100%"]
-|===
-| Total Features | Completed | In Progress | Future
-| 59 | 56 (95%) | 1 (2%) | 2 (3%)
-|===
+Roadmap statuses are based on current code (v0.1.4). See the Master Feature Dashboard for the authoritative, up‑to‑date list of Completed, In Progress, and Future items.
 
 == 🗂️ Documentation Structure
 
@@ -21,23 +17,23 @@ This roadmap is organized by **feature completion status** and **priority rankin
 
 ```
 09-roadmap/
-├── MASTER_FEATURE_DASHBOARD.adoc   # Main dashboard with all 59 features
-├── completed/                       # 95% of features (56 items)
-│   ├── 01-storage-engines.adoc     # Ranks 01-16
-│   ├── 02-index-algorithms.adoc    # Ranks 05-09, 17-20
-│   ├── 03-quantization.adoc        # Ranks 07-09, 41-46
-│   ├── 04-graph-database.adoc      # Ranks 31-34
-│   ├── 05-enterprise-security.adoc # Ranks 21-30
-│   ├── 06-ai-integration.adoc      # Ranks 35-40, 50
-│   └── 07-automl.adoc              # Rank 50
-├── in-progress/                     # Active development (1 item)
-│   └── 51-multi-modal-search.adoc  # Rank 54
-├── future/                          # Planned features (2 items)
-│   ├── 55-cross-modal-reranking.adoc  # Rank 55
-│   ├── 56-unified-query-lang.adoc     # Rank 56
-│   └── 58-additional-sdks.adoc        # Ranks 58-59
-└── implementation/                  # Historical implementation docs
-    └── [legacy quarterly plans]
+├── MASTER_FEATURE_DASHBOARD.adoc
+├── completed/
+│   ├── 01-storage-engines.adoc
+│   ├── 02-index-algorithms.adoc
+│   └── 036-039-graph-database.adoc
+├── in-progress/
+│   ├── 076-multi-modal-search.adoc
+│   └── DOCS_ALIGNMENT_PLAN.adoc
+├── future/
+│   ├── 040-051-enterprise-security.adoc
+│   ├── 052-061-ai-intelligence.adoc
+│   ├── 109-cross-modal-reranking.adoc
+│   └── 110-unified-query-language.adoc
+└── implementation/
+    ├── Q1_2025_IMPLEMENTATION.adoc
+    ├── PRIORITY_ACTION_PLAN.adoc
+    └── HOLISTIC_QUANTIZATION_FRAMEWORK.adoc
 ```
 
 == 🎯 Priority Rankings
@@ -83,12 +79,12 @@ Features are ranked 01-59 by priority, not by quarter:
 |===
 
 === Key Achievements
-* ✅ **6 storage engines** fully operational
-* ✅ **All index algorithms** implemented (HNSW, IVF, LSH, Annoy)
-* ✅ **3 graph engines** (ORION, PULSAR, QUASAR)
-* ✅ **Enterprise security** complete
-* ✅ **AI/LLM integration** operational
-* ✅ **AutoML framework** implemented
+* ✅ 6 storage engines implemented (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX)
+* ✅ Index algorithms implemented: HNSW, IVF, LSH, Annoy (AXIS framework)
+* ✅ Graph engines available: ORION (in‑memory), PULSAR (sharded), QUASAR (hybrid)
+* ⚠️ Security: authentication/auditing present; MFA/SSO/rate‑limiting pending
+* ⚙️ AI integration: Python SDK and examples in `clients/python/`
+* 🚧 AutoML: foundation present; advanced features under active development
 
 == 🔗 Quick Navigation
 
@@ -99,16 +95,14 @@ Features are ranked 01-59 by priority, not by quarter:
 * link:future/[❌ Future Features] - 2 features
 
 === Key Documents
-* link:completed/01-storage-engines.adoc[Storage Engines] - All 6 engines
-* link:completed/02-index-algorithms.adoc[Index Algorithms] - AXIS framework
-* link:completed/03-quantization.adoc[Quantization System] - Hardware acceleration
-* link:completed/04-graph-database.adoc[Graph Database] - 3 engines
-* link:completed/05-enterprise-security.adoc[Security Features] - Enterprise-grade
-* link:completed/06-ai-integration.adoc[AI Integration] - LLM & NLP
+* link:completed/01-storage-engines.adoc[Storage Engines]
+* link:completed/02-index-algorithms.adoc[Index Algorithms]
+* link:completed/036-039-graph-database.adoc[Graph Database]
+* link:future/040-051-enterprise-security.adoc[Enterprise Security (plan + status)]
+* link:future/052-061-ai-intelligence.adoc[AI Integration (plan + status)]
 
 === Implementation Guides
-* link:implementation/Q1_2025_IMPLEMENTATION.adoc[Q1 2025 Original Plan]
-* link:implementation/CORRECTED_STATUS_2024.adoc[2024 Actual Status]
+* link:implementation/Q1_2025_IMPLEMENTATION.adoc[Q1 2025 Implementation]
 * link:implementation/PRIORITY_ACTION_PLAN.adoc[Priority Actions]
 
 == 📝 Notes on Organization

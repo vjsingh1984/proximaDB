@@ -245,7 +245,7 @@ link:../../src/storage/engines/impls/sst/README.adoc[SST Implementation Guide].
 = SST Engine Implementation
 
 For user-facing documentation, see
-link:../../../../docs/02-guides/engine-selection.adoc[Engine Selection Guide].
+link:02-guides/engine_selection_optimization_guide.adoc[Engine Selection Guide].
 ```
 
 === Navigation Patterns

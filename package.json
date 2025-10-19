@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "@databricks/design-system": "^1.12.21"
+    "@databricks/design-system": "^1.12.21",
+    "@openai/codex": "^0.47.0"
   }
 }

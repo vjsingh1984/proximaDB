@@ -274,7 +274,7 @@ For implementation details, see link:../../src/storage/engines/impls/sst/README.
 
 This document covers SST implementation details for developers.
 
-For user-facing documentation, see link:../../../../docs/02-guides/engine-selection.adoc[Engine Selection Guide].
+For user-facing documentation, see link:02-guides/engine_selection_optimization_guide.adoc[Engine Selection Guide].
 
 == Internal Architecture
 

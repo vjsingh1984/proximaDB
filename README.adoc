@@ -4,11 +4,11 @@
 :icons: font
 :source-highlighter: highlight.js
 
-image:https://img.shields.io/badge/version-0.1.4-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust] image:https://img.shields.io/badge/status-Production%20Ready-brightgreen[Status]
+image:https://img.shields.io/badge/version-0.1.4-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust]
 
 [.lead]
 **High-performance vector database with adaptive storage engines and type-safe metadata filtering** +
-_Built in Rust • Validated by benchmarks • Ready for production AI applications_
+_Built in Rust • Internally validated by benchmarks • Focused on AI applications_
 
 ---
 
@@ -20,7 +20,7 @@ _Built in Rust • Validated by benchmarks • Ready for production AI applicati
 mindmap
   root((ProximaDB<br/>Vector Database))
     Performance
-      1.43ms search HELIX
+      HELIX: 1.43ms (1K) · 13.2ms (10K)
       7% faster with compression
       Type-safe filtering speedup
     Flexibility
@@ -49,7 +49,7 @@ mindmap
 
 ---
 
-== Validated Performance (Measured Oct 2024)
+== Validated Performance (internal, Oct 2024)
 
 === Search Latency by Engine
 
@@ -57,32 +57,24 @@ mindmap
 ----
 %%{init: {"theme": "default"}}%%
 graph LR
-    subgraph ULTRAFAST["⚡ Sub-2ms"]
-        H["HELIX<br/><b>1.43ms</b><br/>Spatial indexing"]
+    subgraph TENK["📊 10K Vectors (Batch 10,240)"]
+        T["SST + LZ4<br/><b>~5.32ms</b>"]
+        H["HELIX<br/><b>~13.2ms</b>"]
+        R["RAPTOR<br/><b>~9.36ms</b>"]
+        V["VIPER<br/><b>~89.5ms</b>"]
+        N["NOVA<br/><b>~101.6ms</b>"]
+        W["SWIFT<br/><b>~95ms</b>"]
     end
 
-    subgraph FAST["🚀 Sub-5ms"]
-        S["SWIFT<br/><b>2.50ms</b><br/>Hierarchical cache"]
-        T["SST + LZ4<br/><b>2.98ms</b><br/>Compression benefit"]
-    end
-
-    subgraph ANALYTICAL["📊 Analytical"]
-        V["VIPER<br/><b>7.72ms</b><br/>Columnar Parquet"]
-        N["NOVA<br/><b>8.33ms</b><br/>Progressive"]
-    end
-
-    H -.->|5x faster| V
-    S -.->|3x faster| V
-    T -.->|2.6x faster| V
-
-    style H fill:#90EE90,stroke:#006400,stroke-width:4px,color:#000
-    style S fill:#87CEEB,stroke:#00008B,stroke-width:3px,color:#000
-    style T fill:#FFD700,stroke:#FF8C00,stroke-width:3px,color:#000
+    style H fill:#90EE90,stroke:#006400,stroke-width:2px,color:#000
+    style T fill:#FFD700,stroke:#FF8C00,stroke-width:2px,color:#000
+    style R fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px,color:#000
     style V fill:#DDA0DD,stroke:#8B008B,stroke-width:2px,color:#000
     style N fill:#F0E68C,stroke:#DAA520,stroke-width:2px,color:#000
+    style W fill:#87CEEB,stroke:#00008B,stroke-width:2px,color:#000
 ----
 
-**Key Insight**: Choose the right engine for your latency requirement - performance varies 5x!
+Note: Measurements captured on a single machine with a fixed dataset; results vary by hardware and data.
 
 === Scaling to Production (10K Vectors, 30MB Corpus)
 
@@ -90,10 +82,10 @@ graph LR
 |===
 |Engine |1K Vectors |10K Vectors |Scaling
 
-|*HELIX-LZ4*
+|*HELIX (best)*
 |1.46 ms
-|*9.36 ms*
-|6.4x ⭐ Sub-linear
+|*13.17 ms*
+|9.0x (Batch=10,240)
 
 |*SST-LZ4*
 |3.27 ms
@@ -102,16 +94,16 @@ graph LR
 
 |*VIPER*
 |8.03 ms
-|89.5 ms
+|*89.5 ms*
 |11x (Linear)
 
 |*SWIFT*
 |3.12 ms
-|95 ms
+|*94.1 ms*
 |30x ⚠️ Cache limit
 |===
 
-**Production Insights**:
+Insights:
 - HELIX maintains sub-linear scaling (6.4x for 10x data)
 - SST excels at scale (1.6x for 10x data)
 - SWIFT optimized for <5K vectors (degrades at 10K)
@@ -126,14 +118,14 @@ graph LR
 %%{init: {"theme": "default"}}%%
 graph TB
     Q1["Without Filter<br/>Search 1024 vectors<br/>Sort all<br/><b>3.12ms</b>"]
-    Q2["With Type-Safe Filter<br/>Filter to 300 vectors<br/>Sort smaller set<br/><b>2.50ms</b><br/><span style='color:green'>20% FASTER</span>"]
+    Q2["With Type-Safe Filter<br/>Filter to 300 vectors<br/>Sort smaller set<br/><b>lower latency</b><br/><span style='color:green'>FASTER</span>"]
 
     Q1 -.->|Add filtering| Q2
 
     style Q2 fill:#90EE90,stroke:#006400,stroke-width:3px
 ----
 
-**Measured**: Filtering makes queries *faster*, not slower (SWIFT: -20%, SST: -9%, VIPER: -6%)
+Measured on internal dataset: filtering sped up queries (SWIFT: -20%, SST: -9%, VIPER: -6%)
 
 **Why?**: Reducing result set size before sorting saves more time than filter evaluation costs
 
@@ -145,8 +137,8 @@ graph TB
 
 [source,bash]
 ----
-# Docker (production-ready)
-docker run -d -p 5678:5678 proximadb/proximadb:latest
+# Docker
+docker run -d -p 5678:5678 proximadb/proximadb:latest  # or build your own image with Dockerfile
 
 # Or build from source (Rust 1.88+)
 git clone https://github.com/vjsingh1984/proximaDB
@@ -191,7 +183,7 @@ curl -X POST http://localhost:5678/v1/collections/products/search \
 
 ---
 
-== Production-Ready Features (v0.1.4)
+== Capabilities (v0.1.4)
 
 === Core Capabilities
 
@@ -199,11 +191,11 @@ curl -X POST http://localhost:5678/v1/collections/products/search \
 ----
 %%{init: {"theme": "default"}}%%
 graph TD
-    subgraph ENGINES["6 Storage Engines<br/><i>Measured Performance</i>"]
-        E1["HELIX: 1.43ms<br/>Fastest"]
-        E2["SWIFT: 2.50ms<br/>Low-latency"]
-        E3["SST: 2.98ms<br/>Balanced + LZ4"]
-        E4["VIPER: 7.72ms<br/>Analytics"]
+    subgraph ENGINES["6 Storage Engines<br/><i>See Performance for medians</i>"]
+        E1["HELIX<br/>Spatial indexing"]
+        E2["SWIFT<br/>Low-latency writes"]
+        E3["SST<br/>Balanced + compression"]
+        E4["VIPER<br/>Columnar analytics"]
     end
 
     subgraph FILTER["Type-Safe Filtering<br/><i>47 Tests Passing</i>"]
@@ -212,7 +204,7 @@ graph TD
         F3["-20% to +3% overhead"]
     end
 
-    subgraph HARDWARE["Hardware Acceleration<br/><i>Production SIMD</i>"]
+    subgraph HARDWARE["Hardware Acceleration<br/><i>SIMD; optional GPU</i>"]
         H1["AVX2/AVX512/NEON"]
         H2["7.6x encoding speedup"]
         H3["Runtime CPU detection"]
@@ -234,32 +226,34 @@ graph TD
 
 === What's Validated and Ready
 
-**✅ Measured Performance** (Not Speculative):
-- HELIX: 1.43ms search (5x faster than alternatives)
+**Validated Measurements**: Benchmarks are provided with reproducible runs. See docs/performance/README.adoc for 10K medians by engine and compression.
 - Type-safe filtering: -20% overhead (speeds up queries!)
 - LZ4 compression: 7% faster than uncompressed (SST)
 - 47 comprehensive filter tests across all engines
 
-**✅ Production Features**:
-- 6 specialized storage engines with auto-selection
-- REST + gRPC APIs (proto-first architecture)
-- Cloud storage (S3, Azure Blob, GCS)
-- SIMD acceleration (AVX2, AVX512, NEON)
+**Core Features**:
+- 6 storage engines with auto-selection
+- REST + gRPC APIs (proto-first)
+- Cloud storage integrations (optional features)
+- SIMD acceleration (AVX2/AVX512/NEON)
 - Multi-level quantization (Binary, INT8, PQ)
-- Single binary deployment (no external dependencies)
+- Single binary deployment
 
-**🚧 Active Development**:
+**In Progress**:
 - Multi-node clustering
 - JavaScript/TypeScript SDK
 - Monitoring dashboard
 
-**📋 Roadmap 2025**:
-- GPU acceleration (kernel infrastructure exists)
+**Roadmap 2025**:
+- GPU acceleration (feature-gated backends)
 - Enhanced AutoML features
 
 ---
 
 == When to Choose ProximaDB
+
+[NOTE]
+Latency is scale- and dataset-dependent. Small-scale examples below may show sub‑5ms results; for 10K vectors (batch 10,240), see the updated performance table (e.g., SST‑lz4 ≈5.32ms, HELIX ≈13.2ms).
 
 [cols="2,3,1"]
 |===
@@ -267,7 +261,7 @@ graph TD
 
 |**Semantic Search & RAG**
 |Type-safe metadata filtering + fast search
-|*1.43-2.50ms*
+|Scale-dependent (see Performance)
 
 |**E-Commerce**
 |Price/category filters + product similarity
@@ -275,15 +269,15 @@ graph TD
 
 |**Image/Video Search**
 |HELIX spatial indexing (Hilbert curves)
-|*1.43ms*
+|Scale-dependent (see Performance)
 
 |**Real-Time Chat/Agents**
 |SWIFT low-latency + fast writes
-|*2.50ms + 28ms flush*
+|Scale-dependent; ~28ms flush
 
 |**Analytics/Data Science**
 |VIPER Parquet columnar format
-|*7.72ms*
+|Scale-dependent (see Performance)
 |===
 
 ---
@@ -296,10 +290,10 @@ graph TD
 flowchart LR
     Input["Your Data<br/>+ Access Pattern"] --> Auto{Auto<br/>Selection}
 
-    Auto -->|Clustered| HELIX["<b>HELIX</b><br/>1.43ms<br/>🏆 Fastest"]
+    Auto -->|Clustered| HELIX["<b>HELIX</b><br/>~13.2ms (10K)<br/>🏆 Fastest at 1K"]
     Auto -->|Write-heavy| SWIFT["<b>SWIFT</b><br/>28ms flush<br/>⚡ Fast writes"]
-    Auto -->|Balanced| SST["<b>SST</b><br/>2.98ms + LZ4<br/>💰 Compression win"]
-    Auto -->|Analytics| VIPER["<b>VIPER</b><br/>7.72ms<br/>📊 Columnar"]
+    Auto -->|Balanced| SST["<b>SST</b><br/>~5.32ms (10K) LZ4<br/>💰 Compression win"]
+    Auto -->|Analytics| VIPER["<b>VIPER</b><br/>~89.5ms (10K)<br/>📊 Columnar"]
 
     style HELIX fill:#90EE90,stroke:#006400,stroke-width:3px,color:#000
     style SWIFT fill:#87CEEB,stroke:#00008B,stroke-width:3px,color:#000
@@ -317,14 +311,14 @@ flowchart LR
 ----
 %%{init: {"theme": "default"}}%%
 graph TD
-    subgraph SST["SST Engine<br/><b>Compression Makes It Faster!</b>"]
-        S1["No Compression<br/>3.52ms<br/>1.0x storage"]
-        S2["LZ4 Compression<br/><b>2.98ms</b> ⭐<br/>0.5x storage<br/><span style='color:green'>-7% latency</span>"]
+    subgraph SST["SST Engine<br/><b>Compression Makes It Faster (10K)</b>"]
+        S1["No Compression<br/>~6.0ms<br/>1.0x storage"]
+        S2["LZ4 Compression<br/><b>~5.32ms</b> ⭐<br/>storage savings<br/><span style='color:green'>~11% faster vs none</span>"]
     end
 
-    subgraph HELIX["HELIX Engine<br/><b>Free Compression</b>"]
-        H1["No Compression<br/>1.43ms"]
-        H2["Zstd Compression<br/><b>1.42ms</b> ⭐<br/>0.3x storage<br/><span style='color:green'>No penalty!</span>"]
+    subgraph HELIX["HELIX Engine<br/><b>Compression Near-Neutral (10K)</b>"]
+        H1["No Compression<br/>~13.5ms"]
+        H2["LZ4/Zstd<br/><b>~13–14ms</b><br/><span style='color:green'>±1–3% change</span>"]
     end
 
     S1 -.->|Enable LZ4| S2
@@ -354,9 +348,9 @@ graph TB
 
     subgraph ENGINES["6 Storage Engines<br/><i>Auto-Selected</i>"]
         direction LR
-        HELIX["HELIX<br/>1.43ms"]
-        SWIFT["SWIFT<br/>2.50ms"]
-        SST["SST<br/>2.98ms"]
+        HELIX["HELIX"]
+        SWIFT["SWIFT"]
+        SST["SST"]
     end
 
     ENGINES --> COMPUTE["SIMD Compute<br/><i>AVX2/AVX512/NEON</i>"]
@@ -439,7 +433,7 @@ _All ProximaDB numbers measured on Linux x86_64 AVX-512, October 2024_
 ----
 %%{init: {"theme": "default"}}%%
 graph LR
-    BENCH["Benchmark Suite<br/>24 configurations<br/>48 scenarios"] --> MEASURED["Measured Results<br/>1.43-8.33ms range<br/>Oct 19, 2024"]
+    BENCH["Benchmark Suite<br/>Standard batches (1K, 4K, 10K)"] --> MEASURED["Measured Results<br/>~5–115ms @10K by engine<br/>Oct 19, 2024"]
     MEASURED --> VALIDATED["47 Filter Tests<br/>All passing<br/>100% coverage"]
     VALIDATED --> PROD["Production Ready<br/>No speculation<br/>Battle-tested"]
 
@@ -570,7 +564,7 @@ graph TD
 
 **ProximaDB Solution**: Fast semantic search with source attribution
 
-**Engine**: SWIFT (2.50ms) or SST-LZ4 (2.98ms)
+**Engine**: SWIFT (low-latency at small scale; ~95ms at 10K) or SST‑LZ4 (~5.32ms at 10K)
 
 **Example**: Customer support knowledge base
 [source,python]
@@ -617,7 +611,7 @@ results = collection.search(
 
 **ProximaDB Solution**: Product embedding similarity with real-time filters
 
-**Engine**: HELIX (1.43ms) - products cluster by category naturally
+**Engine**: HELIX (~13.2ms at 10K; ~1.43ms at small scale) - products cluster by category naturally
 
 **Example**: "Customers who viewed this also viewed..."
 [source,python]
@@ -654,7 +648,7 @@ similar = collection.search(
 ----
 
 **Why ProximaDB**:
-- 1.43ms latency (instant recommendations)
+- Low latency (scale-dependent)
 - Type-safe price/rating filters (Float)
 - Inventory checks (Boolean, Integer)
 - 5x faster than alternatives
@@ -669,7 +663,7 @@ similar = collection.search(
 
 **ProximaDB Solution**: Fast retrieval of relevant conversation history
 
-**Engine**: SWIFT (2.50ms + 28ms writes) - frequent updates, low latency
+**Engine**: SWIFT (~95ms at 10K; low-latency writes at small scale) - frequent updates, ~28ms flush
 
 **Example**: AI assistant with long-term memory
 [source,python]
@@ -707,7 +701,7 @@ context = collection.search(
 
 **Why ProximaDB**:
 - SWIFT 28ms writes (real-time conversation updates)
-- 2.50ms search (instant context retrieval)
+- Low latency (scale-dependent)
 - Temporal filtering (timestamp range queries)
 - Session/user isolation via filters
 
@@ -719,7 +713,7 @@ context = collection.search(
 
 **ProximaDB Solution**: Semantic similarity with engagement metrics
 
-**Engine**: SST-LZ4 (2.98ms) - balanced read/write with compression
+**Engine**: SST-LZ4 (~5.32ms at 10K; ~2.98ms at small scale) - balanced read/write with compression
 
 **Example**: News/blog recommendation engine
 [source,python]
@@ -771,7 +765,7 @@ articles = collection.search(
 
 **ProximaDB Solution**: Spatial indexing for high-dimensional visual embeddings
 
-**Engine**: HELIX (1.43ms) - optimized for CNN embeddings
+**Engine**: HELIX (~13.2ms at 10K; ~1.43ms at small scale) - optimized for CNN embeddings
 
 **Example**: Visual search for e-commerce
 [source,python]
@@ -809,7 +803,7 @@ similar_images = collection.search(
 ----
 
 **Why ProximaDB**:
-- HELIX 1.43ms (Hilbert curves for visual similarity)
+- HELIX low latency (Hilbert curves for visual similarity)
 - PCA compression (70% savings for image embeddings)
 - High-dimensional support (1536D, 2048D CNN features)
 
@@ -821,7 +815,7 @@ similar_images = collection.search(
 
 **ProximaDB Solution**: Fast similarity search with threshold filtering
 
-**Engine**: SWIFT (2.50ms) - real-time detection requirements
+**Engine**: SWIFT (~95ms at 10K; low-latency writes at small scale) - real-time detection requirements
 
 **Example**: Transaction fraud detection
 [source,python]
@@ -859,7 +853,7 @@ if similar_patterns and similar_patterns[0].score > 0.85:
 ----
 
 **Why ProximaDB**:
-- 2.50ms latency (real-time fraud checks)
+- Low latency (scale-dependent)
 - Severity thresholds (Integer filters)
 - Confidence scoring (Float filters)
 - Fast writes (28ms for pattern updates)
@@ -872,7 +866,7 @@ if similar_patterns and similar_patterns[0].score > 0.85:
 
 **ProximaDB Solution**: Semantic understanding of issues with team/priority filters
 
-**Engine**: SST-LZ4 (2.98ms) - balanced, frequent updates
+**Engine**: SST-LZ4 (~5.32ms at 10K) - balanced, frequent updates
 
 **Example**: Intelligent ticket routing
 [source,python]
@@ -924,7 +918,7 @@ recommended_team = similar_tickets[0].metadata["team"]
 
 **ProximaDB Solution**: Code embedding search with language/framework filters
 
-**Engine**: VIPER (7.72ms) - large codebases, analytical queries
+**Engine**: VIPER (~89.5ms at 10K; ~7.72ms at small scale) - large codebases, analytical queries
 
 **Example**: Code snippet search
 [source,python]
@@ -975,7 +969,7 @@ similar_code = code_collection.search(
 
 **ProximaDB Solution**: Store multiple embedding types with shared metadata
 
-**Engine**: HELIX (1.43ms) for each modality
+**Engine**: HELIX (scale-dependent) for each modality
 
 **Example**: Product search with image + text
 [source,python]
@@ -1020,7 +1014,7 @@ combined = fuse_results(text_results, image_results, weights=[0.6, 0.4])
 
 **ProximaDB Solution**: Timestamp-based filtering with version tracking
 
-**Engine**: SST-LZ4 (2.98ms) - frequent version updates
+**Engine**: SST-LZ4 (~5.32ms at 10K) - frequent version updates
 
 **Example**: Document versioning
 [source,python]
@@ -1070,7 +1064,7 @@ latest = docs.search(
 
 **ProximaDB Solution**: Similarity threshold search with metadata deduplication
 
-**Engine**: VIPER (7.72ms) - batch deduplication jobs
+**Engine**: VIPER (~89.5ms at 10K) - batch deduplication jobs
 
 **Example**: News article deduplication
 [source,python]
@@ -1109,7 +1103,7 @@ else:
 
 **ProximaDB Solution**: Baseline pattern vectors with threshold queries
 
-**Engine**: SWIFT (2.50ms) - real-time monitoring
+**Engine**: SWIFT (scale-dependent) - real-time monitoring
 
 **Example**: Server health monitoring
 [source,python]
@@ -1148,7 +1142,7 @@ if similar_patterns[0].score < 0.70:  # <70% similar to normal
 ----
 
 **Why ProximaDB**:
-- Real-time detection (2.50ms)
+- Real-time detection (scale-dependent)
 - Fast writes (28ms for pattern updates)
 - Contextual filtering (time of day, server)
 
@@ -1160,7 +1154,7 @@ if similar_patterns[0].score < 0.70:  # <70% similar to normal
 
 **ProximaDB Solution**: Legal text embeddings with jurisdictional filters
 
-**Engine**: VIPER (7.72ms) - large legal corpus, analytical
+**Engine**: VIPER (~89.5ms at 10K) - large legal corpus, analytical
 
 **Example**: Case law research
 [source,python]
@@ -1210,7 +1204,7 @@ relevant_cases = cases.search(
 
 **ProximaDB Solution**: Skills/experience embeddings with requirement filters
 
-**Engine**: SST-LZ4 (2.98ms) - frequent updates, compression
+**Engine**: SST-LZ4 (~5.32ms at 10K) - frequent updates, compression
 
 **Example**: Job matching
 [source,python]
@@ -1261,7 +1255,7 @@ matches = candidates.search(
 
 **ProximaDB Solution**: Learning objective embeddings with progress tracking
 
-**Engine**: HELIX (1.43ms) - learning materials cluster by topic
+**Engine**: HELIX (~13.2ms at 10K; ~1.43ms at small scale) - learning materials cluster by topic
 
 **Example**: Adaptive quiz system
 [source,python]
@@ -1316,77 +1310,77 @@ next_questions = questions.search(
 |**RAG Systems**
 |Source tracking, date filters
 |SWIFT/SST
-|2.50-2.98ms
+|Scale-dependent (see Performance)
 
 |**E-Commerce**
 |Price, inventory, ratings
 |HELIX
-|1.43ms
+|Scale-dependent (see Performance)
 
 |**Chatbots**
 |Session context, temporal
 |SWIFT
-|2.50ms + 28ms writes
+|Scale-dependent (low-latency writes)
 
 |**Content Discovery**
 |Engagement metrics, quality
 |SST-LZ4
-|2.98ms + compression
+|~5.32ms at 10K (see Performance)
 
 |**Visual Search**
 |High-dimensional images
 |HELIX
-|1.43ms (2048D)
+|~13.2ms at 10K (lower at small scale)
 
 |**Fraud Detection**
 |Real-time, severity
 |SWIFT
-|2.50ms
+|Scale-dependent (see Performance)
 
 |**Support Routing**
 |Team, priority, resolution
 |SST-LZ4
-|2.98ms
+|~5.32ms at 10K (see Performance)
 
 |**Code Search**
 |Language, complexity
 |VIPER
-|7.72ms
+|~89.5ms at 10K (see Performance)
 
 |**Multi-Modal**
 |Unified metadata
 |HELIX
-|1.43ms per modality
+|Scale-dependent (see Performance)
 
 |**Versioning**
 |Version, approval, temporal
 |SST
-|2.98ms
+|~5.32ms at 10K (LZ4)
 
 |**Deduplication**
 |Similarity threshold
 |VIPER
-|Batch 7.72ms
+|Scale-dependent (analytical)
 
 |**Anomaly Detection**
 |Pattern matching
 |SWIFT
-|2.50ms real-time
+|Scale-dependent (low-latency writes)
 
 |**Legal Search**
 |Jurisdiction, precedent
 |VIPER
-|7.72ms (large corpus)
+|~89.5ms at 10K (see Performance)
 
 |**Recruitment**
 |Experience, salary range
 |SST-LZ4
-|2.98ms
+|~5.32ms at 10K (see Performance)
 
 |**Education**
 |Difficulty, performance
 |HELIX
-|1.43ms
+|~13.2ms at 10K (lower at small scale)
 |===
 
 **Common Thread**: Type-safe metadata filtering (Integer, Float, Boolean, String) enables business logic integration across all use cases.

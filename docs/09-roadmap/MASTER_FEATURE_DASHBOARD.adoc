@@ -36,7 +36,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 
 [cols="1,1,1,1,1", options="header"]
 |===
-| Completed (78) | In Progress (3) | Future (40) | By Priority | By Category
+| Completed | In Progress | Future | By Priority | By Category
 | <<completed-features>> | <<in-progress-features>> | <<future-features>> | <<priority-index>> | <<category-index>>
 |===
 
@@ -79,16 +79,16 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | 027 | Binary Quantization | Performance | ✅ | File-level quantization columns implemented
 | 028 | INT8 Quantization | Performance | ✅ | File-level quantization columns implemented
 | 029 | PQ4/8/16/32 Quantization | Performance | ✅ | Full PQ suite with file-level columns
-| 030 | Hardware Acceleration | Performance | ❌ | No SIMD/GPU found
-| 031 | Progressive Cascade Search | Performance | ❌ | Not implemented
-| 032 | Codebook Caching | Performance | ❌ | Not implemented
+| 030 | Hardware Acceleration | Performance | ⚠️ Partial | SIMD complete; GPU feature-gated (CUDA/Metal/OpenCL)
+| 031 | Progressive Cascade Search | Performance | ✅ | Progressive pipeline + benches present
+| 032 | Codebook Caching | Performance | ✅ | GlobalQuantizationCache implemented
 | 033 | k-means++ Clustering | Performance | ❌ | Not found
 | 034 | SIMD Distance Compute | Performance | ❌ | No SIMD code
 | 035 | Bloom Filters | Performance | ✅ | Found in SSTable
 
-| 036 | ORION Graph Engine | Graph | ✅ | 1M+ edges/sec
-| 037 | PULSAR Graph Engine | Graph | ✅ | Distributed ops
-| 038 | QUASAR Graph Engine | Graph | ✅ | Hybrid storage
+| 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR engine
+| 037 | PULSAR Graph Engine | Graph | ⚠️ Partial | Distributed engine present; wiring pending
+| 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine present; wiring pending
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
 
 | 040 | UnifiedAuthService | Security | ⚠️ Partial | Basic auth only
@@ -123,7 +123,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 
 | 067 | Cloud Storage Support | Platform | ✅ | S3/Azure/GCS
 | 068 | Python SDK | Platform | ✅ | Full client library
-| 069 | Dashboard UI | Platform | ✅ | Web interface
+| 069 | Dashboard UI | Platform | ⚠️ Partial | UI present; functionality limited
 | 070 | Docker Support | Platform | ✅ | Container deployment
 
 | 071 | README Documentation | Docs | ✅ | Basic readme
@@ -188,10 +188,10 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 |===
 
 [[category-index]]
-== 📂 Features by Category
+== 📂 Features by Category (status reflects v0.1.4 code)
 
 [[completed-features]]
-=== ✅ COMPLETED (78 items)
+=== ✅ COMPLETED (representative set)
 
 ==== Core Infrastructure (15/15 - 100%)
 * 001-010: Foundation components
