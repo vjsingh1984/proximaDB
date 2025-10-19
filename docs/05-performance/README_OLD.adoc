@@ -351,7 +351,8 @@ xychart-beta
     bar [500, 100, 300, 400, 350, 250]
 ----
 
-**Write Speed Performance**: SST (500K/s), VIPER (100K/s), NOVA (300K/s), SWIFT (400K/s), RAPTOR (350K/s), HELIX (250K/s)
+**Write Speed Performance** (Measured): SWIFT (36K/s), HELIX (25K/s), VIPER (21K/s), SST (9K/s), NOVA (17K/s), RAPTOR (0.6K/s)
+*Note: Based on actual benchmarks with 1K vectors, 768D. See docs/performance/BENCHMARK_RESULTS_ANALYSIS.md*
 
 **Memory Usage per Vector**: SST (3KB), VIPER (1KB), NOVA (2KB), SWIFT (2.5KB), RAPTOR (2KB), HELIX (1.5KB)
 

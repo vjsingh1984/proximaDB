@@ -163,7 +163,7 @@ For detailed benchmark charts and comparative analysis, see:
 |**8.44M ops/sec** (562x faster)
 
 |**Open-Source Leader #1**
-|100K ops/sec (8x V100 GPUs)
+|36K ops/sec (SWIFT, measured) (8x V100 GPUs)
 |~8K ops/sec on M4 Pro CPU only
 |**8.44M ops/sec** (1055x faster)
 
@@ -638,7 +638,7 @@ ProximaDB's Proxima encoding system delivers exceptional performance with config
 * **1592% Compression Improvement**: Columnar encoding achieves 17x compression ratio
 * **94% Storage Reduction**: Massive cost savings with columnar strategy
 * **50M+ Decoding Operations/sec**: Row-wise provides instant read access
-* **Round-trip Efficiency**: <1ms total time for row-wise, 17x compression for columnar
+* **Round-trip Efficiency**: 1.6ms (HELIX) to 8.9ms (RAPTOR) total time for row-wise, 17x compression for columnar
 
 [source,mermaid]
 ----
@@ -646,7 +646,7 @@ ProximaDB's Proxima encoding system delivers exceptional performance with config
 graph TB
     subgraph ENCODING["ENCODING STRATEGIES"]
         C[Columnar<br/>17x Compression<br/>38-77ms Latency]
-        R[Row-wise<br/>No Compression<br/><1ms Latency]
+        R[Row-wise<br/>No Compression<br/>1.6ms (HELIX) to 8.9ms (RAPTOR) Latency]
         A[Auto Mode<br/>Dimension-based<br/>Selection]
     end
 
@@ -912,7 +912,7 @@ flowchart LR
 
 |Direct SDK
 |200K req/sec
-|<1ms
+|1.6ms (HELIX) to 8.9ms (RAPTOR)
 |Minimal
 |===
 
