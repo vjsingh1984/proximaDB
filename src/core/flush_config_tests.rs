@@ -30,8 +30,8 @@ mod tests {
         assert_eq!(config.max_files_per_level, 10);
 
         // Test block size
-        assert_eq!(config.block_size_kb, 2048); // 2MB blocks (default)
-        assert_eq!(config.block_size_bytes(), 2048 * 1024);
+        assert_eq!(config.block_size_kb, 1024); // 1MB blocks (new default)
+        assert_eq!(config.block_size_bytes(), 1024 * 1024);
 
         // Test compression - server default is none (no compression)
         assert_eq!(
@@ -95,7 +95,7 @@ mod tests {
         let valid_config = SstConfig {
             level_count: 7,
             compaction_threshold: 5,
-            block_size_kb: 2048, // 2MB - optimal for cloud storage
+            block_size_kb: 1024, // 1MB - new default
             decompression_cache_config: None,
             ..Default::default()
         };
@@ -127,7 +127,7 @@ mod tests {
 
         // Test block size too large
         let large_blocks = SstConfig {
-            block_size_kb: 20000, // More than 16MB - too large
+            block_size_kb: 5000, // More than 4MB - too large (new max)
             decompression_cache_config: None,
             ..Default::default()
         };

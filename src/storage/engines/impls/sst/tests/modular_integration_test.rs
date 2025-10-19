@@ -129,7 +129,7 @@ mod tests {
         let engine = create_test_engine().await;
 
         // Test that the engine is properly initialized
-        assert_eq!(engine.config().block_size_kb, 2048); // Default value
+        assert_eq!(engine.config().block_size_kb, 1024); // New default // Default value
 
         // Test filesystem access (this should work)
         let fs = engine.filesystem();
