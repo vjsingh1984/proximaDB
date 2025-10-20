@@ -97,14 +97,14 @@ class TestRealServerBatching(BaseProximaDBTest):
         
         # Verify results
         assert len(results) == 4  # 100/25 = 4 batches
-        assert all(r.get("success", False) for r in results)
+        assert all(r.success if hasattr(r, "success") else r.get("success", False) for r in results)
         
         # Wait for indexing
         self.wait_for_indexing()
         
         # Verify with search
         query_vector = vectors[0].vector
-        search_results = self.rest_client.search_vectors(
+        search_results = self.rest_client.search(
             collection_name,
             query_vector,
             top_k=10
@@ -172,7 +172,7 @@ class TestRealServerBatching(BaseProximaDBTest):
         self.wait_for_indexing()
         
         # Verify with search
-        results = self.rest_client.search_vectors(
+        results = self.rest_client.search(
             collection_name,
             [0.1] * 384,
             top_k=10
@@ -217,13 +217,13 @@ class TestRealServerBatching(BaseProximaDBTest):
             # Verify results
             expected_batches = (total_vectors + batch_size - 1) // batch_size
             assert len(results) == expected_batches
-            assert all(r.get("success", False) for r in results)
+            assert all(r.success if hasattr(r, "success") else r.get("success", False) for r in results)
         
         # Wait for indexing
         self.wait_for_indexing()
         
         # Verify total insertion
-        all_results = self.rest_client.search_vectors(
+        all_results = self.rest_client.search(
             collection_name,
             [0.1] * 384,
             top_k=100  # Get many results
@@ -313,12 +313,12 @@ class TestBatchHelpers(BaseProximaDBTest):
         
         # Verify results
         assert len(results) == 3  # 75 vectors / 25 batch size = 3 batches
-        assert all(r.get("success", False) for r in results)
+        assert all(r.success if hasattr(r, "success") else r.get("success", False) for r in results)
         
         # Verify insertion
         self.wait_for_indexing()
         
-        search_results = self.rest_client.search_vectors(
+        search_results = self.rest_client.search(
             collection_name,
             vectors[0].vector,
             top_k=5
@@ -366,7 +366,7 @@ class TestGRPCBatching(BaseProximaDBTest):
         
         # Verify with search
         query_vector = vectors[0].vector
-        search_results = self.grpc_client.search_vectors(
+        search_results = self.grpc_client.search(
             collection_name,
             query_vector,
             top_k=10
@@ -417,20 +417,20 @@ class TestGRPCBatching(BaseProximaDBTest):
         # Verify both succeeded
         assert len(rest_results) == 2
         assert len(grpc_results) == 2
-        assert all(r.get("success", False) for r in rest_results)
+        assert all(r.success if hasattr(r, "success") else r.get("success", False) for r in rest_results)
         assert all(r.success for r in grpc_results)
         
         # Wait for indexing
         self.wait_for_indexing()
         
         # Verify both collections have the data
-        rest_search = self.rest_client.search_vectors(
+        rest_search = self.rest_client.search(
             rest_collection,
             vectors[0].vector,
             top_k=5
         )
         
-        grpc_search = self.grpc_client.search_vectors(
+        grpc_search = self.grpc_client.search(
             grpc_collection,
             vectors[0].vector,
             top_k=5
