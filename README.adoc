@@ -20,8 +20,8 @@ _Built in Rust • Internally validated by benchmarks • Focused on AI applicat
 mindmap
   root((ProximaDB<br/>Vector Database))
     Performance
-      HELIX: 1.43ms (1K) · 13.2ms (10K)
-      7% faster with compression
+      SST-LZ4: 5.34ms at 10K production
+      11% faster with LZ4 compression
       Type-safe filtering speedup
     Flexibility
       6 specialized engines
