@@ -34,7 +34,6 @@ def verify_wal_persistence(collection_name):
     wal_paths = [
         "/tmp/proximadb/data/wal",
         "/tmp/proximadb/wal",
-        "/workspace/data/wal"
     ]
     
     for wal_path in wal_paths:
@@ -65,7 +64,6 @@ def verify_collection_persistence(collection_name):
     collections_paths = [
         "/tmp/proximadb/data/metadata",
         "/tmp/proximadb/metadata",
-        "/workspace/data/metadata"
     ]
     
     for collections_path in collections_paths:
