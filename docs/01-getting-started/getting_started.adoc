@@ -105,7 +105,7 @@ curl http://localhost:5678/health
 # Expected response
 {
   "status": "healthy",
-  "version": "1.0.5",
+  "version": "0.1.4",
   "services": {
     "vector_engine": "ready",
     "graph_engine": "ready",
