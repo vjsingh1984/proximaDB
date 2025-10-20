@@ -144,9 +144,16 @@
 === API Reference
 
 **APIs**:
-- link:03-reference/rest-api-specification.adoc[REST API Reference]
+- link:03-reference/api_reference.adoc[REST API Reference]
 - link:03-reference/graph_api_reference.adoc[Graph API Reference]
 - link:03-reference/sks_technical_reference.adoc[SKS Technical Reference]
+
+---
+
+=== Security
+
+**Security**:
+- link:02-guides/security_guide.adoc[Security Guide]
 
 ---
 
