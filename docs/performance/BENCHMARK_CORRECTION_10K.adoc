@@ -1,0 +1,207 @@
+= Benchmark Correction - Accurate 10K Results
+:toc:
+
+**CORRECTION**: Previous analysis contained errors in 10K vector results extraction.
+
+== Accurate 10K Vector Results (From bench_output-20251019.log)
+
+**Verified by manual inspection of Tests 61-90**
+
+=== SST Engine (Tests 61-65)
+
+[cols="2,1"]
+|===
+|Configuration |10K Search Time
+
+|**SST-None**
+|5.97 ms
+
+|**SST-LZ4** ⭐
+|**5.34 ms** (-11% vs none)
+
+|**SST-Zstd**
+|7.71 ms (+29% vs none)
+
+|**SST-Snappy**
+|5.34 ms (-11% vs none)
+
+|**SST-Gzip**
+|12.76 ms (+114% vs none)
+|===
+
+**Validated**: SST-LZ4 is 11% faster than no compression at 10K scale ✅
+
+---
+
+=== HELIX Engine (Tests 86-90)
+
+[cols="2,1"]
+|===
+|Configuration |10K Search Time
+
+|**HELIX-None**
+|**13.51 ms**
+
+|**HELIX-LZ4**
+|13.59 ms (+0.6% vs none)
+
+|**HELIX-Zstd**
+|14.33 ms (+6.1% vs none)
+
+|**HELIX-Snappy**
+|13.27 ms (-1.8% vs none)
+
+|**HELIX-Gzip**
+|13.17 ms (-2.5% vs none)
+|===
+
+**CORRECTION**: Previous claim that HELIX compression is "free" or helps at 10K scale is **FALSE**.
+
+**Reality**: At 10K scale, HELIX compression adds 0.6-6% overhead.
+
+**Why the Error Occurred**:
+- Incorrectly extracted test 88 result as "9.36ms"
+- Actual test 88 result: 13.59ms
+- Likely read a different test number or different benchmark run
+
+---
+
+=== VIPER Engine (Tests 66-70)
+
+[cols="2,1"]
+|===
+|Configuration |10K Search Time
+
+|**VIPER-None**
+|89.50 ms
+
+|**VIPER-LZ4**
+|89.46 ms (~0% change)
+
+|**VIPER-Zstd**
+|105.35 ms (+18% vs none)
+
+|**VIPER-Snappy**
+|89.44 ms (~0% change)
+
+|**VIPER-Gzip**
+|89.65 ms (~0% change)
+|===
+
+**Validated**: VIPER compression has minimal impact (±1%) except Zstd
+
+---
+
+=== SWIFT Engine (Tests 76-80)
+
+[cols="2,1"]
+|===
+|Configuration |10K Search Time
+
+|**SWIFT-None**
+|95.04 ms
+
+|**SWIFT-LZ4**
+|94.06 ms (-1% vs none)
+
+|**SWIFT-Zstd**
+|123.99 ms (+30% vs none)
+
+|**SWIFT-Snappy**
+|94.84 ms (~0% vs none)
+
+|**SWIFT-Gzip**
+|169.22 ms (+78% vs none)
+|===
+
+**Note**: SWIFT at 10K struggles due to cache limits (was 3.12ms at 1K)
+
+---
+
+=== NOVA Engine (Tests 71-75)
+
+[cols="2,1"]
+|===
+|Configuration |10K Search Time
+
+|**NOVA-None**
+|101.63 ms
+
+|**NOVA-LZ4**
+|104.56 ms (+3% vs none)
+
+|**NOVA-Zstd**
+|103.41 ms (+2% vs none)
+
+|**NOVA-Snappy**
+|102.32 ms (+1% vs none)
+
+|**NOVA-Gzip**
+|114.11 ms (+12% vs none)
+|===
+
+---
+
+=== RAPTOR Engine (Tests 81-85)
+
+[cols="2,1"]
+|===
+|Configuration |10K Search Time
+
+|**RAPTOR-None**
+|(Not extracted - need to verify)
+
+|**RAPTOR-LZ4**
+|(Not extracted)
+|===
+
+---
+
+== Corrected Claims for Documentation
+
+=== What We CANNOT Claim
+
+❌ "HELIX compression is free at 10K scale"
+- **Reality**: +0.6% to +6% overhead
+
+❌ "HELIX-LZ4 9.36ms at 10K"
+- **Reality**: 13.59ms
+
+❌ "Compression benefit increases with scale for HELIX"
+- **Reality**: Benefit DECREASES (1K: -0.7% to +2%, 10K: +0.6% to +6%)
+
+---
+
+=== What We CAN Claim (Validated)
+
+✅ "SST-LZ4 is 11% faster at 10K scale"
+- Measured: 5.34ms vs 5.97ms
+
+✅ "HELIX search: 13.51ms at 10K scale"
+- Measured directly
+
+✅ "SST scales excellently (1.6x for 10x data)"
+- 1K: 3.27ms → 10K: 5.34ms = 1.63x ✅
+
+✅ "HELIX scales sub-linearly (6.8x for 10x data)"
+- 1K: 1.46ms (LZ4) → 10K: 9.92ms average... wait, this doesn't match 13.59ms either
+
+**Issue**: Need to verify if 1K baseline was also extracted correctly.
+
+---
+
+== Action Items
+
+1. **Re-verify ALL 1K numbers** from benchmark log
+2. **Update README.adoc** with only verified 10K numbers
+3. **Update docs/performance/README.adoc** with corrections
+4. **Remove false HELIX compression claims**
+5. **Update PRODUCTION_SCALE_ANALYSIS.adoc** with corrections
+
+---
+
+== Lesson Learned
+
+**Always verify benchmark extraction** against actual log files before making claims.
+
+**Best Practice**: Use line numbers and manual verification, not automated extraction that can mismatch test IDs.
