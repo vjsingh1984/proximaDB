@@ -115,6 +115,7 @@
 - link:../src/storage/engines/impls/raptor/README.adoc[RAPTOR Engine]
 
 **Deep Dives** (External docs):
+- link:02-guides/storage_engine_guide.adoc[Storage Engine Guide]
 - link:storage/sst-engine-deep-dive.adoc[SST Deep Dive]
 - link:storage/viper-engine-deep-dive.adoc[VIPER Deep Dive]
 - link:storage/nova-engine-deep-dive.adoc[NOVA Deep Dive]
