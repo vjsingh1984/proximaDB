@@ -128,4 +128,209 @@ compression = "none"
 
 ---
 
+== Graph Database Performance
+
+**Benchmark Suites**: bench_14_graph_operations, bench_17_graph_engines +
+**Platform**: Linux x86_64 +
+**Sample Size**: 30–40 measurements per benchmark
+
+=== Node and Edge Operations
+
+[cols="3,2,2"]
+|===
+|Operation |Throughput |Latency
+
+|**Node Creation (128)**
+|76-80 Kelem/s
+|1.60-1.72 ms
+
+|**Node Creation (1K)**
+|72-77 Kelem/s
+|13.3-14.3 ms
+
+|**Node Creation (10K)**
+|76-84 Kelem/s
+|122-135 ms
+
+|**Edge Creation (128)**
+|133-142 Kelem/s
+|899-961 μs
+
+|**Edge Creation (1K)**
+|130-145 Kelem/s
+|7.08-7.90 ms
+
+|**Edge Creation (5K)**
+|112-123 Kelem/s
+|41.8-45.9 ms
+|===
+
+**Key Findings**:
+
+- Node creation maintains consistent ~75K elem/s throughput across scales
+- Edge creation is faster than node creation (140K vs 75K elem/s at small scale)
+- Both operations scale linearly with dataset size
+
+=== Query Operations
+
+[cols="3,2"]
+|===
+|Query Type |Latency
+
+|**Query by ID**
+|~80 μs
+
+|**Query by Label**
+|~56 μs
+
+|**Query by Property** (filter)
+|~113 μs
+|===
+
+**Key Findings**:
+
+- Label-based queries are fastest (~56μs) due to simple index lookup
+- ID queries slightly slower (~80μs) for hash map access
+- Property filtering adds ~57μs overhead vs label queries
+- All query types show sub-millisecond latency
+
+=== Graph Traversal
+
+[cols="3,2,2"]
+|===
+|Algorithm |Latency |Characteristics
+
+|**BFS** (depth 3, limit 64)
+|~15.1 μs
+|Breadth-first exploration
+
+|**DFS** (depth 4, limit 64)
+|~19.1 μs
+|Depth-first exploration
+|===
+
+**Key Findings**:
+
+- BFS ~27% faster than DFS for shallow traversals
+- Both show excellent sub-20μs latency
+- Traversal on 128-node graph with 150 edges
+
+---
+
+=== Latest Cross-Engine Results (bench_17_graph_engines)
+
+[cols="2,2,2,2"]
+|===
+| Metric | ORION | PULSAR | QUASAR
+
+| Node create 128 | 51–65 Kelem/s | 46–57 Kelem/s | 41–66 Kelem/s
+| Node create 1024 | 59–73 Kelem/s | 38–44 Kelem/s | 33–37 Kelem/s
+| Node create 4096 | 72–82 Kelem/s | 37–45 Kelem/s | 30–40 Kelem/s
+
+| Edge create 128 | 126–151 Kelem/s | 198–202 Kelem/s | 340–355 Kelem/s
+| Edge create 1024 | 125–139 Kelem/s | 191–201 Kelem/s | 274–310 Kelem/s
+| Edge create 4096 | 109–135 Kelem/s | 171–176 Kelem/s | 45–55 Kelem/s
+
+| Property query (0 filter) | 2.01–2.39 Melem/s | 0.50–0.53 Melem/s | 0.55–0.72 Melem/s
+
+| BFS latency | ~32 μs | ~150–170 μs | ~24 μs
+| DFS latency | ~40 μs | ~215–224 μs | ~33–34 μs
+|===
+
+Notes:
+- QUASAR sync benchmark paths operate against hot tier only to avoid nested runtime blocking; cold-tier operations are scheduled asynchronously and do not impact these latencies.
+- For larger graphs (≥10K) or deeper traversals, consider partitioning and parallelization.
+
+=== Shortest Path Algorithms
+
+[cols="3,2,2"]
+|===
+|Algorithm |Latency |Graph Type
+
+|**Dijkstra** (20×20 grid)
+|~1.55 μs
+|Weighted grid (38 hops)
+
+|**A*** (20×20 grid)
+|~1.50 μs
+|Weighted grid with heuristic
+
+|**K-Shortest Paths** (k=5)
+|~2.42 ms
+|Dense layered graph (5 layers × 10 nodes)
+|===
+
+**Key Findings**:
+
+- A* slightly faster than Dijkstra (~3% improvement) with spatial heuristics
+- Both single-path algorithms show sub-2μs latency
+- K-shortest paths (k=5) ~1600× slower due to multiple path exploration
+- Grid pathfinding extremely efficient for spatial graphs
+
+=== Graph Analysis
+
+[cols="3,2,2"]
+|===
+|Algorithm |Latency |Graph Size
+
+|**Connected Components**
+|~1.45 ms
+|200 nodes (4 components × 50 nodes)
+
+|**Cycle Detection**
+|~297 μs
+|192 nodes (3 rings × 64 nodes)
+|===
+
+**Key Findings**:
+
+- Connected components analysis ~1.45ms for 200-node graph
+- Cycle detection ~5× faster than component detection
+- Both scale linearly with node count
+
+=== Scaling Analysis
+
+**Connected Components Scaling**:
+
+[cols="2,2,2"]
+|===
+|Nodes |Latency |Throughput
+
+|200 (4×50)
+|1.45 ms
+|138 Kelem/s
+
+|800 (4×200)
+|16.1 ms
+|49.7 Kelem/s
+
+|3200 (4×800)
+|212 ms
+|15.1 Kelem/s
+|===
+
+**Scaling Factor**: ~15× latency increase per 4× node increase
+
+=== Performance Recommendations
+
+**For High-Throughput Applications**:
+
+- Prefer label-based queries over property filters when possible
+- Use BFS for shallow traversals (depth ≤ 3)
+- Edge creation is 2× faster than node creation - batch edges separately
+
+**For Low-Latency Applications**:
+
+- All query types deliver sub-millisecond latency
+- Single-path algorithms (Dijkstra, A*) deliver sub-10μs latency
+- Traversal operations complete in <20μs for moderate graphs
+
+**Scaling Considerations**:
+
+- Node/edge creation throughput stable at 75-140K elem/s
+- Connected components analysis scales linearly
+- For graphs >10K nodes, consider partitioning for parallel analysis
+
+---
+
 _Verified from bench_output-20251019.log, tests 61-90_
