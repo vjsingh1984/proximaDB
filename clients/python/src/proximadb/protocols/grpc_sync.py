@@ -862,6 +862,330 @@ class ProximaDBSyncGrpcClient:
             upsert=upsert
         )
 
+    # === GRAPH OPERATIONS (v1) ===
+
+    def _convert_to_property_value(self, value: Any):
+        """Convert Python value to PropertyValue proto"""
+        if v1_graph_pb2 is None:
+            raise ProximaDBError("Graph protos not available. Run: make -C clients/python gen-proto")
+
+        if isinstance(value, str):
+            return v1_graph_pb2.PropertyValue(string_value=value)
+        elif isinstance(value, bool):
+            return v1_graph_pb2.PropertyValue(bool_value=value)
+        elif isinstance(value, int):
+            return v1_graph_pb2.PropertyValue(int_value=value)
+        elif isinstance(value, float):
+            return v1_graph_pb2.PropertyValue(double_value=value)
+        elif isinstance(value, bytes):
+            return v1_graph_pb2.PropertyValue(bytes_value=value)
+        elif isinstance(value, list):
+            array_values = [self._convert_to_property_value(item) for item in value]
+            return v1_graph_pb2.PropertyValue(
+                array_value=v1_graph_pb2.PropertyArray(values=array_values)
+            )
+        elif isinstance(value, dict):
+            object_fields = {k: self._convert_to_property_value(v) for k, v in value.items()}
+            return v1_graph_pb2.PropertyValue(
+                object_value=v1_graph_pb2.PropertyObject(fields=object_fields)
+            )
+        else:
+            return v1_graph_pb2.PropertyValue(string_value=str(value))
+
+    def _convert_from_property_value(self, prop_value) -> Any:
+        """Convert PropertyValue proto to Python value"""
+        if prop_value.HasField('string_value'):
+            return prop_value.string_value
+        elif prop_value.HasField('int_value'):
+            return prop_value.int_value
+        elif prop_value.HasField('double_value'):
+            return prop_value.double_value
+        elif prop_value.HasField('bool_value'):
+            return prop_value.bool_value
+        elif prop_value.HasField('bytes_value'):
+            return prop_value.bytes_value
+        elif prop_value.HasField('array_value'):
+            return [self._convert_from_property_value(item) for item in prop_value.array_value.values]
+        elif prop_value.HasField('object_value'):
+            return {k: self._convert_from_property_value(v) for k, v in prop_value.object_value.fields.items()}
+        else:
+            return None
+
+    def _convert_node_from_proto(self, node) -> Dict[str, Any]:
+        """Convert Node proto to dictionary"""
+        return {
+            "id": node.id,
+            "labels": list(node.labels),
+            "properties": {k: self._convert_from_property_value(v) for k, v in node.properties.items()},
+            "created_at": node.created_at.ToDatetime().isoformat() if node.HasField('created_at') else None,
+            "updated_at": node.updated_at.ToDatetime().isoformat() if node.HasField('updated_at') else None
+        }
+
+    def _convert_edge_from_proto(self, edge) -> Dict[str, Any]:
+        """Convert Edge proto to dictionary"""
+        return {
+            "id": edge.id,
+            "from_node_id": edge.from_node_id,
+            "to_node_id": edge.to_node_id,
+            "edge_type": edge.edge_type,
+            "properties": {k: self._convert_from_property_value(v) for k, v in edge.properties.items()},
+            "weight": edge.weight if edge.HasField('weight') else None,
+            "created_at": edge.created_at.ToDatetime().isoformat() if edge.HasField('created_at') else None,
+            "updated_at": edge.updated_at.ToDatetime().isoformat() if edge.HasField('updated_at') else None
+        }
+
+    def _convert_path_from_proto(self, path) -> List[str]:
+        """Convert GraphPath proto to list of node IDs"""
+        if hasattr(path, 'node_ids'):
+            return list(path.node_ids)
+        else:
+            return []
+
+    def create_node(
+        self,
+        node_id: str,
+        labels: List[str],
+        properties: Optional[Dict[str, Any]] = None,
+        embedding: Optional[List[float]] = None
+    ) -> Dict[str, Any]:
+        """Create a graph node via gRPC
+
+        Args:
+            node_id: Unique identifier for the node
+            labels: List of labels for the node
+            properties: Optional dictionary of node properties
+            embedding: Optional embedding vector for the node
+
+        Returns:
+            Dictionary representation of the created node
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+
+            node_properties = {}
+            if properties:
+                for key, value in properties.items():
+                    node_properties[key] = self._convert_to_property_value(value)
+
+            node = v1_graph_pb2.Node(
+                id=node_id,
+                labels=labels,
+                properties=node_properties
+            )
+
+            request = v1_graph_pb2.CreateNodeRequest(node=node)
+            response = stub.CreateNode(request, timeout=self.timeout)
+            return self._convert_node_from_proto(response)
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC create_node RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"create_node RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC create_node failed: {e}")
+            raise ProximaDBError(f"create_node failed: {e}")
+
+    def create_edge(
+        self,
+        edge_id: str,
+        from_node_id: str,
+        to_node_id: str,
+        edge_type: str,
+        properties: Optional[Dict[str, Any]] = None,
+        weight: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Create a graph edge via gRPC
+
+        Args:
+            edge_id: Unique identifier for the edge
+            from_node_id: Source node ID
+            to_node_id: Target node ID
+            edge_type: Type/label of the edge
+            properties: Optional dictionary of edge properties
+            weight: Optional edge weight
+
+        Returns:
+            Dictionary representation of the created edge
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+
+            edge_properties = {}
+            if properties:
+                for key, value in properties.items():
+                    edge_properties[key] = self._convert_to_property_value(value)
+
+            edge = v1_graph_pb2.Edge(
+                id=edge_id,
+                from_node_id=from_node_id,
+                to_node_id=to_node_id,
+                edge_type=edge_type,
+                properties=edge_properties
+            )
+
+            if weight is not None:
+                edge.weight = weight
+
+            request = v1_graph_pb2.CreateEdgeRequest(edge=edge)
+            response = stub.CreateEdge(request, timeout=self.timeout)
+            return self._convert_edge_from_proto(response)
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC create_edge RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"create_edge RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC create_edge failed: {e}")
+            raise ProximaDBError(f"create_edge failed: {e}")
+
+    def traverse_graph(
+        self,
+        start_node_id: str,
+        max_depth: int = 3,
+        edge_types: Optional[List[str]] = None,
+        node_labels: Optional[List[str]] = None,
+        algorithm: str = "BFS",
+        limit: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Traverse graph from a starting node via gRPC
+
+        Args:
+            start_node_id: ID of the node to start traversal from
+            max_depth: Maximum depth to traverse (default: 3)
+            edge_types: Optional list of edge types to follow
+            node_labels: Optional list of node labels to include
+            algorithm: Traversal algorithm - "BFS", "DFS", or "PARALLEL_BFS" (default: "BFS")
+            limit: Optional limit on number of results
+
+        Returns:
+            Dictionary with nodes, edges, paths, and traversal statistics
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+
+            # Map algorithm string to enum
+            algorithm_enum = v1_graph_pb2.TRAVERSAL_ALGORITHM_BFS
+            if algorithm.upper() == "DFS":
+                algorithm_enum = v1_graph_pb2.TRAVERSAL_ALGORITHM_DFS
+            elif algorithm.upper() == "PARALLEL_BFS":
+                algorithm_enum = v1_graph_pb2.TRAVERSAL_ALGORITHM_PARALLEL_BFS
+
+            request = v1_graph_pb2.TraversalRequest(
+                start_node_id=start_node_id,
+                max_depth=max_depth,
+                edge_types=edge_types or [],
+                node_labels=node_labels or [],
+                algorithm=algorithm_enum
+            )
+
+            if limit is not None:
+                request.limit = limit
+
+            response = stub.TraverseGraph(request, timeout=self.timeout)
+
+            return {
+                "nodes": [self._convert_node_from_proto(node) for node in response.nodes],
+                "edges": [self._convert_edge_from_proto(edge) for edge in response.edges],
+                "paths": [self._convert_path_from_proto(path) for path in response.paths],
+                "stats": {
+                    "nodes_visited": response.stats.nodes_visited if hasattr(response, 'stats') else 0,
+                    "edges_traversed": response.stats.edges_traversed if hasattr(response, 'stats') else 0,
+                    "max_depth_reached": response.stats.max_depth_reached if hasattr(response, 'stats') else 0,
+                    "execution_time_microseconds": response.stats.execution_time_microseconds if hasattr(response, 'stats') else 0
+                }
+            }
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC traverse_graph RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"traverse_graph RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC traverse_graph failed: {e}")
+            raise ProximaDBError(f"traverse_graph failed: {e}")
+
+    def query_nodes(
+        self,
+        labels: Optional[List[str]] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Query nodes by labels and properties via gRPC
+
+        Args:
+            labels: Optional list of labels to filter by
+            properties: Optional dictionary of properties to filter by
+            limit: Optional maximum number of results
+            offset: Optional offset for pagination
+
+        Returns:
+            Dictionary with success status, nodes list, and total count
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+
+            filters = []
+            if properties:
+                for key, value in properties.items():
+                    filters.append(v1_graph_pb2.PropertyFilter(
+                        key=key,
+                        operator=v1_graph_pb2.PROPERTY_FILTER_OPERATOR_EQUALS,
+                        value=self._convert_to_property_value(value)
+                    ))
+
+            request = v1_graph_pb2.NodeQuery(
+                labels=labels or [],
+                filters=filters
+            )
+
+            if limit is not None:
+                request.limit = limit
+            if offset is not None:
+                request.offset = offset
+
+            response = stub.QueryNodes(request, timeout=self.timeout)
+            return {
+                "success": response.success if hasattr(response, 'success') else True,
+                "nodes": [self._convert_node_from_proto(node) for node in response.nodes],
+                "total_count": len(response.nodes)
+            }
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC query_nodes RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"query_nodes RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC query_nodes failed: {e}")
+            raise ProximaDBError(f"query_nodes failed: {e}")
+
     def health_check(self):
         """Check server health status
 

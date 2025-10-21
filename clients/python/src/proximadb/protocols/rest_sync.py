@@ -2331,6 +2331,157 @@ class ProximaDBClient:
         
         self._batch_processor.reset_metrics()
     
+    # === GRAPH OPERATIONS ===
+
+    def create_node(
+        self,
+        node_id: str,
+        labels: List[str],
+        properties: Optional[Dict[str, Any]] = None,
+        embedding: Optional[List[float]] = None
+    ) -> Dict[str, Any]:
+        """Create a graph node via REST
+
+        Args:
+            node_id: Unique identifier for the node
+            labels: List of labels for the node
+            properties: Optional dictionary of node properties
+            embedding: Optional embedding vector for the node
+
+        Returns:
+            Dictionary representation of the created node
+        """
+        node_data = {
+            "id": node_id,
+            "labels": labels,
+            "properties": properties or {},
+        }
+        if embedding:
+            node_data["embedding"] = embedding
+
+        payload = {"node": node_data}
+
+        response = self._http_client.post(
+            "/api/v1/graph/nodes",
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def create_edge(
+        self,
+        edge_id: str,
+        from_node_id: str,
+        to_node_id: str,
+        edge_type: str,
+        properties: Optional[Dict[str, Any]] = None,
+        weight: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Create a graph edge via REST
+
+        Args:
+            edge_id: Unique identifier for the edge
+            from_node_id: Source node ID
+            to_node_id: Target node ID
+            edge_type: Type/label of the edge
+            properties: Optional dictionary of edge properties
+            weight: Optional edge weight
+
+        Returns:
+            Dictionary representation of the created edge
+        """
+        edge_data = {
+            "id": edge_id,
+            "from_node_id": from_node_id,
+            "to_node_id": to_node_id,
+            "edge_type": edge_type,
+            "properties": properties or {},
+        }
+        if weight is not None:
+            edge_data["weight"] = weight
+
+        payload = {"edge": edge_data}
+
+        response = self._http_client.post(
+            "/api/v1/graph/edges",
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def traverse_graph(
+        self,
+        start_node_id: str,
+        max_depth: int = 3,
+        edge_types: Optional[List[str]] = None,
+        node_labels: Optional[List[str]] = None,
+        algorithm: str = "BFS",
+        limit: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Traverse graph from a starting node via REST
+
+        Args:
+            start_node_id: ID of the node to start traversal from
+            max_depth: Maximum depth to traverse (default: 3)
+            edge_types: Optional list of edge types to follow
+            node_labels: Optional list of node labels to include
+            algorithm: Traversal algorithm - "BFS", "DFS", or "PARALLEL_BFS" (default: "BFS")
+            limit: Optional limit on number of results
+
+        Returns:
+            Dictionary with nodes, edges, paths, and traversal statistics
+        """
+        payload = {
+            "start_node_id": start_node_id,
+            "max_depth": max_depth,
+            "edge_types": edge_types or [],
+            "node_labels": node_labels or [],
+            "algorithm": algorithm.upper()
+        }
+        if limit is not None:
+            payload["limit"] = limit
+
+        response = self._http_client.post(
+            "/api/v1/graph/traverse",
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def query_nodes(
+        self,
+        labels: Optional[List[str]] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Query nodes by labels and properties via REST
+
+        Args:
+            labels: Optional list of labels to filter by
+            properties: Optional dictionary of properties to filter by
+            limit: Optional maximum number of results
+            offset: Optional offset for pagination
+
+        Returns:
+            Dictionary with success status, nodes list, and total count
+        """
+        payload = {
+            "labels": labels or [],
+            "properties": properties or {}
+        }
+        if limit is not None:
+            payload["limit"] = limit
+        if offset is not None:
+            payload["offset"] = offset
+
+        response = self._http_client.post(
+            "/api/v1/graph/nodes/query",
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+
     def __enter__(self):
         """Context manager entry"""
         return self

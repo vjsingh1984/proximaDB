@@ -1867,7 +1867,172 @@ class ProximaDBClient:
     ) -> VectorOperationResponse:
         """Legacy delete method for backward compatibility"""
         return self.delete_vectors(collection_id, ids)
-    
+    # ===========================
+    # Graph API Methods
+    # ===========================
+
+    def create_node(
+        self,
+        node_id: str,
+        labels: List[str],
+        properties: Optional[Dict[str, Any]] = None,
+        embedding: Optional[List[float]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a graph node.
+
+        Args:
+            node_id: Unique identifier for the node
+            labels: List of labels for the node (e.g., ["Person", "Employee"])
+            properties: Dictionary of node properties
+            embedding: Optional vector embedding for the node
+
+        Returns:
+            Dictionary with created node information
+
+        Example:
+            >>> client.create_node(
+            ...     node_id="person_123",
+            ...     labels=["Person"],
+            ...     properties={"name": "Alice", "age": 30}
+            ... )
+        """
+        return self._client.create_node(
+            node_id=node_id,
+            labels=labels,
+            properties=properties,
+            embedding=embedding
+        )
+
+    def create_edge(
+        self,
+        edge_id: str,
+        from_node_id: str,
+        to_node_id: str,
+        edge_type: str,
+        properties: Optional[Dict[str, Any]] = None,
+        weight: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a graph edge between two nodes.
+
+        Args:
+            edge_id: Unique identifier for the edge
+            from_node_id: ID of the source node
+            to_node_id: ID of the target node
+            edge_type: Type of relationship (e.g., "KNOWS", "WORKS_WITH")
+            properties: Dictionary of edge properties
+            weight: Optional numeric weight for the edge
+
+        Returns:
+            Dictionary with created edge information
+
+        Example:
+            >>> client.create_edge(
+            ...     edge_id="edge_123",
+            ...     from_node_id="person_123",
+            ...     to_node_id="person_456",
+            ...     edge_type="KNOWS",
+            ...     properties={"since": 2020},
+            ...     weight=1.0
+            ... )
+        """
+        return self._client.create_edge(
+            edge_id=edge_id,
+            from_node_id=from_node_id,
+            to_node_id=to_node_id,
+            edge_type=edge_type,
+            properties=properties,
+            weight=weight
+        )
+
+    def traverse_graph(
+        self,
+        start_node_id: str,
+        max_depth: int = 3,
+        edge_types: Optional[List[str]] = None,
+        node_labels: Optional[List[str]] = None,
+        algorithm: str = "BFS",
+        limit: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Traverse the graph starting from a node.
+
+        Args:
+            start_node_id: ID of the starting node
+            max_depth: Maximum traversal depth (default: 3)
+            edge_types: Filter by specific edge types (default: all types)
+            node_labels: Filter by specific node labels (default: all labels)
+            algorithm: Traversal algorithm - "BFS", "DFS", or "PARALLEL_BFS" (default: "BFS")
+            limit: Maximum number of nodes to return (default: unlimited)
+
+        Returns:
+            Dictionary with:
+                - nodes: List of visited nodes
+                - edges: List of traversed edges
+                - paths: List of paths found
+                - stats: Traversal statistics
+
+        Example:
+            >>> result = client.traverse_graph(
+            ...     start_node_id="person_123",
+            ...     max_depth=2,
+            ...     edge_types=["KNOWS"],
+            ...     algorithm="BFS",
+            ...     limit=50
+            ... )
+            >>> print(f"Found {len(result['nodes'])} nodes")
+        """
+        return self._client.traverse_graph(
+            start_node_id=start_node_id,
+            max_depth=max_depth,
+            edge_types=edge_types,
+            node_labels=node_labels,
+            algorithm=algorithm,
+            limit=limit
+        )
+
+    def query_nodes(
+        self,
+        labels: Optional[List[str]] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Query graph nodes by labels and properties.
+
+        Args:
+            labels: Filter by node labels (default: all labels)
+            properties: Filter by properties (exact match, default: no filter)
+            limit: Maximum number of nodes to return (default: unlimited)
+            offset: Number of nodes to skip for pagination (default: 0)
+
+        Returns:
+            Dictionary with:
+                - nodes: List of matching nodes
+                - total_count: Total number of matching nodes (if available)
+                - has_more: Whether more results are available
+
+        Example:
+            >>> # Query all Person nodes
+            >>> result = client.query_nodes(labels=["Person"], limit=10)
+            >>>
+            >>> # Query with property filter
+            >>> result = client.query_nodes(
+            ...     labels=["Person"],
+            ...     properties={"age": 30},
+            ...     limit=20,
+            ...     offset=0
+            ... )
+        """
+        return self._client.query_nodes(
+            labels=labels,
+            properties=properties,
+            limit=limit,
+            offset=offset
+        )
+
     def get_collection_stats(self, collection_id: str) -> Dict[str, Any]:
         """Get collection statistics (legacy compatibility)"""
         collection = self.get_collection(collection_id)

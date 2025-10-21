@@ -95,18 +95,24 @@ impl UnifiedHandlers {
         collection_service: Arc<CollectionService>,
         vector_operations_service: Arc<VectorOperationsService>,
     ) -> Self {
+        // Create a SINGLE GraphCollectionService instance that will be shared
+        // by both the external API and the GraphOperationsService
         let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
+
+        // Pass the SAME instance to GraphOperationsService so both use the same registry
+        // This fixes the bug where graph collections created via the REST API
+        // were not visible to node/edge creation operations
         let graph_operations_service = Arc::new(
             crate::graph::GraphOperationsService::new_with_collection_service(
-                graph_collection_service.clone(),
+                graph_collection_service.clone(), // Share the same instance
             ),
         );
 
         Self {
             collection_service,
             vector_operations_service,
-            graph_collection_service,
-            graph_operations_service,
+            graph_collection_service, // External API uses this
+            graph_operations_service,  // Internal uses graph_operations_service.collection_service (same instance)
             metrics_query_service: None,
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
         }
@@ -118,10 +124,13 @@ impl UnifiedHandlers {
         vector_operations_service: Arc<VectorOperationsService>,
         metrics_query_service: Arc<MetricsQueryService>,
     ) -> Self {
+        // Create a SINGLE GraphCollectionService instance (same pattern as new())
         let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
+
+        // Share the same instance with GraphOperationsService
         let graph_operations_service = Arc::new(
             crate::graph::GraphOperationsService::new_with_collection_service(
-                graph_collection_service.clone(),
+                graph_collection_service.clone(), // Share the same instance
             ),
         );
 
