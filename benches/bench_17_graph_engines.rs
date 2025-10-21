@@ -57,7 +57,7 @@ fn bench_engine_crud(c: &mut Criterion) {
     for engine in ENGINES {
         let engine = *engine;
         let graph_id = format!("bench_crud_{}", engine.to_lowercase());
-        let (service, collection_service) = rt.block_on(async {
+        let (service, _collection_service) = rt.block_on(async {
             let cs = Arc::new(GraphCollectionService::new());
             let svc = Arc::new(GraphOperationsService::new_with_collection_service(
                 cs.clone(),

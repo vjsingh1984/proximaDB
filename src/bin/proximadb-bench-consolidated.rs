@@ -4040,7 +4040,7 @@ fn generate_test_vectors_for_encoding_2(num_vectors: usize, dimension: usize) ->
             // Pattern 7: Time Series - Sequential data with trend and seasonality
             let trend = (v as f32 / num_vectors as f32) * 0.5;
             for d in 0..chunk_size {
-                let seasonal = ((d as f32 / 10.0).sin() * 0.3);
+                let seasonal = (d as f32 / 10.0).sin() * 0.3;
                 vec.push(trend + seasonal + rng.gen_range(-0.1..0.1));
             }
 
@@ -4048,7 +4048,7 @@ fn generate_test_vectors_for_encoding_2(num_vectors: usize, dimension: usize) ->
             for _ in 0..chunk_size {
                 let u1: f32 = rng.gen_range(0.001..1.0);
                 let u2: f32 = rng.gen_range(0.0..1.0);
-                let val = ((-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos());
+                let val = (-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos();
                 vec.push(val.clamp(-2.0, 2.0));
             }
 

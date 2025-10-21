@@ -188,7 +188,7 @@ impl InMemoryRelationsStore {
     async fn persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         // Use ORION graph engine for persistence instead of direct file I/O
         {
-            let graph_engine = &self.storage_engine;
+            let _graph_engine = &self.storage_engine;
             let edge = crate::proto::proximadb_v1::Edge {
                 id: format!(
                     "{}:{}:{}",

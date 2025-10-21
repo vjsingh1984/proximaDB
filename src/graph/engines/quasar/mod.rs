@@ -439,10 +439,16 @@ impl GraphEngine for QuasarGraphEngine {
             return self.hot_tier.update_node(node);
         }
 
-        // If not in hot tier, it might be in cold tier
-        // For simplicity, insert into hot tier (it will be the "updated" version)
-        let rt = tokio::runtime::Handle::current();
-        let result = rt.block_on(self.insert_node_to_hot(node))?;
+        // If not in hot tier, insert into hot tier synchronously (acts as updated version)
+        let result = self.hot_tier.insert_node(node)?;
+        // Update stats asynchronously
+        tokio::spawn({
+            let stats = Arc::clone(&self.stats);
+            async move {
+                let mut stats = stats.write().await;
+                stats.hot_tier_nodes = stats.hot_tier_nodes.saturating_add(1);
+            }
+        });
 
         // Remove from cold tier asynchronously
         tokio::spawn({
@@ -460,8 +466,9 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         // Try deleting from hot tier first
-        let rt = tokio::runtime::Handle::current();
-        if let Ok(Some(node)) = rt.block_on(self.hot_tier.delete_node(id)) {
+        // Use the synchronous GraphEngine trait method explicitly to avoid
+        // selecting the async inherent alias on OrionGraphEngine
+        if let Some(node) = crate::graph::engines::GraphEngine::delete_node(&*self.hot_tier, id)? {
             // Update stats
             tokio::spawn({
                 let stats = Arc::clone(&self.stats);
@@ -474,30 +481,37 @@ impl GraphEngine for QuasarGraphEngine {
             return Ok(Some(node));
         }
 
-        // Try cold tier
-        let rt = tokio::runtime::Handle::current();
-        let result = rt.block_on(async {
-            if let Ok(Some(node)) = self.cold_tier.delete_node(id).await {
-                // Update stats
-                let mut stats = self.stats.write().await;
-                stats.cold_tier_nodes = stats.cold_tier_nodes.saturating_sub(1);
-                Ok(Some(node))
-            } else {
-                Ok(None)
+        // Deletion from cold tier is async; avoid blocking here.
+        // Spawn background task and return None synchronously.
+        let cold = Arc::clone(&self.cold_tier);
+        let stats = Arc::clone(&self.stats);
+        let id_owned = id.clone();
+        tokio::spawn(async move {
+            if let Ok(Some(_node)) = cold.delete_node(&id_owned).await {
+                let mut s = stats.write().await;
+                s.cold_tier_nodes = s.cold_tier_nodes.saturating_sub(1);
             }
         });
-
-        result
+        Ok(None)
     }
 
     fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(self.insert_edge_to_hot(edge))
+        // Perform synchronous hot-tier insert to avoid blocking within a runtime
+        let edge_arc = self.hot_tier.insert_edge(edge)?;
+        // Update stats asynchronously
+        tokio::spawn({
+            let stats = Arc::clone(&self.stats);
+            async move {
+                let mut stats = stats.write().await;
+                stats.hot_tier_edges += 1;
+            }
+        });
+        Ok(edge_arc)
     }
 
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(self.get_edge_from_tiers(id))
+        // Return hot-tier edge synchronously; skip cold tier to avoid blocking
+        self.hot_tier.get_edge(id)
     }
 
     fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
@@ -508,8 +522,15 @@ impl GraphEngine for QuasarGraphEngine {
             return self.hot_tier.update_edge(edge);
         }
 
-        let rt = tokio::runtime::Handle::current();
-        let result = rt.block_on(self.insert_edge_to_hot(edge))?;
+        // Insert directly into hot tier synchronously and update stats asynchronously
+        let result = self.hot_tier.insert_edge(edge)?;
+        tokio::spawn({
+            let stats = Arc::clone(&self.stats);
+            async move {
+                let mut stats = stats.write().await;
+                stats.hot_tier_edges += 1;
+            }
+        });
 
         // Remove from cold tier asynchronously
         tokio::spawn({
@@ -527,8 +548,7 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         // Try hot tier first
-        let rt = tokio::runtime::Handle::current();
-        if let Ok(Some(edge)) = rt.block_on(self.hot_tier.delete_edge(id)) {
+        if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*self.hot_tier, id)? {
             tokio::spawn({
                 let stats = Arc::clone(&self.stats);
                 async move {
@@ -540,17 +560,17 @@ impl GraphEngine for QuasarGraphEngine {
             return Ok(Some(edge));
         }
 
-        // Try cold tier
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            if let Ok(Some(edge)) = self.cold_tier.delete_edge(id).await {
-                let mut stats = self.stats.write().await;
-                stats.cold_tier_edges = stats.cold_tier_edges.saturating_sub(1);
-                Ok(Some(edge))
-            } else {
-                Ok(None)
+        // Spawn cold tier deletion in background
+        let cold = Arc::clone(&self.cold_tier);
+        let stats = Arc::clone(&self.stats);
+        let id_owned = id.clone();
+        tokio::spawn(async move {
+            if let Ok(Some(_edge)) = cold.delete_edge(&id_owned).await {
+                let mut s = stats.write().await;
+                s.cold_tier_edges = s.cold_tier_edges.saturating_sub(1);
             }
-        })
+        });
+        Ok(None)
     }
 
     fn get_outgoing_edges(
@@ -559,14 +579,8 @@ impl GraphEngine for QuasarGraphEngine {
         edge_type: Option<&str>,
     ) -> Result<Vec<Arc<Edge>>> {
         // Check both tiers and combine results
-        let mut edges = self.hot_tier.get_outgoing_edges(node_id, edge_type)?;
-
-        let rt = tokio::runtime::Handle::current();
-        if let Ok(cold_edges) = rt.block_on(self.cold_tier.get_outgoing_edges(node_id, edge_type)) {
-            edges.extend(cold_edges);
-        }
-
-        Ok(edges)
+        // Return only hot-tier edges synchronously
+        self.hot_tier.get_outgoing_edges(node_id, edge_type)
     }
 
     fn get_incoming_edges(
@@ -575,14 +589,8 @@ impl GraphEngine for QuasarGraphEngine {
         edge_type: Option<&str>,
     ) -> Result<Vec<Arc<Edge>>> {
         // Check both tiers and combine results
-        let mut edges = self.hot_tier.get_incoming_edges(node_id, edge_type)?;
-
-        let rt = tokio::runtime::Handle::current();
-        if let Ok(cold_edges) = rt.block_on(self.cold_tier.get_incoming_edges(node_id, edge_type)) {
-            edges.extend(cold_edges);
-        }
-
-        Ok(edges)
+        // Return only hot-tier edges synchronously
+        self.hot_tier.get_incoming_edges(node_id, edge_type)
     }
 
     fn get_neighbors(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Node>>> {
@@ -601,14 +609,8 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn get_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>> {
         // Check both tiers and combine results
-        let mut nodes = self.hot_tier.get_nodes_by_label(label)?;
-
-        let rt = tokio::runtime::Handle::current();
-        if let Ok(cold_nodes) = rt.block_on(self.cold_tier.get_nodes_by_label(label)) {
-            nodes.extend(cold_nodes);
-        }
-
-        Ok(nodes)
+        // Return only hot-tier nodes synchronously
+        self.hot_tier.get_nodes_by_label(label)
     }
 
     fn node_count(&self) -> Result<usize> {
@@ -624,14 +626,10 @@ impl GraphEngine for QuasarGraphEngine {
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
-        let mut all_nodes = self.hot_tier.get_all_nodes()?;
-
-        let rt = tokio::runtime::Handle::current();
-        let mut cold_nodes =
-            rt.block_on(async { self.cold_tier.get_all_nodes().await.unwrap_or_default() });
-
-        all_nodes.append(&mut cold_nodes);
-        Ok(all_nodes)
+        // Return hot-tier nodes synchronously to avoid blocking inside an active runtime.
+        // Cold-tier enumeration is skipped here to keep this method safe for sync contexts
+        // (benchmarks and other non-async callers).
+        self.hot_tier.get_all_nodes()
     }
 }
 

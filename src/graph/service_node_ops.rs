@@ -458,7 +458,7 @@ impl super::GraphOperationsService {
         graph_id: &str,
         node: &Arc<Node>,
     ) {
-        for mut entry in self.memory_pool.unique_constraints_multi.iter_mut() {
+        for entry in self.memory_pool.unique_constraints_multi.iter_mut() {
             let (cgraph, labels_key, props_key) = entry.key().clone();
             if cgraph != graph_id {
                 continue;
@@ -480,7 +480,7 @@ impl super::GraphOperationsService {
         graph_id: &str,
         node: &Arc<Node>,
     ) {
-        for mut entry in self.memory_pool.unique_constraints_multi.iter_mut() {
+        for entry in self.memory_pool.unique_constraints_multi.iter_mut() {
             let (cgraph, labels_key, props_key) = entry.key().clone();
             if cgraph != graph_id {
                 continue;

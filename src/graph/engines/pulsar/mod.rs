@@ -424,7 +424,7 @@ impl PulsarGraphEngine {
 
 impl GraphEngine for PulsarGraphEngine {
     fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
-        let node_id = node.id.clone();
+        let _node_id = node.id.clone();
 
         // For now, use first available shard to avoid runtime nesting issues
         let primary_shard = self
@@ -662,19 +662,16 @@ impl GraphEngine for PulsarGraphEngine {
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
-        let rt = tokio::runtime::Handle::current();
+        // Synchronous aggregation of nodes from all shards to avoid nested runtimes
+        let mut all_nodes = Vec::new();
 
-        rt.block_on(async {
-            let mut all_nodes = Vec::new();
+        for shard_entry in self.shards.iter() {
+            let shard = shard_entry.value();
+            let mut shard_nodes = shard.get_all_nodes()?;
+            all_nodes.append(&mut shard_nodes);
+        }
 
-            for shard_entry in self.shards.iter() {
-                let shard = shard_entry.value();
-                let mut shard_nodes = shard.get_all_nodes()?;
-                all_nodes.append(&mut shard_nodes);
-            }
-
-            Ok(all_nodes)
-        })
+        Ok(all_nodes)
     }
 }
 

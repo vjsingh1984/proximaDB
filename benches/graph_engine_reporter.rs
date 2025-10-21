@@ -187,6 +187,7 @@ async fn run_config(config: &GraphBenchConfig) -> Result<GraphBenchResult> {
             None,
             None,
             None,
+            None,
         )
         .await?;
     let dijkstra_ms = t4.elapsed().as_millis() as u64;
@@ -201,7 +202,6 @@ async fn run_config(config: &GraphBenchConfig) -> Result<GraphBenchResult> {
             Some(64),
             None,
             Some(proximadb::proto::proximadb_v1::ShortestPathAlgorithm::Astar),
-            None,
             None,
             None,
             None,
