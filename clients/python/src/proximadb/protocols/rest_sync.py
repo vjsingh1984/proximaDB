@@ -2338,7 +2338,8 @@ class ProximaDBClient:
         node_id: str,
         labels: List[str],
         properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None
+        embedding: Optional[List[float]] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Create a graph node via REST
 
@@ -2347,6 +2348,7 @@ class ProximaDBClient:
             labels: List of labels for the node
             properties: Optional dictionary of node properties
             embedding: Optional embedding vector for the node
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary representation of the created node
@@ -2362,7 +2364,7 @@ class ProximaDBClient:
         payload = {"node": node_data}
 
         response = self._http_client.post(
-            "/api/v1/graph/nodes",
+            f"/api/v1/graph/graphs/{graph_id}/nodes",
             json=payload
         )
         response.raise_for_status()
@@ -2375,7 +2377,8 @@ class ProximaDBClient:
         to_node_id: str,
         edge_type: str,
         properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None
+        weight: Optional[float] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Create a graph edge via REST
 
@@ -2386,6 +2389,7 @@ class ProximaDBClient:
             edge_type: Type/label of the edge
             properties: Optional dictionary of edge properties
             weight: Optional edge weight
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary representation of the created edge
@@ -2403,7 +2407,7 @@ class ProximaDBClient:
         payload = {"edge": edge_data}
 
         response = self._http_client.post(
-            "/api/v1/graph/edges",
+            f"/api/v1/graph/graphs/{graph_id}/edges",
             json=payload
         )
         response.raise_for_status()
@@ -2416,7 +2420,8 @@ class ProximaDBClient:
         edge_types: Optional[List[str]] = None,
         node_labels: Optional[List[str]] = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Traverse graph from a starting node via REST
 
@@ -2427,6 +2432,7 @@ class ProximaDBClient:
             node_labels: Optional list of node labels to include
             algorithm: Traversal algorithm - "BFS", "DFS", or "PARALLEL_BFS" (default: "BFS")
             limit: Optional limit on number of results
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary with nodes, edges, paths, and traversal statistics
@@ -2442,7 +2448,7 @@ class ProximaDBClient:
             payload["limit"] = limit
 
         response = self._http_client.post(
-            "/api/v1/graph/traverse",
+            f"/api/v1/graph/graphs/{graph_id}/traverse",
             json=payload
         )
         response.raise_for_status()
@@ -2453,7 +2459,8 @@ class ProximaDBClient:
         labels: Optional[List[str]] = None,
         properties: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None
+        offset: Optional[int] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Query nodes by labels and properties via REST
 
@@ -2462,6 +2469,7 @@ class ProximaDBClient:
             properties: Optional dictionary of properties to filter by
             limit: Optional maximum number of results
             offset: Optional offset for pagination
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary with success status, nodes list, and total count
@@ -2476,7 +2484,7 @@ class ProximaDBClient:
             payload["offset"] = offset
 
         response = self._http_client.post(
-            "/api/v1/graph/nodes/query",
+            f"/api/v1/graph/graphs/{graph_id}/query/nodes",
             json=payload
         )
         response.raise_for_status()

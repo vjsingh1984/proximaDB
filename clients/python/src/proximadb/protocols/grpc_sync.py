@@ -946,7 +946,8 @@ class ProximaDBSyncGrpcClient:
         node_id: str,
         labels: List[str],
         properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None
+        embedding: Optional[List[float]] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Create a graph node via gRPC
 
@@ -955,6 +956,7 @@ class ProximaDBSyncGrpcClient:
             labels: List of labels for the node
             properties: Optional dictionary of node properties
             embedding: Optional embedding vector for the node
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary representation of the created node
@@ -978,7 +980,7 @@ class ProximaDBSyncGrpcClient:
                 properties=node_properties
             )
 
-            request = v1_graph_pb2.CreateNodeRequest(node=node)
+            request = v1_graph_pb2.CreateNodeRequest(graph_id=graph_id, node=node)
             response = stub.CreateNode(request, timeout=self.timeout)
             return self._convert_node_from_proto(response)
 
@@ -999,7 +1001,8 @@ class ProximaDBSyncGrpcClient:
         to_node_id: str,
         edge_type: str,
         properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None
+        weight: Optional[float] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Create a graph edge via gRPC
 
@@ -1010,6 +1013,7 @@ class ProximaDBSyncGrpcClient:
             edge_type: Type/label of the edge
             properties: Optional dictionary of edge properties
             weight: Optional edge weight
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary representation of the created edge
@@ -1038,7 +1042,7 @@ class ProximaDBSyncGrpcClient:
             if weight is not None:
                 edge.weight = weight
 
-            request = v1_graph_pb2.CreateEdgeRequest(edge=edge)
+            request = v1_graph_pb2.CreateEdgeRequest(graph_id=graph_id, edge=edge)
             response = stub.CreateEdge(request, timeout=self.timeout)
             return self._convert_edge_from_proto(response)
 
@@ -1059,7 +1063,8 @@ class ProximaDBSyncGrpcClient:
         edge_types: Optional[List[str]] = None,
         node_labels: Optional[List[str]] = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Traverse graph from a starting node via gRPC
 
@@ -1070,6 +1075,7 @@ class ProximaDBSyncGrpcClient:
             node_labels: Optional list of node labels to include
             algorithm: Traversal algorithm - "BFS", "DFS", or "PARALLEL_BFS" (default: "BFS")
             limit: Optional limit on number of results
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary with nodes, edges, paths, and traversal statistics
@@ -1090,6 +1096,7 @@ class ProximaDBSyncGrpcClient:
                 algorithm_enum = v1_graph_pb2.TRAVERSAL_ALGORITHM_PARALLEL_BFS
 
             request = v1_graph_pb2.TraversalRequest(
+                graph_id=graph_id,
                 start_node_id=start_node_id,
                 max_depth=max_depth,
                 edge_types=edge_types or [],
@@ -1129,7 +1136,8 @@ class ProximaDBSyncGrpcClient:
         labels: Optional[List[str]] = None,
         properties: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None
+        offset: Optional[int] = None,
+        graph_id: str = "default"
     ) -> Dict[str, Any]:
         """Query nodes by labels and properties via gRPC
 
@@ -1138,6 +1146,7 @@ class ProximaDBSyncGrpcClient:
             properties: Optional dictionary of properties to filter by
             limit: Optional maximum number of results
             offset: Optional offset for pagination
+            graph_id: Graph collection ID (defaults to "default")
 
         Returns:
             Dictionary with success status, nodes list, and total count
@@ -1160,6 +1169,7 @@ class ProximaDBSyncGrpcClient:
                     ))
 
             request = v1_graph_pb2.NodeQuery(
+                graph_id=graph_id,
                 labels=labels or [],
                 filters=filters
             )
