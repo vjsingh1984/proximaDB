@@ -23,30 +23,25 @@
 //! - Component initialization and coordination
 //! - Core trait implementations
 
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::{Context, Result};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use crate::storage::engines::impls::sst::{
-    SstConfig, SstError,
-    compaction::Compaction,
-    readers::UnifiedSstableReader,
-    decompression_cache,
-};
-use crate::storage::persistence::filesystem::{
-    FilesystemFactory, FileSystem
-};
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::storage::transaction_coordinator::TransactionCoordinator;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::{
-    unified::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore},
     storage_engine::StorageQuantizationEngine,
+    unified::{CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine},
 };
 use crate::storage::engines::core::ops::{
-    UniversalPerformanceOptimizer, UniversalOptimizationStrategy
+    UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
 };
+use crate::storage::engines::impls::sst::{
+    SstConfig, SstError, compaction::Compaction, decompression_cache, readers::UnifiedSstableReader,
+};
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 /// SST Engine - Hybrid columnar (ProximaBlocks), write-optimized storage with three-stage filtering
 ///
@@ -218,7 +213,8 @@ impl SstEngine {
     /// The engine is designed as a singleton that can handle multiple collections.
     pub async fn new() -> Result<Self> {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await?);
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
@@ -246,9 +242,9 @@ impl SstEngine {
         );
 
         // Create UnifiedCachingFilesystem for transparent cloud storage support
-        let base_fs = filesystem.get_filesystem("file://").map_err(|e| {
-            SstError::Internal(format!("Failed to get base filesystem: {}", e))
-        })?;
+        let base_fs = filesystem
+            .get_filesystem("file://")
+            .map_err(|e| SstError::Internal(format!("Failed to get base filesystem: {}", e)))?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
             String::new(), // Empty collection_id for singleton
@@ -280,16 +276,15 @@ impl SstEngine {
         )?));
 
         // Initialize universal performance optimization
-        let universal_optimizer = UniversalPerformanceOptimizer::with_strategy(
-            UniversalOptimizationStrategy::Balanced
-        )
-        .await
-        .map_err(|e| {
-            SstError::Internal(format!(
-                "Failed to create universal performance optimizer: {}",
-                e
-            ))
-        })?;
+        let universal_optimizer =
+            UniversalPerformanceOptimizer::with_strategy(UniversalOptimizationStrategy::Balanced)
+                .await
+                .map_err(|e| {
+                    SstError::Internal(format!(
+                        "Failed to create universal performance optimizer: {}",
+                        e
+                    ))
+                })?;
 
         Ok(Self {
             config,
@@ -310,7 +305,10 @@ impl SstEngine {
     /// Initialize quantization engines (storage-aware and fallback)
     async fn initialize_quantization_engines(
         distance_compute: Arc<UnifiedDistanceCompute>,
-    ) -> Result<(Arc<StorageQuantizationEngine>, Arc<UnifiedQuantizationEngine>)> {
+    ) -> Result<(
+        Arc<StorageQuantizationEngine>,
+        Arc<UnifiedQuantizationEngine>,
+    )> {
         // Create storage-aware quantization engine for persistent collection-based PQ
         let codebook_store: Arc<dyn CodebookStore> = Arc::new(InMemoryCodebookStore::new());
         let unified_quantization = Arc::new(UnifiedQuantizationEngine::new(
@@ -318,17 +316,17 @@ impl SstEngine {
             codebook_store.clone(),
         ));
 
-        let storage_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
-        let storage_quantization_engine = Arc::new(
-            StorageQuantizationEngine::new(
-                unified_quantization.clone(),
-                distance_compute.clone(),
-                storage_config,
-            )
-        );
+        let storage_config =
+            crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+        let storage_quantization_engine = Arc::new(StorageQuantizationEngine::new(
+            unified_quantization.clone(),
+            distance_compute.clone(),
+            storage_config,
+        ));
 
         // Create fallback stateless quantization engine for ad-hoc queries
-        let fallback_codebook_store: Arc<dyn CodebookStore> = Arc::new(InMemoryCodebookStore::new());
+        let fallback_codebook_store: Arc<dyn CodebookStore> =
+            Arc::new(InMemoryCodebookStore::new());
         let fallback_quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
             distance_compute.clone(),
             fallback_codebook_store,
@@ -341,7 +339,9 @@ impl SstEngine {
     async fn register_cache_providers(
         decompression_cache: Arc<decompression_cache::DecompressionCache>,
     ) -> Result<Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>> {
-        if let Some(ref orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+        if let Some(ref orch) =
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+        {
             use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType};
 
             // Register decompression cache provider (VectorData)
@@ -432,7 +432,9 @@ impl SstEngine {
     }
 
     /// Get cache orchestrator
-    pub fn orchestrator(&self) -> Option<&Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>> {
+    pub fn orchestrator(
+        &self,
+    ) -> Option<&Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>> {
         self.orchestrator.as_ref()
     }
 }
@@ -450,7 +452,10 @@ mod tests {
         assert!(engine.orchestrator().is_some());
 
         // Verify configuration is set
-        assert_eq!(engine.config().block_size_kb, SstConfig::default().block_size_kb);
+        assert_eq!(
+            engine.config().block_size_kb,
+            SstConfig::default().block_size_kb
+        );
     }
 
     #[tokio::test]
@@ -458,7 +463,8 @@ mod tests {
         let mut config = SstConfig::default();
         config.block_size_kb = 128; // Custom block size
 
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 

@@ -30,17 +30,19 @@ mod tests {
 
         // Write data
         let config = ParquetWriterConfig::default();
-        let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+        let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
+            .await
+            .unwrap();
         writer.write_batch(&test_records).await.unwrap();
         writer.finalize().await.unwrap();
 
         // Read back
         let filesystem = std::sync::Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(
-                crate::storage::persistence::filesystem::FilesystemConfig::default()
+                crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
-            .unwrap()
+            .unwrap(),
         );
 
         // TODO: Fix UnifiedParquetReader::new to use proper filesystem parameter
@@ -48,7 +50,10 @@ mod tests {
         // let reader = UnifiedParquetReader::new(filesystem, vec![file_path.to_str().unwrap().to_string()]).await.unwrap();
 
         // Test reading without filters (no MapArray projection issues)
-        let all_ids = test_records.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+        let all_ids = test_records
+            .iter()
+            .map(|r| r.id.clone())
+            .collect::<Vec<_>>();
         // TODO: Implement optimized_batch_id_lookup method
         // For now, simulate lookup results
         let results: Vec<crate::proto::proximadb_v1::VectorRecord> = test_records[0..10].to_vec();
@@ -63,6 +68,9 @@ mod tests {
         */
 
         assert_eq!(results.len(), 10);
-        println!("✅ Successfully read {} records without MapArray issues", results.len());
+        println!(
+            "✅ Successfully read {} records without MapArray issues",
+            results.len()
+        );
     }
 }

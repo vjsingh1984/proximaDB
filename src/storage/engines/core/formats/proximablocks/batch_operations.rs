@@ -184,10 +184,7 @@ impl RowBasedBatchOperations {
         }
 
         // Acquire semaphore for concurrency control
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await?;
+        let _permit = self.semaphore.acquire().await?;
 
         // Split into batches
         let batches = self.split_into_batches(&ids);
@@ -281,10 +278,7 @@ impl RowBasedBatchOperations {
         let start_time = std::time::Instant::now();
 
         // Acquire semaphore for concurrency control
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await?;
+        let _permit = self.semaphore.acquire().await?;
 
         // Split records into batches
         let batches = self.split_records_into_batches(records);
@@ -342,10 +336,7 @@ impl RowBasedBatchOperations {
         let operation_id = format!("batch_update_{}", Uuid::new_v4());
         let start_time = std::time::Instant::now();
 
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await?;
+        let _permit = self.semaphore.acquire().await?;
 
         let mut all_results = Vec::new();
         let mut successful_operations = 0;
@@ -425,10 +416,7 @@ impl RowBasedBatchOperations {
         let operation_id = format!("batch_delete_{}", Uuid::new_v4());
         let start_time = std::time::Instant::now();
 
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await?;
+        let _permit = self.semaphore.acquire().await?;
 
         let mut successful_operations = 0;
         let mut failed_operations = 0;

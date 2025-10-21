@@ -152,7 +152,8 @@ impl RestServer {
 
 /// Dashboard handler - serves a comprehensive professional dashboard
 async fn dashboard_handler() -> axum::response::Html<&'static str> {
-    axum::response::Html(r#"<!DOCTYPE html>
+    axum::response::Html(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1113,5 +1114,6 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
         });
     </script>
 </body>
-</html>"#)
+</html>"#,
+    )
 }

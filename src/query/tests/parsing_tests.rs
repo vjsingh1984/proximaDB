@@ -10,14 +10,14 @@
 //! - AST lowering and collection resolution
 //! - Error handling for invalid SQL
 
-use crate::query::sql_frontend::parser::SqlFrontendParser;
-use crate::query::sql_frontend::lowering::QueryLowering;
-use crate::query::ast::{BinaryOp, Expr, Literal, Query, UnaryOp, ProjectionItem, TableRef};
-use crate::services::collection::manager::CollectionService;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::config::StorageConfig;
-use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
 use crate::proto::proximadb_v1::CollectionConfig;
+use crate::query::ast::{BinaryOp, Expr, Literal, ProjectionItem, Query, TableRef, UnaryOp};
+use crate::query::sql_frontend::lowering::QueryLowering;
+use crate::query::sql_frontend::parser::SqlFrontendParser;
+use crate::services::collection::manager::CollectionService;
+use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
 
 // ============================================================================
@@ -29,9 +29,19 @@ async fn setup_test_collection_service() -> Arc<CollectionService> {
     let config = UniversalMetadataConfig::default();
     let filesystem_config = Default::default();
     let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
-    let backend = crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(config, filesystem_factory).await.unwrap();
+    let backend =
+        crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(
+            config,
+            filesystem_factory,
+        )
+        .await
+        .unwrap();
     let storage_config = StorageConfig::default();
-    let service = Arc::new(CollectionService::new(Arc::new(backend), storage_config).await.unwrap());
+    let service = Arc::new(
+        CollectionService::new(Arc::new(backend), storage_config)
+            .await
+            .unwrap(),
+    );
 
     // Create test collection "products" (8 characters minimum)
     let collection_config = CollectionConfig {
@@ -181,7 +191,11 @@ fn test_parse_group_by() {
     let sql = "SELECT category, COUNT(*) FROM products GROUP BY category";
 
     let result = parser.parse(sql);
-    assert!(result.is_ok(), "Failed to parse GROUP BY: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse GROUP BY: {:?}",
+        result.err()
+    );
 
     match result.unwrap() {
         Query::Select(select) => {
@@ -237,12 +251,20 @@ fn test_parse_case_expression() {
     let sql = "SELECT CASE WHEN price > 100 THEN 'expensive' ELSE 'cheap' END FROM products";
 
     let result = parser.parse(sql);
-    assert!(result.is_ok(), "Failed to parse CASE expression: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse CASE expression: {:?}",
+        result.err()
+    );
 
     match result.unwrap() {
         Query::Select(select) => {
             assert_eq!(select.projection.len(), 1);
-            if let Some(ProjectionItem { expr: Expr::Case { .. }, .. }) = select.projection.first() {
+            if let Some(ProjectionItem {
+                expr: Expr::Case { .. },
+                ..
+            }) = select.projection.first()
+            {
                 // Correctly parsed CASE expression
             } else {
                 panic!("Expected CASE expression in projection");
@@ -262,12 +284,21 @@ fn test_parse_subquery_in_from() {
     let sql = "SELECT a.id FROM (SELECT id FROM products WHERE price > 100) AS a";
 
     let result = parser.parse(sql);
-    assert!(result.is_ok(), "Failed to parse subquery in FROM: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse subquery in FROM: {:?}",
+        result.err()
+    );
 
     match result.unwrap() {
         Query::Select(select) => {
             assert_eq!(select.from.len(), 1);
-            if let Some(TableRef { subquery: Some(_), alias: Some(alias), .. }) = select.from.first() {
+            if let Some(TableRef {
+                subquery: Some(_),
+                alias: Some(alias),
+                ..
+            }) = select.from.first()
+            {
                 assert_eq!(alias, "a");
             } else {
                 panic!("Expected subquery with alias in FROM clause");
@@ -280,15 +311,24 @@ fn test_parse_subquery_in_from() {
 #[test]
 fn test_parse_subquery_in_where() {
     let parser = SqlFrontendParser::new();
-    let sql = "SELECT id FROM products WHERE id IN (SELECT product_id FROM orders WHERE quantity > 5)";
+    let sql =
+        "SELECT id FROM products WHERE id IN (SELECT product_id FROM orders WHERE quantity > 5)";
 
     let result = parser.parse(sql);
-    assert!(result.is_ok(), "Failed to parse subquery in WHERE: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse subquery in WHERE: {:?}",
+        result.err()
+    );
 
     match result.unwrap() {
         Query::Select(select) => {
             assert!(select.selection.is_some());
-            if let Some(Expr::Binary { right: subquery_expr, .. }) = &select.selection {
+            if let Some(Expr::Binary {
+                right: subquery_expr,
+                ..
+            }) = &select.selection
+            {
                 if let Expr::Subquery(_) = **subquery_expr {
                     // Correctly parsed subquery
                 } else {
@@ -368,7 +408,12 @@ async fn test_metadata_filter_lowering() {
 
             // Verify WHERE clause generates efficient FilterExpression
             // This will use HashMap.get("category") instead of linear scan
-            if let Some(Expr::Binary { left: _, op, right: _ }) = &select.selection {
+            if let Some(Expr::Binary {
+                left: _,
+                op,
+                right: _,
+            }) = &select.selection
+            {
                 assert!(matches!(op, BinaryOp::Eq));
                 // TODO: Validate field access pattern optimizes to HashMap.get()
             }
@@ -415,14 +460,28 @@ async fn test_parameter_placeholder_recognition() {
             // Verify parameter placeholders are preserved in the AST
             if let Some(Expr::Binary { left, op: _, right }) = &select.selection {
                 // Left side: category = $1
-                if let Expr::Binary { left: _, op: _, right: param1 } = left.as_ref() {
-                    assert!(matches!(param1.as_ref(), Expr::Param(_)),
-                        "First parameter should be Expr::Param");
+                if let Expr::Binary {
+                    left: _,
+                    op: _,
+                    right: param1,
+                } = left.as_ref()
+                {
+                    assert!(
+                        matches!(param1.as_ref(), Expr::Param(_)),
+                        "First parameter should be Expr::Param"
+                    );
                 }
                 // Right side: price > $2
-                if let Expr::Binary { left: _, op: _, right: param2 } = right.as_ref() {
-                    assert!(matches!(param2.as_ref(), Expr::Param(_)),
-                        "Second parameter should be Expr::Param");
+                if let Expr::Binary {
+                    left: _,
+                    op: _,
+                    right: param2,
+                } = right.as_ref()
+                {
+                    assert!(
+                        matches!(param2.as_ref(), Expr::Param(_)),
+                        "Second parameter should be Expr::Param"
+                    );
                 }
             }
         }

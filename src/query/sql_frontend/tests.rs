@@ -1,7 +1,7 @@
 //! Tests for SQL frontend parser
 
 use super::parser::SqlFrontendParser;
-use crate::query::ast::{BinaryOp, Expr, Literal, Query, UnaryOp, ProjectionItem, TableRef};
+use crate::query::ast::{BinaryOp, Expr, Literal, ProjectionItem, Query, TableRef, UnaryOp};
 
 #[cfg(test)]
 mod tests {
@@ -134,7 +134,11 @@ mod tests {
         let sql = "SELECT category, COUNT(*) FROM products GROUP BY category";
 
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse GROUP BY: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to parse GROUP BY: {:?}",
+            result.err()
+        );
 
         match result.unwrap() {
             Query::Select(select) => {
@@ -182,12 +186,20 @@ mod tests {
         let sql = "SELECT CASE WHEN price > 100 THEN 'expensive' ELSE 'cheap' END FROM products";
 
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse CASE expression: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to parse CASE expression: {:?}",
+            result.err()
+        );
 
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 1);
-                if let Some(ProjectionItem { expr: Expr::Case { .. }, .. }) = select.projection.first() {
+                if let Some(ProjectionItem {
+                    expr: Expr::Case { .. },
+                    ..
+                }) = select.projection.first()
+                {
                     // Correctly parsed CASE expression
                 } else {
                     panic!("Expected CASE expression in projection");
@@ -203,12 +215,21 @@ mod tests {
         let sql = "SELECT a.id FROM (SELECT id FROM products WHERE price > 100) AS a";
 
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse subquery in FROM: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to parse subquery in FROM: {:?}",
+            result.err()
+        );
 
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.from.len(), 1);
-                if let Some(TableRef { subquery: Some(_), alias: Some(alias), .. }) = select.from.first() {
+                if let Some(TableRef {
+                    subquery: Some(_),
+                    alias: Some(alias),
+                    ..
+                }) = select.from.first()
+                {
                     assert_eq!(alias, "a");
                 } else {
                     panic!("Expected subquery with alias in FROM clause");
@@ -224,12 +245,20 @@ mod tests {
         let sql = "SELECT id FROM products WHERE id IN (SELECT product_id FROM orders WHERE quantity > 5)";
 
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse subquery in WHERE: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to parse subquery in WHERE: {:?}",
+            result.err()
+        );
 
         match result.unwrap() {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
-                if let Some(Expr::Binary { right: subquery_expr, .. }) = &select.selection {
+                if let Some(Expr::Binary {
+                    right: subquery_expr,
+                    ..
+                }) = &select.selection
+                {
                     if let Expr::Subquery(_) = **subquery_expr {
                         // Correctly parsed subquery
                     } else {

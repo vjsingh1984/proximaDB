@@ -3,16 +3,16 @@
 pub mod aws_iam;
 pub mod azure_ad;
 pub mod google_cloud;
-pub mod saml;
 pub mod oidc;
+pub mod saml;
 pub mod types;
 
-pub use types::{SSOToken, SSOProvider, SSOValidationResult, EnterpriseUserContext};
 pub use aws_iam::AWSIAMIntegration;
 pub use azure_ad::AzureADIntegration;
 pub use google_cloud::GoogleCloudIntegration;
-pub use saml::SAMLIntegration;
 pub use oidc::OIDCIntegration;
+pub use saml::SAMLIntegration;
+pub use types::{EnterpriseUserContext, SSOProvider, SSOToken, SSOValidationResult};
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -42,21 +42,21 @@ impl SSOIntegrationManager {
             token_cache: Arc::new(dashmap::DashMap::new()),
         }
     }
-    
+
     /// Configure AWS IAM integration
     pub fn configure_aws_iam(&mut self, config: AWSIAMConfig) -> Result<()> {
         let integration = AWSIAMIntegration::new(config)?;
         self.aws_integration = Some(Arc::new(integration));
         Ok(())
     }
-    
+
     /// Configure Azure AD integration
     pub fn configure_azure_ad(&mut self, config: AzureADConfig) -> Result<()> {
         let integration = AzureADIntegration::new(config)?;
         self.azure_integration = Some(Arc::new(integration));
         Ok(())
     }
-    
+
     /// Validate SSO token and resolve to enterprise user context
     pub async fn validate_and_resolve_token(
         &self,
@@ -68,22 +68,26 @@ impl SSOIntegrationManager {
                 return Ok(cached.user_context.clone());
             }
         }
-        
+
         // Validate with appropriate provider
         let validation_result = match &sso_token.provider {
             SSOProvider::AWSIAM => {
-                let aws = self.aws_integration.as_ref()
+                let aws = self
+                    .aws_integration
+                    .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("AWS IAM not configured"))?;
                 aws.validate_token(sso_token).await?
-            },
+            }
             SSOProvider::AzureAD => {
-                let azure = self.azure_integration.as_ref()
+                let azure = self
+                    .azure_integration
+                    .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Azure AD not configured"))?;
                 azure.validate_token(sso_token).await?
-            },
+            }
             _ => return Err(anyhow::anyhow!("Unsupported SSO provider")),
         };
-        
+
         // Cache validation result
         self.token_cache.insert(
             sso_token.token_id.clone(),
@@ -92,7 +96,7 @@ impl SSOIntegrationManager {
                 expires_at: chrono::Utc::now() + chrono::Duration::minutes(5), // 5 min cache
             },
         );
-        
+
         Ok(validation_result.user_context)
     }
 }
@@ -170,7 +174,7 @@ mod tests {
             enable_cross_account: false,
             trusted_account_ids: vec!["123456789012".to_string()],
         };
-        
+
         assert_eq!(config.region, "us-east-1");
         assert!(!config.enable_cross_account);
     }

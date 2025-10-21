@@ -113,9 +113,13 @@ impl BatchOptimizer {
 
         // Helper to find previous power of 2
         fn prev_power_of_2(n: usize) -> usize {
-            if n <= 1 { return 1; }
+            if n <= 1 {
+                return 1;
+            }
             let mut p = 1;
-            while p * 2 <= n { p *= 2; }
+            while p * 2 <= n {
+                p *= 2;
+            }
             p
         }
 
@@ -124,9 +128,9 @@ impl BatchOptimizer {
             // GPU backends: 4-8 row groups (4096-8192 vectors)
             HardwareBackend::CUDA | HardwareBackend::ROCm => {
                 if total_vectors >= 8 * ROW_GROUP_SIZE {
-                    8 * ROW_GROUP_SIZE  // 8192 vectors
+                    8 * ROW_GROUP_SIZE // 8192 vectors
                 } else if total_vectors >= 4 * ROW_GROUP_SIZE {
-                    4 * ROW_GROUP_SIZE  // 4096 vectors
+                    4 * ROW_GROUP_SIZE // 4096 vectors
                 } else {
                     prev_power_of_2(total_vectors.max(ROW_GROUP_SIZE))
                 }
@@ -135,9 +139,9 @@ impl BatchOptimizer {
             // MPS (Apple Metal): 2-4 row groups (2048-4096 vectors)
             HardwareBackend::MPS => {
                 if total_vectors >= 4 * ROW_GROUP_SIZE {
-                    4 * ROW_GROUP_SIZE  // 4096 vectors
+                    4 * ROW_GROUP_SIZE // 4096 vectors
                 } else if total_vectors >= 2 * ROW_GROUP_SIZE {
-                    2 * ROW_GROUP_SIZE  // 2048 vectors
+                    2 * ROW_GROUP_SIZE // 2048 vectors
                 } else {
                     prev_power_of_2(total_vectors.max(ROW_GROUP_SIZE))
                 }
@@ -159,7 +163,7 @@ impl BatchOptimizer {
             // SIMD (AVX2/AVX512): 1-2 row groups (1024-2048 vectors)
             HardwareBackend::AVX512 | HardwareBackend::AVX2 => {
                 if total_vectors >= 2 * ROW_GROUP_SIZE {
-                    2 * ROW_GROUP_SIZE  // 2048 vectors
+                    2 * ROW_GROUP_SIZE // 2048 vectors
                 } else {
                     prev_power_of_2(total_vectors.max(ROW_GROUP_SIZE))
                 }
@@ -168,7 +172,7 @@ impl BatchOptimizer {
             // NEON/SSE: 1 row group (1024 vectors)
             HardwareBackend::NEON | HardwareBackend::SSE => {
                 if total_vectors >= ROW_GROUP_SIZE {
-                    ROW_GROUP_SIZE  // 1024 vectors
+                    ROW_GROUP_SIZE // 1024 vectors
                 } else {
                     prev_power_of_2(total_vectors.max(512))
                 }
@@ -177,11 +181,11 @@ impl BatchOptimizer {
             // Scalar: Fraction of row group (128-512 vectors)
             HardwareBackend::Scalar => {
                 if total_vectors >= 512 {
-                    512  // Half row group
+                    512 // Half row group
                 } else if total_vectors >= 256 {
-                    256  // Quarter row group
+                    256 // Quarter row group
                 } else if total_vectors >= 128 {
-                    128  // 1/8 row group
+                    128 // 1/8 row group
                 } else {
                     prev_power_of_2(total_vectors.max(16))
                 }
@@ -189,7 +193,11 @@ impl BatchOptimizer {
         };
 
         // Ensure batch size is power of 2
-        debug_assert_eq!(batch_size & (batch_size - 1), 0, "Batch size must be power of 2");
+        debug_assert_eq!(
+            batch_size & (batch_size - 1),
+            0,
+            "Batch size must be power of 2"
+        );
         batch_size
     }
 
@@ -218,14 +226,16 @@ impl BatchOptimizer {
     pub fn should_use_parallel(&self, total_vectors: usize) -> bool {
         match self.backend {
             // GPU: Don't use Rayon parallel (GPU handles parallelism)
-            HardwareBackend::CUDA | HardwareBackend::ROCm |
-            HardwareBackend::MPS | HardwareBackend::OpenCL => false,
+            HardwareBackend::CUDA
+            | HardwareBackend::ROCm
+            | HardwareBackend::MPS
+            | HardwareBackend::OpenCL => false,
 
             // SIMD: Use Rayon for large datasets
-            HardwareBackend::AVX512 | HardwareBackend::AVX2 |
-            HardwareBackend::NEON | HardwareBackend::SSE => {
-                total_vectors > 10_000
-            }
+            HardwareBackend::AVX512
+            | HardwareBackend::AVX2
+            | HardwareBackend::NEON
+            | HardwareBackend::SSE => total_vectors > 10_000,
 
             // Scalar: Use Rayon for medium+ datasets
             HardwareBackend::Scalar => total_vectors > 5_000,
@@ -295,7 +305,10 @@ pub fn batch_encode_vectors(
     if optimizer.should_use_parallel(vectors.len()) {
         use rayon::prelude::*;
 
-        debug!("⚡ Using parallel encoding (Rayon) for {} vectors", vectors.len());
+        debug!(
+            "⚡ Using parallel encoding (Rayon) for {} vectors",
+            vectors.len()
+        );
         // Parallel encoding for large datasets
         vectors
             .par_iter()
@@ -357,19 +370,22 @@ pub fn batch_decode_vectors(encoded_vectors: &[Vec<u8>]) -> Result<Vec<Vec<f32>>
     if optimizer.should_use_parallel(encoded_vectors.len()) {
         use rayon::prelude::*;
 
-        debug!("⚡ Using parallel decoding (Rayon) for {} vectors", encoded_vectors.len());
+        debug!(
+            "⚡ Using parallel decoding (Rayon) for {} vectors",
+            encoded_vectors.len()
+        );
         // Parallel decoding for large datasets
         encoded_vectors
             .par_iter()
             .map(|e| codec.decode(e))
             .collect()
     } else {
-        debug!("🔄 Using sequential decoding for {} vectors", encoded_vectors.len());
+        debug!(
+            "🔄 Using sequential decoding for {} vectors",
+            encoded_vectors.len()
+        );
         // Sequential decoding for small/medium datasets
-        encoded_vectors
-            .iter()
-            .map(|e| codec.decode(e))
-            .collect()
+        encoded_vectors.iter().map(|e| codec.decode(e)).collect()
     }
 }
 
@@ -380,7 +396,10 @@ mod tests {
     #[test]
     fn test_batch_optimizer_creation() {
         let optimizer = BatchOptimizer::new();
-        println!("✅ Batch optimizer created with backend: {:?}", optimizer.backend());
+        println!(
+            "✅ Batch optimizer created with backend: {:?}",
+            optimizer.backend()
+        );
 
         // Verify backend is valid
         assert!(matches!(
@@ -408,12 +427,20 @@ mod tests {
 
         let batch_size = optimizer.optimal_batch_size(typical_batch, bert_dim);
         println!("   Backend: {:?}", optimizer.backend());
-        println!("   Input: {} vectors × {}D = ~{}MB", typical_batch, bert_dim,
-                 (typical_batch * bert_dim * 4) / (1024 * 1024));
+        println!(
+            "   Input: {} vectors × {}D = ~{}MB",
+            typical_batch,
+            bert_dim,
+            (typical_batch * bert_dim * 4) / (1024 * 1024)
+        );
         println!("   Optimal batch: {} vectors (power of 2)", batch_size);
 
         // Verify batch is power of 2
-        assert_eq!(batch_size & (batch_size - 1), 0, "Batch size must be power of 2");
+        assert_eq!(
+            batch_size & (batch_size - 1),
+            0,
+            "Batch size must be power of 2"
+        );
 
         match optimizer.backend() {
             HardwareBackend::CUDA | HardwareBackend::ROCm => {
@@ -462,7 +489,10 @@ mod tests {
 
         let batch_size = optimizer.optimal_batch_size(row_group_size, openai_dim);
         println!("   Backend: {:?}", optimizer.backend());
-        println!("   Row group: {} vectors × {}D = ~6MB", row_group_size, openai_dim);
+        println!(
+            "   Row group: {} vectors × {}D = ~6MB",
+            row_group_size, openai_dim
+        );
         println!("   Optimal batch: {} vectors", batch_size);
 
         match optimizer.backend() {
@@ -505,35 +535,55 @@ mod tests {
         let dimension = 768;
 
         let batch_size = optimizer.optimal_batch_size(total_vectors, dimension);
-        println!("   Total: {} vectors ({} row groups of 1024)",
-                 total_vectors, total_vectors / 1024);
+        println!(
+            "   Total: {} vectors ({} row groups of 1024)",
+            total_vectors,
+            total_vectors / 1024
+        );
         println!("   Batch size: {} vectors", batch_size);
         println!("   Row groups per batch: {}", batch_size / 1024);
-        println!("   Batches needed: {}", (total_vectors + batch_size - 1) / batch_size);
+        println!(
+            "   Batches needed: {}",
+            (total_vectors + batch_size - 1) / batch_size
+        );
 
         // Verify batch size is power of 2
-        assert_eq!(batch_size & (batch_size - 1), 0, "Batch size must be power of 2");
+        assert_eq!(
+            batch_size & (batch_size - 1),
+            0,
+            "Batch size must be power of 2"
+        );
 
         // Verify batch size is multiple of row group size (1024)
         if batch_size >= 1024 {
-            assert_eq!(batch_size % 1024, 0, "Should be multiple of 1024 (row group size)");
+            assert_eq!(
+                batch_size % 1024,
+                0,
+                "Should be multiple of 1024 (row group size)"
+            );
         }
 
         match optimizer.backend() {
             HardwareBackend::CUDA | HardwareBackend::ROCm => {
                 // GPU: 4-8 row groups (4096 or 8192)
-                assert!(matches!(batch_size, 4096 | 8192),
-                        "GPU should use 4096 or 8192 vectors");
+                assert!(
+                    matches!(batch_size, 4096 | 8192),
+                    "GPU should use 4096 or 8192 vectors"
+                );
             }
             HardwareBackend::MPS => {
                 // MPS: 2-4 row groups (2048 or 4096)
-                assert!(matches!(batch_size, 2048 | 4096),
-                        "MPS should use 2048 or 4096 vectors");
+                assert!(
+                    matches!(batch_size, 2048 | 4096),
+                    "MPS should use 2048 or 4096 vectors"
+                );
             }
             HardwareBackend::AVX512 | HardwareBackend::AVX2 => {
                 // AVX: 1-2 row groups (1024 or 2048)
-                assert!(matches!(batch_size, 1024 | 2048),
-                        "AVX should use 1024 or 2048 vectors");
+                assert!(
+                    matches!(batch_size, 1024 | 2048),
+                    "AVX should use 1024 or 2048 vectors"
+                );
             }
             HardwareBackend::NEON | HardwareBackend::SSE => {
                 // NEON/SSE: 1 row group (1024)
@@ -541,8 +591,10 @@ mod tests {
             }
             HardwareBackend::Scalar => {
                 // Scalar: 128-512 (fractions of row group)
-                assert!(matches!(batch_size, 128 | 256 | 512),
-                        "Scalar should use 128, 256, or 512 vectors");
+                assert!(
+                    matches!(batch_size, 128 | 256 | 512),
+                    "Scalar should use 128, 256, or 512 vectors"
+                );
             }
             _ => {}
         }
@@ -555,16 +607,24 @@ mod tests {
 
         // Small dataset: Should not use parallel
         let small_parallel = optimizer.should_use_parallel(100);
-        println!("🔀 Small dataset (100 vectors): parallel={}", small_parallel);
+        println!(
+            "🔀 Small dataset (100 vectors): parallel={}",
+            small_parallel
+        );
 
         // Large dataset: May use parallel depending on backend
         let large_parallel = optimizer.should_use_parallel(50_000);
-        println!("🔀 Large dataset (50K vectors): parallel={}", large_parallel);
+        println!(
+            "🔀 Large dataset (50K vectors): parallel={}",
+            large_parallel
+        );
 
         // Parallel decision depends on backend
         match optimizer.backend() {
-            HardwareBackend::CUDA | HardwareBackend::ROCm |
-            HardwareBackend::MPS | HardwareBackend::OpenCL => {
+            HardwareBackend::CUDA
+            | HardwareBackend::ROCm
+            | HardwareBackend::MPS
+            | HardwareBackend::OpenCL => {
                 // GPU backends: Never use Rayon
                 assert!(!small_parallel);
                 assert!(!large_parallel);
@@ -625,7 +685,10 @@ mod tests {
                 assert!(
                     diff < 1e-6,
                     "Round-trip mismatch at vector {}, element {}: {} != {}",
-                    i, j, orig, dec
+                    i,
+                    j,
+                    orig,
+                    dec
                 );
             }
         }

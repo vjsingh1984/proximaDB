@@ -178,7 +178,6 @@ pub use quantization::*;
 #[cfg(test)]
 mod tests;
 
-
 /// Vector computation configuration
 #[derive(Debug, Clone)]
 pub struct ComputeConfig {

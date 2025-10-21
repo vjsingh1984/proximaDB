@@ -745,10 +745,11 @@ class ProximaDBClient:
         if config.auto_index_selection is not None:
             proto_config.auto_index_selection = config.auto_index_selection
         
-        # Handle quantization config (renamed field)
-        if config.quantization:
+        # Handle quantization config (check both quantization_config and quantization property)
+        quant = getattr(config, 'quantization_config', None) or getattr(config, 'quantization', None)
+        if quant:
             proto_config.quantization.CopyFrom(
-                self._pydantic_to_proto_quantization_config(config.quantization)
+                self._pydantic_to_proto_quantization_config(quant)
             )
         
         # Handle storage config
@@ -937,8 +938,9 @@ class ProximaDBClient:
                 )
             # Quantization config (converted to proto)
             qcfg = None
-            if getattr(config, 'quantization', None):
-                qcfg = self._pydantic_to_proto_quantization_config(config.quantization)
+            quant = getattr(config, 'quantization_config', None) or getattr(config, 'quantization', None)
+            if quant:
+                qcfg = self._pydantic_to_proto_quantization_config(quant)
 
             response = self._client.create_collection(
                 name=config.name,
@@ -1121,10 +1123,30 @@ class ProximaDBClient:
                     }
                     if record.id:
                         vector_dict["id"] = record.id
-                    if record.timestamp:
+                    # Add all timestamp fields (support both _ms and non-_ms versions)
+                    if hasattr(record, 'timestamp_ms') and record.timestamp_ms:
+                        vector_dict["timestamp_ms"] = record.timestamp_ms
+                    elif hasattr(record, 'timestamp') and record.timestamp:
                         vector_dict["timestamp"] = record.timestamp
-                    if record.expires_at:
+
+                    if hasattr(record, 'updated_at_ms') and record.updated_at_ms:
+                        vector_dict["updated_at_ms"] = record.updated_at_ms
+                    elif hasattr(record, 'updated_at') and record.updated_at:
+                        vector_dict["updated_at"] = record.updated_at
+
+                    if hasattr(record, 'expires_at_ms') and record.expires_at_ms:
+                        vector_dict["expires_at_ms"] = record.expires_at_ms
+                    elif hasattr(record, 'expires_at') and record.expires_at:
                         vector_dict["expires_at"] = record.expires_at
+
+                    # Add version field
+                    if hasattr(record, 'version') and record.version is not None:
+                        vector_dict["version"] = record.version
+
+                    # Add source field (original content)
+                    if hasattr(record, 'source') and record.source:
+                        vector_dict["source"] = record.source
+
                     vector_dicts.append(vector_dict)
                 
                 proto_response = client.insert_vectors(collection_id, vector_dicts)
@@ -1153,16 +1175,45 @@ class ProximaDBClient:
                 
             elif client == self._rest_client:
                 protocol_used = Protocol.REST
-                # REST client expects separate arrays
-                vectors = [r.vector for r in records]
-                ids = [r.id for r in records if r.id]
-                metadata = [r.metadata for r in records]
-                
-                # If no IDs provided, generate them
-                if not ids:
-                    ids = [f"vec_{i}" for i in range(len(vectors))]
-                
-                result = client.insert_vectors(collection_id, vectors, ids, metadata)
+                # REST API accepts VectorRecord objects via /api/v1/vectors/batch
+                # Convert VectorRecord to dict format with ALL fields
+                vector_dicts = []
+                for record in records:
+                    vector_dict = {
+                        "vector": record.vector,
+                        "metadata": record.metadata or {}
+                    }
+                    if record.id:
+                        vector_dict["id"] = record.id
+
+                    # Add timestamp fields (support both _ms and non-_ms versions)
+                    if hasattr(record, 'timestamp_ms') and record.timestamp_ms:
+                        vector_dict["timestamp"] = record.timestamp_ms
+                    elif hasattr(record, 'timestamp') and record.timestamp:
+                        vector_dict["timestamp"] = record.timestamp
+
+                    if hasattr(record, 'updated_at_ms') and record.updated_at_ms:
+                        vector_dict["updated_at"] = record.updated_at_ms
+                    elif hasattr(record, 'updated_at') and record.updated_at:
+                        vector_dict["updated_at"] = record.updated_at
+
+                    if hasattr(record, 'expires_at_ms') and record.expires_at_ms:
+                        vector_dict["expires_at"] = record.expires_at_ms
+                    elif hasattr(record, 'expires_at') and record.expires_at:
+                        vector_dict["expires_at"] = record.expires_at
+
+                    # Add version field
+                    if hasattr(record, 'version') and record.version is not None:
+                        vector_dict["version"] = record.version
+
+                    # Add source field (original content)
+                    if hasattr(record, 'source') and record.source:
+                        vector_dict["source"] = record.source
+
+                    vector_dicts.append(vector_dict)
+
+                # Send VectorRecord dicts to REST API via new vector_records parameter
+                result = client.insert_vectors(collection_id, vectors=[], ids=[], metadata=[], vector_records=vector_dicts)
                 
             else:
                 # Fallback to active protocol
@@ -1177,10 +1228,30 @@ class ProximaDBClient:
                         }
                         if record.id:
                             vector_dict["id"] = record.id
-                        if record.timestamp:
+                        # Add all timestamp fields (support both _ms and non-_ms versions)
+                        if hasattr(record, 'timestamp_ms') and record.timestamp_ms:
+                            vector_dict["timestamp_ms"] = record.timestamp_ms
+                        elif hasattr(record, 'timestamp') and record.timestamp:
                             vector_dict["timestamp"] = record.timestamp
-                        if record.expires_at:
+
+                        if hasattr(record, 'updated_at_ms') and record.updated_at_ms:
+                            vector_dict["updated_at_ms"] = record.updated_at_ms
+                        elif hasattr(record, 'updated_at') and record.updated_at:
+                            vector_dict["updated_at"] = record.updated_at
+
+                        if hasattr(record, 'expires_at_ms') and record.expires_at_ms:
+                            vector_dict["expires_at_ms"] = record.expires_at_ms
+                        elif hasattr(record, 'expires_at') and record.expires_at:
                             vector_dict["expires_at"] = record.expires_at
+
+                        # Add version field
+                        if hasattr(record, 'version') and record.version is not None:
+                            vector_dict["version"] = record.version
+
+                        # Add source field (original content)
+                        if hasattr(record, 'source') and record.source:
+                            vector_dict["source"] = record.source
+
                         vector_dicts.append(vector_dict)
                     
                     proto_response = client.insert_vectors(collection_id, vector_dicts)
@@ -1244,10 +1315,30 @@ class ProximaDBClient:
                 }
                 if record.id:
                     vector_dict["id"] = record.id
-                if record.timestamp:
+                # Add all timestamp fields (support both _ms and non-_ms versions)
+                if hasattr(record, 'timestamp_ms') and record.timestamp_ms:
+                    vector_dict["timestamp_ms"] = record.timestamp_ms
+                elif hasattr(record, 'timestamp') and record.timestamp:
                     vector_dict["timestamp"] = record.timestamp
-                if record.expires_at:
+
+                if hasattr(record, 'updated_at_ms') and record.updated_at_ms:
+                    vector_dict["updated_at_ms"] = record.updated_at_ms
+                elif hasattr(record, 'updated_at') and record.updated_at:
+                    vector_dict["updated_at"] = record.updated_at
+
+                if hasattr(record, 'expires_at_ms') and record.expires_at_ms:
+                    vector_dict["expires_at_ms"] = record.expires_at_ms
+                elif hasattr(record, 'expires_at') and record.expires_at:
                     vector_dict["expires_at"] = record.expires_at
+
+                # Add version field
+                if hasattr(record, 'version') and record.version is not None:
+                    vector_dict["version"] = record.version
+
+                # Add source field (original content)
+                if hasattr(record, 'source') and record.source:
+                    vector_dict["source"] = record.source
+
                 vector_dicts.append(vector_dict)
             
             proto_response = self._client.insert_vectors(collection_id, vector_dicts, upsert=True)
@@ -1547,25 +1638,53 @@ class ProximaDBClient:
         vector_id: str,
         vector: Union[List[float], np.ndarray],
         metadata: Optional[Dict[str, Any]] = None,
+        timestamp_ms: Optional[int] = None,
+        updated_at_ms: Optional[int] = None,
+        expires_at_ms: Optional[int] = None,
+        version: Optional[int] = None,
+        source: Optional[str] = None,
         upsert: bool = False
     ) -> VectorOperationResponse:
-        """Insert a single vector - alias for batch insert with one vector
-        
+        """Insert a single vector with full VectorRecord support
+
         Args:
             collection_id: Collection ID or name
-            vector_id: Vector identifier  
-            vector: Vector data
-            metadata: Optional metadata
+            vector_id: Vector identifier
+            vector: Vector data (list or numpy array of floats)
+            metadata: Optional metadata key-value pairs
+            timestamp_ms: Optional timestamp in milliseconds (auto-generated if not provided)
+            updated_at_ms: Optional last update timestamp in milliseconds
+            expires_at_ms: Optional expiration timestamp in milliseconds
+            version: Optional version number (default: 0)
+            source: Optional original content that generated this vector
             upsert: If True, update existing vector
-            
+
         Returns:
             VectorOperationResponse
         """
+        # Create VectorRecord with all supported fields
         record = VectorRecord(
             id=vector_id,
             vector=vector,
             metadata=metadata or {}
         )
+
+        # Add optional timestamp fields if provided
+        if timestamp_ms is not None:
+            record.timestamp_ms = timestamp_ms
+        if updated_at_ms is not None:
+            record.updated_at_ms = updated_at_ms
+        if expires_at_ms is not None:
+            record.expires_at_ms = expires_at_ms
+
+        # Add version if provided
+        if version is not None:
+            record.version = version
+
+        # Add source field (original content)
+        if source is not None:
+            record.source = source
+
         if upsert:
             return self.upsert_vectors(collection_id, [record])
         else:

@@ -3,11 +3,11 @@ mod tests {
     use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::hardware_capabilities::HardwareCapabilities;
+    use crate::core::search::integrated_search_optimization::BufferPool;
     use crate::core::search::metadata_filter_pushdown::{ColumnStatistics, MetadataFilterPushdown};
     use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
-    use crate::core::search::integrated_search_optimization::BufferPool;
-    use crate::core::search::{FilterExpression, ComparisonOperator};
     use crate::core::search::results::OptimizedSearchRecord;
+    use crate::core::search::{ComparisonOperator, FilterExpression};
     // use crate::core::search::unified_progressive_pipeline::{
     //     PipelineConfig, UnifiedProgressiveSearchPipeline,
     // };
@@ -87,7 +87,10 @@ mod tests {
     async fn test_query_preprocessing_with_simd() {
         use tracing::debug;
 
-        debug!("Starting SIMD test on architecture: {}", std::env::consts::ARCH);
+        debug!(
+            "Starting SIMD test on architecture: {}",
+            std::env::consts::ARCH
+        );
 
         debug!("Initializing test environment");
         init_test_environment();
@@ -95,7 +98,8 @@ mod tests {
 
         debug!("Getting hardware capabilities");
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        debug!("Hardware caps - AVX2: {}, SSE42: {}, NEON: {}",
+        debug!(
+            "Hardware caps - AVX2: {}, SSE42: {}, NEON: {}",
             hardware.cpu.features.avx2_support,
             hardware.cpu.features.sse42_support,
             hardware.cpu.features.neon_support
@@ -124,7 +128,8 @@ mod tests {
         assert!((norm - 1.0).abs() < 0.001, "Vector should be normalized");
 
         // Verify quantization levels were created
-        debug!("Checking quantization - binary: {}, int8: {}",
+        debug!(
+            "Checking quantization - binary: {}, int8: {}",
             cached.quantized_binary.is_some(),
             cached.quantized_int8.is_some()
         );

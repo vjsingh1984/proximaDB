@@ -3,7 +3,10 @@
 //! Complete Ollama API integration for local/self-hosted LLM models.
 
 use super::{LLMClient, RateLimitStatus, validate_request_safety};
-use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason, OllamaConfig};
+use crate::ai::llm_integration::types::{
+    FinishReason, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, OllamaConfig,
+    TokenUsage,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -53,7 +56,9 @@ impl OllamaClient {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))
             .build()
-            .map_err(|e| LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let ollama_client = Self { client, config };
 
@@ -65,12 +70,19 @@ impl OllamaClient {
 
 #[async_trait]
 impl LLMClient for OllamaClient {
-    async fn query(&self, request: &LLMRequest, _context: &LLMRequestContext) -> Result<LLMResponse, LLMError> {
+    async fn query(
+        &self,
+        request: &LLMRequest,
+        _context: &LLMRequestContext,
+    ) -> Result<LLMResponse, LLMError> {
         let start_time = Instant::now();
         validate_request_safety(request)?;
 
         let ollama_request = OllamaRequest {
-            model: request.model.clone().unwrap_or_else(|| self.config.model_name.clone()),
+            model: request
+                .model
+                .clone()
+                .unwrap_or_else(|| self.config.model_name.clone()),
             prompt: request.prompt.clone(),
             system: request.system_prompt.clone(),
             options: Some(OllamaOptions {
@@ -82,9 +94,13 @@ impl LLMClient for OllamaClient {
             stream: false,
         };
 
-        debug!("Sending Ollama request to: {}/api/generate", self.config.base_url);
+        debug!(
+            "Sending Ollama request to: {}/api/generate",
+            self.config.base_url
+        );
 
-        let response = self.client
+        let response = self
+            .client
             .post(&format!("{}/api/generate", self.config.base_url))
             .header("Content-Type", "application/json")
             .json(&ollama_request)
@@ -93,7 +109,9 @@ impl LLMClient for OllamaClient {
             .map_err(|e| LLMError::NetworkError(format!("Request failed: {}", e)))?;
 
         let status = response.status();
-        let response_body = response.text().await
+        let response_body = response
+            .text()
+            .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to read response: {}", e)))?;
 
         if !status.is_success() {
@@ -114,9 +132,9 @@ impl LLMClient for OllamaClient {
                 // Rough estimation: ~4 characters per token
                 (request.prompt.len() / 4) as u32
             }),
-            completion_tokens: ollama_response.eval_count.unwrap_or_else(|| {
-                (ollama_response.response.len() / 4) as u32
-            }),
+            completion_tokens: ollama_response
+                .eval_count
+                .unwrap_or_else(|| (ollama_response.response.len() / 4) as u32),
             total_tokens: 0, // Will be calculated below
         };
 
@@ -131,7 +149,11 @@ impl LLMClient for OllamaClient {
                 ..estimated_tokens
             },
             confidence_score: Some(0.8), // Ollama doesn't provide confidence scores
-            finish_reason: if ollama_response.done { FinishReason::Stop } else { FinishReason::Length },
+            finish_reason: if ollama_response.done {
+                FinishReason::Stop
+            } else {
+                FinishReason::Length
+            },
             response_time_ms,
             created_at: chrono::Utc::now(),
         })
@@ -143,7 +165,8 @@ impl LLMClient for OllamaClient {
 
     async fn is_healthy(&self) -> bool {
         // Check if Ollama server is running
-        match self.client
+        match self
+            .client
             .get(&format!("{}/api/tags", self.config.base_url))
             .send()
             .await
@@ -160,7 +183,8 @@ impl LLMClient for OllamaClient {
 
     async fn test_authentication(&self) -> Result<(), LLMError> {
         // Test by checking available models
-        let response = self.client
+        let response = self
+            .client
             .get(&format!("{}/api/tags", self.config.base_url))
             .send()
             .await
@@ -172,7 +196,10 @@ impl LLMClient for OllamaClient {
         } else {
             Err(LLMError::AuthenticationFailed {
                 provider: LLMProvider::Ollama,
-                reason: format!("Failed to connect to Ollama server at {}", self.config.base_url),
+                reason: format!(
+                    "Failed to connect to Ollama server at {}",
+                    self.config.base_url
+                ),
             })
         }
     }

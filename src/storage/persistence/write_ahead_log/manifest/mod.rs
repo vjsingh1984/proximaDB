@@ -24,20 +24,28 @@
 //! let entries = manifest::get_active_entries().await;
 //! ```
 
-mod types;
 mod service;
 mod singleton;
+mod types;
 
 // Re-export all public types and functions
-pub use types::{
-    GlobalManifestEntry, GlobalCheckpoint, CheckpointCollectionState,
-    GlobalLsnAllocator, WalEntryStatus,
-};
 pub use service::{GlobalManifestService, GlobalManifestServiceConfig};
 pub use singleton::{
-    init, get_service, get_or_init, shutdown,
     // Convenience functions
-    append_async, append_sync,
-    get_active_entries, get_collection_entries, get_all_entries,
-    create_checkpoint, cleanup_checkpointed, mark_flushed,
+    append_async,
+    append_sync,
+    cleanup_checkpointed,
+    create_checkpoint,
+    get_active_entries,
+    get_all_entries,
+    get_collection_entries,
+    get_or_init,
+    get_service,
+    init,
+    mark_flushed,
+    shutdown,
+};
+pub use types::{
+    CheckpointCollectionState, GlobalCheckpoint, GlobalLsnAllocator, GlobalManifestEntry,
+    WalEntryStatus,
 };

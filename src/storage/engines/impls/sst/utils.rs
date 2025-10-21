@@ -24,13 +24,13 @@
 //! - Metadata management utilities
 //! - Common operations shared across SST engine components
 
-use std::collections::HashMap;
 use anyhow::Result;
+use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::storage::engines::impls::sst::{SstEngine, SstError};
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue};
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
 use crate::storage::engines::impls::sst::SstableBloomFilter;
+use crate::storage::engines::impls::sst::{SstEngine, SstError};
 
 impl SstEngine {
     /// Sort vectors for optimal SSTable encoding
@@ -111,9 +111,11 @@ impl SstEngine {
 
     /// Extract metadata value as a comparable string
     fn extract_metadata_value(&self, vector: &VectorRecord, key: &str) -> String {
-        vector.metadata.get(key).map(|sql_val| {
-            self.sql_value_to_string(sql_val)
-        }).unwrap_or_default()
+        vector
+            .metadata
+            .get(key)
+            .map(|sql_val| self.sql_value_to_string(sql_val))
+            .unwrap_or_default()
     }
 
     /// Convert SqlValue to string for comparison
@@ -259,33 +261,39 @@ impl SstEngine {
     /// Parse SSTable filename to extract level and sequence
     pub fn parse_sstable_filename(&self, filename: &str) -> Result<(u32, u64)> {
         if !filename.ends_with(".sst") {
-            return Err(SstError::InvalidArgument(format!("Invalid SSTable filename: {}", filename)).into());
+            return Err(SstError::InvalidArgument(format!(
+                "Invalid SSTable filename: {}",
+                filename
+            ))
+            .into());
         }
 
         let parts: Vec<&str> = filename.trim_end_matches(".sst").split('-').collect();
         if parts.len() != 2 {
-            return Err(SstError::InvalidArgument(format!("Invalid SSTable filename format: {}", filename)).into());
+            return Err(SstError::InvalidArgument(format!(
+                "Invalid SSTable filename format: {}",
+                filename
+            ))
+            .into());
         }
 
-        let level = parts[0].trim_start_matches('L').parse::<u32>()
+        let level = parts[0]
+            .trim_start_matches('L')
+            .parse::<u32>()
             .map_err(|e| SstError::InvalidArgument(format!("Invalid level in filename: {}", e)))?;
 
-        let sequence = parts[1].parse::<u64>()
-            .map_err(|e| SstError::InvalidArgument(format!("Invalid sequence in filename: {}", e)))?;
+        let sequence = parts[1].parse::<u64>().map_err(|e| {
+            SstError::InvalidArgument(format!("Invalid sequence in filename: {}", e))
+        })?;
 
         Ok((level, sequence))
     }
 
     /// Check if SSTable file needs compaction based on size and age
-    pub fn should_compact_file(
-        &self,
-        file_size: u64,
-        file_age_hours: u64,
-        level: u32,
-    ) -> bool {
+    pub fn should_compact_file(&self, file_size: u64, file_age_hours: u64, level: u32) -> bool {
         // Size threshold increases with level
-        let size_threshold = (self.config().level_size_multiplier.powf(level as f64) *
-                             64.0 * 1_000_000.0) as u64; // Default 64MB base level size
+        let size_threshold =
+            (self.config().level_size_multiplier.powf(level as f64) * 64.0 * 1_000_000.0) as u64; // Default 64MB base level size
 
         // Age threshold decreases with level (higher levels compact less frequently)
         let age_threshold = 24 * (level + 1) as u64; // Hours
@@ -344,7 +352,7 @@ impl SstableFileUtils {
                                 name: name.to_string(),
                                 size: metadata.len(),
                                 created: metadata.created().ok(),
-                                level: 0, // Will be parsed from filename
+                                level: 0,    // Will be parsed from filename
                                 sequence: 0, // Will be parsed from filename
                             });
                         }
@@ -354,10 +362,7 @@ impl SstableFileUtils {
         }
 
         // Sort by level and sequence
-        files.sort_by(|a, b| {
-            a.level.cmp(&b.level)
-                .then(a.sequence.cmp(&b.sequence))
-        });
+        files.sort_by(|a, b| a.level.cmp(&b.level).then(a.sequence.cmp(&b.sequence)));
 
         Ok(files)
     }
@@ -372,7 +377,10 @@ impl SstableFileUtils {
         let mut grouped = HashMap::new();
 
         for file in files {
-            grouped.entry(file.level).or_insert_with(Vec::new).push(file);
+            grouped
+                .entry(file.level)
+                .or_insert_with(Vec::new)
+                .push(file);
         }
 
         grouped
@@ -393,9 +401,9 @@ pub struct SstableFileInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -408,7 +416,10 @@ mod tests {
             create_test_vector("vec2", vec![2.0, 3.0]),
         ];
 
-        let (sorted, stats) = engine.sort_vectors_for_sstable_encoding(vectors).await.unwrap();
+        let (sorted, stats) = engine
+            .sort_vectors_for_sstable_encoding(vectors)
+            .await
+            .unwrap();
 
         // Verify sorting by ID
         assert_eq!(sorted[0].id, "vec1");
@@ -469,11 +480,14 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 
     fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {

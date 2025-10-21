@@ -81,13 +81,13 @@
 //! ```
 
 use anyhow::Result;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use super::{GpuEncoder, GpuDecoder, GpuBatchSizer, GpuBatchIterator, BatchPerformanceEstimator};
-use super::kernels::utils::{GpuBufferPoolFactory, GpuBufferPool};
-use crate::storage::engines::core::ops::proximacodec::traits::{RawEncoder, RawDecoder};
-use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+use super::kernels::utils::{GpuBufferPool, GpuBufferPoolFactory};
+use super::{BatchPerformanceEstimator, GpuBatchIterator, GpuBatchSizer, GpuDecoder, GpuEncoder};
 use crate::core::hardware_capabilities::HardwareBackend;
+use crate::storage::engines::core::ops::proximacodec::traits::{RawDecoder, RawEncoder};
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 /// Complete example: Encode large dataset with GPU acceleration
 ///
@@ -103,7 +103,10 @@ pub fn example_encode_large_dataset(
     dimension: usize,
 ) -> Result<Vec<u8>> {
     info!("🚀 Starting GPU-accelerated encoding");
-    info!("   Dataset: {} vectors × {} dimensions", vector_count, dimension);
+    info!(
+        "   Dataset: {} vectors × {} dimensions",
+        vector_count, dimension
+    );
 
     // Step 1: Detect hardware backend
     let backend = detect_backend();
@@ -138,7 +141,10 @@ pub fn example_encode_large_dataset(
     info!("📊 Encoding complete:");
     info!("   Batches processed: {}", encoded_batches.len());
     info!("   Pool hit rate: {:.1}%", stats.hit_rate() * 100.0);
-    info!("   Pool efficiency: {} hits, {} misses", stats.cache_hits, stats.cache_misses);
+    info!(
+        "   Pool efficiency: {} hits, {} misses",
+        stats.cache_hits, stats.cache_misses
+    );
 
     // Concatenate all encoded batches
     let total_size: usize = encoded_batches.iter().map(|b| b.len()).sum();
@@ -171,7 +177,10 @@ pub fn example_decode_with_performance_monitoring(
     // Step 3: Estimate expected performance
     let expected_throughput = estimator.estimate_throughput(batch_size, dimension);
     let expected_latency = estimator.estimate_latency(batch_size, dimension);
-    info!("   Expected throughput: {:.0} vectors/sec", expected_throughput);
+    info!(
+        "   Expected throughput: {:.0} vectors/sec",
+        expected_throughput
+    );
     info!("   Expected latency: {:.2}ms per batch", expected_latency);
 
     // Step 4: Create decoder
@@ -187,10 +196,7 @@ pub fn example_decode_with_performance_monitoring(
 }
 
 /// Example: Compare different batching strategies
-pub fn example_compare_batching_strategies(
-    vector_count: usize,
-    dimension: usize,
-) -> Result<()> {
+pub fn example_compare_batching_strategies(vector_count: usize, dimension: usize) -> Result<()> {
     use super::BatchingStrategy;
 
     info!("🔬 Comparing batching strategies");
@@ -203,10 +209,19 @@ pub fn example_compare_batching_strategies(
         ("Fixed 4K", BatchingStrategy::Fixed(4096)),
         ("Fixed 16K", BatchingStrategy::Fixed(16384)),
         ("Dynamic", BatchingStrategy::Dynamic),
-        ("Pipelined 16K", BatchingStrategy::Pipelined { batch_size: 16384, pipeline_depth: 4 }),
+        (
+            "Pipelined 16K",
+            BatchingStrategy::Pipelined {
+                batch_size: 16384,
+                pipeline_depth: 4,
+            },
+        ),
     ];
 
-    info!("   Dataset: {} vectors × {} dimensions", vector_count, dimension);
+    info!(
+        "   Dataset: {} vectors × {} dimensions",
+        vector_count, dimension
+    );
     info!("");
     info!("   Strategy              | Batch Size | Throughput       | Latency");
     info!("   ------------------------------------------------------------------");
@@ -218,8 +233,10 @@ pub fn example_compare_batching_strategies(
         let throughput = estimator.estimate_throughput(batch_size, dimension);
         let latency = estimator.estimate_latency(batch_size, dimension);
 
-        info!("   {:<21} | {:>10} | {:>12.0} v/s | {:>6.2} ms",
-              name, batch_size, throughput, latency);
+        info!(
+            "   {:<21} | {:>10} | {:>12.0} v/s | {:>6.2} ms",
+            name, batch_size, throughput, latency
+        );
     }
 
     Ok(())
@@ -235,7 +252,11 @@ pub fn example_memory_pool_efficiency() -> Result<()> {
     // Create pool
     let pool: GpuBufferPool<f32> = GpuBufferPoolFactory::create_f32_pool(&backend, capacity);
 
-    info!("   Buffer capacity: {} elements ({} bytes)", capacity, capacity * 4);
+    info!(
+        "   Buffer capacity: {} elements ({} bytes)",
+        capacity,
+        capacity * 4
+    );
     info!("");
 
     // Simulate 100 acquire/release cycles
@@ -245,11 +266,13 @@ pub fn example_memory_pool_efficiency() -> Result<()> {
 
         if (i + 1) % 10 == 0 {
             let stats = pool.stats();
-            info!("   After {} cycles: hit_rate={:.1}%, outstanding={}, peak={}",
-                  i + 1,
-                  stats.hit_rate() * 100.0,
-                  stats.outstanding_buffers,
-                  stats.peak_outstanding);
+            info!(
+                "   After {} cycles: hit_rate={:.1}%, outstanding={}, peak={}",
+                i + 1,
+                stats.hit_rate() * 100.0,
+                stats.outstanding_buffers,
+                stats.peak_outstanding
+            );
         }
     }
 
@@ -314,18 +337,22 @@ pub fn example_full_pipeline(
     info!("✅ Decoding complete: {} vectors", decoded.len());
 
     // 7. Verify round-trip
-    let error: f32 = input_vectors.iter()
+    let error: f32 = input_vectors
+        .iter()
         .zip(decoded.iter())
         .map(|(a, b)| (a - b).abs())
-        .sum::<f32>() / input_vectors.len() as f32;
+        .sum::<f32>()
+        / input_vectors.len() as f32;
 
     info!("✅ Round-trip error: {:.6}", error);
 
     // 8. Report statistics
     let encode_stats = encode_pool.stats();
-    info!("📊 Encode pool: hit_rate={:.1}%, total_created={}",
-          encode_stats.hit_rate() * 100.0,
-          encode_stats.total_buffers_created);
+    info!(
+        "📊 Encode pool: hit_rate={:.1}%, total_created={}",
+        encode_stats.hit_rate() * 100.0,
+        encode_stats.total_buffers_created
+    );
 
     Ok(decoded)
 }
@@ -359,10 +386,10 @@ mod tests {
     fn test_example_decode_with_monitoring() {
         // Create some encoded data (4 f32 values as i64 deltas)
         let encoded_data = vec![
-            1, 0, 0, 0, 0, 0, 0, 0,  // delta = 1
-            2, 0, 0, 0, 0, 0, 0, 0,  // delta = 2
-            3, 0, 0, 0, 0, 0, 0, 0,  // delta = 3
-            4, 0, 0, 0, 0, 0, 0, 0,  // delta = 4
+            1, 0, 0, 0, 0, 0, 0, 0, // delta = 1
+            2, 0, 0, 0, 0, 0, 0, 0, // delta = 2
+            3, 0, 0, 0, 0, 0, 0, 0, // delta = 3
+            4, 0, 0, 0, 0, 0, 0, 0, // delta = 4
         ];
 
         let result = example_decode_with_performance_monitoring(&encoded_data, 4, 1);

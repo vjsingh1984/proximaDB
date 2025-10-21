@@ -33,8 +33,8 @@
 use std::collections::HashMap;
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 use crate::proto::proximadb_v1::SqlValue;
+use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 
 /// Evaluate a filter expression against SqlValue metadata (type-safe, no conversion)
 ///
@@ -54,10 +54,7 @@ use crate::proto::proximadb_v1::SqlValue;
 /// - O(1) for simple comparisons
 /// - O(n) for AND/OR with n sub-expressions
 /// - Zero allocation for comparisons
-pub fn evaluate_filter(
-    expr: &FilterExpression,
-    metadata: &HashMap<String, SqlValue>,
-) -> bool {
+pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlValue>) -> bool {
     match expr {
         FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter(e, metadata)),
         FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter(e, metadata)),
@@ -262,10 +259,7 @@ mod tests {
     #[test]
     fn test_number_comparisons() {
         let mut metadata = HashMap::new();
-        metadata.insert(
-            "age".to_string(),
-            make_sql_value(SqlVal::NumberValue(25.0)),
-        );
+        metadata.insert("age".to_string(), make_sql_value(SqlVal::NumberValue(25.0)));
 
         // Less than
         let filter = FilterExpression::Comparison {
@@ -304,10 +298,7 @@ mod tests {
     #[test]
     fn test_and_or_not() {
         let mut metadata = HashMap::new();
-        metadata.insert(
-            "age".to_string(),
-            make_sql_value(SqlVal::NumberValue(25.0)),
-        );
+        metadata.insert("age".to_string(), make_sql_value(SqlVal::NumberValue(25.0)));
         metadata.insert(
             "active".to_string(),
             make_sql_value(SqlVal::BoolValue(true)),

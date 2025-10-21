@@ -221,7 +221,8 @@ impl HilbertCurve {
     fn compress_16d_to_4bits(&self, bits: u32) -> u32 {
         // Use population count and bit patterns for compression
         let pop_count = bits.count_ones();
-        let pattern = (bits & 0xF) ^ ((bits >> 4) & 0xF) ^ ((bits >> 8) & 0xF) ^ ((bits >> 12) & 0xF);
+        let pattern =
+            (bits & 0xF) ^ ((bits >> 4) & 0xF) ^ ((bits >> 8) & 0xF) ^ ((bits >> 12) & 0xF);
         ((pop_count & 0x3) << 2) | (pattern & 0x3)
     }
 
@@ -636,12 +637,19 @@ mod tests {
         let h_far = curve.encode(&far_point);
 
         // Points closer in space should have closer Hilbert indices (generally)
-        let dist_close = if h1 > h_close { h1 - h_close } else { h_close - h1 };
+        let dist_close = if h1 > h_close {
+            h1 - h_close
+        } else {
+            h_close - h1
+        };
         let dist_far = if h1 > h_far { h1 - h_far } else { h_far - h1 };
 
         // This is a soft assertion as Hilbert curve doesn't guarantee strict distance preservation
         // but statistically nearby points should be closer
-        println!("16D Hilbert - Close distance: {}, Far distance: {}", dist_close, dist_far);
+        println!(
+            "16D Hilbert - Close distance: {}, Far distance: {}",
+            dist_close, dist_far
+        );
     }
 
     #[test]

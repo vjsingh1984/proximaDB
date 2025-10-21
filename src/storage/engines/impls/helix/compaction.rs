@@ -17,8 +17,8 @@ use crate::storage::persistence::filesystem::{FileSystem, unified::UnifiedCachin
 use super::clustering::{
     HilbertKey, LiquidClusteringConfig, PCAModel, QueryPatternTracker, sort_by_hilbert,
 };
-use super::proxima::{extract_helix_metadata, write_helix_sstable};
 use super::liquid_clustering::LiquidClusteringCoordinator;
+use super::proxima::{extract_helix_metadata, write_helix_sstable};
 use super::{HelixConfig, SStableMetadata};
 
 /// Leveled compactor for HELIX engine
@@ -33,7 +33,11 @@ pub struct LeveledCompactor {
 
 impl LeveledCompactor {
     /// Create a new compactor
-    pub fn new(config: HelixConfig, filesystem: Arc<UnifiedCachingFilesystem>, data_dir: PathBuf) -> Self {
+    pub fn new(
+        config: HelixConfig,
+        filesystem: Arc<UnifiedCachingFilesystem>,
+        data_dir: PathBuf,
+    ) -> Self {
         Self {
             config,
             filesystem,
@@ -193,7 +197,10 @@ impl LeveledCompactor {
         {
             let mut levels_write = levels.write().await;
 
-            debug!("HELIX Compaction: Removing {} L0 files from metadata", l0_files.len());
+            debug!(
+                "HELIX Compaction: Removing {} L0 files from metadata",
+                l0_files.len()
+            );
             for sstable in &l0_files {
                 debug!("  - L0 file marked for removal: {}", sstable.path.display());
             }
@@ -201,9 +208,16 @@ impl LeveledCompactor {
             // Remove L0 files from metadata
             levels_write.remove(&0);
 
-            debug!("HELIX Compaction: Adding {} new L1 files to metadata", new_l1_files.len());
+            debug!(
+                "HELIX Compaction: Adding {} new L1 files to metadata",
+                new_l1_files.len()
+            );
             for sstable in &new_l1_files {
-                debug!("  + L1 file created: {} (Hilbert range: {:?})", sstable.path.display(), sstable.hilbert_range);
+                debug!(
+                    "  + L1 file created: {} (Hilbert range: {:?})",
+                    sstable.path.display(),
+                    sstable.hilbert_range
+                );
             }
 
             // Add new L1 files
@@ -214,17 +228,17 @@ impl LeveledCompactor {
         }
 
         // Delete old L0 files from disk
-        debug!("HELIX Compaction: Deleting {} L0 files from disk", l0_files.len());
+        debug!(
+            "HELIX Compaction: Deleting {} L0 files from disk",
+            l0_files.len()
+        );
         for sstable in &l0_files {
             let file_path = sstable.path.to_str().unwrap_or("");
             debug!("  - Deleting L0 file: {}", file_path);
-            self.filesystem
-                .delete(file_path)
-                .await
-                .map_err(|e| {
-                    warn!("Failed to delete L0 file {}: {}", file_path, e);
-                    e
-                })?;
+            self.filesystem.delete(file_path).await.map_err(|e| {
+                warn!("Failed to delete L0 file {}: {}", file_path, e);
+                e
+            })?;
             info!("  ✓ Deleted L0 file: {}", file_path);
         }
 
@@ -359,16 +373,26 @@ impl LeveledCompactor {
         let num_l1_files = new_l1_files.len();
         let mut levels_write = levels.write().await;
 
-        debug!("HELIX Optimized Merge: Removing {} L0 files from metadata", l0_files.len());
+        debug!(
+            "HELIX Optimized Merge: Removing {} L0 files from metadata",
+            l0_files.len()
+        );
         for sstable in &l0_files {
             debug!("  - L0 file marked for removal: {}", sstable.path.display());
         }
 
         levels_write.remove(&0);
 
-        debug!("HELIX Optimized Merge: Adding {} new L1 files to metadata", num_l1_files);
+        debug!(
+            "HELIX Optimized Merge: Adding {} new L1 files to metadata",
+            num_l1_files
+        );
         for sstable in &new_l1_files {
-            debug!("  + L1 file created: {} (Hilbert range: {:?})", sstable.path.display(), sstable.hilbert_range);
+            debug!(
+                "  + L1 file created: {} (Hilbert range: {:?})",
+                sstable.path.display(),
+                sstable.hilbert_range
+            );
         }
 
         levels_write
@@ -379,17 +403,17 @@ impl LeveledCompactor {
         drop(levels_write); // Release lock before filesystem operations
 
         // Delete L0 files from disk
-        debug!("HELIX Optimized Merge: Deleting {} L0 files from disk", l0_files.len());
+        debug!(
+            "HELIX Optimized Merge: Deleting {} L0 files from disk",
+            l0_files.len()
+        );
         for sstable in &l0_files {
             let file_path = sstable.path.to_string_lossy();
             debug!("  - Deleting L0 file: {}", file_path);
-            self.filesystem
-                .delete(&file_path)
-                .await
-                .map_err(|e| {
-                    warn!("Failed to delete L0 file {}: {}", file_path, e);
-                    e
-                })?;
+            self.filesystem.delete(&file_path).await.map_err(|e| {
+                warn!("Failed to delete L0 file {}: {}", file_path, e);
+                e
+            })?;
             info!("  ✓ Deleted L0 file: {}", file_path);
         }
 
@@ -762,7 +786,11 @@ mod tests {
         // Create filesystem factory with proper config
         let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         fs_config.default_fs = Some("file:///tmp/helix_test".to_string());
-        let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await.unwrap());
+        let factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
+                .await
+                .unwrap(),
+        );
         let base_filesystem = factory.get_filesystem("file:///tmp/helix_test").unwrap();
 
         // Wrap in UnifiedCachingFilesystem like production code

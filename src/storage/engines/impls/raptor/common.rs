@@ -35,7 +35,7 @@ pub struct RowGroup {
     pub offset: u64,            // File offset for this rowgroup
     pub compressed_size: u64,   // Compressed size in bytes
     pub uncompressed_size: u64, // Original size
-    pub vector_count: usize, // Number of vectors in this rowgroup
+    pub vector_count: usize,    // Number of vectors in this rowgroup
     pub max_vectors: usize,     // Maximum capacity (from smart sizing)
 
     // Column pages with individual compression (from RowGroupMetadata)

@@ -643,10 +643,9 @@ impl GraphMonitor {
 
                 // Update error counts if failed
                 if !success {
-                    let mut error_counts = collector
-                        .error_counts
-                        .write()
-                        .map_err(|_| ProximaDBError::Internal("Failed to write error counts".to_string()))?;
+                    let mut error_counts = collector.error_counts.write().map_err(|_| {
+                        ProximaDBError::Internal("Failed to write error counts".to_string())
+                    })?;
                     *error_counts.entry(operation.clone()).or_insert(0) += 1;
                 }
 
@@ -665,18 +664,16 @@ impl GraphMonitor {
             }
 
             MetricEvent::ResourceUpdate(metrics) => {
-                let mut resource_metrics = collector
-                    .resource_metrics
-                    .write()
-                    .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics".to_string()))?;
+                let mut resource_metrics = collector.resource_metrics.write().map_err(|_| {
+                    ProximaDBError::Internal("Failed to write resource metrics".to_string())
+                })?;
                 *resource_metrics = metrics;
             }
 
             MetricEvent::CacheEvent { cache_type, hit } => {
-                let mut cache_metrics = collector
-                    .cache_metrics
-                    .write()
-                    .map_err(|_| ProximaDBError::Internal("Failed to write cache metrics".to_string()))?;
+                let mut cache_metrics = collector.cache_metrics.write().map_err(|_| {
+                    ProximaDBError::Internal("Failed to write cache metrics".to_string())
+                })?;
 
                 match cache_type.as_str() {
                     "plan" => {
@@ -720,10 +717,9 @@ impl GraphMonitor {
             }
 
             MetricEvent::BusinessUpdate(metrics) => {
-                let mut business_metrics = collector
-                    .business_metrics
-                    .write()
-                    .map_err(|_| ProximaDBError::Internal("Failed to write business metrics".to_string()))?;
+                let mut business_metrics = collector.business_metrics.write().map_err(|_| {
+                    ProximaDBError::Internal("Failed to write business metrics".to_string())
+                })?;
                 *business_metrics = metrics;
             }
         }
@@ -751,10 +747,9 @@ impl GraphMonitor {
             network_out_bytes_per_sec: 0.0,
         };
 
-        let mut resource_metrics = collector
-            .resource_metrics
-            .write()
-            .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics".to_string()))?;
+        let mut resource_metrics = collector.resource_metrics.write().map_err(|_| {
+            ProximaDBError::Internal("Failed to write resource metrics".to_string())
+        })?;
         *resource_metrics = metrics;
 
         Ok(())

@@ -1,11 +1,11 @@
 //! Test for SSTable format fix - verifies bloom filter read/write
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::config::SstConfig;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -65,7 +65,11 @@ async fn test_sstable_format_with_bloom_filter() {
         .unwrap();
 
     // Read SSTable metadata (this will test bloom filter reading)
-    let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(
+        FilesystemFactory::create(FilesystemConfig::default())
+            .await
+            .unwrap(),
+    );
     let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
     let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
         base_fs,

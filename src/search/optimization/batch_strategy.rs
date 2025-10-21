@@ -22,8 +22,8 @@
 //! - AVX2: 64-item batches
 //! - SSE2/NEON: 32-item batches
 
-use std::sync::Arc;
 use crate::compute::distance_computation::UnifiedDistanceCompute;
+use std::sync::Arc;
 
 /// Batch processing strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,8 +61,8 @@ impl BatchStrategySelector {
     pub fn new(distance_compute: Arc<UnifiedDistanceCompute>) -> Self {
         Self {
             distance_compute,
-            sequential_threshold: 16,   // Small batches: avoid parallel overhead
-            parallel_threshold: 5000,   // Large batches: parallel overhead dominates
+            sequential_threshold: 16, // Small batches: avoid parallel overhead
+            parallel_threshold: 5000, // Large batches: parallel overhead dominates
         }
     }
 
@@ -215,11 +215,7 @@ mod tests {
         let compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
         let selector = BatchStrategySelector::new(compute);
 
-        let result = selector.process_with_strategy(
-            8,
-            || "sequential",
-            || "parallel",
-        );
+        let result = selector.process_with_strategy(8, || "sequential", || "parallel");
 
         assert_eq!(result, "sequential");
     }
@@ -245,8 +241,7 @@ mod tests {
     #[test]
     fn test_custom_threshold() {
         let compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
-        let selector = BatchStrategySelector::new(compute)
-            .with_threshold(32);
+        let selector = BatchStrategySelector::new(compute).with_threshold(32);
 
         // 32 should now be sequential
         assert_eq!(selector.select_strategy(32), BatchStrategy::Sequential);
@@ -258,8 +253,7 @@ mod tests {
     #[test]
     fn test_custom_thresholds() {
         let compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
-        let selector = BatchStrategySelector::new(compute)
-            .with_thresholds(10, 3000);  // Custom lower=10, upper=3000
+        let selector = BatchStrategySelector::new(compute).with_thresholds(10, 3000); // Custom lower=10, upper=3000
 
         // Below 10: Sequential
         assert_eq!(selector.select_strategy(5), BatchStrategy::Sequential);

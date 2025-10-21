@@ -3,7 +3,10 @@
 //! Complete Azure OpenAI API integration for Microsoft-hosted OpenAI models.
 
 use super::{LLMClient, RateLimitStatus, validate_request_safety};
-use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason, AzureOpenAIConfig};
+use crate::ai::llm_integration::types::{
+    AzureOpenAIConfig, FinishReason, LLMError, LLMProvider, LLMRequest, LLMRequestContext,
+    LLMResponse, TokenUsage,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -67,17 +70,23 @@ struct AzureUsage {
 impl AzureOpenAIClient {
     pub async fn new(config: AzureOpenAIConfig) -> Result<Self, LLMError> {
         if config.api_key.is_empty() {
-            return Err(LLMError::ConfigurationError("Azure OpenAI API key is required".to_string()));
+            return Err(LLMError::ConfigurationError(
+                "Azure OpenAI API key is required".to_string(),
+            ));
         }
 
         if config.endpoint.is_empty() {
-            return Err(LLMError::ConfigurationError("Azure OpenAI endpoint is required".to_string()));
+            return Err(LLMError::ConfigurationError(
+                "Azure OpenAI endpoint is required".to_string(),
+            ));
         }
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
-            .map_err(|e| LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let azure_client = Self { client, config };
         azure_client.test_authentication().await?;
@@ -96,7 +105,11 @@ impl AzureOpenAIClient {
 
 #[async_trait]
 impl LLMClient for AzureOpenAIClient {
-    async fn query(&self, request: &LLMRequest, _context: &LLMRequestContext) -> Result<LLMResponse, LLMError> {
+    async fn query(
+        &self,
+        request: &LLMRequest,
+        _context: &LLMRequestContext,
+    ) -> Result<LLMResponse, LLMError> {
         let start_time = Instant::now();
         validate_request_safety(request)?;
 
@@ -126,9 +139,13 @@ impl LLMClient for AzureOpenAIClient {
             stream: false,
         };
 
-        debug!("Sending Azure OpenAI request to deployment: {}", self.config.deployment_name);
+        debug!(
+            "Sending Azure OpenAI request to deployment: {}",
+            self.config.deployment_name
+        );
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.build_azure_url())
             .header("api-key", &self.config.api_key)
             .header("Content-Type", "application/json")
@@ -138,21 +155,33 @@ impl LLMClient for AzureOpenAIClient {
             .map_err(|e| LLMError::NetworkError(format!("Request failed: {}", e)))?;
 
         let status = response.status();
-        let response_body = response.text().await
+        let response_body = response
+            .text()
+            .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to read response: {}", e)))?;
 
         if !status.is_success() {
-            return Err(super::handle_http_error(status, &response_body, LLMProvider::AzureOpenAI));
+            return Err(super::handle_http_error(
+                status,
+                &response_body,
+                LLMProvider::AzureOpenAI,
+            ));
         }
 
-        let azure_response: AzureOpenAIResponse = serde_json::from_str(&response_body)
-            .map_err(|e| LLMError::ParseError(format!("Failed to parse Azure OpenAI response: {}", e)))?;
-
-        let choice = azure_response.choices.into_iter().next()
-            .ok_or_else(|| LLMError::InvalidResponse {
-                provider: LLMProvider::AzureOpenAI,
-                reason: "No choices in response".to_string(),
+        let azure_response: AzureOpenAIResponse =
+            serde_json::from_str(&response_body).map_err(|e| {
+                LLMError::ParseError(format!("Failed to parse Azure OpenAI response: {}", e))
             })?;
+
+        let choice =
+            azure_response
+                .choices
+                .into_iter()
+                .next()
+                .ok_or_else(|| LLMError::InvalidResponse {
+                    provider: LLMProvider::AzureOpenAI,
+                    reason: "No choices in response".to_string(),
+                })?;
 
         let finish_reason = match choice.finish_reason.as_str() {
             "stop" => FinishReason::Stop,
@@ -206,7 +235,8 @@ impl LLMClient for AzureOpenAIClient {
             stream: false,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.build_azure_url())
             .header("api-key", &self.config.api_key)
             .header("Content-Type", "application/json")

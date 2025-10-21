@@ -479,10 +479,7 @@ impl SharedServices {
 
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
-        let sst_engine = Arc::new(
-            crate::storage::engines::impls::sst::SstEngine::new()
-            .await?,
-        );
+        let sst_engine = Arc::new(crate::storage::engines::impls::sst::SstEngine::new().await?);
         debug!("✅ SharedServices::new - SST engine created successfully");
 
         // Create WAL manager for two-stage search
@@ -522,7 +519,8 @@ impl SharedServices {
             orch
         } else {
             // Create a default orchestrator if none provided (backward compatibility)
-            let mut default_orchestrator = CrossCacheOrchestrator::new((storage_config.cache_size_mb * 1024 * 1024) as usize);
+            let mut default_orchestrator =
+                CrossCacheOrchestrator::new((storage_config.cache_size_mb * 1024 * 1024) as usize);
             default_orchestrator.start_eviction_service(None);
             let orch = Arc::new(default_orchestrator);
             orch.clone().start_rebalancing_service();
@@ -581,7 +579,9 @@ impl SharedServices {
                 let collection_config = crate::proto::proximadb_v1::CollectionConfig {
                     name: metadata.name.clone(),
                     dimension: metadata.dimension as u32,
-                    distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32), // Default
+                    distance_metric: Some(
+                        crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                    ), // Default
                     storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32), // Default: SST
                     filterable_columns: vec![],
                     index_configs: vec![],
@@ -589,7 +589,8 @@ impl SharedServices {
                         enabled: Some(true), // Quantization enabled by default
                         strategy: Some(
                             crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults
-                                as i32),
+                                as i32,
+                        ),
                         custom_levels: vec![],
                         enable_progressive_search: Some(true), // Progressive search enabled by default
                         binary_filter_selectivity: Some(0.3),
@@ -666,8 +667,14 @@ impl SharedServices {
         }
 
         // Create GraphOperationsService for native graph database operations
-        debug!("🔧 SharedServices::new - Creating GraphOperationsService for graph database operations...");
-        let mut graph_service_inst = if let Some(cfg) = opt_config { crate::graph::GraphOperationsService::from_config(cfg) } else { crate::graph::GraphOperationsService::new() };
+        debug!(
+            "🔧 SharedServices::new - Creating GraphOperationsService for graph database operations..."
+        );
+        let mut graph_service_inst = if let Some(cfg) = opt_config {
+            crate::graph::GraphOperationsService::from_config(cfg)
+        } else {
+            crate::graph::GraphOperationsService::new()
+        };
         // Create a simple file-backed metrics updater under data_root/metrics
         let filesystem_factory =
             Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
@@ -770,10 +777,11 @@ impl SharedServices {
 
         // Implement comprehensive vector recovery from WAL to VectorOperationsService
         let mut total_vectors_recovered = 0u64;
-        
+
         for (collection_id, _collection) in &recovered_collections {
             // 1. Check if write buffer has unflushed data for this collection
-            let unflushed_batches = match storage_ref.write_ahead_log_manager()
+            let unflushed_batches = match storage_ref
+                .write_ahead_log_manager()
                 .read_all_batches(collection_id, None)
                 .await
             {
@@ -788,19 +796,23 @@ impl SharedServices {
             };
 
             if unflushed_batches.is_empty() {
-                debug!("No unflushed vectors found for collection: {}", collection_id);
+                debug!(
+                    "No unflushed vectors found for collection: {}",
+                    collection_id
+                );
                 continue;
             }
 
             // 2. Load vectors from write buffer into VectorOperationsService memtable
             let mut collection_vectors_recovered = 0u64;
-            
+
             for batch in unflushed_batches {
                 let batch_size = batch.vector_records.len();
-                
+
                 // Insert each vector into the VectorOperationsService memtable
                 for vector_record in batch.vector_records.iter() {
-                    match self.vector_operations_service
+                    match self
+                        .vector_operations_service
                         .insert_vectors_direct(collection_id, Arc::new(vec![vector_record.clone()]))
                         .await
                     {
@@ -810,14 +822,12 @@ impl SharedServices {
                         Err(e) => {
                             warn!(
                                 "Failed to recover vector {} for collection {}: {}",
-                                &vector_record.id,
-                                collection_id,
-                                e
+                                &vector_record.id, collection_id, e
                             );
                         }
                     }
                 }
-                
+
                 debug!(
                     "Recovered batch {} with {} vectors for collection {}",
                     batch.batch_id.to_base62(),
@@ -827,7 +837,7 @@ impl SharedServices {
             }
 
             total_vectors_recovered += collection_vectors_recovered;
-            
+
             // 3. Mark recovery complete for this collection
             info!(
                 "✅ Collection '{}': Recovered {} vectors from WAL to memtable",
@@ -837,9 +847,10 @@ impl SharedServices {
 
         info!(
             "✅ SharedServices: Vector recovery completed - {} vectors across {} collections",
-            total_vectors_recovered, recovered_collections.len()
+            total_vectors_recovered,
+            recovered_collections.len()
         );
-        
+
         Ok(())
     }
 
@@ -952,7 +963,10 @@ impl MultiServer {
             let mut vector_service =
                 crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
                     vector_service_impl,
-                );
+                )
+                .max_decoding_message_size(64 * 1024 * 1024) // 64MB for bulk vector inserts
+                .max_encoding_message_size(64 * 1024 * 1024); // 64MB for bulk vector responses
+
             if self.config.grpc_config.compression {
                 use tonic::codec::CompressionEncoding;
                 vector_service = vector_service
@@ -967,7 +981,10 @@ impl MultiServer {
             let mut sql_service =
                 crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
                     sql_service_impl,
-                );
+                )
+                .max_decoding_message_size(64 * 1024 * 1024) // 64MB for bulk SQL queries
+                .max_encoding_message_size(64 * 1024 * 1024); // 64MB for large result sets
+
             if self.config.grpc_config.compression {
                 use tonic::codec::CompressionEncoding;
                 sql_service = sql_service

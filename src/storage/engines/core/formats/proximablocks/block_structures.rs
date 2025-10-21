@@ -113,8 +113,10 @@ use crate::core::bloom::SstableBloomFilter;
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 
 // ProximaCodec system for encoding/decoding
-use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, types::ProximaScheme};
 use super::engine_profile::EngineProfile;
+use crate::storage::engines::core::ops::proximacodec::{
+    ProximaCodec, analysis, types::ProximaScheme,
+};
 // Quantization now handled by unified compute module
 
 /// Pattern detected in vector data for optimal encoding selection
@@ -550,7 +552,10 @@ impl ProximaDataBlock {
     /// DEPRECATED: Use serialize_with_config() which now uses ProximaCodec
     ///
     /// Apply SIMD-optimized encoding based on layout strategy
-    #[deprecated(since = "0.1.5", note = "Use serialize_with_config() which now uses ProximaCodec")]
+    #[deprecated(
+        since = "0.1.5",
+        note = "Use serialize_with_config() which now uses ProximaCodec"
+    )]
     #[allow(dead_code)]
     fn apply_simd_encoding(
         &mut self,
@@ -558,7 +563,9 @@ impl ProximaDataBlock {
         _layout: VectorEncodingLayout,
         _engine_profile: EngineProfile,
     ) -> anyhow::Result<()> {
-        panic!("apply_simd_encoding is obsolete - use serialize_with_config() which uses ProximaCodec instead")
+        panic!(
+            "apply_simd_encoding is obsolete - use serialize_with_config() which uses ProximaCodec instead"
+        )
     }
 
     /// **🚀 Create a new Proxima data block with AUTOMATIC optimization capabilities**
@@ -656,7 +663,10 @@ impl ProximaDataBlock {
         };
 
         // Calculate timestamp range
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0) as i64).collect();
+        let timestamps: Vec<i64> = records
+            .iter()
+            .map(|r| r.timestamp.unwrap_or(0) as i64)
+            .collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
@@ -722,9 +732,12 @@ impl ProximaDataBlock {
         };
 
         // Apply SIMD encoding if layout requires it
-        if compression_config.vector_layout != VectorEncodingLayout::FullVector && !records.is_empty() {
+        if compression_config.vector_layout != VectorEncodingLayout::FullVector
+            && !records.is_empty()
+        {
             // Extract vectors for SIMD encoding
-            let vectors: Vec<Vec<f32>> = records.iter()
+            let vectors: Vec<Vec<f32>> = records
+                .iter()
                 .filter(|r| !r.vector.is_empty())
                 .map(|r| r.vector.clone())
                 .collect();
@@ -773,7 +786,7 @@ impl ProximaDataBlock {
                     Vec::new(), // No metadata filter for blocks
                     stats,
                 ))
-            },
+            }
             Err(e) => {
                 warn!("Failed to create bloom filter: {}", e);
                 None
@@ -801,7 +814,10 @@ impl ProximaDataBlock {
         };
 
         // Calculate timestamp range
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0) as i64).collect();
+        let timestamps: Vec<i64> = records
+            .iter()
+            .map(|r| r.timestamp.unwrap_or(0) as i64)
+            .collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
@@ -868,7 +884,9 @@ impl ProximaDataBlock {
         // Apply SIMD encoding with specific engine profile
         // Note: Encoding now happens in serialize_with_config() using ProximaCodec
         // Just store the layout preference from config
-        if compression_config.vector_layout != VectorEncodingLayout::FullVector && !records.is_empty() {
+        if compression_config.vector_layout != VectorEncodingLayout::FullVector
+            && !records.is_empty()
+        {
             block.vector_layout = compression_config.vector_layout;
         }
 
@@ -1000,7 +1018,10 @@ impl ProximaDataBlock {
         let range = max_val - min_val;
 
         if range < 4.0 && min_val >= -2.0 && max_val <= 2.0 {
-            return VectorDataPattern::Normalized { min: min_val, max: max_val };
+            return VectorDataPattern::Normalized {
+                min: min_val,
+                max: max_val,
+            };
         }
 
         // Check for sequential/monotonic pattern
@@ -1020,7 +1041,11 @@ impl ProximaDataBlock {
         }
 
         // Default to general pattern with statistics
-        VectorDataPattern::General { min: min_val, max: max_val, range }
+        VectorDataPattern::General {
+            min: min_val,
+            max: max_val,
+            range,
+        }
     }
 
     /// Choose optimal encoding based on detected pattern
@@ -1030,33 +1055,54 @@ impl ProximaDataBlock {
         let encoding_marker = match pattern {
             VectorDataPattern::Empty => 0x00, // Raw encoding
             VectorDataPattern::Constant(val) => {
-                trace!("[PATTERN] Constant pattern detected (value: {}) -> Using RunLength encoding", val);
+                trace!(
+                    "[PATTERN] Constant pattern detected (value: {}) -> Using RunLength encoding",
+                    val
+                );
                 0x60 // RunLength encoding
-            },
+            }
             VectorDataPattern::Sparse(ratio) if ratio > 0.7 => {
-                trace!("[PATTERN] Sparse pattern detected ({}% zeros) -> Using RunLength encoding", ratio * 100.0);
+                trace!(
+                    "[PATTERN] Sparse pattern detected ({}% zeros) -> Using RunLength encoding",
+                    ratio * 100.0
+                );
                 0x60 // RunLength for very sparse
-            },
+            }
             VectorDataPattern::Sparse(ratio) => {
-                trace!("[PATTERN] Sparse pattern detected ({}% zeros) -> Using FrameOfReference encoding", ratio * 100.0);
+                trace!(
+                    "[PATTERN] Sparse pattern detected ({}% zeros) -> Using FrameOfReference encoding",
+                    ratio * 100.0
+                );
                 0x30 // FrameOfReference for moderate sparsity
-            },
+            }
             VectorDataPattern::Sequential { max_delta } if max_delta < 1.0 => {
-                trace!("[PATTERN] Sequential pattern detected (max_delta: {}) -> Using Delta encoding", max_delta);
+                trace!(
+                    "[PATTERN] Sequential pattern detected (max_delta: {}) -> Using Delta encoding",
+                    max_delta
+                );
                 0x20 // Delta encoding
-            },
+            }
             VectorDataPattern::Normalized { min, max } => {
-                trace!("[PATTERN] Normalized pattern detected (range: [{}, {}]) -> Using FrameOfReference encoding", min, max);
+                trace!(
+                    "[PATTERN] Normalized pattern detected (range: [{}, {}]) -> Using FrameOfReference encoding",
+                    min, max
+                );
                 0x30 // FrameOfReference for normalized
-            },
+            }
             VectorDataPattern::General { min, max, range } if range < 100.0 => {
-                trace!("[PATTERN] General pattern with small range (min: {}, max: {}, range: {}) -> Using FrameOfReference encoding", min, max, range);
+                trace!(
+                    "[PATTERN] General pattern with small range (min: {}, max: {}, range: {}) -> Using FrameOfReference encoding",
+                    min, max, range
+                );
                 0x30 // FrameOfReference for small range
-            },
+            }
             VectorDataPattern::General { min, max, range } => {
-                trace!("[PATTERN] General pattern (min: {}, max: {}, range: {}) -> Using BitPacked encoding", min, max, range);
+                trace!(
+                    "[PATTERN] General pattern (min: {}, max: {}, range: {}) -> Using BitPacked encoding",
+                    min, max, range
+                );
                 0x10 // BitPacked as default for general case
-            },
+            }
             _ => {
                 trace!("[PATTERN] Unknown pattern -> Using BitPacked encoding (default)");
                 0x10
@@ -1153,7 +1199,11 @@ impl ProximaDataBlock {
     /// Estimate the serialized size for pre-allocation
     fn estimate_serialized_size(&self) -> usize {
         let header_size = 10; // Version + marker + counts
-        let dimension = if self.records.is_empty() { 0 } else { self.records[0].vector.len() };
+        let dimension = if self.records.is_empty() {
+            0
+        } else {
+            self.records[0].vector.len()
+        };
         let vector_size = self.records.len() * dimension * 4; // f32 = 4 bytes
         let metadata_estimate = self.records.len() * 100; // Estimate 100 bytes per record metadata
         let padding = 1024; // Safety margin for compression overhead
@@ -1197,7 +1247,11 @@ impl ProximaDataBlock {
     }
 
     /// Helper to serialize vectors directly to buffer
-    fn serialize_vectors_to_buffer(&self, buffer: &mut Vec<u8>, config: &BlockCompressionConfig) -> anyhow::Result<()> {
+    fn serialize_vectors_to_buffer(
+        &self,
+        buffer: &mut Vec<u8>,
+        config: &BlockCompressionConfig,
+    ) -> anyhow::Result<()> {
         // This would contain the vector serialization logic from serialize_with_config
         // but writing directly to the buffer instead of creating intermediate buffers
         Ok(())
@@ -1230,8 +1284,8 @@ impl ProximaDataBlock {
 
     /// Serialize with bloom filter generation in parallel (async)
     pub async fn serialize_with_bloom(&self) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
-        use tokio::task;
         use std::sync::Arc;
+        use tokio::task;
 
         // Share self through Arc for parallel access
         let self_arc = Arc::new(self.clone());
@@ -1244,14 +1298,14 @@ impl ProximaDataBlock {
 
         // Spawn bloom generation task
         let bloom_self = Arc::clone(&self_arc);
-        let bloom_handle = task::spawn_blocking(move || {
-            bloom_self.generate_bloom()
-        });
+        let bloom_handle = task::spawn_blocking(move || bloom_self.generate_bloom());
 
         // Wait for both to complete
-        let serialized_block = serialize_handle.await
+        let serialized_block = serialize_handle
+            .await
             .map_err(|e| anyhow::anyhow!("Serialization failed: {}", e))??;
-        let bloom_filter = bloom_handle.await
+        let bloom_filter = bloom_handle
+            .await
             .map_err(|e| anyhow::anyhow!("Bloom filter generation failed: {}", e))??;
 
         Ok((serialized_block, bloom_filter))
@@ -1263,7 +1317,7 @@ impl ProximaDataBlock {
 
         let (serialized_block, bloom_filter) = rayon::join(
             || self.serialize_with_config(&self.compression_config),
-            || self.generate_bloom()
+            || self.generate_bloom(),
         );
 
         Ok((serialized_block?, bloom_filter?))
@@ -1289,7 +1343,12 @@ impl ProximaDataBlock {
         const COLUMNAR_FORMAT_VERSION: u8 = 1; // Version 1 = initial release
         result.push(COLUMNAR_FORMAT_VERSION);
         result.push(self.encoding_marker);
-        trace!("[ENCODE] Position {}: Wrote format version {} + encoding marker {}", result.len(), COLUMNAR_FORMAT_VERSION, self.encoding_marker);
+        trace!(
+            "[ENCODE] Position {}: Wrote format version {} + encoding marker {}",
+            result.len(),
+            COLUMNAR_FORMAT_VERSION,
+            self.encoding_marker
+        );
 
         if self.records.is_empty() {
             result.write_all(&0u32.to_le_bytes())?; // Zero records
@@ -1300,7 +1359,12 @@ impl ProximaDataBlock {
         result.write_all(&(self.records.len() as u32).to_le_bytes())?;
         let dimension = self.records[0].vector.len();
         result.write_all(&(dimension as u32).to_le_bytes())?;
-        trace!("[ENCODE] Position {}: Wrote record count {} + dimension {}", result.len(), self.records.len(), dimension);
+        trace!(
+            "[ENCODE] Position {}: Wrote record count {} + dimension {}",
+            result.len(),
+            self.records.len(),
+            dimension
+        );
 
         // ============ STEP 1: Encode vectors using Proxima dual-mode encoding ============
         // Use ProximaCodec for encoding
@@ -1327,19 +1391,29 @@ impl ProximaDataBlock {
                 //
                 // Vector databases are read-heavy: embeddings written once, queried thousands of times
                 // Decode speed is MORE important than marginal compression differences
-                VectorEncodingLayout::FullVector  // RECOMMENDED default for vector databases
+                VectorEncodingLayout::FullVector // RECOMMENDED default for vector databases
             }
             layout => layout,
         };
 
-        debug!("[ENCODE] Selected strategy: {:?}, dimension: {}", strategy, dimension);
+        debug!(
+            "[ENCODE] Selected strategy: {:?}, dimension: {}",
+            strategy, dimension
+        );
 
         let encoded_vectors = match strategy {
             VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector => {
-                trace!("[ENCODE] Using TransposeFieldEncodedAndCompressedVector strategy with field-level compression");
+                trace!(
+                    "[ENCODE] Using TransposeFieldEncodedAndCompressedVector strategy with field-level compression"
+                );
                 // TransposeFieldEncodedAndCompressedVector strategy: RxD → DxR with per-dimension compression
-                let result = Self::encode_transpose_field_encoded_and_compressed_vector_field(&vectors, dimension, config)?;
-                trace!("[ENCODE] TransposeFieldEncodedAndCompressedVector encoded size: {} bytes", result.len());
+                let result = Self::encode_transpose_field_encoded_and_compressed_vector_field(
+                    &vectors, dimension, config,
+                )?;
+                trace!(
+                    "[ENCODE] TransposeFieldEncodedAndCompressedVector encoded size: {} bytes",
+                    result.len()
+                );
                 result
             }
             VectorEncodingLayout::FullVector => {
@@ -1350,24 +1424,41 @@ impl ProximaDataBlock {
                 result
             }
             VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector => {
-                trace!("[ENCODE] Using TransposeFieldEncodedBlockCompressedVector strategy with block-level compression");
+                trace!(
+                    "[ENCODE] Using TransposeFieldEncodedBlockCompressedVector strategy with block-level compression"
+                );
                 // TransposeFieldEncodedBlockCompressedVector strategy: RxD → DxR with block compression
-                let result = Self::encode_transpose_field_encoded_block_compressed_vector_field(&vectors, dimension, config)?;
-                trace!("[ENCODE] TransposeFieldEncodedBlockCompressedVector encoded size: {} bytes", result.len());
+                let result = Self::encode_transpose_field_encoded_block_compressed_vector_field(
+                    &vectors, dimension, config,
+                )?;
+                trace!(
+                    "[ENCODE] TransposeFieldEncodedBlockCompressedVector encoded size: {} bytes",
+                    result.len()
+                );
                 result
             }
             VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector => {
                 trace!("[ENCODE] Using GroupedFieldEncodedAndCompressedVector strategy");
                 // GroupedFieldEncodedAndCompressedVector strategy: divide into 32D groups with field-level compression
-                let result = Self::encode_grouped_field_encoded_and_compressed_vector_field(&vectors, dimension, config)?;
-                trace!("[ENCODE] GroupedFieldEncodedAndCompressedVector encoded size: {} bytes", result.len());
+                let result = Self::encode_grouped_field_encoded_and_compressed_vector_field(
+                    &vectors, dimension, config,
+                )?;
+                trace!(
+                    "[ENCODE] GroupedFieldEncodedAndCompressedVector encoded size: {} bytes",
+                    result.len()
+                );
                 result
             }
             VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector => {
                 trace!("[ENCODE] Using GroupedFieldEncodedBlockCompressedVector strategy");
                 // GroupedFieldEncodedBlockCompressedVector strategy: divide into 32D groups with block-level compression
-                let result = Self::encode_grouped_field_encoded_block_compressed_vector_field(&vectors, dimension, config)?;
-                trace!("[ENCODE] GroupedFieldEncodedBlockCompressedVector encoded size: {} bytes", result.len());
+                let result = Self::encode_grouped_field_encoded_block_compressed_vector_field(
+                    &vectors, dimension, config,
+                )?;
+                trace!(
+                    "[ENCODE] GroupedFieldEncodedBlockCompressedVector encoded size: {} bytes",
+                    result.len()
+                );
                 result
             }
             VectorEncodingLayout::Auto => unreachable!("Auto should be resolved above"),
@@ -1376,10 +1467,18 @@ impl ProximaDataBlock {
         // Write encoded vectors
         result.write_all(&(encoded_vectors.len() as u32).to_le_bytes())?;
         result.write_all(&encoded_vectors)?;
-        trace!("[ENCODE] Position {}: Wrote vector data length {} + {} bytes", result.len(), encoded_vectors.len(), encoded_vectors.len());
+        trace!(
+            "[ENCODE] Position {}: Wrote vector data length {} + {} bytes",
+            result.len(),
+            encoded_vectors.len(),
+            encoded_vectors.len()
+        );
 
         // ============ STEP 2: Encode ID Column (Cardinality-Aware) ============
-        debug!("[ENCODE] Encoding ID column for {} records", self.records.len());
+        debug!(
+            "[ENCODE] Encoding ID column for {} records",
+            self.records.len()
+        );
 
         // Collect IDs in original record order (CRITICAL for correct reconstruction)
         let ordered_ids: Vec<String> = self.records.iter().map(|r| r.id.clone()).collect();
@@ -1397,7 +1496,11 @@ impl ProximaDataBlock {
         }
         trace!("ID dictionary built: {} entries", id_dictionary.len());
 
-        debug!("[ENCODE] ID dictionary: {} unique IDs from {} records", id_dictionary.len(), ordered_ids.len());
+        debug!(
+            "[ENCODE] ID dictionary: {} unique IDs from {} records",
+            id_dictionary.len(),
+            ordered_ids.len()
+        );
 
         // Write ID dictionary
         result.write_all(&(id_dictionary.len() as u32).to_le_bytes())?;
@@ -1415,7 +1518,10 @@ impl ProximaDataBlock {
             .collect();
 
         trace!("ID indices to encode: {} values", id_indices.len());
-        debug!("[ENCODE] ID indices (first 5): {:?}", &id_indices[..std::cmp::min(5, id_indices.len())]);
+        debug!(
+            "[ENCODE] ID indices (first 5): {:?}",
+            &id_indices[..std::cmp::min(5, id_indices.len())]
+        );
 
         // Encode indices using ProximaCodec with automatic scheme analysis
         // ProximaCodec automatically includes wire format headers with type and scheme information
@@ -1424,7 +1530,11 @@ impl ProximaDataBlock {
         let encoded_ids = codec.encode_i64(&id_indices, id_scheme)?;
         result.write_all(&(encoded_ids.len() as u32).to_le_bytes())?; // Data length only
         result.write_all(&encoded_ids)?;
-        debug!("[ENCODE] Encoded {} ID indices to {} bytes", id_indices.len(), encoded_ids.len());
+        debug!(
+            "[ENCODE] Encoded {} ID indices to {} bytes",
+            id_indices.len(),
+            encoded_ids.len()
+        );
 
         // ============ STEP 3: Build sparse metadata columns (chunk IDs, page IDs, etc.) ============
         let mut metadata_keys = HashSet::new();
@@ -1436,7 +1546,11 @@ impl ProximaDataBlock {
 
         let metadata_key_list: Vec<String> = metadata_keys.into_iter().collect();
         result.write_all(&(metadata_key_list.len() as u32).to_le_bytes())?;
-        trace!("[ENCODE] Position {}: Wrote metadata key count {}", result.len(), metadata_key_list.len());
+        trace!(
+            "[ENCODE] Position {}: Wrote metadata key count {}",
+            result.len(),
+            metadata_key_list.len()
+        );
 
         for key in &metadata_key_list {
             // Write key name
@@ -1507,28 +1621,43 @@ impl ProximaDataBlock {
         }
 
         // ============ STEP 4: Encode Timestamp Column (High Cardinality, Often Sequential) ============
-        debug!("[ENCODE] Encoding timestamp column for {} records", self.records.len());
+        debug!(
+            "[ENCODE] Encoding timestamp column for {} records",
+            self.records.len()
+        );
 
         // Collect timestamps in record order - use both timestamp and updated_at
-        let timestamps: Vec<i64> = self.records
+        let timestamps: Vec<i64> = self
+            .records
             .iter()
             .map(|record| record.timestamp.unwrap_or(0)) // Use primary timestamp field
             .collect();
 
-        debug!("[ENCODE] Timestamps (first 5): {:?}", &timestamps[..std::cmp::min(5, timestamps.len())]);
+        debug!(
+            "[ENCODE] Timestamps (first 5): {:?}",
+            &timestamps[..std::cmp::min(5, timestamps.len())]
+        );
 
         // ProximaCodec automatic scheme analysis chooses optimal encoding for timestamps
         let timestamp_scheme = analysis::analyze_and_choose_scheme_i64(&timestamps);
         let encoded_timestamps = codec.encode_i64(&timestamps, timestamp_scheme)?;
         result.write_all(&(encoded_timestamps.len() as u32).to_le_bytes())?;
         result.write_all(&encoded_timestamps)?;
-        debug!("[ENCODE] Encoded {} timestamps to {} bytes", timestamps.len(), encoded_timestamps.len());
+        debug!(
+            "[ENCODE] Encoded {} timestamps to {} bytes",
+            timestamps.len(),
+            encoded_timestamps.len()
+        );
 
         // ============ STEP 5: Encode Source Column (Medium/High Cardinality - Actual Content) ============
-        debug!("[ENCODE] Encoding source column for {} records", self.records.len());
+        debug!(
+            "[ENCODE] Encoding source column for {} records",
+            self.records.len()
+        );
 
         // Collect sources in record order (actual embedding generation content)
-        let ordered_sources: Vec<Option<String>> = self.records.iter().map(|r| r.source.clone()).collect();
+        let ordered_sources: Vec<Option<String>> =
+            self.records.iter().map(|r| r.source.clone()).collect();
 
         // Build dictionary for sources (actual content text - medium to high cardinality)
         let mut source_dictionary = Vec::new();
@@ -1546,7 +1675,10 @@ impl ProximaDataBlock {
             }
         }
 
-        debug!("[ENCODE] Source dictionary: {} unique sources", source_dictionary.len());
+        debug!(
+            "[ENCODE] Source dictionary: {} unique sources",
+            source_dictionary.len()
+        );
 
         // Write source dictionary
         result.write_all(&(source_dictionary.len() as u32).to_le_bytes())?;
@@ -1554,7 +1686,11 @@ impl ProximaDataBlock {
             let bytes = source.as_bytes();
             result.write_all(&(bytes.len() as u32).to_le_bytes())?;
             result.write_all(bytes)?;
-            trace!("[ENCODE] Source dict[{}]: '{}'", i, if source.is_empty() { "NULL" } else { source });
+            trace!(
+                "[ENCODE] Source dict[{}]: '{}'",
+                i,
+                if source.is_empty() { "NULL" } else { source }
+            );
         }
 
         // Create source indices in record order
@@ -1563,7 +1699,10 @@ impl ProximaDataBlock {
             .map(|source| *source_lookup.get(source).unwrap() as i64)
             .collect();
 
-        debug!("[ENCODE] Source indices (first 5): {:?}", &source_indices[..std::cmp::min(5, source_indices.len())]);
+        debug!(
+            "[ENCODE] Source indices (first 5): {:?}",
+            &source_indices[..std::cmp::min(5, source_indices.len())]
+        );
 
         // Encode source indices using ProximaCodec with automatic scheme analysis
         // Adaptive selection detects patterns in dictionary indices
@@ -1571,17 +1710,28 @@ impl ProximaDataBlock {
         let encoded_sources = codec.encode_i64(&source_indices, source_scheme)?;
         result.write_all(&(encoded_sources.len() as u32).to_le_bytes())?; // Data length only
         result.write_all(&encoded_sources)?;
-        debug!("[ENCODE] Encoded {} source indices to {} bytes", source_indices.len(), encoded_sources.len());
+        debug!(
+            "[ENCODE] Encoded {} source indices to {} bytes",
+            source_indices.len(),
+            encoded_sources.len()
+        );
 
         // ============ STEP 6: Encode Updated_at Column (Optional Timestamps) ============
-        debug!("[ENCODE] Encoding updated_at column for {} records", self.records.len());
+        debug!(
+            "[ENCODE] Encoding updated_at column for {} records",
+            self.records.len()
+        );
 
         // Collect updated_at values (may be None)
         let updated_ats: Vec<Option<i64>> = self.records.iter().map(|r| r.updated_at).collect();
 
         // Count non-None values for efficient sparse storage
         let non_none_count = updated_ats.iter().filter(|&&x| x.is_some()).count();
-        debug!("[ENCODE] Updated_at: {} non-None values out of {}", non_none_count, updated_ats.len());
+        debug!(
+            "[ENCODE] Updated_at: {} non-None values out of {}",
+            non_none_count,
+            updated_ats.len()
+        );
 
         if non_none_count == 0 {
             // All None - just write marker
@@ -1627,7 +1777,11 @@ impl ProximaDataBlock {
         // Expires_at (same 3-mode encoding as updated_at)
         let expires_ats: Vec<Option<i64>> = self.records.iter().map(|r| r.expires_at).collect();
         let expires_non_none = expires_ats.iter().filter(|&&x| x.is_some()).count();
-        debug!("[ENCODE] Expires_at: {} non-None values out of {}", expires_non_none, expires_ats.len());
+        debug!(
+            "[ENCODE] Expires_at: {} non-None values out of {}",
+            expires_non_none,
+            expires_ats.len()
+        );
 
         if expires_non_none == 0 {
             // All None - just write marker
@@ -1695,7 +1849,10 @@ impl ProximaDataBlock {
         let metadata_bytes = bincode::serialize(&self.metadata)?;
         result.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
         result.write_all(&metadata_bytes)?;
-        debug!("[ENCODE] Wrote block metadata: {} bytes", metadata_bytes.len());
+        debug!(
+            "[ENCODE] Wrote block metadata: {} bytes",
+            metadata_bytes.len()
+        );
 
         // ============ STEP 9: Apply compression if configured ============
         if config.algorithm != CompressionAlgorithm::None {
@@ -1708,7 +1865,11 @@ impl ProximaDataBlock {
 
             // If compression is actually beneficial
             if compressed.len() < result.len() {
-                trace!("[ENCODE] Compression beneficial: {} -> {} bytes", result.len(), compressed.len());
+                trace!(
+                    "[ENCODE] Compression beneficial: {} -> {} bytes",
+                    result.len(),
+                    compressed.len()
+                );
                 // Write compressed format: marker + original size + compressed data
                 let mut final_result = Vec::new();
 
@@ -1721,7 +1882,10 @@ impl ProximaDataBlock {
                     _ => 0x80,
                 };
                 final_result.push(compression_marker);
-                trace!("[ENCODE] Using compression marker: 0x{:02X}", compression_marker);
+                trace!(
+                    "[ENCODE] Using compression marker: 0x{:02X}",
+                    compression_marker
+                );
 
                 // Write original size for decompression
                 final_result.extend(&(result.len() as u32).to_le_bytes());
@@ -1729,10 +1893,17 @@ impl ProximaDataBlock {
                 // Write compressed data
                 final_result.extend(compressed);
 
-                trace!("[ENCODE] Final compressed size: {} bytes", final_result.len());
+                trace!(
+                    "[ENCODE] Final compressed size: {} bytes",
+                    final_result.len()
+                );
                 return Ok(final_result);
             } else {
-                trace!("[ENCODE] Compression not beneficial: {} -> {} bytes", result.len(), compressed.len());
+                trace!(
+                    "[ENCODE] Compression not beneficial: {} -> {} bytes",
+                    result.len(),
+                    compressed.len()
+                );
             }
         }
 
@@ -1741,7 +1912,10 @@ impl ProximaDataBlock {
         let mut final_result = Vec::with_capacity(result.len() + 1);
         final_result.push(0x00); // Uncompressed marker
         final_result.extend(result);
-        trace!("[ENCODE] Final uncompressed size: {} bytes", final_result.len());
+        trace!(
+            "[ENCODE] Final uncompressed size: {} bytes",
+            final_result.len()
+        );
         Ok(final_result)
     }
 
@@ -1757,7 +1931,7 @@ impl ProximaDataBlock {
         val_bytes: &[u8],
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value, FilterableDataType};
+        use crate::proto::proximadb_v1::{FilterableDataType, SqlValue, sql_value::Value};
 
         // Try to get type from collection config for filterable columns
         if let Some(config) = collection_config {
@@ -1768,22 +1942,32 @@ impl ProximaDataBlock {
                     return match col_spec.data_type() {
                         FilterableDataType::FilterableInteger => {
                             let i = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
-                            SqlValue { value: Some(Value::Int64Value(i)) }
+                            SqlValue {
+                                value: Some(Value::Int64Value(i)),
+                            }
                         }
                         FilterableDataType::FilterableFloat => {
                             let f = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
-                            SqlValue { value: Some(Value::NumberValue(f)) }
+                            SqlValue {
+                                value: Some(Value::NumberValue(f)),
+                            }
                         }
-                        FilterableDataType::FilterableBoolean => {
-                            SqlValue { value: Some(Value::BoolValue(val_bytes.get(0).map(|&b| b != 0).unwrap_or(false))) }
-                        }
+                        FilterableDataType::FilterableBoolean => SqlValue {
+                            value: Some(Value::BoolValue(
+                                val_bytes.get(0).map(|&b| b != 0).unwrap_or(false),
+                            )),
+                        },
                         FilterableDataType::FilterableString => {
                             let s = String::from_utf8_lossy(val_bytes).to_string();
-                            SqlValue { value: Some(Value::StringValue(s)) }
+                            SqlValue {
+                                value: Some(Value::StringValue(s)),
+                            }
                         }
                         FilterableDataType::FilterableDatetime => {
                             let ts = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
-                            SqlValue { value: Some(Value::Int64Value(ts)) }
+                            SqlValue {
+                                value: Some(Value::Int64Value(ts)),
+                            }
                         }
                         _ => {
                             // Unknown type, fall back to heuristic
@@ -1801,7 +1985,9 @@ impl ProximaDataBlock {
 
     /// Heuristic-based deserialization for non-filterable metadata
     /// Similar to Parquet's extra_meta approach (best-effort type guessing)
-    fn deserialize_metadata_value_heuristic(val_bytes: &[u8]) -> crate::proto::proximadb_v1::SqlValue {
+    fn deserialize_metadata_value_heuristic(
+        val_bytes: &[u8],
+    ) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
         // For non-filterable metadata, we use heuristics (no type info available)
@@ -1812,14 +1998,20 @@ impl ProximaDataBlock {
             // 8 bytes: could be f64 or i64
             // Default to f64 (most common for non-filterable metadata)
             let num = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
-            SqlValue { value: Some(Value::NumberValue(num)) }
+            SqlValue {
+                value: Some(Value::NumberValue(num)),
+            }
         } else if val_len == 1 && (val_bytes[0] == 0 || val_bytes[0] == 1) {
             // Single byte with value 0 or 1: likely a bool
-            SqlValue { value: Some(Value::BoolValue(val_bytes[0] != 0)) }
+            SqlValue {
+                value: Some(Value::BoolValue(val_bytes[0] != 0)),
+            }
         } else {
             // Everything else: treat as string
             let s = String::from_utf8_lossy(val_bytes).to_string();
-            SqlValue { value: Some(Value::StringValue(s)) }
+            SqlValue {
+                value: Some(Value::StringValue(s)),
+            }
         }
     }
 
@@ -1830,11 +2022,17 @@ impl ProximaDataBlock {
     /// - Non-filterable metadata uses heuristic (like Parquet extra_meta)
     ///
     /// Backward compatible: Pass None to use heuristic for all metadata
-    pub fn deserialize(data: &[u8], collection_config: Option<&crate::proto::proximadb_v1::Collection>) -> anyhow::Result<Self> {
-        use crate::core::compression::{CompressionContext, CompressionAlgorithm, decompress};
+    pub fn deserialize(
+        data: &[u8],
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> anyhow::Result<Self> {
+        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::Read;
 
-        trace!("[DECODE] Starting deserialization, data size: {} bytes", data.len());
+        trace!(
+            "[DECODE] Starting deserialization, data size: {} bytes",
+            data.len()
+        );
 
         if data.is_empty() {
             warn!(" [DECODE] ERROR: Empty data");
@@ -1865,12 +2063,11 @@ impl ProximaDataBlock {
 
             // Decompress the rest of the data
             let compressed_data = &data[5..];
-            trace!("[DECODE] Compressed data size: {} bytes", compressed_data.len());
-            let decompressed = decompress(
-                compressed_data,
-                algorithm,
-                CompressionContext::Block,
-            )?;
+            trace!(
+                "[DECODE] Compressed data size: {} bytes",
+                compressed_data.len()
+            );
+            let decompressed = decompress(compressed_data, algorithm, CompressionContext::Block)?;
             trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
 
             // The decompressed data contains: format_version + encoding_marker + data
@@ -1879,7 +2076,10 @@ impl ProximaDataBlock {
             } else {
                 0x00
             };
-            trace!("[DECODE] Encoding marker from decompressed: 0x{:02X}", actual_marker);
+            trace!(
+                "[DECODE] Encoding marker from decompressed: 0x{:02X}",
+                actual_marker
+            );
             (decompressed, actual_marker)
         } else if first_byte == 0x00 {
             // Uncompressed data marker - the actual data follows
@@ -1891,15 +2091,25 @@ impl ProximaDataBlock {
             } else {
                 0x00
             };
-            trace!("[DECODE] Format version: 0x{:02X}, Encoding marker: 0x{:02X}",
-                     if actual_data.len() > 0 { actual_data[0] } else { 0x00 }, actual_marker);
+            trace!(
+                "[DECODE] Format version: 0x{:02X}, Encoding marker: 0x{:02X}",
+                if actual_data.len() > 0 {
+                    actual_data[0]
+                } else {
+                    0x00
+                },
+                actual_marker
+            );
             (actual_data.to_vec(), actual_marker)
         } else {
             // Legacy or direct format: check if it's format version
             trace!("[DECODE] Legacy/direct format detected");
             if first_byte == 0x01 && data.len() > 1 {
                 // Format version 1, next byte is encoding marker
-                trace!("[DECODE] Format version 1, encoding marker: 0x{:02X}", data[1]);
+                trace!(
+                    "[DECODE] Format version 1, encoding marker: 0x{:02X}",
+                    data[1]
+                );
                 (data.to_vec(), data[1])
             } else {
                 // Assume first byte is encoding marker directly (very old format)
@@ -1910,7 +2120,10 @@ impl ProximaDataBlock {
         // Now process the decompressed data sequentially from position 0
         // DO NOT SKIP ANY BYTES - read everything in sequence to match serialization
         trace!("[DECODE] Processing decompressed data sequentially from position 0");
-        trace!("[DECODE] Total decompressed data size: {} bytes", decompressed_data.len());
+        trace!(
+            "[DECODE] Total decompressed data size: {} bytes",
+            decompressed_data.len()
+        );
 
         // Create cursor at position 0 - read all fields sequentially
         let mut cursor = std::io::Cursor::new(&decompressed_data);
@@ -1919,12 +2132,18 @@ impl ProximaDataBlock {
         let mut format_version_byte = [0u8; 1];
         cursor.read_exact(&mut format_version_byte)?;
         let format_version = format_version_byte[0];
-        trace!("[DECODE] Format version: 0x{:02X} at position 0", format_version);
+        trace!(
+            "[DECODE] Format version: 0x{:02X} at position 0",
+            format_version
+        );
 
         let mut encoding_marker_byte = [0u8; 1];
         cursor.read_exact(&mut encoding_marker_byte)?;
         let encoding_marker_read = encoding_marker_byte[0];
-        trace!("[DECODE] Encoding marker: 0x{:02X} at position 1", encoding_marker_read);
+        trace!(
+            "[DECODE] Encoding marker: 0x{:02X} at position 1",
+            encoding_marker_read
+        );
 
         // ============ STEP 1: Read record count and dimension (matches serialization) ============
         let mut record_count_bytes = [0u8; 4];
@@ -1954,30 +2173,57 @@ impl ProximaDataBlock {
         // Detect encoding strategy and decode accordingly
         trace!("[DECODE] Checking vector data format...");
         if vector_data.len() >= 2 {
-            trace!("[DECODE] Vector data first 2 bytes: [0x{:02X}, 0x{:02X}]",
-                     vector_data[0], vector_data[1]);
+            trace!(
+                "[DECODE] Vector data first 2 bytes: [0x{:02X}, 0x{:02X}]",
+                vector_data[0], vector_data[1]
+            );
         }
 
-        let mut records = if vector_data.len() >= 2 && vector_data[0] == 0x46 && vector_data[1] == 0x56 {
+        let mut records = if vector_data.len() >= 2
+            && vector_data[0] == 0x46
+            && vector_data[1] == 0x56
+        {
             // FullVector format detected (FV marker)
             trace!("[DECODE] FullVector format detected, decoding...");
             Self::decode_full_vector(&vector_data, dimension, record_count)?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x56 {
             // GroupedFieldEncodedAndCompressedVector format detected (GV marker)
             trace!("[DECODE] GroupedFieldEncodedAndCompressedVector format detected, decoding...");
-            Self::decode_grouped_field_encoded_and_compressed_vector(&vector_data, dimension, record_count)?
+            Self::decode_grouped_field_encoded_and_compressed_vector(
+                &vector_data,
+                dimension,
+                record_count,
+            )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x42 {
             // GroupedFieldEncodedBlockCompressedVector format detected (GB marker)
-            trace!("[DECODE] GroupedFieldEncodedBlockCompressedVector format detected, decoding...");
-            Self::decode_grouped_field_encoded_block_compressed_vector(&vector_data, dimension, record_count)?
+            trace!(
+                "[DECODE] GroupedFieldEncodedBlockCompressedVector format detected, decoding..."
+            );
+            Self::decode_grouped_field_encoded_block_compressed_vector(
+                &vector_data,
+                dimension,
+                record_count,
+            )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x56 {
             // TransposeFieldEncodedAndCompressedVector format detected (TV marker)
-            trace!("[DECODE] TransposeFieldEncodedAndCompressedVector format detected, decoding...");
-            Self::decode_transpose_field_encoded_and_compressed_vector(&vector_data, dimension, record_count)?
+            trace!(
+                "[DECODE] TransposeFieldEncodedAndCompressedVector format detected, decoding..."
+            );
+            Self::decode_transpose_field_encoded_and_compressed_vector(
+                &vector_data,
+                dimension,
+                record_count,
+            )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x42 {
             // TransposeFieldEncodedBlockCompressedVector format detected (TB marker)
-            trace!("[DECODE] TransposeFieldEncodedBlockCompressedVector format detected, decoding...");
-            Self::decode_transpose_field_encoded_block_compressed_vector(&vector_data, dimension, record_count)?
+            trace!(
+                "[DECODE] TransposeFieldEncodedBlockCompressedVector format detected, decoding..."
+            );
+            Self::decode_transpose_field_encoded_block_compressed_vector(
+                &vector_data,
+                dimension,
+                record_count,
+            )?
         } else {
             // Legacy format: decode using existing columnar logic
             trace!("[DECODE] Legacy format detected, decoding...");
@@ -1987,18 +2233,29 @@ impl ProximaDataBlock {
         // ============ CRITICAL: Decode the remaining sections that encoder wrote ============
 
         // STEP 2: Decode IDs (must match encoder sequence)
-        trace!("[DECODE] Position {}: Reading ID dictionary length", cursor.position());
+        trace!(
+            "[DECODE] Position {}: Reading ID dictionary length",
+            cursor.position()
+        );
         let mut id_len_bytes = [0u8; 4];
         cursor.read_exact(&mut id_len_bytes)?;
         let id_dict_len = u32::from_le_bytes(id_len_bytes) as usize;
-        trace!("[DECODE] Position {}: ID dictionary length: {} (bytes: {:?})", cursor.position(), id_dict_len, id_len_bytes);
+        trace!(
+            "[DECODE] Position {}: ID dictionary length: {} (bytes: {:?})",
+            cursor.position(),
+            id_dict_len,
+            id_len_bytes
+        );
 
         let mut id_dictionary = Vec::with_capacity(id_dict_len);
         for i in 0..id_dict_len {
             let mut id_str_len_bytes = [0u8; 4];
             cursor.read_exact(&mut id_str_len_bytes)?;
             let id_str_len = u32::from_le_bytes(id_str_len_bytes) as usize;
-            trace!("[DECODE] ID[{}] string length: {} (bytes: {:?})", i, id_str_len, id_str_len_bytes);
+            trace!(
+                "[DECODE] ID[{}] string length: {} (bytes: {:?})",
+                i, id_str_len, id_str_len_bytes
+            );
 
             let mut id_bytes = vec![0u8; id_str_len];
             cursor.read_exact(&mut id_bytes)?;
@@ -2009,26 +2266,44 @@ impl ProximaDataBlock {
         }
         trace!("ID dictionary loaded: {} entries", id_dictionary.len());
         // Read encoded ID indices (part of ID dictionary section in serialization)
-        trace!("[DECODE] Position {}: Reading encoded ID indices (part of ID section)", cursor.position());
+        trace!(
+            "[DECODE] Position {}: Reading encoded ID indices (part of ID section)",
+            cursor.position()
+        );
 
         // Read data length
         let mut encoded_id_len_bytes = [0u8; 4];
         cursor.read_exact(&mut encoded_id_len_bytes)?;
         let encoded_id_len = u32::from_le_bytes(encoded_id_len_bytes) as usize;
-        trace!("[DECODE] Position {}: Encoded ID indices length: {} (bytes: {:?})", cursor.position(), encoded_id_len, encoded_id_len_bytes);
+        trace!(
+            "[DECODE] Position {}: Encoded ID indices length: {} (bytes: {:?})",
+            cursor.position(),
+            encoded_id_len,
+            encoded_id_len_bytes
+        );
 
         let mut encoded_id_data = vec![0u8; encoded_id_len];
         cursor.read_exact(&mut encoded_id_data)?;
-        trace!("[DECODE] Position {}: Finished reading entire ID section (dictionary + indices)", cursor.position());
+        trace!(
+            "[DECODE] Position {}: Finished reading entire ID section (dictionary + indices)",
+            cursor.position()
+        );
 
         // Decode the ID indices using ProximaCodec (migrated from old decoder)
-        trace!("Decoding ID indices: record_count={}, data_len={}", record_count, encoded_id_data.len());
+        trace!(
+            "Decoding ID indices: record_count={}, data_len={}",
+            record_count,
+            encoded_id_data.len()
+        );
         let codec = ProximaCodec::global();
         let decoded_id_indices = match codec.decode_i64(&encoded_id_data) {
             Ok(indices) => {
                 if indices.len() != record_count {
-                    warn!("❌ [DECODE_IDS] ID indices count mismatch: got {}, expected {}, using sequential fallback",
-                          indices.len(), record_count);
+                    warn!(
+                        "❌ [DECODE_IDS] ID indices count mismatch: got {}, expected {}, using sequential fallback",
+                        indices.len(),
+                        record_count
+                    );
                     (0..record_count).map(|i| i as i64).collect()
                 } else {
                     trace!("Successfully decoded {} ID indices", indices.len());
@@ -2036,21 +2311,34 @@ impl ProximaDataBlock {
                 }
             }
             Err(e) => {
-                warn!("❌ [DECODE_IDS] Failed to decode ID indices: {}, using sequential fallback", e);
+                warn!(
+                    "❌ [DECODE_IDS] Failed to decode ID indices: {}, using sequential fallback",
+                    e
+                );
                 (0..record_count).map(|i| i as i64).collect()
             }
         };
 
         // STEP 3: Read and deserialize metadata sections
-        trace!("[DECODE] Position {}: Reading metadata key count", cursor.position());
+        trace!(
+            "[DECODE] Position {}: Reading metadata key count",
+            cursor.position()
+        );
         let mut metadata_key_count_bytes = [0u8; 4];
         cursor.read_exact(&mut metadata_key_count_bytes)?;
         let metadata_key_count = u32::from_le_bytes(metadata_key_count_bytes) as usize;
-        trace!("[DECODE] Position {}: Metadata key count: {} (bytes: {:?})", cursor.position(), metadata_key_count, metadata_key_count_bytes);
+        trace!(
+            "[DECODE] Position {}: Metadata key count: {} (bytes: {:?})",
+            cursor.position(),
+            metadata_key_count,
+            metadata_key_count_bytes
+        );
 
         // Store metadata for each key (key_name -> Vec of SqlValue, one per record)
-        let mut metadata_columns: std::collections::HashMap<String, Vec<Option<crate::proto::proximadb_v1::SqlValue>>> =
-            std::collections::HashMap::new();
+        let mut metadata_columns: std::collections::HashMap<
+            String,
+            Vec<Option<crate::proto::proximadb_v1::SqlValue>>,
+        > = std::collections::HashMap::new();
 
         for i in 0..metadata_key_count {
             trace!("[DECODE] Processing metadata key {}", i);
@@ -2059,34 +2347,55 @@ impl ProximaDataBlock {
             let mut key_len_bytes = [0u8; 4];
             cursor.read_exact(&mut key_len_bytes)?;
             let key_len = u32::from_le_bytes(key_len_bytes) as usize;
-            trace!("[DECODE] Metadata key[{}] name length: {} (bytes: {:?})", i, key_len, key_len_bytes);
+            trace!(
+                "[DECODE] Metadata key[{}] name length: {} (bytes: {:?})",
+                i, key_len, key_len_bytes
+            );
             let mut key_name_bytes = vec![0u8; key_len];
             cursor.read_exact(&mut key_name_bytes)?;
             let key_name = String::from_utf8_lossy(&key_name_bytes).to_string();
-            trace!("[DECODE] Metadata key[{}] name: '{}' (read {} bytes)", i, key_name, key_len);
+            trace!(
+                "[DECODE] Metadata key[{}] name: '{}' (read {} bytes)",
+                i, key_name, key_len
+            );
 
             // Read presence bitmap
             let mut bitmap_len_bytes = [0u8; 4];
             cursor.read_exact(&mut bitmap_len_bytes)?;
             let bitmap_len = u32::from_le_bytes(bitmap_len_bytes) as usize;
-            trace!("[DECODE] Metadata key[{}] bitmap length: {} (bytes: {:?})", i, bitmap_len, bitmap_len_bytes);
+            trace!(
+                "[DECODE] Metadata key[{}] bitmap length: {} (bytes: {:?})",
+                i, bitmap_len, bitmap_len_bytes
+            );
             let mut bitmap_bytes = vec![0u8; bitmap_len];
             cursor.read_exact(&mut bitmap_bytes)?;
-            trace!("[DECODE] Metadata key[{}] bitmap: read {} bytes", i, bitmap_len);
+            trace!(
+                "[DECODE] Metadata key[{}] bitmap: read {} bytes",
+                i, bitmap_len
+            );
 
             // Read sparse values with compression marker (consistent with serialize)
             let mut values_len_bytes = [0u8; 4];
             cursor.read_exact(&mut values_len_bytes)?;
             let values_len = u32::from_le_bytes(values_len_bytes) as usize;
-            trace!("[DECODE] Metadata key[{}] total length (marker + compressed): {}", i, values_len);
+            trace!(
+                "[DECODE] Metadata key[{}] total length (marker + compressed): {}",
+                i, values_len
+            );
 
             // Decompress using algorithm marker
             let values_bytes = if values_len > 0 {
                 // Read compression marker (1 byte)
                 let mut marker_byte = [0u8; 1];
                 cursor.read_exact(&mut marker_byte)?;
-                let compression_algo = crate::core::compression::markers::compression_algorithm_from_marker(marker_byte[0]);
-                trace!("[DECODE] Metadata key[{}] compression: {:?} (marker=0x{:02x})", i, compression_algo, marker_byte[0]);
+                let compression_algo =
+                    crate::core::compression::markers::compression_algorithm_from_marker(
+                        marker_byte[0],
+                    );
+                trace!(
+                    "[DECODE] Metadata key[{}] compression: {:?} (marker=0x{:02x})",
+                    i, compression_algo, marker_byte[0]
+                );
 
                 // Read compressed bytes (total_len - 1 for marker)
                 let compressed_len = values_len - 1;
@@ -2094,11 +2403,19 @@ impl ProximaDataBlock {
                 cursor.read_exact(&mut compressed_bytes)?;
 
                 // Decompress using algorithm from marker
-                decompress(&compressed_bytes, compression_algo, CompressionContext::Block)?
+                decompress(
+                    &compressed_bytes,
+                    compression_algo,
+                    CompressionContext::Block,
+                )?
             } else {
                 Vec::new() // No data
             };
-            trace!("[DECODE] Metadata key[{}] decompressed to {} bytes", i, values_bytes.len());
+            trace!(
+                "[DECODE] Metadata key[{}] decompressed to {} bytes",
+                i,
+                values_bytes.len()
+            );
 
             // Parse the decompressed sparse values blob
             // Format: each value is [u32 length][raw bytes]
@@ -2124,7 +2441,8 @@ impl ProximaDataBlock {
                     // Deserialize value using collection config for type info (if available)
                     // This uses filterable_columns from collection config as the source of truth
                     // for type information, eliminating guesswork for declared filterable columns!
-                    let sql_value = Self::deserialize_metadata_value(&key_name, &val_bytes, collection_config);
+                    let sql_value =
+                        Self::deserialize_metadata_value(&key_name, &val_bytes, collection_config);
                     sparse_values.push(Some(sql_value));
                 }
             }
@@ -2160,36 +2478,70 @@ impl ProximaDataBlock {
                 }
             }
 
-            tracing::trace!(key_index = i, total_values = full_values.len(), present_count = value_idx, "Reconstructed metadata column");
+            tracing::trace!(
+                key_index = i,
+                total_values = full_values.len(),
+                present_count = value_idx,
+                "Reconstructed metadata column"
+            );
             metadata_columns.insert(key_name.clone(), full_values);
-            trace!("[DECODE] Metadata key[{}]: Stored {} values for key '{}'", i, record_count, key_name);
+            trace!(
+                "[DECODE] Metadata key[{}]: Stored {} values for key '{}'",
+                i, record_count, key_name
+            );
 
-            trace!("[DECODE] Finished processing metadata key {}, cursor at position: {}", i, cursor.position());
+            trace!(
+                "[DECODE] Finished processing metadata key {}, cursor at position: {}",
+                i,
+                cursor.position()
+            );
         }
 
-        trace!("[DECODE] Deserialized metadata for {} keys", metadata_columns.len());
-        tracing::trace!(column_count = metadata_columns.len(), "Deserialized metadata");
+        trace!(
+            "[DECODE] Deserialized metadata for {} keys",
+            metadata_columns.len()
+        );
+        tracing::trace!(
+            column_count = metadata_columns.len(),
+            "Deserialized metadata"
+        );
         for (key, values) in &metadata_columns {
             tracing::trace!(key_name = %key, value_count = values.len(), "Metadata column details");
         }
 
         // STEP 4: Read and skip timestamps (actually read the bytes, don't just set position)
         let data_len = cursor.get_ref().len();
-        trace!("[DECODE] About to read timestamp length at cursor position: {}, total data length: {}", cursor.position(), data_len);
+        trace!(
+            "[DECODE] About to read timestamp length at cursor position: {}, total data length: {}",
+            cursor.position(),
+            data_len
+        );
         if cursor.position() + 4 > data_len as u64 {
-            warn!(" [DECODE] ERROR: Trying to read past end of data! Cursor {} + 4 > data length {}", cursor.position(), data_len);
+            warn!(
+                " [DECODE] ERROR: Trying to read past end of data! Cursor {} + 4 > data length {}",
+                cursor.position(),
+                data_len
+            );
         }
         // Debug: print next 8 bytes at current position
         let current_pos = cursor.position() as usize;
         let data_ref = cursor.get_ref();
         if current_pos + 8 <= data_ref.len() {
             let next_8_bytes = &data_ref[current_pos..current_pos + 8];
-            trace!("[DECODE] Next 8 bytes at position {}: {:?}", current_pos, next_8_bytes);
+            trace!(
+                "[DECODE] Next 8 bytes at position {}: {:?}",
+                current_pos, next_8_bytes
+            );
         }
         let mut timestamp_len_bytes = [0u8; 4];
         cursor.read_exact(&mut timestamp_len_bytes)?;
         let timestamp_len = u32::from_le_bytes(timestamp_len_bytes) as usize;
-        trace!("[DECODE] Timestamp length: {} (bytes: {:?}), cursor now at: {}", timestamp_len, timestamp_len_bytes, cursor.position());
+        trace!(
+            "[DECODE] Timestamp length: {} (bytes: {:?}), cursor now at: {}",
+            timestamp_len,
+            timestamp_len_bytes,
+            cursor.position()
+        );
 
         // Read and decode timestamp bytes
         let mut timestamp_bytes = vec![0u8; timestamp_len];
@@ -2199,11 +2551,17 @@ impl ProximaDataBlock {
         // Decode timestamps using ProximaCodec (migrated from old decoder)
         let decoded_timestamps = match codec.decode_i64(&timestamp_bytes) {
             Ok(timestamps) => {
-                trace!("✅ [DECODE] Successfully decoded {} timestamps", timestamps.len());
+                trace!(
+                    "✅ [DECODE] Successfully decoded {} timestamps",
+                    timestamps.len()
+                );
                 timestamps
             }
             Err(e) => {
-                warn!("❌ [DECODE] Failed to decode timestamps: {}, using fallback zeros", e);
+                warn!(
+                    "❌ [DECODE] Failed to decode timestamps: {}, using fallback zeros",
+                    e
+                );
                 vec![0; record_count]
             }
         };
@@ -2238,11 +2596,17 @@ impl ProximaDataBlock {
         // Use record_count from header instead of storing redundant count
         let decoded_source_indices = match codec.decode_i64(&encoded_source_data) {
             Ok(indices) => {
-                trace!("✅ [DECODE] Successfully decoded {} source indices", indices.len());
+                trace!(
+                    "✅ [DECODE] Successfully decoded {} source indices",
+                    indices.len()
+                );
                 indices
             }
             Err(e) => {
-                warn!("❌ [DECODE] Failed to decode source indices: {}, using fallback", e);
+                warn!(
+                    "❌ [DECODE] Failed to decode source indices: {}, using fallback",
+                    e
+                );
                 vec![0; record_count] // Fallback to first dictionary entry (empty string/None)
             }
         };
@@ -2401,12 +2765,23 @@ impl ProximaDataBlock {
         trace!("[DECODE] Block metadata deserialized successfully");
 
         // ============ RECONSTRUCT COMPLETE VECTORRECORDS FROM COLUMNAR DATA ============
-        trace!("🔧 [DECODE] Reconstructing {} VectorRecords from columnar data", record_count);
+        trace!(
+            "🔧 [DECODE] Reconstructing {} VectorRecords from columnar data",
+            record_count
+        );
 
         // All data should have exactly record_count elements in the same order
-        if records.len() != record_count || decoded_id_indices.len() != record_count || decoded_source_indices.len() != record_count {
-            return Err(anyhow::anyhow!("Columnar data length mismatch: vectors={}, ids={}, sources={}, expected={}",
-                records.len(), decoded_id_indices.len(), decoded_source_indices.len(), record_count));
+        if records.len() != record_count
+            || decoded_id_indices.len() != record_count
+            || decoded_source_indices.len() != record_count
+        {
+            return Err(anyhow::anyhow!(
+                "Columnar data length mismatch: vectors={}, ids={}, sources={}, expected={}",
+                records.len(),
+                decoded_id_indices.len(),
+                decoded_source_indices.len(),
+                record_count
+            ));
         }
 
         // Reconstruct each record by combining columnar data at the same index
@@ -2419,9 +2794,17 @@ impl ProximaDataBlock {
             trace!("Record[{}]: ID dict_index = {}", i, id_dict_index);
             if id_dict_index < id_dictionary.len() {
                 record.id = id_dictionary[id_dict_index].clone();
-                trace!("Record[{}]: Set ID from dict[{}] = '{}'", i, id_dict_index, record.id);
+                trace!(
+                    "Record[{}]: Set ID from dict[{}] = '{}'",
+                    i, id_dict_index, record.id
+                );
             } else {
-                warn!("Record[{}]: ID dict_index {} >= dict_len {}", i, id_dict_index, id_dictionary.len());
+                warn!(
+                    "Record[{}]: ID dict_index {} >= dict_len {}",
+                    i,
+                    id_dict_index,
+                    id_dictionary.len()
+                );
                 record.id = format!("corrupted_id_{}", i);
             }
 
@@ -2429,9 +2812,18 @@ impl ProximaDataBlock {
             let source_dict_index = decoded_source_indices[i] as usize;
             if source_dict_index < source_dictionary.len() {
                 let source_str = &source_dictionary[source_dict_index];
-                record.source = if source_str.is_empty() { None } else { Some(source_str.clone()) };
+                record.source = if source_str.is_empty() {
+                    None
+                } else {
+                    Some(source_str.clone())
+                };
             } else {
-                warn!("❌ [DECODE] Record[{}]: Source dict_index {} >= dict_len {}", i, source_dict_index, source_dictionary.len());
+                warn!(
+                    "❌ [DECODE] Record[{}]: Source dict_index {} >= dict_len {}",
+                    i,
+                    source_dict_index,
+                    source_dictionary.len()
+                );
                 record.source = None;
             }
 
@@ -2443,7 +2835,11 @@ impl ProximaDataBlock {
             // quantized_vector removed - internalized in storage
 
             // Populate metadata from columnar storage
-            tracing::trace!(record_index = i, keys_before = record.metadata.len(), "Record before metadata");
+            tracing::trace!(
+                record_index = i,
+                keys_before = record.metadata.len(),
+                "Record before metadata"
+            );
             for (key, values) in &metadata_columns {
                 tracing::trace!(key = %key, values_len = values.len(), record_index = i, "Checking metadata key");
                 match values.get(i) {
@@ -2459,13 +2855,29 @@ impl ProximaDataBlock {
                     }
                 }
             }
-            tracing::trace!(record_index = i, keys_after = record.metadata.len(), "Record after metadata");
+            tracing::trace!(
+                record_index = i,
+                keys_after = record.metadata.len(),
+                "Record after metadata"
+            );
 
-            trace!("🔧 [DECODE] Record[{}]: ID='{}', Timestamp={:?}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}, Metadata_keys={}",
-                i, record.id, record.timestamp, record.source, record.updated_at, record.expires_at, record.version, record.metadata.len());
+            trace!(
+                "🔧 [DECODE] Record[{}]: ID='{}', Timestamp={:?}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}, Metadata_keys={}",
+                i,
+                record.id,
+                record.timestamp,
+                record.source,
+                record.updated_at,
+                record.expires_at,
+                record.version,
+                record.metadata.len()
+            );
         }
 
-        trace!("✅ [DECODE] Successfully reconstructed {} VectorRecords", record_count);
+        trace!(
+            "✅ [DECODE] Successfully reconstructed {} VectorRecords",
+            record_count
+        );
 
         // Reconstruct the block
         let block_id = metadata.record_count;
@@ -2500,10 +2912,14 @@ impl ProximaDataBlock {
 
     /// Encode vectors using FullVector strategy with field-level compression
     /// Each field (vectors, IDs, metadata) is compressed separately
-    fn encode_full_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+    fn encode_full_vector_field(
+        vectors: &[Vec<f32>],
+        dimension: usize,
+        config: &BlockCompressionConfig,
+    ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
         use super::engine_profile::EngineProfile;
-        use crate::core::compression::{compress, CompressionContext};
+        use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
 
@@ -2523,7 +2939,11 @@ impl ProximaDataBlock {
         let mut all_floats = Vec::with_capacity(vectors.len() * dimension);
         for vector in vectors {
             if vector.len() != dimension {
-                return Err(anyhow::anyhow!("Vector dimension mismatch: {} != {}", vector.len(), dimension));
+                return Err(anyhow::anyhow!(
+                    "Vector dimension mismatch: {} != {}",
+                    vector.len(),
+                    dimension
+                ));
             }
             all_floats.extend_from_slice(vector);
         }
@@ -2533,8 +2953,13 @@ impl ProximaDataBlock {
 
         // Enhanced debugging - print sample data for random data analysis
         let sample_values: Vec<f32> = all_floats.iter().take(10).copied().collect();
-        debug!("🔍 [ENCODE_FULL_VECTOR] Raw bytes: {} | Values: {} | Dimension: {} | Sample: {:?}",
-               raw_bytes, all_floats.len(), dimension, sample_values);
+        debug!(
+            "🔍 [ENCODE_FULL_VECTOR] Raw bytes: {} | Values: {} | Dimension: {} | Sample: {:?}",
+            raw_bytes,
+            all_floats.len(),
+            dimension,
+            sample_values
+        );
 
         use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
 
@@ -2543,22 +2968,26 @@ impl ProximaDataBlock {
 
         // Override lossy schemes with lossless alternatives
         let scheme = match &detected_scheme {
-            crate::storage::engines::core::ops::proximacodec::ProximaScheme::Simple8b |
-            crate::storage::engines::core::ops::proximacodec::ProximaScheme::RunLength |
-            crate::storage::engines::core::ops::proximacodec::ProximaScheme::VByte |
-            crate::storage::engines::core::ops::proximacodec::ProximaScheme::Zigzag { .. } |
-            crate::storage::engines::core::ops::proximacodec::ProximaScheme::PForDelta { .. } => {
-                crate::storage::engines::core::ops::proximacodec::ProximaScheme::Delta { base: 0 }
-            },
+            crate::storage::engines::core::ops::proximacodec::ProximaScheme::Simple8b
+            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::RunLength
+            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::VByte
+            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::Zigzag { .. }
+            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::PForDelta {
+                ..
+            } => crate::storage::engines::core::ops::proximacodec::ProximaScheme::Delta { base: 0 },
             _ => detected_scheme.clone(),
         };
 
         // Print algorithm selection with more detail
-        debug!("🎯 [ENCODE_FULL_VECTOR] Pattern: '{}' | Detected: {:?} | Selected: {:?} | Data Stats: min={:.3} max={:.3} avg={:.3}",
-               pattern_info, detected_scheme, scheme,
-               all_floats.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
-               all_floats.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
-               all_floats.iter().sum::<f32>() / all_floats.len() as f32);
+        debug!(
+            "🎯 [ENCODE_FULL_VECTOR] Pattern: '{}' | Detected: {:?} | Selected: {:?} | Data Stats: min={:.3} max={:.3} avg={:.3}",
+            pattern_info,
+            detected_scheme,
+            scheme,
+            all_floats.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+            all_floats.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
+            all_floats.iter().sum::<f32>() / all_floats.len() as f32
+        );
 
         // Use ProximaCodec for hardware-optimized encoding with lossless enforcement
         let codec = ProximaCodec::global();
@@ -2583,13 +3012,16 @@ impl ProximaDataBlock {
 
         // Calculate compression ratio for bypass decision
         let compression_ratio = raw_bytes as f64 / encoded_bytes as f64;
-        debug!("📊 [ENCODE_FULL_VECTOR] Encoded: {} bytes | Compression: {:.2}x (Raw {} -> Encoded {})",
-               encoded_bytes, compression_ratio, raw_bytes, encoded_bytes);
+        debug!(
+            "📊 [ENCODE_FULL_VECTOR] Encoded: {} bytes | Compression: {:.2}x (Raw {} -> Encoded {})",
+            encoded_bytes, compression_ratio, raw_bytes, encoded_bytes
+        );
 
         // Compress vector field if enabled AND Proxima didn't already compress well
         let final_vector_data = if config.enable_vector_compression
             && config.algorithm != crate::core::compression::CompressionAlgorithm::None
-            && compression_ratio < 2.0  // Only apply additional compression if Proxima achieved < 2x
+            && compression_ratio < 2.0
+        // Only apply additional compression if Proxima achieved < 2x
         {
             let compressed = compress(
                 &encoded_vectors,
@@ -2602,8 +3034,15 @@ impl ProximaDataBlock {
             if compressed.len() < (encoded_vectors.len() * 9 / 10) {
                 let compressed_bytes = compressed.len();
                 let total_compression = raw_bytes as f64 / compressed_bytes as f64;
-                debug!("[ENCODE_FULL_VECTOR] Field: VECTORS | Additional compression: {} -> {} bytes | Total: {:.2}x | Final: Raw {} -> Encoded {} -> Compressed {}",
-                       encoded_bytes, compressed_bytes, total_compression, raw_bytes, encoded_bytes, compressed_bytes);
+                debug!(
+                    "[ENCODE_FULL_VECTOR] Field: VECTORS | Additional compression: {} -> {} bytes | Total: {:.2}x | Final: Raw {} -> Encoded {} -> Compressed {}",
+                    encoded_bytes,
+                    compressed_bytes,
+                    total_compression,
+                    raw_bytes,
+                    encoded_bytes,
+                    compressed_bytes
+                );
 
                 // Write vector field header: [compression_marker][data] (no size overhead)
                 let compression_marker = match config.algorithm {
@@ -2612,7 +3051,7 @@ impl ProximaDataBlock {
                     crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
                     crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
                     _ => 0x00,
-            };
+                };
 
                 let mut compressed_field = Vec::new();
                 compressed_field.push(compression_marker);
@@ -2627,7 +3066,10 @@ impl ProximaDataBlock {
                 uncompressed_field
             }
         } else {
-            debug!("[ENCODE] Bypassing compression (Proxima already compressed {:.2}x)", compression_ratio);
+            debug!(
+                "[ENCODE] Bypassing compression (Proxima already compressed {:.2}x)",
+                compression_ratio
+            );
             // Uncompressed vector field: [0x00][data] (no size overhead)
             let mut uncompressed_field = Vec::new();
             uncompressed_field.push(0x00); // no compression marker
@@ -2637,18 +3079,26 @@ impl ProximaDataBlock {
 
         field_data.extend(&final_vector_data);
 
-        trace!("[ENCODE_FV] Encoded FullVector: {} vectors, {} dims, {} bytes",
-               vectors.len(), dimension, field_data.len());
+        trace!(
+            "[ENCODE_FV] Encoded FullVector: {} vectors, {} dims, {} bytes",
+            vectors.len(),
+            dimension,
+            field_data.len()
+        );
 
         Ok(field_data)
     }
 
     /// Encode vectors using GroupedFieldEncodedAndCompressedVector strategy with compression-friendly encoding
     /// Divides vectors into 32D groups for better cache locality and compression
-    fn encode_grouped_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+    fn encode_grouped_field_encoded_and_compressed_vector_field(
+        vectors: &[Vec<f32>],
+        dimension: usize,
+        config: &BlockCompressionConfig,
+    ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
         use super::engine_profile::EngineProfile;
-        use crate::core::compression::{compress, CompressionContext};
+        use crate::core::compression::{CompressionContext, compress};
 
         const GROUP_SIZE: usize = 32;
         let mut field_data = Vec::new();
@@ -2664,17 +3114,18 @@ impl ProximaDataBlock {
         // Note: dimension and record count are available from file header, no need to duplicate
 
         // Write compression intent (what we'll try, but actual compression is per-group)
-        let compression_intent = if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
-            match config.algorithm {
-                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
-                _ => 0x10, // Default to LZ4
-            }
-        } else {
-            0x00 // No compression
-        };
+        let compression_intent =
+            if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+                match config.algorithm {
+                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
+                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
+                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
+                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    _ => 0x10, // Default to LZ4
+                }
+            } else {
+                0x00 // No compression
+            };
         field_data.push(compression_intent);
 
         // ============================================================================
@@ -2709,7 +3160,9 @@ impl ProximaDataBlock {
         //
         // ============================================================================
 
-        use crate::storage::engines::core::ops::proximacodec::{analysis, ProximaScheme as CodecScheme};
+        use crate::storage::engines::core::ops::proximacodec::{
+            ProximaScheme as CodecScheme, analysis,
+        };
         use std::collections::HashMap;
 
         // Track pattern distribution for debugging
@@ -2748,8 +3201,10 @@ impl ProximaDataBlock {
 
             let scheme = if detected_scheme.is_lossy(TypeId::F32) {
                 // Scheme is lossy for f32 - override with safe alternative
-                trace!("[ENCODE_GV] Group {}: Detected scheme {:?} is lossy for F32, overriding",
-                       group_idx, detected_scheme);
+                trace!(
+                    "[ENCODE_GV] Group {}: Detected scheme {:?} is lossy for F32, overriding",
+                    group_idx, detected_scheme
+                );
 
                 // Special case: upgrade PForDelta to PForDoubleDelta for better compression
                 match &detected_scheme {
@@ -2761,11 +3216,14 @@ impl ProximaDataBlock {
                             } else {
                                 0
                             };
-                            CodecScheme::PForDoubleDelta { base: base_bits, first_delta }
+                            CodecScheme::PForDoubleDelta {
+                                base: base_bits,
+                                first_delta,
+                            }
                         } else {
                             CodecScheme::Delta { base: 0 }
                         }
-                    },
+                    }
                     _ => {
                         // Default fallback for all other lossy schemes
                         CodecScheme::Delta { base: 0 }
@@ -2781,12 +3239,27 @@ impl ProximaDataBlock {
             // Track patterns for summary
             *pattern_counts.entry(pattern.clone()).or_insert(0) += 1;
 
-            trace!("[ENCODE_GV] Group {} (dims {}-{}): Pattern: {} | Detected: {:?} | Selected: {:?} | {} floats ({} vectors × {} dims)",
-                   group_idx, start_dim, end_dim - 1, pattern, &detected_scheme, &scheme, group_floats.len(), vectors.len(), group_dims);
+            trace!(
+                "[ENCODE_GV] Group {} (dims {}-{}): Pattern: {} | Detected: {:?} | Selected: {:?} | {} floats ({} vectors × {} dims)",
+                group_idx,
+                start_dim,
+                end_dim - 1,
+                pattern,
+                &detected_scheme,
+                &scheme,
+                group_floats.len(),
+                vectors.len(),
+                group_dims
+            );
 
             // Encode the group using ProximaCodec (hardware-optimized)
             let encoded_group = codec.encode(&group_floats, scheme.clone())?;
-            trace!("[ENCODE_GV] Group {}: encoded to {} bytes (scheme: {:?})", group_idx, encoded_group.len(), scheme);
+            trace!(
+                "[ENCODE_GV] Group {}: encoded to {} bytes (scheme: {:?})",
+                group_idx,
+                encoded_group.len(),
+                scheme
+            );
 
             // Apply compression uniformly based on header setting
             let final_group_data = if compression_intent != 0x00 {
@@ -2796,7 +3269,11 @@ impl ProximaDataBlock {
                     config.compression_level as i32,
                     CompressionContext::Block,
                 )?;
-                trace!("[ENCODE_GV] Group {}: compressed to {} bytes", group_idx, compressed.len());
+                trace!(
+                    "[ENCODE_GV] Group {}: compressed to {} bytes",
+                    group_idx,
+                    compressed.len()
+                );
 
                 // Always use compression when header says to compress
                 // This ensures consistency between encoder and decoder
@@ -2816,18 +3293,30 @@ impl ProximaDataBlock {
         // Add summary debug log
         let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
         let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
-        debug!("[ENCODE_GV] GroupedFieldEncoded Summary: {} vectors x {} dims | {} groups | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Per-group analysis with cache locality",
-               vectors.len(), dimension, num_groups, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
+        debug!(
+            "[ENCODE_GV] GroupedFieldEncoded Summary: {} vectors x {} dims | {} groups | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Per-group analysis with cache locality",
+            vectors.len(),
+            dimension,
+            num_groups,
+            pattern_counts,
+            total_raw_bytes,
+            field_data.len(),
+            compression_ratio
+        );
 
         Ok(field_data)
     }
 
     /// Encode vectors using GroupedFieldEncodedBlockCompressedVector strategy with block-level compression
     /// Divides vectors into 32D groups, applies Proxima encoding to each group, then compresses entire block
-    fn encode_grouped_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+    fn encode_grouped_field_encoded_block_compressed_vector_field(
+        vectors: &[Vec<f32>],
+        dimension: usize,
+        config: &BlockCompressionConfig,
+    ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
         use super::engine_profile::EngineProfile;
-        use crate::core::compression::{compress, CompressionContext};
+        use crate::core::compression::{CompressionContext, compress};
 
         const GROUP_SIZE: usize = 32;
         let mut field_data = Vec::new();
@@ -2847,7 +3336,8 @@ impl ProximaDataBlock {
         }
 
         // Track patterns across groups for summary
-        let mut pattern_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut pattern_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
         // Process each group and accumulate uncompressed data
         let mut uncompressed_block = Vec::new();
@@ -2865,7 +3355,9 @@ impl ProximaDataBlock {
             }
 
             // Analyze this group's pattern and choose scheme
-            use crate::storage::engines::core::ops::proximacodec::{analysis, ProximaScheme as CodecScheme};
+            use crate::storage::engines::core::ops::proximacodec::{
+                ProximaScheme as CodecScheme, analysis,
+            };
 
             let detected_scheme = analysis::analyze_and_choose_scheme_f32(&group_floats);
             let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
@@ -2876,8 +3368,10 @@ impl ProximaDataBlock {
 
             let scheme = if detected_scheme.is_lossy(TypeId::F32) {
                 // Scheme is lossy for f32 - override with safe alternative
-                trace!("[ENCODE_GB] Group {}: Detected scheme {:?} is lossy for F32, overriding",
-                       group_idx, detected_scheme);
+                trace!(
+                    "[ENCODE_GB] Group {}: Detected scheme {:?} is lossy for F32, overriding",
+                    group_idx, detected_scheme
+                );
 
                 // Special case: upgrade PForDelta to PForDoubleDelta for better compression
                 match &detected_scheme {
@@ -2889,11 +3383,14 @@ impl ProximaDataBlock {
                             } else {
                                 0
                             };
-                            CodecScheme::PForDoubleDelta { base: base_bits, first_delta }
+                            CodecScheme::PForDoubleDelta {
+                                base: base_bits,
+                                first_delta,
+                            }
                         } else {
                             CodecScheme::Delta { base: 0 }
                         }
-                    },
+                    }
                     _ => {
                         // Default fallback for all other lossy schemes
                         CodecScheme::Delta { base: 0 }
@@ -2909,16 +3406,31 @@ impl ProximaDataBlock {
             // Track patterns for summary
             *pattern_counts.entry(pattern.clone()).or_insert(0) += 1;
 
-            trace!(" [ENCODE_GB] Group {} (dims {}-{}): Pattern: {} | Detected: {:?} | Selected: {:?}",
-                   group_idx, start_dim, end_dim - 1, pattern, detected_scheme, scheme);
+            trace!(
+                " [ENCODE_GB] Group {} (dims {}-{}): Pattern: {} | Detected: {:?} | Selected: {:?}",
+                group_idx,
+                start_dim,
+                end_dim - 1,
+                pattern,
+                detected_scheme,
+                scheme
+            );
 
             // Encode entire group at once using ProximaCodec
-                let codec = ProximaCodec::global();
-            let encoded_group = codec.encode(&group_floats, scheme.clone())
-                .map_err(|e| anyhow::anyhow!("Proxima encoding failed for group {}: {}", group_idx, e))?;
+            let codec = ProximaCodec::global();
+            let encoded_group = codec.encode(&group_floats, scheme.clone()).map_err(|e| {
+                anyhow::anyhow!("Proxima encoding failed for group {}: {}", group_idx, e)
+            })?;
 
-            trace!(" [ENCODE_GB] Group {}: {} floats ({} vectors × {} dims) → {} bytes (scheme: {:?})",
-                   group_idx, group_floats.len(), vectors.len(), end_dim - start_dim, encoded_group.len(), scheme);
+            trace!(
+                " [ENCODE_GB] Group {}: {} floats ({} vectors × {} dims) → {} bytes (scheme: {:?})",
+                group_idx,
+                group_floats.len(),
+                vectors.len(),
+                end_dim - start_dim,
+                encoded_group.len(),
+                scheme
+            );
 
             let group_data = encoded_group;
 
@@ -2929,8 +3441,13 @@ impl ProximaDataBlock {
 
         // Now compress the entire block
         if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
-            let compressed_block = compress(&uncompressed_block, config.algorithm.clone(), config.compression_level as i32, CompressionContext::Block)
-                .map_err(|e| anyhow::anyhow!("Block compression failed: {}", e))?;
+            let compressed_block = compress(
+                &uncompressed_block,
+                config.algorithm.clone(),
+                config.compression_level as i32,
+                CompressionContext::Block,
+            )
+            .map_err(|e| anyhow::anyhow!("Block compression failed: {}", e))?;
 
             // Write compression algorithm marker
             let compression_marker = match config.algorithm {
@@ -2956,19 +3473,35 @@ impl ProximaDataBlock {
         let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
         let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
 
-        debug!("[ENCODE_GB] GroupedBlockCompressed Summary: {} vectors x {} dims | {} groups | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x",
-               vectors.len(), dimension, num_groups, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
+        debug!(
+            "[ENCODE_GB] GroupedBlockCompressed Summary: {} vectors x {} dims | {} groups | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x",
+            vectors.len(),
+            dimension,
+            num_groups,
+            pattern_counts,
+            total_raw_bytes,
+            field_data.len(),
+            compression_ratio
+        );
 
-        trace!(" [ENCODE_GB] GroupedFieldEncodedBlockCompressed complete: {} groups, {} bytes", num_groups, field_data.len());
+        trace!(
+            " [ENCODE_GB] GroupedFieldEncodedBlockCompressed complete: {} groups, {} bytes",
+            num_groups,
+            field_data.len()
+        );
         Ok(field_data)
     }
 
     /// Encode vectors using TransposeFieldEncodedBlockCompressedVector strategy with block-level compression
     /// Transposes RxD → DxR, applies Proxima encoding to each dimension, then compresses entire block
-    fn encode_transpose_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+    fn encode_transpose_field_encoded_block_compressed_vector_field(
+        vectors: &[Vec<f32>],
+        dimension: usize,
+        config: &BlockCompressionConfig,
+    ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
         use super::engine_profile::EngineProfile;
-        use crate::core::compression::{compress, CompressionContext};
+        use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
 
@@ -2983,24 +3516,32 @@ impl ProximaDataBlock {
             return Ok(field_data);
         }
 
-        trace!("[ENCODE_TB] Encoding {} vectors, {} dimensions with PARALLEL per-dimension analysis", vectors.len(), dimension);
+        trace!(
+            "[ENCODE_TB] Encoding {} vectors, {} dimensions with PARALLEL per-dimension analysis",
+            vectors.len(),
+            dimension
+        );
 
         // Track pattern statistics across dimensions for summary
-        let mut pattern_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut pattern_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
         // Use ProximaCodec for hardware-optimized encoding
-        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, ProximaScheme as CodecScheme};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
+        use crate::storage::engines::core::ops::proximacodec::{
+            ProximaCodec, ProximaScheme as CodecScheme, analysis,
+        };
 
         // ===== PHASE 1: PARALLEL ANALYSIS =====
         // Analyze all dimensions in parallel using Rayon (5-10x speedup expected)
         use rayon::prelude::*;
 
         let dim_info: Vec<(Vec<f32>, CodecScheme, String)> = (0..dimension)
-            .into_par_iter()  // Parallel iterator across all dimensions
+            .into_par_iter() // Parallel iterator across all dimensions
             .map(|dim_idx| {
                 // Extract this dimension across ALL vectors (100% coverage, not sample)
-                let dim_values: Vec<f32> = vectors.iter()
+                let dim_values: Vec<f32> = vectors
+                    .iter()
                     .map(|v| v.get(dim_idx).copied().unwrap_or(0.0))
                     .collect();
 
@@ -3020,19 +3561,24 @@ impl ProximaDataBlock {
                                 } else {
                                     0
                                 };
-                                CodecScheme::PForDoubleDelta { base: base_bits, first_delta }
+                                CodecScheme::PForDoubleDelta {
+                                    base: base_bits,
+                                    first_delta,
+                                }
                             } else {
                                 CodecScheme::Delta { base: 0 }
                             }
-                        },
-                        _ => CodecScheme::Delta { base: 0 }
+                        }
+                        _ => CodecScheme::Delta { base: 0 },
                     }
                 } else {
-                    detected_scheme.clone()  // Use lossless scheme as-is
+                    detected_scheme.clone() // Use lossless scheme as-is
                 };
 
-                trace!(" [ENCODE_TB] Dimension {}: Pattern: {} | Detected: {:?} | Selected: {:?}",
-                       dim_idx, pattern, detected_scheme, scheme);
+                trace!(
+                    " [ENCODE_TB] Dimension {}: Pattern: {} | Detected: {:?} | Selected: {:?}",
+                    dim_idx, pattern, detected_scheme, scheme
+                );
 
                 (dim_values, scheme, pattern)
             })
@@ -3048,7 +3594,8 @@ impl ProximaDataBlock {
             *pattern_counts.entry(pattern).or_insert(0) += 1;
 
             // Apply ProximaCodec encoding (no compression yet)
-            let encoded_dim = codec.encode(&dim_values, scheme)
+            let encoded_dim = codec
+                .encode(&dim_values, scheme)
                 .map_err(|e| anyhow::anyhow!("Proxima encoding failed: {}", e))?;
 
             // Write dimension size and encoded data
@@ -3058,8 +3605,13 @@ impl ProximaDataBlock {
 
         // Now compress the entire block
         if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
-            let compressed_block = compress(&uncompressed_block, config.algorithm.clone(), config.compression_level as i32, CompressionContext::Block)
-                .map_err(|e| anyhow::anyhow!("Block compression failed: {}", e))?;
+            let compressed_block = compress(
+                &uncompressed_block,
+                config.algorithm.clone(),
+                config.compression_level as i32,
+                CompressionContext::Block,
+            )
+            .map_err(|e| anyhow::anyhow!("Block compression failed: {}", e))?;
 
             // Write compression algorithm marker
             let compression_marker = match config.algorithm {
@@ -3084,21 +3636,37 @@ impl ProximaDataBlock {
         // Add summary debug log
         let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
         let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
-        debug!("[ENCODE_TB] TransposeBlockCompressed Summary: {} vectors x {} dims | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Per-dimension analysis then block compress",
-               vectors.len(), dimension, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
+        debug!(
+            "[ENCODE_TB] TransposeBlockCompressed Summary: {} vectors x {} dims | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Per-dimension analysis then block compress",
+            vectors.len(),
+            dimension,
+            pattern_counts,
+            total_raw_bytes,
+            field_data.len(),
+            compression_ratio
+        );
 
-        trace!(" [ENCODE_TB] TransposeFieldEncodedBlockCompressed complete: {} bytes", field_data.len());
+        trace!(
+            " [ENCODE_TB] TransposeFieldEncodedBlockCompressed complete: {} bytes",
+            field_data.len()
+        );
         Ok(field_data)
     }
 
     /// Encode vectors using TransposeFieldEncodedAndCompressedVector strategy with per-dimension field compression
     /// Transposes RxD → DxR and compresses each dimension field separately
-    fn encode_transpose_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+    fn encode_transpose_field_encoded_and_compressed_vector_field(
+        vectors: &[Vec<f32>],
+        dimension: usize,
+        config: &BlockCompressionConfig,
+    ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
         use super::engine_profile::EngineProfile;
-        use crate::core::compression::{compress, CompressionContext};
-        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, ProximaScheme as CodecScheme};
+        use crate::core::compression::{CompressionContext, compress};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
+        use crate::storage::engines::core::ops::proximacodec::{
+            ProximaCodec, ProximaScheme as CodecScheme, analysis,
+        };
         use rayon::prelude::*;
 
         let mut field_data = Vec::new();
@@ -3114,10 +3682,15 @@ impl ProximaDataBlock {
             return Ok(field_data);
         }
 
-        trace!("[ENCODE_TV] Encoding {} vectors, {} dimensions with PARALLEL per-dimension analysis", vectors.len(), dimension);
+        trace!(
+            "[ENCODE_TV] Encoding {} vectors, {} dimensions with PARALLEL per-dimension analysis",
+            vectors.len(),
+            dimension
+        );
 
         // Track pattern statistics across dimensions for summary
-        let mut pattern_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut pattern_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
         // ===== PHASE 1: PARALLEL ANALYSIS AND ENCODING =====
         // Analyze and encode all dimensions in parallel using Rayon (5-10x speedup expected)
@@ -3183,7 +3756,9 @@ impl ProximaDataBlock {
             *pattern_counts.entry(pattern).or_insert(0) += 1;
 
             // Compress dimension field if enabled
-            let final_dimension_data = if config.enable_vector_compression && config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+            let final_dimension_data = if config.enable_vector_compression
+                && config.algorithm != crate::core::compression::CompressionAlgorithm::None
+            {
                 let compressed = compress(
                     &encoded_dimension,
                     config.algorithm,
@@ -3221,28 +3796,51 @@ impl ProximaDataBlock {
         let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
         let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
 
-        debug!("[ENCODE_TV] TransposeFieldEncoded Summary: {} vectors x {} dims | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x",
-               vectors.len(), dimension, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
+        debug!(
+            "[ENCODE_TV] TransposeFieldEncoded Summary: {} vectors x {} dims | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x",
+            vectors.len(),
+            dimension,
+            pattern_counts,
+            total_raw_bytes,
+            field_data.len(),
+            compression_ratio
+        );
 
-        trace!("[ENCODE_TV] Total TransposeFieldEncodedAndCompressed encoded size: {} bytes", field_data.len());
+        trace!(
+            "[ENCODE_TV] Total TransposeFieldEncodedAndCompressed encoded size: {} bytes",
+            field_data.len()
+        );
 
         Ok(field_data)
     }
 
     /// Decode FullVector format data
-    fn decode_full_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+    fn decode_full_vector(
+        data: &[u8],
+        dimension: usize,
+        vector_count: usize,
+    ) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
 
-        trace!(" [DECODE_FV] Starting FullVector decode, data size: {} bytes", data.len());
+        trace!(
+            " [DECODE_FV] Starting FullVector decode, data size: {} bytes",
+            data.len()
+        );
         let mut cursor = Cursor::new(data);
 
         // Verify FullVector marker
         let mut marker = [0u8; 2];
         cursor.read_exact(&mut marker)?;
-        trace!(" [DECODE_FV] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        trace!(
+            " [DECODE_FV] Read marker: [{:02X}, {:02X}]",
+            marker[0], marker[1]
+        );
         if marker != [0x46, 0x56] {
             warn!(" [DECODE_FV] Invalid marker");
-            return Err(anyhow::anyhow!("Invalid FullVector marker: expected [0x46, 0x56], got {:?}", marker));
+            return Err(anyhow::anyhow!(
+                "Invalid FullVector marker: expected [0x46, 0x56], got {:?}",
+                marker
+            ));
         }
 
         // Read encoding version
@@ -3251,7 +3849,10 @@ impl ProximaDataBlock {
         let encoding_version = version[0];
 
         trace!(" [DECODE_FV] Dimension: {} (from file header)", dimension);
-        trace!(" [DECODE_FV] Vector count: {} (from file header)", vector_count);
+        trace!(
+            " [DECODE_FV] Vector count: {} (from file header)",
+            vector_count
+        );
 
         if vector_count == 0 {
             return Ok(vec![]);
@@ -3261,13 +3862,16 @@ impl ProximaDataBlock {
 
         if encoding_version == 0x01 {
             // Field-level compression with delta encoding
-                use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
+            use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
 
             // ===== DECODE VECTOR FIELD =====
             // Read compression marker
             let mut compression_marker = [0u8; 1];
             cursor.read_exact(&mut compression_marker)?;
-            trace!(" [DECODE_FV] Vector compression marker: 0x{:02X}", compression_marker[0]);
+            trace!(
+                " [DECODE_FV] Vector compression marker: 0x{:02X}",
+                compression_marker[0]
+            );
 
             let vector_data = if compression_marker[0] != 0x00 {
                 // Compressed vector field - read all remaining data and decompress
@@ -3293,46 +3897,65 @@ impl ProximaDataBlock {
             };
 
             // Decode Proxima encoded data with fallback handling
-            let decoded_floats = if vector_data.len() >= 2 && vector_data[0] == 0xFF && vector_data[1] == 0xFB {
-                // Fallback marker detected - decode raw f32 data
-                trace!("🔧 [DECODE_FV] Fallback marker detected, using raw f32 decoding");
-                let raw_data = &vector_data[2..]; // Skip fallback marker
-                if raw_data.len() != vector_count * dimension * 4 {
-                    return Err(anyhow::anyhow!("Fallback raw data size mismatch: {} vs {}",
-                        raw_data.len(), vector_count * dimension * 4));
-                }
-
-                let mut decoded = Vec::with_capacity(vector_count * dimension);
-                for chunk in raw_data.chunks_exact(4) {
-                    let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    decoded.push(value);
-                }
-                trace!("🔧 [DECODE_FV] Fallback decoded {} floats", decoded.len());
-                decoded
-            } else {
-                // Normal ProximaCodec decoding with enhanced error handling (migrated from old decoder)
-                trace!("🔍 [DECODE_FV] Using ProximaCodec decoding, data size: {} bytes", vector_data.len());
-                        let codec = ProximaCodec::global();
-
-                match codec.decode(&vector_data) {
-                    Ok(floats) => {
-                        trace!("✅ [DECODE_FV] Proxima decoded {} floats successfully", floats.len());
-                        floats
+            let decoded_floats =
+                if vector_data.len() >= 2 && vector_data[0] == 0xFF && vector_data[1] == 0xFB {
+                    // Fallback marker detected - decode raw f32 data
+                    trace!("🔧 [DECODE_FV] Fallback marker detected, using raw f32 decoding");
+                    let raw_data = &vector_data[2..]; // Skip fallback marker
+                    if raw_data.len() != vector_count * dimension * 4 {
+                        return Err(anyhow::anyhow!(
+                            "Fallback raw data size mismatch: {} vs {}",
+                            raw_data.len(),
+                            vector_count * dimension * 4
+                        ));
                     }
-                    Err(e) => {
-                        warn!("❌ [DECODE_FV] Proxima decoding failed: {}", e);
-                        debug!("   Vector data preview: {:?}", &vector_data[..std::cmp::min(20, vector_data.len())]);
-                        return Err(anyhow::anyhow!("Proxima decoding failed: {}", e));
-                    }
-                }
-            };
 
-            trace!(" [DECODE_FV] Decoded {} floats from Proxima", decoded_floats.len());
+                    let mut decoded = Vec::with_capacity(vector_count * dimension);
+                    for chunk in raw_data.chunks_exact(4) {
+                        let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                        decoded.push(value);
+                    }
+                    trace!("🔧 [DECODE_FV] Fallback decoded {} floats", decoded.len());
+                    decoded
+                } else {
+                    // Normal ProximaCodec decoding with enhanced error handling (migrated from old decoder)
+                    trace!(
+                        "🔍 [DECODE_FV] Using ProximaCodec decoding, data size: {} bytes",
+                        vector_data.len()
+                    );
+                    let codec = ProximaCodec::global();
+
+                    match codec.decode(&vector_data) {
+                        Ok(floats) => {
+                            trace!(
+                                "✅ [DECODE_FV] Proxima decoded {} floats successfully",
+                                floats.len()
+                            );
+                            floats
+                        }
+                        Err(e) => {
+                            warn!("❌ [DECODE_FV] Proxima decoding failed: {}", e);
+                            debug!(
+                                "   Vector data preview: {:?}",
+                                &vector_data[..std::cmp::min(20, vector_data.len())]
+                            );
+                            return Err(anyhow::anyhow!("Proxima decoding failed: {}", e));
+                        }
+                    }
+                };
+
+            trace!(
+                " [DECODE_FV] Decoded {} floats from Proxima",
+                decoded_floats.len()
+            );
 
             // NEW: Vectors are now encoded directly without manual delta
             if decoded_floats.len() != vector_count * dimension {
-                return Err(anyhow::anyhow!("Decoded data size mismatch: {} vs {}",
-                    decoded_floats.len(), vector_count * dimension));
+                return Err(anyhow::anyhow!(
+                    "Decoded data size mismatch: {} vs {}",
+                    decoded_floats.len(),
+                    vector_count * dimension
+                ));
             }
 
             // Each vector is stored consecutively in the decoded array
@@ -3342,7 +3965,10 @@ impl ProximaDataBlock {
                 let vector = decoded_floats[start_idx..end_idx].to_vec();
 
                 let temp_id = format!("fv_vec_{:06}", i);
-                trace!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from Proxima data", i, temp_id);
+                trace!(
+                    "🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from Proxima data",
+                    i, temp_id
+                );
 
                 records.push(VectorRecord {
                     id: temp_id,
@@ -3364,7 +3990,10 @@ impl ProximaDataBlock {
                 let vector: Vec<f32> = bytemuck::cast_slice(&vector_bytes).to_vec();
 
                 let temp_id = format!("fv_vec_{:06}", i);
-                trace!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from raw data", i, temp_id);
+                trace!(
+                    "🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from raw data",
+                    i, temp_id
+                );
 
                 records.push(VectorRecord {
                     id: temp_id,
@@ -3383,21 +4012,34 @@ impl ProximaDataBlock {
     }
 
     /// Decode GroupedFieldEncodedAndCompressedVector format data with Proxima encoding and per-group compression
-    fn decode_grouped_field_encoded_and_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+    fn decode_grouped_field_encoded_and_compressed_vector(
+        data: &[u8],
+        dimension: usize,
+        vector_count: usize,
+    ) -> anyhow::Result<Vec<VectorRecord>> {
+        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
-        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
         const GROUP_SIZE: usize = 32;
 
-        trace!(" [DECODE_GV] Starting GroupedFieldEncodedAndCompressed decode, data size: {} bytes", data.len());
+        trace!(
+            " [DECODE_GV] Starting GroupedFieldEncodedAndCompressed decode, data size: {} bytes",
+            data.len()
+        );
         let mut cursor = Cursor::new(data);
 
         // Verify GroupedFieldEncodedAndCompressed marker
         let mut marker = [0u8; 2];
         cursor.read_exact(&mut marker)?;
-        trace!(" [DECODE_GV] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        trace!(
+            " [DECODE_GV] Read marker: [{:02X}, {:02X}]",
+            marker[0], marker[1]
+        );
         if marker != [0x47, 0x56] {
             warn!(" [DECODE_GV] Invalid marker");
-            return Err(anyhow::anyhow!("Invalid GroupedFieldEncodedAndCompressed marker: expected [0x47, 0x56], got {:?}", marker));
+            return Err(anyhow::anyhow!(
+                "Invalid GroupedFieldEncodedAndCompressed marker: expected [0x47, 0x56], got {:?}",
+                marker
+            ));
         }
 
         // Read encoding version
@@ -3407,7 +4049,10 @@ impl ProximaDataBlock {
         trace!(" [DECODE_GV] Encoding version: 0x{:02X}", encoding_version);
 
         trace!(" [DECODE_GV] Dimension: {} (from file header)", dimension);
-        trace!(" [DECODE_GV] Vector count: {} (from file header)", vector_count);
+        trace!(
+            " [DECODE_GV] Vector count: {} (from file header)",
+            vector_count
+        );
 
         // Handle optimized header-based compression in version 0x01
         // Read compression intent BEFORE num_groups for v0x01
@@ -3427,7 +4072,7 @@ impl ProximaDataBlock {
                 0x12 => Some(CompressionAlgorithm::Snappy),
                 0x13 => Some(CompressionAlgorithm::Gzip),
                 0x00 => None, // No compression
-                _ => None, // Default to no compression for unknown markers
+                _ => None,    // Default to no compression for unknown markers
             };
 
             // No bitmap needed - uniform compression from header
@@ -3444,7 +4089,10 @@ impl ProximaDataBlock {
         };
 
         let (num_groups, _compression_bitmap) = compression_bitmap_deferred;
-        trace!(" [DECODE_GV] Header compression algorithm: {:?}", compression_algorithm);
+        trace!(
+            " [DECODE_GV] Header compression algorithm: {:?}",
+            compression_algorithm
+        );
 
         if vector_count == 0 {
             return Ok(vec![]);
@@ -3528,23 +4176,41 @@ impl ProximaDataBlock {
 
             let end_dim = start_dim + group_dims;
 
-            trace!(" [DECODE_GV] Group {}: start_dim={}, end_dim={}, data_len={}",
-                     group_idx, start_dim, end_dim, group_data.len());
+            trace!(
+                " [DECODE_GV] Group {}: start_dim={}, end_dim={}, data_len={}",
+                group_idx,
+                start_dim,
+                end_dim,
+                group_data.len()
+            );
 
             // Decode entire group at once (row-wise layout: R0[d0-d31], R1[d0-d31], ...)
             let expected_floats = vector_count * group_dims;
 
-                let codec = ProximaCodec::global();
-            let group_floats = codec.decode(&group_data)
-                .map_err(|e| anyhow::anyhow!("ProximaCodec decoding failed for group {}: {}", group_idx, e))?;
+            let codec = ProximaCodec::global();
+            let group_floats = codec.decode(&group_data).map_err(|e| {
+                anyhow::anyhow!(
+                    "ProximaCodec decoding failed for group {}: {}",
+                    group_idx,
+                    e
+                )
+            })?;
 
-            trace!(" [DECODE_GV] Group {}: decoded {} floats (expected {})",
-                   group_idx, group_floats.len(), expected_floats);
+            trace!(
+                " [DECODE_GV] Group {}: decoded {} floats (expected {})",
+                group_idx,
+                group_floats.len(),
+                expected_floats
+            );
 
             if group_floats.len() != expected_floats {
                 return Err(anyhow::anyhow!(
                     "Group {}: decoded {} floats but expected {} (vector_count={}, group_dims={})",
-                    group_idx, group_floats.len(), expected_floats, vector_count, group_dims
+                    group_idx,
+                    group_floats.len(),
+                    expected_floats,
+                    vector_count,
+                    group_dims
                 ));
             }
 
@@ -3572,25 +4238,41 @@ impl ProximaDataBlock {
             });
         }
 
-        trace!(" [DECODE_GV] Successfully decoded {} vectors", records.len());
+        trace!(
+            " [DECODE_GV] Successfully decoded {} vectors",
+            records.len()
+        );
         Ok(records)
     }
 
     /// Decode TransposeFieldEncodedAndCompressedVector format data with per-dimension field compression
-    fn decode_transpose_field_encoded_and_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+    fn decode_transpose_field_encoded_and_compressed_vector(
+        data: &[u8],
+        dimension: usize,
+        vector_count: usize,
+    ) -> anyhow::Result<Vec<VectorRecord>> {
+        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
-        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
 
-        trace!(" [DECODE_TV] Starting TransposeFieldEncodedAndCompressed decode, data size: {} bytes", data.len());
+        trace!(
+            " [DECODE_TV] Starting TransposeFieldEncodedAndCompressed decode, data size: {} bytes",
+            data.len()
+        );
         let mut cursor = Cursor::new(data);
 
         // Verify TransposeFieldEncodedAndCompressed marker
         let mut marker = [0u8; 2];
         cursor.read_exact(&mut marker)?;
-        trace!(" [DECODE_TV] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        trace!(
+            " [DECODE_TV] Read marker: [{:02X}, {:02X}]",
+            marker[0], marker[1]
+        );
         if marker != [0x54, 0x56] {
             warn!(" [DECODE_TV] Invalid marker");
-            return Err(anyhow::anyhow!("Invalid TransposeFieldEncodedAndCompressed marker: expected [0x54, 0x56], got {:?}", marker));
+            return Err(anyhow::anyhow!(
+                "Invalid TransposeFieldEncodedAndCompressed marker: expected [0x54, 0x56], got {:?}",
+                marker
+            ));
         }
 
         // Read encoding version
@@ -3600,7 +4282,10 @@ impl ProximaDataBlock {
         trace!(" [DECODE_TV] Encoding version: 0x{:02X}", encoding_version);
 
         trace!(" [DECODE_TV] Dimension: {} (from file header)", dimension);
-        trace!(" [DECODE_TV] Vector count: {} (from file header)", vector_count);
+        trace!(
+            " [DECODE_TV] Vector count: {} (from file header)",
+            vector_count
+        );
 
         if vector_count == 0 || dimension == 0 {
             return Ok(vec![]);
@@ -3616,7 +4301,10 @@ impl ProximaDataBlock {
             // Read compression marker for this dimension
             let mut compression_marker = [0u8; 1];
             cursor.read_exact(&mut compression_marker)?;
-            trace!(" [DECODE_TV] Dimension {} compression marker: 0x{:02X}", dim_idx, compression_marker[0]);
+            trace!(
+                " [DECODE_TV] Dimension {} compression marker: 0x{:02X}",
+                dim_idx, compression_marker[0]
+            );
 
             let dimension_data = if compression_marker[0] != 0x00 {
                 // Compressed dimension field - read compressed data size and decompress
@@ -3650,15 +4338,23 @@ impl ProximaDataBlock {
 
             // Decode Proxima encoded dimension data
             // Create a decoder for this dimension's data
-                let codec = ProximaCodec::global();
+            let codec = ProximaCodec::global();
             let dimension_floats = codec.decode(&dimension_data)?;
 
-            trace!(" [DECODE_TV] Decoded dimension {}: {} floats", dim_idx, dimension_floats.len());
+            trace!(
+                " [DECODE_TV] Decoded dimension {}: {} floats",
+                dim_idx,
+                dimension_floats.len()
+            );
 
             // Verify we have the right number of values for this dimension
             if dimension_floats.len() != vector_count {
-                return Err(anyhow::anyhow!("Dimension {} data size mismatch: {} vs {}",
-                    dim_idx, dimension_floats.len(), vector_count));
+                return Err(anyhow::anyhow!(
+                    "Dimension {} data size mismatch: {} vs {}",
+                    dim_idx,
+                    dimension_floats.len(),
+                    vector_count
+                ));
             }
 
             // Distribute the decoded floats to the appropriate position in each vector
@@ -3682,12 +4378,18 @@ impl ProximaDataBlock {
             });
         }
 
-        trace!(" [DECODE_TV] Successfully decoded {} vectors", records.len());
+        trace!(
+            " [DECODE_TV] Successfully decoded {} vectors",
+            records.len()
+        );
         Ok(records)
     }
 
     /// Decode existing TransposeFieldEncodedAndCompressed (columnar) format
-    fn decode_existing_columnar_format(data: &[u8], encoding_marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
+    fn decode_existing_columnar_format(
+        data: &[u8],
+        encoding_marker: u8,
+    ) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
 
         let mut cursor = Cursor::new(data);
@@ -3746,21 +4448,35 @@ impl ProximaDataBlock {
     }
 
     /// Decode GroupedFieldEncodedBlockCompressedVector format data with block-level compression
-    fn decode_grouped_field_encoded_block_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+    fn decode_grouped_field_encoded_block_compressed_vector(
+        data: &[u8],
+        dimension: usize,
+        vector_count: usize,
+    ) -> anyhow::Result<Vec<VectorRecord>> {
+        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
-        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
         const GROUP_SIZE: usize = 32;
 
-        trace!(" [DECODE_GB] Starting GroupedFieldEncodedBlockCompressed decode, data size: {} bytes", data.len());
+        trace!(
+            " [DECODE_GB] Starting GroupedFieldEncodedBlockCompressed decode, data size: {} bytes",
+            data.len()
+        );
         let mut cursor = Cursor::new(data);
 
         // Verify GroupedBlockCompressed marker
         let mut marker = [0u8; 2];
         cursor.read_exact(&mut marker)?;
-        trace!(" [DECODE_GB] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
-        if marker != [0x47, 0x42] { // "GB"
+        trace!(
+            " [DECODE_GB] Read marker: [{:02X}, {:02X}]",
+            marker[0], marker[1]
+        );
+        if marker != [0x47, 0x42] {
+            // "GB"
             warn!(" [DECODE_GB] Invalid marker");
-            return Err(anyhow::anyhow!("Invalid GroupedFieldEncodedBlockCompressedVector marker: expected [0x47, 0x42], got {:?}", marker));
+            return Err(anyhow::anyhow!(
+                "Invalid GroupedFieldEncodedBlockCompressedVector marker: expected [0x47, 0x42], got {:?}",
+                marker
+            ));
         }
 
         // Read encoding version
@@ -3770,7 +4486,10 @@ impl ProximaDataBlock {
         trace!(" [DECODE_GB] Encoding version: 0x{:02X}", encoding_version);
 
         trace!(" [DECODE_GB] Dimension: {} (from file header)", dimension);
-        trace!(" [DECODE_GB] Vector count: {} (from file header)", vector_count);
+        trace!(
+            " [DECODE_GB] Vector count: {} (from file header)",
+            vector_count
+        );
 
         // Read number of groups (field-specific metadata)
         let mut num_groups_bytes = [0u8; 4];
@@ -3791,7 +4510,12 @@ impl ProximaDataBlock {
             0x11 => CompressionAlgorithm::Zstd,
             0x12 => CompressionAlgorithm::Snappy,
             0x13 => CompressionAlgorithm::Gzip,
-            _ => return Err(anyhow::anyhow!("Unknown compression algorithm marker: 0x{:02X}", compression_marker[0])),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown compression algorithm marker: 0x{:02X}",
+                    compression_marker[0]
+                ));
+            }
         };
 
         // Read block size and data
@@ -3804,8 +4528,12 @@ impl ProximaDataBlock {
 
         // Decompress block if needed
         let uncompressed_block = if compression_algorithm != CompressionAlgorithm::None {
-            decompress(&block_data, compression_algorithm, CompressionContext::Block)
-                .map_err(|e| anyhow::anyhow!("Block decompression failed: {}", e))?
+            decompress(
+                &block_data,
+                compression_algorithm,
+                CompressionContext::Block,
+            )
+            .map_err(|e| anyhow::anyhow!("Block decompression failed: {}", e))?
         } else {
             block_data
         };
@@ -3833,17 +4561,30 @@ impl ProximaDataBlock {
             let group_dims = end_dim - start_dim;
             let expected_floats = vector_count * group_dims;
 
-                let codec = ProximaCodec::global();
-            let group_floats = codec.decode(&group_data)
-                .map_err(|e| anyhow::anyhow!("ProximaCodec decoding failed for group {}: {}", group_idx, e))?;
+            let codec = ProximaCodec::global();
+            let group_floats = codec.decode(&group_data).map_err(|e| {
+                anyhow::anyhow!(
+                    "ProximaCodec decoding failed for group {}: {}",
+                    group_idx,
+                    e
+                )
+            })?;
 
-            trace!(" [DECODE_GB] Group {}: decoded {} floats (expected {})",
-                     group_idx, group_floats.len(), expected_floats);
+            trace!(
+                " [DECODE_GB] Group {}: decoded {} floats (expected {})",
+                group_idx,
+                group_floats.len(),
+                expected_floats
+            );
 
             if group_floats.len() != expected_floats {
                 return Err(anyhow::anyhow!(
                     "Group {}: decoded {} floats but expected {} (vector_count={}, group_dims={})",
-                    group_idx, group_floats.len(), expected_floats, vector_count, group_dims
+                    group_idx,
+                    group_floats.len(),
+                    expected_floats,
+                    vector_count,
+                    group_dims
                 ));
             }
 
@@ -3871,25 +4612,42 @@ impl ProximaDataBlock {
             });
         }
 
-        trace!(" [DECODE_GB] Successfully decoded {} vectors", records.len());
+        trace!(
+            " [DECODE_GB] Successfully decoded {} vectors",
+            records.len()
+        );
         Ok(records)
     }
 
     /// Decode TransposeFieldEncodedBlockCompressedVector format data with block-level compression
-    fn decode_transpose_field_encoded_block_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+    fn decode_transpose_field_encoded_block_compressed_vector(
+        data: &[u8],
+        dimension: usize,
+        vector_count: usize,
+    ) -> anyhow::Result<Vec<VectorRecord>> {
+        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
-        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
 
-        trace!(" [DECODE_TB] Starting TransposeFieldEncodedBlockCompressed decode, data size: {} bytes", data.len());
+        trace!(
+            " [DECODE_TB] Starting TransposeFieldEncodedBlockCompressed decode, data size: {} bytes",
+            data.len()
+        );
         let mut cursor = Cursor::new(data);
 
         // Verify TransposeBlockCompressed marker
         let mut marker = [0u8; 2];
         cursor.read_exact(&mut marker)?;
-        trace!(" [DECODE_TB] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
-        if marker != [0x54, 0x42] { // "TB"
+        trace!(
+            " [DECODE_TB] Read marker: [{:02X}, {:02X}]",
+            marker[0], marker[1]
+        );
+        if marker != [0x54, 0x42] {
+            // "TB"
             warn!(" [DECODE_TB] Invalid marker");
-            return Err(anyhow::anyhow!("Invalid TransposeFieldEncodedBlockCompressedVector marker: expected [0x54, 0x42], got {:?}", marker));
+            return Err(anyhow::anyhow!(
+                "Invalid TransposeFieldEncodedBlockCompressedVector marker: expected [0x54, 0x42], got {:?}",
+                marker
+            ));
         }
 
         // Read encoding version
@@ -3899,7 +4657,10 @@ impl ProximaDataBlock {
         trace!(" [DECODE_TB] Encoding version: 0x{:02X}", encoding_version);
 
         trace!(" [DECODE_TB] Dimension: {} (from file header)", dimension);
-        trace!(" [DECODE_TB] Vector count: {} (from file header)", vector_count);
+        trace!(
+            " [DECODE_TB] Vector count: {} (from file header)",
+            vector_count
+        );
 
         if vector_count == 0 || dimension == 0 {
             return Ok(vec![]);
@@ -3914,7 +4675,12 @@ impl ProximaDataBlock {
             0x11 => CompressionAlgorithm::Zstd,
             0x12 => CompressionAlgorithm::Snappy,
             0x13 => CompressionAlgorithm::Gzip,
-            _ => return Err(anyhow::anyhow!("Unknown compression algorithm marker: 0x{:02X}", compression_marker[0])),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown compression algorithm marker: 0x{:02X}",
+                    compression_marker[0]
+                ));
+            }
         };
 
         // Read block size and data
@@ -3927,8 +4693,12 @@ impl ProximaDataBlock {
 
         // Decompress block if needed
         let uncompressed_block = if compression_algorithm != CompressionAlgorithm::None {
-            decompress(&block_data, compression_algorithm, CompressionContext::Block)
-                .map_err(|e| anyhow::anyhow!("Block decompression failed: {}", e))?
+            decompress(
+                &block_data,
+                compression_algorithm,
+                CompressionContext::Block,
+            )
+            .map_err(|e| anyhow::anyhow!("Block decompression failed: {}", e))?
         } else {
             block_data
         };
@@ -3950,10 +4720,15 @@ impl ProximaDataBlock {
             block_cursor.read_exact(&mut dim_data)?;
 
             // Decode this dimension's values using ProximaCodec (migrated from old decoder)
-                let codec = ProximaCodec::global();
+            let codec = ProximaCodec::global();
 
-            let decoded_values = codec.decode(&dim_data)
-                .map_err(|e| anyhow::anyhow!("ProximaCodec decoding failed for dimension {}: {}", dim_idx, e))?;
+            let decoded_values = codec.decode(&dim_data).map_err(|e| {
+                anyhow::anyhow!(
+                    "ProximaCodec decoding failed for dimension {}: {}",
+                    dim_idx,
+                    e
+                )
+            })?;
 
             // Copy values to vectors
             for (row_idx, &value) in decoded_values.iter().enumerate() {
@@ -3978,7 +4753,10 @@ impl ProximaDataBlock {
             });
         }
 
-        trace!(" [DECODE_TB] Successfully decoded {} vectors", records.len());
+        trace!(
+            " [DECODE_TB] Successfully decoded {} vectors",
+            records.len()
+        );
         Ok(records)
     }
 }
@@ -4232,10 +5010,7 @@ mod tests {
             vector_layout: VectorEncodingLayout::Auto,
             ..Default::default()
         };
-        let block_auto = ProximaDataBlock::new(
-            records.clone(),
-            compression_config_auto,
-        );
+        let block_auto = ProximaDataBlock::new(records.clone(), compression_config_auto);
 
         // Serialize and deserialize
         let serialized = block_auto.serialize().unwrap();
@@ -4256,13 +5031,11 @@ mod tests {
             vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
             ..Default::default()
         };
-        let block_grouped = ProximaDataBlock::new(
-            records,
-            compression_config_grouped,
-        );
+        let block_grouped = ProximaDataBlock::new(records, compression_config_grouped);
 
         let serialized_grouped = block_grouped.serialize().unwrap();
-        let deserialized_grouped = ProximaDataBlock::deserialize(&serialized_grouped, None).unwrap();
+        let deserialized_grouped =
+            ProximaDataBlock::deserialize(&serialized_grouped, None).unwrap();
 
         assert_eq!(deserialized_grouped.records.len(), vector_count);
         // Verify all dimensions are preserved
@@ -4322,7 +5095,11 @@ mod tests {
         // Verify compression is effective (should be much smaller than raw)
         let raw_size = count * dimension * 4; // 4 bytes per f32
         let compression_ratio = raw_size as f64 / serialized.len() as f64;
-        assert!(compression_ratio > 10.0, "Constant data should compress well: {:.2}x", compression_ratio);
+        assert!(
+            compression_ratio > 10.0,
+            "Constant data should compress well: {:.2}x",
+            compression_ratio
+        );
 
         // Verify round-trip
         let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
@@ -4332,7 +5109,11 @@ mod tests {
         for (i, record) in deserialized.records.iter().enumerate() {
             assert_eq!(record.vector.len(), dimension);
             for &val in &record.vector {
-                assert!((val - 42.0).abs() < 0.0001, "Record {} has incorrect value", i);
+                assert!(
+                    (val - 42.0).abs() < 0.0001,
+                    "Record {} has incorrect value",
+                    i
+                );
             }
         }
     }
@@ -4382,26 +5163,57 @@ mod tests {
         // This can result in unexpectedly high compression ratios for truly random data
         // TODO: Improve pattern detection in analyze_and_choose_scheme_f32() to handle random data better
         // For now, just verify serialization succeeds
-        assert!(compression_ratio > 0.1, "Should produce some output: {:.2}x", compression_ratio);
+        assert!(
+            compression_ratio > 0.1,
+            "Should produce some output: {:.2}x",
+            compression_ratio
+        );
 
         // Verify round-trip - handle potential error gracefully
         match ProximaDataBlock::deserialize(&serialized, None) {
             Ok(deserialized) => {
-                assert_eq!(deserialized.records.len(), count, "Expected {} records, got {}", count, deserialized.records.len());
+                assert_eq!(
+                    deserialized.records.len(),
+                    count,
+                    "Expected {} records, got {}",
+                    count,
+                    deserialized.records.len()
+                );
 
                 // Verify data integrity
-                for (i, (original, deserialized)) in records.iter().zip(deserialized.records.iter()).enumerate() {
-                    assert_eq!(original.vector.len(), deserialized.vector.len(), "Record {} dimension mismatch", i);
-                    for (j, (&orig, &deser)) in original.vector.iter().zip(deserialized.vector.iter()).enumerate() {
-                        assert!((orig - deser).abs() < 0.0001,
-                            "Record {} dim {} mismatch: {} vs {}", i, j, orig, deser);
+                for (i, (original, deserialized)) in
+                    records.iter().zip(deserialized.records.iter()).enumerate()
+                {
+                    assert_eq!(
+                        original.vector.len(),
+                        deserialized.vector.len(),
+                        "Record {} dimension mismatch",
+                        i
+                    );
+                    for (j, (&orig, &deser)) in original
+                        .vector
+                        .iter()
+                        .zip(deserialized.vector.iter())
+                        .enumerate()
+                    {
+                        assert!(
+                            (orig - deser).abs() < 0.0001,
+                            "Record {} dim {} mismatch: {} vs {}",
+                            i,
+                            j,
+                            orig,
+                            deser
+                        );
                     }
                 }
-            },
+            }
             Err(e) => {
                 // For random data with aggressive compression, sometimes the compressed data
                 // might not decompress correctly. This is acceptable.
-                println!("Random pattern compression test: Deserialization failed (expected for highly random data): {}", e);
+                println!(
+                    "Random pattern compression test: Deserialization failed (expected for highly random data): {}",
+                    e
+                );
             }
         }
     }
@@ -4415,7 +5227,7 @@ mod tests {
         // Create mixed pattern vectors
         let records: Vec<VectorRecord> = (0..count)
             .map(|i| {
-                let vector = if i < count/2 {
+                let vector = if i < count / 2 {
                     // First half: constant values (compress well)
                     vec![i as f32; dimension]
                 } else {
@@ -4455,8 +5267,11 @@ mod tests {
         let compression_ratio = raw_size as f64 / serialized.len() as f64;
         // Mixed pattern should compress moderately (between 1.0x and 20.0x)
         // ProximaCodec can achieve better compression than old encoder
-        assert!(compression_ratio > 0.5 && compression_ratio < 20.0,
-            "Mixed data should have moderate compression: {:.2}x", compression_ratio);
+        assert!(
+            compression_ratio > 0.5 && compression_ratio < 20.0,
+            "Mixed data should have moderate compression: {:.2}x",
+            compression_ratio
+        );
 
         // Verify round-trip - handle potential error gracefully
         match ProximaDataBlock::deserialize(&serialized, None) {
@@ -4464,17 +5279,38 @@ mod tests {
                 assert_eq!(deserialized.records.len(), count);
 
                 // Verify data integrity
-                for (i, (original, deserialized)) in records.iter().zip(deserialized.records.iter()).enumerate() {
-                    assert_eq!(original.vector.len(), deserialized.vector.len(), "Record {} dimension mismatch", i);
-                    for (j, (&orig, &deser)) in original.vector.iter().zip(deserialized.vector.iter()).enumerate() {
-                        assert!((orig - deser).abs() < 0.0001,
-                            "Record {} dim {} mismatch: {} vs {}", i, j, orig, deser);
+                for (i, (original, deserialized)) in
+                    records.iter().zip(deserialized.records.iter()).enumerate()
+                {
+                    assert_eq!(
+                        original.vector.len(),
+                        deserialized.vector.len(),
+                        "Record {} dimension mismatch",
+                        i
+                    );
+                    for (j, (&orig, &deser)) in original
+                        .vector
+                        .iter()
+                        .zip(deserialized.vector.iter())
+                        .enumerate()
+                    {
+                        assert!(
+                            (orig - deser).abs() < 0.0001,
+                            "Record {} dim {} mismatch: {} vs {}",
+                            i,
+                            j,
+                            orig,
+                            deser
+                        );
                     }
                 }
-            },
+            }
             Err(e) => {
                 // For mixed data with varying compression patterns, sometimes issues can occur
-                println!("Mixed pattern compression test: Deserialization failed (can happen with mixed patterns): {}", e);
+                println!(
+                    "Mixed pattern compression test: Deserialization failed (can happen with mixed patterns): {}",
+                    e
+                );
             }
         }
     }
@@ -4502,10 +5338,7 @@ mod tests {
             },
         ];
 
-        let block = ProximaDataBlock::new(
-            records.clone(),
-            BlockCompressionConfig::default()
-        );
+        let block = ProximaDataBlock::new(records.clone(), BlockCompressionConfig::default());
 
         // Test bloom filter generation
         let bloom_result = block.generate_bloom();
@@ -4542,10 +5375,7 @@ mod tests {
             },
         ];
 
-        let block = ProximaDataBlock::new(
-            records,
-            BlockCompressionConfig::default()
-        );
+        let block = ProximaDataBlock::new(records, BlockCompressionConfig::default());
 
         // Test parallel serialization with bloom
         let result = block.serialize_with_bloom_sync();
@@ -4574,18 +5404,13 @@ mod tests {
         use crate::proto::proximadb_v1::VectorRecord;
 
         // Create test records
-        let records = vec![
-            VectorRecord {
-                id: "async1".to_string(),
-                vector: vec![10.0, 20.0, 30.0],
-                ..Default::default()
-            },
-        ];
+        let records = vec![VectorRecord {
+            id: "async1".to_string(),
+            vector: vec![10.0, 20.0, 30.0],
+            ..Default::default()
+        }];
 
-        let block = ProximaDataBlock::new(
-            records,
-            BlockCompressionConfig::default()
-        );
+        let block = ProximaDataBlock::new(records, BlockCompressionConfig::default());
 
         // Test async parallel serialization
         let result = block.serialize_with_bloom().await;
@@ -4601,10 +5426,7 @@ mod tests {
     #[test]
     fn test_empty_block_bloom() {
         // Test with empty records
-        let block = ProximaDataBlock::new(
-            vec![],
-            BlockCompressionConfig::default()
-        );
+        let block = ProximaDataBlock::new(vec![], BlockCompressionConfig::default());
 
         // Empty block should return None for bloom
         let bloom_result = block.generate_bloom();
@@ -4632,17 +5454,21 @@ mod tests {
                     let vector = match pattern {
                         "sequential" => (0..dims).map(|d| (i * dims + d) as f32).collect(),
                         "normalized" => {
-                            let v: Vec<f32> = (0..dims).map(|d| ((i as f32 * 0.1) + (d as f32 * 0.01)).sin()).collect();
+                            let v: Vec<f32> = (0..dims)
+                                .map(|d| ((i as f32 * 0.1) + (d as f32 * 0.01)).sin())
+                                .collect();
                             let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
                             v.iter().map(|x| x / norm).collect()
-                        },
+                        }
                         "constant" => vec![42.0; dims],
                         "sparse" => {
                             let mut v = vec![0.0; dims];
                             v[i % dims] = 1.0;
                             v
-                        },
-                        "random" => (0..dims).map(|d| ((i * 7 + d * 13) % 100) as f32 / 100.0).collect(),
+                        }
+                        "random" => (0..dims)
+                            .map(|d| ((i * 7 + d * 13) % 100) as f32 / 100.0)
+                            .collect(),
                         _ => vec![0.0; dims],
                     };
                     VectorRecord {
@@ -4665,15 +5491,30 @@ mod tests {
 
             for (i, (orig, dec)) in original.iter().zip(decoded.iter()).enumerate() {
                 assert_eq!(orig.id, dec.id, "ID mismatch at record {}", i);
-                assert_eq!(orig.vector.len(), dec.vector.len(), "Dimension mismatch at record {}", i);
-                assert_eq!(orig.timestamp, dec.timestamp, "Timestamp mismatch at record {}", i);
+                assert_eq!(
+                    orig.vector.len(),
+                    dec.vector.len(),
+                    "Dimension mismatch at record {}",
+                    i
+                );
+                assert_eq!(
+                    orig.timestamp, dec.timestamp,
+                    "Timestamp mismatch at record {}",
+                    i
+                );
 
-                for (d, (&orig_val, &dec_val)) in orig.vector.iter().zip(dec.vector.iter()).enumerate() {
+                for (d, (&orig_val, &dec_val)) in
+                    orig.vector.iter().zip(dec.vector.iter()).enumerate()
+                {
                     let diff = (orig_val - dec_val).abs();
                     assert!(
                         diff <= tolerance,
                         "Vector mismatch at record {} dim {}: expected {}, got {}, diff {}",
-                        i, d, orig_val, dec_val, diff
+                        i,
+                        d,
+                        orig_val,
+                        dec_val,
+                        diff
                     );
                 }
             }
@@ -4939,7 +5780,8 @@ mod tests {
             };
             let transpose_block = ProximaDataBlock::new(vectors.clone(), transpose_config);
             let transpose_serialized = transpose_block.serialize().unwrap();
-            let transpose_deserialized = ProximaDataBlock::deserialize(&transpose_serialized, None).unwrap();
+            let transpose_deserialized =
+                ProximaDataBlock::deserialize(&transpose_serialized, None).unwrap();
 
             let grouped_config = BlockCompressionConfig {
                 vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
@@ -4947,16 +5789,24 @@ mod tests {
             };
             let grouped_block = ProximaDataBlock::new(vectors.clone(), grouped_config);
             let grouped_serialized = grouped_block.serialize().unwrap();
-            let grouped_deserialized = ProximaDataBlock::deserialize(&grouped_serialized, None).unwrap();
+            let grouped_deserialized =
+                ProximaDataBlock::deserialize(&grouped_serialized, None).unwrap();
 
             // Both should decode to identical results
             verify_roundtrip(&vectors, &transpose_deserialized.records, 0.0001);
             verify_roundtrip(&vectors, &grouped_deserialized.records, 0.0001);
 
             // Verify both produce same output
-            for (t, g) in transpose_deserialized.records.iter().zip(grouped_deserialized.records.iter()) {
+            for (t, g) in transpose_deserialized
+                .records
+                .iter()
+                .zip(grouped_deserialized.records.iter())
+            {
                 for (tv, gv) in t.vector.iter().zip(g.vector.iter()) {
-                    assert!((tv - gv).abs() < 0.0001, "Transpose and Grouped produce different results");
+                    assert!(
+                        (tv - gv).abs() < 0.0001,
+                        "Transpose and Grouped produce different results"
+                    );
                 }
             }
         }
@@ -4986,16 +5836,26 @@ mod tests {
             let transpose_serialized = transpose_block.serialize().unwrap();
 
             println!("Raw size: {} bytes", raw_size);
-            println!("Grouped compressed: {} bytes ({:.1}% of raw)",
-                     grouped_serialized.len(),
-                     (grouped_serialized.len() as f32 / raw_size as f32) * 100.0);
-            println!("Transpose compressed: {} bytes ({:.1}% of raw)",
-                     transpose_serialized.len(),
-                     (transpose_serialized.len() as f32 / raw_size as f32) * 100.0);
+            println!(
+                "Grouped compressed: {} bytes ({:.1}% of raw)",
+                grouped_serialized.len(),
+                (grouped_serialized.len() as f32 / raw_size as f32) * 100.0
+            );
+            println!(
+                "Transpose compressed: {} bytes ({:.1}% of raw)",
+                transpose_serialized.len(),
+                (transpose_serialized.len() as f32 / raw_size as f32) * 100.0
+            );
 
             // Both should provide some compression (encoded size < raw size)
-            assert!(grouped_serialized.len() < raw_size, "GroupedField should compress data");
-            assert!(transpose_serialized.len() < raw_size, "TransposeField should compress data");
+            assert!(
+                grouped_serialized.len() < raw_size,
+                "GroupedField should compress data"
+            );
+            assert!(
+                transpose_serialized.len() < raw_size,
+                "TransposeField should compress data"
+            );
         }
 
         #[test]

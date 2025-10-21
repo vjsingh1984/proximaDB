@@ -151,15 +151,15 @@ impl HyperparameterTuner {
     }
 
     /// Run tuning process
-    pub async fn tune<F, Fut>(
-        &self,
-        objective: F,
-    ) -> Result<HashMap<String, ParameterValue>>
+    pub async fn tune<F, Fut>(&self, objective: F) -> Result<HashMap<String, ParameterValue>>
     where
         F: Fn(HashMap<String, ParameterValue>) -> Fut + Send + Sync + Clone + 'static,
         Fut: std::future::Future<Output = Result<f64>> + Send,
     {
-        info!("Starting hyperparameter tuning with {:?} algorithm", self.algorithm);
+        info!(
+            "Starting hyperparameter tuning with {:?} algorithm",
+            self.algorithm
+        );
 
         let parameters = self.parameters.read().await.clone();
 
@@ -168,7 +168,8 @@ impl HyperparameterTuner {
             TuningAlgorithm::Random => self.tune_random(objective, parameters).await,
             TuningAlgorithm::Grid => self.tune_grid(objective, parameters).await,
             TuningAlgorithm::Hyperband { max_iter, eta } => {
-                self.tune_hyperband(objective, parameters, max_iter, eta).await
+                self.tune_hyperband(objective, parameters, max_iter, eta)
+                    .await
             }
             TuningAlgorithm::Optuna => self.tune_optuna(objective, parameters).await,
         }
@@ -357,7 +358,8 @@ impl HyperparameterTuner {
                 }
 
                 let k = (n_i as f64 / eta).floor() as usize;
-                configs = scores.into_iter()
+                configs = scores
+                    .into_iter()
                     .take(k)
                     .map(|(config, _)| config)
                     .collect();
@@ -382,7 +384,10 @@ impl HyperparameterTuner {
     }
 
     /// Sample random parameters
-    fn sample_random(&self, parameters: &[HyperParameter]) -> Result<HashMap<String, ParameterValue>> {
+    fn sample_random(
+        &self,
+        parameters: &[HyperParameter],
+    ) -> Result<HashMap<String, ParameterValue>> {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let mut params = HashMap::new();
@@ -416,7 +421,10 @@ impl HyperparameterTuner {
     }
 
     /// Sample using TPE
-    async fn sample_tpe(&self, parameters: &[HyperParameter]) -> Result<HashMap<String, ParameterValue>> {
+    async fn sample_tpe(
+        &self,
+        parameters: &[HyperParameter],
+    ) -> Result<HashMap<String, ParameterValue>> {
         let trials = self.trials.read().await;
 
         if trials.len() < 10 {
@@ -436,14 +444,18 @@ impl HyperparameterTuner {
 
         for param in parameters {
             // Get values from good trials
-            let good_values: Vec<_> = good_trials.iter()
+            let good_values: Vec<_> = good_trials
+                .iter()
                 .filter_map(|t| t.parameters.get(&param.name))
                 .collect();
 
             if good_values.is_empty() {
                 // Sample randomly if no good values
                 let random_params = self.sample_random(&[param.clone()])?;
-                params.insert(param.name.clone(), random_params.into_values().next().unwrap());
+                params.insert(
+                    param.name.clone(),
+                    random_params.into_values().next().unwrap(),
+                );
             } else {
                 // Sample from good distribution (simplified)
                 use rand::seq::SliceRandom;
@@ -457,7 +469,10 @@ impl HyperparameterTuner {
     }
 
     /// Generate grid points
-    fn generate_grid(&self, parameters: &[HyperParameter]) -> Result<Vec<HashMap<String, ParameterValue>>> {
+    fn generate_grid(
+        &self,
+        parameters: &[HyperParameter],
+    ) -> Result<Vec<HashMap<String, ParameterValue>>> {
         let mut grid_points = vec![HashMap::new()];
 
         for param in parameters {
@@ -466,10 +481,12 @@ impl HyperparameterTuner {
             let values = match &param.search_space {
                 SearchSpace::Continuous { min, max } => {
                     // Sample 5 points for continuous
-                    (0..5).map(|i| {
-                        let t = i as f64 / 4.0;
-                        ParameterValue::Float(min + t * (max - min))
-                    }).collect::<Vec<_>>()
+                    (0..5)
+                        .map(|i| {
+                            let t = i as f64 / 4.0;
+                            ParameterValue::Float(min + t * (max - min))
+                        })
+                        .collect::<Vec<_>>()
                 }
                 SearchSpace::Discrete { min, max, step } => {
                     let mut values = Vec::new();
@@ -480,20 +497,21 @@ impl HyperparameterTuner {
                     }
                     values
                 }
-                SearchSpace::Categorical { choices } => {
-                    choices.iter()
-                        .map(|c| ParameterValue::String(c.clone()))
-                        .collect()
-                }
+                SearchSpace::Categorical { choices } => choices
+                    .iter()
+                    .map(|c| ParameterValue::String(c.clone()))
+                    .collect(),
                 SearchSpace::LogScale { min, max } => {
                     // Sample 5 points in log scale
                     let log_min = min.ln();
                     let log_max = max.ln();
-                    (0..5).map(|i| {
-                        let t = i as f64 / 4.0;
-                        let log_value = log_min + t * (log_max - log_min);
-                        ParameterValue::Float(log_value.exp())
-                    }).collect::<Vec<_>>()
+                    (0..5)
+                        .map(|i| {
+                            let t = i as f64 / 4.0;
+                            let log_value = log_min + t * (log_max - log_min);
+                            ParameterValue::Float(log_value.exp())
+                        })
+                        .collect::<Vec<_>>()
                 }
             };
 
@@ -534,17 +552,29 @@ impl ProximaDBHyperparameters {
             HyperParameter {
                 name: "M".to_string(),
                 param_type: ParameterType::Integer,
-                search_space: SearchSpace::Discrete { min: 8, max: 64, step: 4 },
+                search_space: SearchSpace::Discrete {
+                    min: 8,
+                    max: 64,
+                    step: 4,
+                },
             },
             HyperParameter {
                 name: "ef_construction".to_string(),
                 param_type: ParameterType::Integer,
-                search_space: SearchSpace::Discrete { min: 50, max: 500, step: 50 },
+                search_space: SearchSpace::Discrete {
+                    min: 50,
+                    max: 500,
+                    step: 50,
+                },
             },
             HyperParameter {
                 name: "ef_search".to_string(),
                 param_type: ParameterType::Integer,
-                search_space: SearchSpace::Discrete { min: 10, max: 200, step: 10 },
+                search_space: SearchSpace::Discrete {
+                    min: 10,
+                    max: 200,
+                    step: 10,
+                },
             },
         ]
     }
@@ -555,12 +585,19 @@ impl ProximaDBHyperparameters {
             HyperParameter {
                 name: "nlist".to_string(),
                 param_type: ParameterType::Integer,
-                search_space: SearchSpace::LogScale { min: 10.0, max: 10000.0 },
+                search_space: SearchSpace::LogScale {
+                    min: 10.0,
+                    max: 10000.0,
+                },
             },
             HyperParameter {
                 name: "nprobe".to_string(),
                 param_type: ParameterType::Integer,
-                search_space: SearchSpace::Discrete { min: 1, max: 100, step: 5 },
+                search_space: SearchSpace::Discrete {
+                    min: 1,
+                    max: 100,
+                    step: 5,
+                },
             },
         ]
     }
@@ -585,7 +622,11 @@ impl ProximaDBHyperparameters {
             HyperParameter {
                 name: "codebook_size".to_string(),
                 param_type: ParameterType::Integer,
-                search_space: SearchSpace::Discrete { min: 128, max: 1024, step: 128 },
+                search_space: SearchSpace::Discrete {
+                    min: 128,
+                    max: 1024,
+                    step: 128,
+                },
             },
         ]
     }
@@ -597,7 +638,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_random_sampling() {
-        let tuner = HyperparameterTuner::new(TuningConfig::default()).await.unwrap();
+        let tuner = HyperparameterTuner::new(TuningConfig::default())
+            .await
+            .unwrap();
 
         let params = ProximaDBHyperparameters::hnsw_params();
         for param in params {
@@ -624,7 +667,11 @@ mod tests {
             HyperParameter {
                 name: "param1".to_string(),
                 param_type: ParameterType::Integer,
-                search_space: SearchSpace::Discrete { min: 0, max: 2, step: 1 },
+                search_space: SearchSpace::Discrete {
+                    min: 0,
+                    max: 2,
+                    step: 1,
+                },
             },
             HyperParameter {
                 name: "param2".to_string(),

@@ -57,17 +57,36 @@
 //! - **Transaction Management**: ACID transactions with rollback support
 //! - **Performance Optimization**: SIMD-ready operations and cache-friendly access patterns
 
+#[path = "service_edge_ops.rs"]
+mod service_edge_ops;
+#[path = "service_engine_factory.rs"]
+mod service_engine_factory;
+#[path = "service_helpers.rs"]
+mod service_helpers;
+#[path = "service_node_ops.rs"]
+mod service_node_ops;
+#[path = "service_schema_validation.rs"]
+mod service_schema_validation;
+#[path = "service_traversal_api.rs"]
+mod service_traversal_api;
+pub(super) use service_helpers::*;
+
 use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, NodeId, NodeQuery, OperationMode,
-    engines::{GraphEngine, orion::{OrionGraphEngine, traversal::TraversalConfig}},
+    engines::{
+        GraphEngine,
+        orion::{OrionGraphEngine, traversal::TraversalConfig},
+    },
 };
 use crate::metrics::updater::OperationMetricsUpdate;
+use crate::storage::cache::orchestrator::{
+    CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
+};
 use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats};
 use std::time::Instant;
 use tracing::debug;
 
@@ -81,8 +100,8 @@ pub struct GraphOperationsService {
     /// Reference to graph collection service for metadata management
     collection_service: Arc<crate::services::graph_collection::GraphCollectionService>,
 
-    /// Graph registry for multi-graph support - maps graph_id to engine
-    graphs: Arc<DashMap<String, Arc<OrionGraphEngine>>>,
+    /// Graph registry for multi-graph support - maps graph_id to engine (polymorphic)
+    graphs: Arc<DashMap<String, Arc<crate::graph::engines::GraphEngineImpl>>>,
 
     /// Configuration for graph storage base URL
     base_storage_url: String,
@@ -105,11 +124,11 @@ impl GraphOperationsService {
     /// Create a new GraphOperationsService in unified mode
     pub fn new() -> Self {
         let memory_pool = Arc::new(GraphMemoryPool::new());
-        let collection_service = Arc::new(crate::services::graph_collection::GraphCollectionService::new());
+        let collection_service =
+            Arc::new(crate::services::graph_collection::GraphCollectionService::new());
 
         // Initialize graph settings from global if available
-        let default_settings = crate::core::context::global_graph_settings()
-            .unwrap_or_default();
+        let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
         let service = Self {
             mode: OperationMode::Unified,
@@ -152,11 +171,12 @@ impl GraphOperationsService {
     }
 
     /// Create GraphOperationsService with existing collection service (for dependency injection)
-    pub fn new_with_collection_service(collection_service: Arc<crate::services::graph_collection::GraphCollectionService>) -> Self {
+    pub fn new_with_collection_service(
+        collection_service: Arc<crate::services::graph_collection::GraphCollectionService>,
+    ) -> Self {
         let memory_pool = Arc::new(GraphMemoryPool::new());
 
-        let default_settings = crate::core::context::global_graph_settings()
-            .unwrap_or_default();
+        let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
         let service = Self {
             mode: OperationMode::Unified,
@@ -204,50 +224,28 @@ impl GraphOperationsService {
             .unwrap_or_else(|| "file:///tmp/proximadb".to_string());
 
         // TODO: Wire PULSAR/QUASAR engines when implemented
-        tracing::info!("GraphOperationsService engine selection: {}, storage: {}", engine_name, base_storage_url);
+        tracing::info!(
+            "GraphOperationsService engine selection: {}, storage: {}",
+            engine_name,
+            base_storage_url
+        );
 
         let mut service = Self::new();
         service.base_storage_url = base_storage_url;
         service
     }
 
-    /// Get or create a graph engine for the specified graph ID
-    pub async fn get_or_create_graph_engine(&self, graph_id: &str) -> Result<Arc<OrionGraphEngine>> {
-        // Check if engine already exists
-        if let Some(engine) = self.graphs.get(graph_id) {
-            return Ok(Arc::clone(&engine));
-        }
+    // get_or_create_graph_engine moved to service_engine_factory.rs
 
-        // Verify graph collection exists first
-        let collection = self.collection_service.ensure_graph_exists(graph_id).await?;
-
-        // Get storage URL from collection config or use default
-        let graph_storage_url = collection.storage_config
-            .as_ref()
-            .map(|cfg| cfg.base_url.clone())
-            .unwrap_or_else(|| format!("{}/graphs/{}/data",
-                self.base_storage_url.trim_end_matches('/'),
-                graph_id));
-
-        tracing::info!("Creating new graph engine for '{}' at {}", graph_id, graph_storage_url);
-
-        let engine = Arc::new(
-            OrionGraphEngine::with_persistence_for_graph(
-                graph_id.to_string(),
-                graph_storage_url,
-                true, // Enable WAL
-            ).await?
-        );
-
-        // Store in registry
-        self.graphs.insert(graph_id.to_string(), Arc::clone(&engine));
-
-        Ok(engine)
-    }
+    /// Initialize constraint registries based on graph schema (unique constraints)
+    // initialize_schema_constraints moved to service_engine_factory.rs
 
     /// List all active graph engines (not collections)
     pub fn list_active_graphs(&self) -> Vec<String> {
-        self.graphs.iter().map(|entry| entry.key().clone()).collect()
+        self.graphs
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// List all graph collections (delegates to collection service)
@@ -257,17 +255,24 @@ impl GraphOperationsService {
     }
 
     /// Create a new graph collection (delegates to collection service)
-    pub async fn create_graph_collection(&self, request: crate::proto::proximadb_v1::CreateGraphRequest) -> Result<()> {
+    pub async fn create_graph_collection(
+        &self,
+        request: crate::proto::proximadb_v1::CreateGraphRequest,
+    ) -> Result<()> {
         self.collection_service.create_graph(request).await?;
         Ok(())
     }
 
     /// Remove a graph engine (for cleanup/deletion)
-    pub fn remove_graph(&self, graph_id: &str) -> Option<Arc<OrionGraphEngine>> {
+    pub fn remove_graph(
+        &self,
+        graph_id: &str,
+    ) -> Option<Arc<crate::graph::engines::GraphEngineImpl>> {
         self.graphs.remove(graph_id).map(|(_, engine)| engine)
     }
 
     /// Compute shortest path with algorithm selection and optional k-shortest support.
+    /* moved to service_traversal_api.rs
     pub async fn shortest_path(
         &self,
         graph_id: &str,
@@ -306,26 +311,62 @@ impl GraphOperationsService {
         };
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
+        let orion_engine = match &*engine {
+            crate::graph::engines::GraphEngineImpl::Orion(e) => Some(e),
+            _ => None,
+        };
+
         if let Some(kk) = k {
             if kk > 1 {
-                let paths = k_shortest_paths(
-                    &*engine,
-                    start_node_id,
-                    target_node_id,
-                    kk as usize,
-                    config,
-                )
-                .await?;
-                return Ok(paths.first().cloned());
+                if let Some(eng) = orion_engine {
+                    let paths = k_shortest_paths(
+                        eng,
+                        start_node_id,
+                        target_node_id,
+                        kk as usize,
+                        config,
+                    )
+                    .await?;
+                    return Ok(paths.first().cloned());
+                } else {
+                    // Fallback: only compute the single best path via generic dijkstra
+                    let res = crate::graph::engines::generic_traversal::dijkstra_generic(
+                        engine.as_ref(),
+                        start_node_id,
+                        target_node_id,
+                        config.edge_types.as_ref().map(|v| v.as_slice()),
+                    )?;
+                    return Ok(res);
+                }
             }
         }
         let result = match algorithm.unwrap_or(
             crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra,
         ) {
             crate::proto::proximadb_v1::ShortestPathAlgorithm::Astar => {
-                astar_shortest_path(&*engine, start_node_id, target_node_id, config).await
+                if let Some(eng) = orion_engine {
+                    astar_shortest_path(eng, start_node_id, target_node_id, config).await
+                } else {
+                    Ok(crate::graph::engines::generic_traversal::dijkstra_generic(
+                        engine.as_ref(),
+                        start_node_id,
+                        target_node_id,
+                        config.edge_types.as_ref().map(|v| v.as_slice()),
+                    )?)
+                }
             }
-            _ => dijkstra_shortest_path(&*engine, start_node_id, target_node_id, config).await,
+            _ => {
+                if let Some(eng) = orion_engine {
+                    dijkstra_shortest_path(eng, start_node_id, target_node_id, config).await
+                } else {
+                    Ok(crate::graph::engines::generic_traversal::dijkstra_generic(
+                        engine.as_ref(),
+                        start_node_id,
+                        target_node_id,
+                        config.edge_types.as_ref().map(|v| v.as_slice()),
+                    )?)
+                }
+            }
         }?;
         if let Some(updater) = &self.metrics_updater {
             let _ = updater
@@ -346,6 +387,7 @@ impl GraphOperationsService {
         }
         Ok(result)
     }
+    */
 
     /// Create a new GraphOperationsService with specific mode
     pub fn with_mode(mode: OperationMode) -> Self {
@@ -385,176 +427,34 @@ impl GraphOperationsService {
         )
     }
 
-    /// Create a new node
-    pub async fn create_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
+    // create_node moved to service_node_ops.rs
 
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
+    // get_node moved to service_node_ops.rs
 
-        // Enforce unique constraints per label/property for this specific graph
-        self.enforce_unique_constraints_on_node(graph_id, &node)?;
+    // update_node moved to service_node_ops.rs
 
-        let node_arc = engine.insert_node(node)?;
+    // delete_node moved to service_node_ops.rs
 
-        // Register unique keys for this specific graph
-        self.register_node_in_unique_constraints(graph_id, &node_arc);
+    // create_edge moved to service_edge_ops.rs
 
-        Ok(node_arc)
-    }
-
-    /// Get a node by ID
-    pub async fn get_node(&self, graph_id: &str, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-        engine.get_node(id)
-    }
-
-    /// Update a node
-    pub async fn update_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-
-        // Enforce unique constraints before update for this specific graph
-        self.enforce_unique_constraints_on_node(graph_id, &node)?;
-        let node_arc = engine.update_node(node)?;
-        // Update unique key registry for this specific graph
-        self.register_node_in_unique_constraints(graph_id, &node_arc);
-        Ok(node_arc)
-    }
-
-    /// Delete a node
-    pub async fn delete_node(&self, graph_id: &str, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-
-        // Default: RESTRICT — prevent deletion if incident edges exist
-        let outgoing = engine.get_outgoing_edges(id, None)?;
-        let incoming = engine.get_incoming_edges(id, None)?;
-        if !outgoing.is_empty() || !incoming.is_empty() {
-            return Err(ProximaDBError::InvalidInput(format!(
-                "Cannot delete node '{}': incident edges exist (restrict mode)",
-                id
-            )));
-        }
-        // Remove from unique constraints if present for this specific graph
-        if let Some(node) = engine.get_node(id)? {
-            self.unregister_node_from_unique_constraints(graph_id, &node);
-        }
-        GraphEngine::delete_node(&*engine, id)
-    }
-
-    /// Create a new edge
-    pub async fn create_edge(&self, graph_id: &str, edge: Edge) -> Result<Arc<Edge>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-
-        // Referential integrity: both endpoints must exist
-        if engine.get_node(&edge.from_node_id)?.is_none() {
-            return Err(ProximaDBError::InvalidInput(format!(
-                "Referential integrity violation: from_node_id '{}' does not exist",
-                edge.from_node_id
-            )));
-        }
-        if engine.get_node(&edge.to_node_id)?.is_none() {
-            return Err(ProximaDBError::InvalidInput(format!(
-                "Referential integrity violation: to_node_id '{}' does not exist",
-                edge.to_node_id
-            )));
-        }
-
-        // Composite uniqueness: (from,to,type) must be unique
-        if self
-            .memory_pool
-            .edge_composite_index
-            .get(&(
-                edge.from_node_id.clone(),
-                edge.to_node_id.clone(),
-                edge.edge_type.clone(),
-            ))
-            .is_some()
-        {
-            return Err(ProximaDBError::InvalidInput(format!(
-                "Composite edge already exists: (from='{}', to='{}', type='{}')",
-                edge.from_node_id, edge.to_node_id, edge.edge_type
-            )));
-        }
-
-        let edge_arc = engine.insert_edge(edge)?;
-        // Update edge stats
-        self.stats_edges.fetch_add(1, Ordering::Relaxed);
-        self.edge_type_counts
-            .entry(edge_arc.edge_type.clone())
-            .or_insert_with(|| AtomicU64::new(0))
-            .fetch_add(1, Ordering::Relaxed);
-        Ok(edge_arc)
-    }
-
-    /// Delete a node and detach all incident edges (DETACH mode)
-    pub async fn delete_node_detach(&self, graph_id: &str, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-
-        // Collect edges outgoing and incoming
-        let mut edge_ids: HashSet<String> = HashSet::new();
-        for e in engine.get_outgoing_edges(id, None)? {
-            edge_ids.insert(e.id.clone());
-        }
-        for e in engine.get_incoming_edges(id, None)? {
-            edge_ids.insert(e.id.clone());
-        }
-        // Delete edges
-        for eid in edge_ids.into_iter() {
-            if let Some(edge) = GraphEngine::delete_edge(&*engine, &eid)? {
-                self.stats_edges.fetch_sub(1, Ordering::Relaxed);
-                if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
-                    v.fetch_sub(1, Ordering::Relaxed);
-                }
-            }
-        }
-        // Remove from unique constraints if present for this specific graph
-        if let Some(node) = engine.get_node(id)? {
-            self.unregister_node_from_unique_constraints(graph_id, &node);
-        }
-        // Delete node
-        GraphEngine::delete_node(&*engine, id)
-    }
+    // delete_node_detach moved to service_node_ops.rs
 
     /// Add a unique constraint for a label/property for a specific graph. Scans existing nodes to build index.
-    pub async fn add_unique_constraint(&self, graph_id: &str, label: &str, property: &str) -> Result<()> {
+    pub async fn add_unique_constraint(
+        &self,
+        graph_id: &str,
+        label: &str,
+        property: &str,
+    ) -> Result<()> {
         // Get the graph engine to ensure it exists
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
         // Store constraint key with graph_id for graph-specific constraints
-        let key = (graph_id.to_string(), label.to_string(), property.to_string());
+        let key = (
+            graph_id.to_string(),
+            label.to_string(),
+            property.to_string(),
+        );
         let map: DashMap<String, String> = DashMap::new();
 
         // Build from existing nodes in this specific graph (use engine's get_all_nodes)
@@ -564,7 +464,7 @@ impl GraphOperationsService {
                 continue;
             }
             if let Some(val) = node.properties.get(property) {
-                let k = Self::index_key_for_value_internal(val);
+                let k = index_key_for_value(val);
                 if let Some(existing) = map.get(&k) {
                     if existing.value() != &node.id {
                         return Err(ProximaDBError::InvalidInput(format!(
@@ -581,33 +481,84 @@ impl GraphOperationsService {
     }
 
     /// Remove a unique constraint for a specific graph
-    pub async fn remove_unique_constraint(&self, graph_id: &str, label: &str, property: &str) -> Result<()> {
+    pub async fn remove_unique_constraint(
+        &self,
+        graph_id: &str,
+        label: &str,
+        property: &str,
+    ) -> Result<()> {
         // Get the graph engine to ensure it exists
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
         // Remove constraint using graph-specific key
-        let key = (graph_id.to_string(), label.to_string(), property.to_string());
+        let key = (
+            graph_id.to_string(),
+            label.to_string(),
+            property.to_string(),
+        );
         self.memory_pool.unique_constraints.remove(&key);
 
         Ok(())
     }
 
-    fn enforce_unique_constraints_on_node(&self, graph_id: &str, node: &Node) -> Result<()> {
-        // For each label/property under constraint, ensure no duplicate value exists
-        for label in &node.labels {
-            for entry in self.memory_pool.unique_constraints.iter() {
-                let (cgraph, clabel, cprop) = entry.key();
-                let map = entry.value();
+    // enforce_unique_constraints_on_node moved to service_node_ops.rs
 
-                // Only check constraints for this specific graph
-                if cgraph == graph_id && clabel == label {
-                    if let Some(val) = node.properties.get(cprop) {
-                        let k = Self::index_key_for_value_internal(val);
-                        if let Some(existing) = map.get(&k) {
-                            if existing.value() != &node.id {
+    // register_node_in_unique_constraints moved to service_node_ops.rs
+
+    // unregister_node_from_unique_constraints moved to service_node_ops.rs
+
+    // get_edge moved to service_edge_ops.rs
+
+    // update_edge moved to service_edge_ops.rs
+
+    /// Enforce schema constraints for a node if schema is defined
+    /* moved to service_schema_validation.rs
+    async fn enforce_schema_on_node(&self, graph_id: &str, node: &Node) -> Result<()> {
+        let maybe_collection = self.collection_service.get_graph(graph_id).await?;
+        if let Some(coll) = maybe_collection {
+            if let Some(schema) = &coll.schema {
+                let strict = schema.strict_mode;
+                // Build quick lookup for node label schemas
+                for label in &node.labels {
+                    let label_schema = schema.node_labels.iter().find(|ls| &ls.label == label);
+                    if label_schema.is_none() {
+                        if strict {
+                            return Err(ProximaDBError::InvalidInput(format!(
+                                "Label '{}' is not allowed by schema", label
+                            )));
+                        }
+                        continue;
+                    }
+                    let ls = label_schema.unwrap();
+                    // Required properties present
+                    for req in &ls.required_properties {
+                        if !node.properties.contains_key(req) {
+                            return Err(ProximaDBError::InvalidInput(format!(
+                                "Missing required property '{}' for label '{}'", req, label
+                            )));
+                        }
+                    }
+                    // Validate property types and constraints (schema-level + label-level)
+                    for (k, v) in &node.properties {
+                        if let Some(ps) = schema.properties.get(k) {
+                            Self::validate_property_value_type(k, v, ps)?;
+                            Self::validate_property_constraints(k, v, &ps.constraints)?;
+                        }
+                        if let Some(pc) = ls.property_constraints.get(k) {
+                            Self::validate_property_constraint_one(k, v, pc)?;
+                        }
+                    }
+                    // Disallow additional properties if configured
+                    if !ls.allow_additional_properties {
+                        let mut allowed: std::collections::HashSet<&str> = std::collections::HashSet::new();
+                        for s in &ls.required_properties { allowed.insert(s.as_str()); }
+                        for s in &ls.optional_properties { allowed.insert(s.as_str()); }
+                        for (p, _) in &ls.property_constraints { allowed.insert(p.as_str()); }
+                        for key in node.properties.keys() {
+                            if !allowed.contains(key.as_str()) {
                                 return Err(ProximaDBError::InvalidInput(format!(
-                                    "Unique constraint violation on (label='{}', property='{}') for value '{}'",
-                                    clabel, cprop, k
+                                    "Property '{}' not allowed by schema for label '{}'",
+                                    key, label
                                 )));
                             }
                         }
@@ -617,89 +568,92 @@ impl GraphOperationsService {
         }
         Ok(())
     }
+    */
 
-    fn register_node_in_unique_constraints(&self, graph_id: &str, node: &Arc<Node>) {
-        for label in &node.labels {
-            let label = label.clone();
-            for entry in self.memory_pool.unique_constraints.iter() {
-                let (cgraph, clabel, cprop) = entry.key();
-                let map = entry.value();
-                // Only register for this specific graph
-                if cgraph == graph_id && *clabel == label {
-                    if let Some(val) = node.properties.get(cprop) {
-                        let k = Self::index_key_for_value_internal(val);
-                        map.insert(k, node.id.clone());
+    /// Enforce schema constraints for an edge if schema is defined
+    /* moved to service_schema_validation.rs
+    async fn enforce_schema_on_edge(
+        &self,
+        graph_id: &str,
+        edge: &Edge,
+        from_labels: &[String],
+        to_labels: &[String],
+    ) -> Result<()> {
+        let maybe_collection = self.collection_service.get_graph(graph_id).await?;
+        if let Some(coll) = maybe_collection {
+            if let Some(schema) = &coll.schema {
+                let strict = schema.strict_mode;
+                let ets = schema.edge_types.iter().find(|et| et.edge_type == edge.edge_type);
+                if ets.is_none() {
+                    if strict {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Edge type '{}' is not allowed by schema", edge.edge_type
+                        )));
+                    }
+                    return Ok(());
+                }
+                let ets = ets.unwrap();
+                // Required properties present
+                for req in &ets.required_properties {
+                    if !edge.properties.contains_key(req) {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Missing required property '{}' for edge type '{}'",
+                            req, edge.edge_type
+                        )));
                     }
                 }
-            }
-        }
-    }
-
-    fn unregister_node_from_unique_constraints(&self, graph_id: &str, node: &Arc<Node>) {
-        for label in &node.labels {
-            let label = label.clone();
-            for entry in self.memory_pool.unique_constraints.iter() {
-                let (cgraph, clabel, cprop) = entry.key();
-                let map = entry.value();
-                // Only unregister from this specific graph
-                if cgraph == graph_id && *clabel == label {
-                    if let Some(val) = node.properties.get(cprop) {
-                        let k = Self::index_key_for_value_internal(val);
-                        if let Some(existing) = map.get(&k) {
-                            if existing.value() == &node.id {
-                                map.remove(&k);
-                            }
+                // Validate edge property types and constraints (schema-level + edge-type level)
+                for (k, v) in &edge.properties {
+                    if let Some(ps) = schema.properties.get(k) {
+                        Self::validate_property_value_type(k, v, ps)?;
+                        Self::validate_property_constraints(k, v, &ps.constraints)?;
+                    }
+                    if let Some(pc) = ets.property_constraints.get(k) {
+                        Self::validate_property_constraint_one(k, v, pc)?;
+                    }
+                }
+                // Source/target label constraints
+                if !ets.source_labels.is_empty() {
+                    if !from_labels.iter().any(|l| ets.source_labels.contains(l)) {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Source node labels {:?} do not satisfy schema for edge type '{}'",
+                            from_labels, edge.edge_type
+                        )));
+                    }
+                }
+                if !ets.target_labels.is_empty() {
+                    if !to_labels.iter().any(|l| ets.target_labels.contains(l)) {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Target node labels {:?} do not satisfy schema for edge type '{}'",
+                            to_labels, edge.edge_type
+                        )));
+                    }
+                }
+                // Disallow additional properties if configured
+                if !ets.allow_additional_properties {
+                    let mut allowed: std::collections::HashSet<&str> = std::collections::HashSet::new();
+                    for s in &ets.required_properties { allowed.insert(s.as_str()); }
+                    for s in &ets.optional_properties { allowed.insert(s.as_str()); }
+                    for (p, _) in &ets.property_constraints { allowed.insert(p.as_str()); }
+                    for key in edge.properties.keys() {
+                        if !allowed.contains(key.as_str()) {
+                            return Err(ProximaDBError::InvalidInput(format!(
+                                "Property '{}' not allowed by schema for edge type '{}'",
+                                key, edge.edge_type
+                            )));
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
+    */
 
-    /// Get an edge by ID
-    pub async fn get_edge(&self, graph_id: &str, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
+    // delete_edge moved to service_edge_ops.rs
 
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-        engine.get_edge(id)
-    }
-
-    /// Update an edge
-    pub async fn update_edge(&self, graph_id: &str, edge: Edge) -> Result<Arc<Edge>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-        engine.update_edge(edge)
-    }
-
-    /// Delete an edge
-    pub async fn delete_edge(&self, graph_id: &str, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-        let deleted = GraphEngine::delete_edge(&*engine, id)?;
-        if let Some(ref edge) = deleted {
-            self.stats_edges.fetch_sub(1, Ordering::Relaxed);
-            if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
-                v.fetch_sub(1, Ordering::Relaxed);
-            }
-        }
-        Ok(deleted)
-    }
-
-    /// Query nodes by labels and properties
+    // query_nodes moved to service_node_ops.rs
+    /*
     pub async fn query_nodes(&self, graph_id: &str, query: NodeQuery) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
@@ -736,8 +690,7 @@ impl GraphOperationsService {
                     // Look up index for this property
                     if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key)
                     {
-                        let key =
-                            Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
+                        let key = index_key_for_value(filter.value.as_ref().unwrap());
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
                             candidates = candidates
@@ -919,9 +872,14 @@ impl GraphOperationsService {
         let end = (offset + limit).min(res.len());
         Ok(res.drain(offset..end).collect())
     }
+    */
 
-    /// Query edges by type and properties
-    pub async fn query_edges(&self, graph_id: &str, query: EdgeQuery) -> Result<Vec<Arc<Edge>>> {
+    /// Legacy query_edges (moved). Kept for reference; new implementation in service_edge_ops.rs
+    pub(crate) async fn query_edges_legacy(
+        &self,
+        graph_id: &str,
+        query: EdgeQuery,
+    ) -> Result<Vec<Arc<Edge>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
@@ -958,8 +916,7 @@ impl GraphOperationsService {
                         if let Some(index_map) =
                             self.memory_pool.edge_property_indexes.get(&filter.key)
                         {
-                            let key =
-                                Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
+                            let key = index_key_for_value(filter.value.as_ref().unwrap());
                             if let Some(ids) = index_map.get(&key) {
                                 let set: std::collections::HashSet<EdgeId> =
                                     ids.iter().cloned().collect();
@@ -994,10 +951,7 @@ impl GraphOperationsService {
                             }
                         }
                     }
-                    Op::GreaterThan
-                    | Op::GreaterEqual
-                    | Op::LessThan
-                    | Op::LessEqual => {
+                    Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
                         // Prefer numeric range if value numeric, else fallback to string ordered
                         if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap())
                         {
@@ -1114,7 +1068,6 @@ impl GraphOperationsService {
 
         // Filter by edge property filters
         if !query.filters.is_empty() {
-            
             results.retain(|edge| {
                 for filter in &query.filters {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
@@ -1134,18 +1087,12 @@ impl GraphOperationsService {
                         Op::GreaterEqual => {
                             cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
                         }
-                        Op::LessThan => {
-                            cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap())
-                        }
-                        Op::LessEqual => {
-                            cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap())
-                        }
+                        Op::LessThan => cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap()),
+                        Op::LessEqual => cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap()),
                         Op::StartsWith => {
                             prop_starts_with(prop_val_opt, filter.value.as_ref().unwrap())
                         }
-                        Op::Contains => {
-                            prop_contains(prop_val_opt, filter.value.as_ref().unwrap())
-                        }
+                        Op::Contains => prop_contains(prop_val_opt, filter.value.as_ref().unwrap()),
                         _ => false,
                     };
                     if !pass {
@@ -1165,45 +1112,15 @@ impl GraphOperationsService {
         Ok(results.drain(offset..end).collect())
     }
 
-    /// Get neighbors of a node
-    pub async fn get_neighbors(&self, graph_id: &str, node_id: &NodeId) -> Result<Vec<Arc<Node>>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string(),
-            ));
-        }
+    // get_neighbors moved to service_node_ops.rs
 
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-        engine.get_neighbors(node_id, None)
-    }
-
-    /// Convert PropertyValue to string key for property index maps
-    fn index_key_for_value_internal(value: &crate::graph::PropertyValue) -> String {
-        match &value.value {
-            Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
-            Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
-            Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                d.to_string()
-            }
-            Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
-            Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
-                format!("bytes:{}", b.len())
-            }
-            Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => {
-                "array".to_string()
-            }
-            Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
-                "object".to_string()
-            }
-            Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
-                "vector".to_string()
-            }
-            None => "null".to_string(),
-        }
-    }
+    // index_key_for_value moved to helpers
 
     /// Get graph statistics
-    pub async fn get_stats(&self, graph_id: &str) -> Result<crate::proto::proximadb_v1::GraphStats> {
+    pub async fn get_stats(
+        &self,
+        graph_id: &str,
+    ) -> Result<crate::proto::proximadb_v1::GraphStats> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
@@ -1213,7 +1130,8 @@ impl GraphOperationsService {
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
         // Collect label statistics by iterating through all nodes
-        let mut label_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        let mut label_counts: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
         if let Ok(nodes) = engine.get_all_nodes() {
             for node in nodes {
                 for label in &node.labels {
@@ -1224,10 +1142,7 @@ impl GraphOperationsService {
 
         let label_stats: Vec<crate::proto::proximadb_v1::LabelStats> = label_counts
             .into_iter()
-            .map(|(label, count)| crate::proto::proximadb_v1::LabelStats {
-                label,
-                count,
-            })
+            .map(|(label, count)| crate::proto::proximadb_v1::LabelStats { label, count })
             .collect();
 
         let stats = crate::proto::proximadb_v1::GraphStats {
@@ -1252,18 +1167,22 @@ impl GraphOperationsService {
     }
 
     /// Helper method to convert properties to proto format
-    fn convert_properties_to_proto(&self, properties: &std::collections::HashMap<String, crate::graph::PropertyValue>) -> std::collections::HashMap<String, crate::proto::proximadb_v1::PropertyValue> {
-        // TODO: Fix PropertyValue enum matching - using placeholder for compilation
-        properties.iter().map(|(key, _value)| {
-            let proto_value = crate::proto::proximadb_v1::PropertyValue {
-                value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("placeholder".to_string())),
-            };
-            (key.clone(), proto_value)
-        }).collect()
+    fn convert_properties_to_proto(
+        &self,
+        properties: &std::collections::HashMap<String, crate::graph::PropertyValue>,
+    ) -> std::collections::HashMap<String, crate::proto::proximadb_v1::PropertyValue> {
+        properties
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Batch create nodes for high-performance ingestion
-    pub async fn batch_create_nodes(&self, graph_id: &str, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+    pub async fn batch_create_nodes(
+        &self,
+        graph_id: &str,
+        nodes: Vec<Node>,
+    ) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
@@ -1321,7 +1240,11 @@ impl GraphOperationsService {
     }
 
     /// Batch create edges for high-performance ingestion
-    pub async fn batch_create_edges(&self, graph_id: &str, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+    pub async fn batch_create_edges(
+        &self,
+        graph_id: &str,
+        edges: Vec<Edge>,
+    ) -> Result<Vec<Arc<Edge>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
@@ -1342,175 +1265,188 @@ impl GraphOperationsService {
         s.parse::<f64>().ok()
     }
 
-    /// Perform graph traversal (basic implementation)
-    pub async fn traverse(&self, graph_id: &str, request: crate::proto::proximadb_v1::TraversalRequest) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
-        use std::time::Instant;
-        let _t0 = Instant::now();
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
-            ));
-        }
-
-        // Use the comprehensive BFS traversal algorithm from ORION traversal module
-        let config = crate::graph::engines::orion::traversal::TraversalConfig {
-            max_depth: if request.max_depth > 0 { Some(request.max_depth) } else { None },
-            max_nodes: None, // TraversalRequest doesn't have max_nodes field
-            edge_types: if request.edge_types.is_empty() { 
-                None 
-            } else { 
-                Some(request.edge_types.clone()) 
-            },
-            node_filter: None, // TODO: Implement node filtering from request
-            early_stop: None,
-            track_paths: true, // Default to tracking paths
-            parallel_processing: true,
-            timeout_ms: request.timeout_ms.map(|t| t as u64),
-            max_frontier: None, // Use default
-            enable_prefetch: true,
-            prefetch_budget: 8,
-        };
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-
-        // Execute BFS traversal
-        let traversal_result = crate::graph::engines::orion::traversal::breadth_first_search(
-            &*engine,
-            &request.start_node_id,
-            config
-        ).await?;
-
-        // Convert TraversalResult to proto TraversalResponse
-        let proto_nodes = traversal_result.nodes
-            .iter()
-            .map(|node| crate::proto::proximadb_v1::Node {
-                id: node.id.clone(),
-                labels: node.labels.clone(),
-                properties: self.convert_properties_to_proto(&node.properties),
-                embedding: node.embedding.clone(),
-                created_at_ms: node.created_at_ms,
-                updated_at_ms: node.updated_at_ms,
-            })
-            .collect();
-
-        let proto_edges = traversal_result.edges
-            .iter()
-            .map(|edge| crate::proto::proximadb_v1::Edge {
-                id: edge.id.clone(),
-                from_node_id: edge.from_node_id.clone(),
-                to_node_id: edge.to_node_id.clone(),
-                edge_type: edge.edge_type.clone(),
-                properties: self.convert_properties_to_proto(&edge.properties),
-                weight: edge.weight,
-                created_at_ms: edge.created_at_ms,
-                updated_at_ms: edge.updated_at_ms,
-            })
-            .collect();
-
-        let proto_paths = traversal_result.paths
-            .iter()
-            .map(|path| crate::proto::proximadb_v1::GraphPath {
-                entities: vec![], // TODO: Map to proper entities
-                relations: vec![], // TODO: Map to proper relations
-            })
-            .collect();
-
-        // Convert traversal stats to proto
-        let proto_stats = Some(crate::proto::proximadb_v1::TraversalStats {
-            nodes_visited: traversal_result.stats.nodes_visited as u32,
-            edges_traversed: traversal_result.stats.edges_traversed as u32,
-            max_depth_reached: traversal_result.stats.max_depth_reached,
-            execution_time_microseconds: traversal_result.stats.execution_time_microseconds,
-        });
-
-        Ok(crate::proto::proximadb_v1::TraversalResponse {
-            nodes: proto_nodes,
-            edges: proto_edges,
-            paths: proto_paths,
-            stats: proto_stats,
-        })
-    }
+    // traverse moved to service_traversal_api.rs
 
     /// Perform graph traversal with per-call override hints (prefetch settings)
-    pub async fn traverse_with_overrides(
-        &self,
-        graph_id: &str,
-        request: crate::proto::proximadb_v1::TraversalRequest,
-        _override_enable_prefetch: Option<bool>,
-        _override_prefetch_budget: Option<usize>,
-    ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
-        // Construct TraversalConfig using overrides when provided
-        let traversal_config = TraversalConfig {
-            enable_prefetch: _override_enable_prefetch.unwrap_or(true),
-            prefetch_budget: _override_prefetch_budget.unwrap_or(1000),
-            max_depth: if request.max_depth > 0 { Some(request.max_depth) } else { None },
-            max_nodes: None,
-            edge_types: None,
-            node_filter: None,
-            early_stop: None,
-            track_paths: false,
-            parallel_processing: true,
-            timeout_ms: None,
-            max_frontier: None,
-        };
-        
-        // Execute traversal with configuration
-        self.traverse_with_config(graph_id, request, traversal_config).await
-    }
-    
+    // traverse_with_overrides moved to service_traversal_api.rs
+
     /// Execute traversal with specific configuration
-    async fn traverse_with_config(
-        &self,
-        graph_id: &str,
-        request: crate::proto::proximadb_v1::TraversalRequest,
-        config: TraversalConfig
-    ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
-        // Use the configuration to optimize traversal execution
-        let mut response = self.traverse(graph_id, request).await?;
-        
-        // Apply configuration optimizations
-        if config.enable_prefetch && config.prefetch_budget > 0 {
-            // Prefetch related nodes based on budget
-            debug!("Traversal executed with prefetch budget: {}", config.prefetch_budget);
-        }
-        
-        // Apply max depth limit
-        if let Some(stats) = &mut response.stats {
-            if stats.max_depth_reached > config.max_depth.unwrap_or(u32::MAX) {
-                debug!("Traversal limited by max_depth: {:?}", config.max_depth);
-                // Results would be filtered by depth in actual implementation
-            }
-        }
-        
-        Ok(response)
-    }
+    // traverse_with_config moved to service_traversal_api.rs
 
     /// Get connected components (basic implementation)
-    pub async fn connected_components(&self, graph_id: &str) -> Result<Vec<Vec<crate::graph::NodeId>>> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
-            ));
-        }
-
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
-
-        // Use the comprehensive connected components algorithm from ORION traversal module
-        crate::graph::engines::orion::traversal::connected_components(&*engine).await
-    }
+    // connected_components moved to service_traversal_api.rs
 
     /// Check for cycles (basic implementation)
-    pub async fn has_cycle(&self, graph_id: &str) -> Result<bool> {
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
-            ));
+    // has_cycle moved to service_traversal_api.rs
+
+    // ===== Unique (multi-field) and schema validation helpers =====
+
+    fn normalize_list(list: &[String]) -> String {
+        let mut v: Vec<String> = list.to_vec();
+        v.sort();
+        v.join("|")
+    }
+
+    fn node_has_all_labels(node: &Node, labels: &[String]) -> bool {
+        labels.iter().all(|l| node.labels.contains(l))
+    }
+
+    fn composite_key_for_node(node: &Node, props: &[String]) -> Option<String> {
+        let mut parts = Vec::with_capacity(props.len());
+        for p in props {
+            let v = node.properties.get(p)?;
+            parts.push(index_key_for_value(v));
         }
+        Some(parts.join("\u{1f}"))
+    }
 
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
+    // multi-unique helpers moved to service_node_ops.rs
 
-        // Use the comprehensive cycle detection algorithm from ORION traversal module
-        crate::graph::engines::orion::traversal::has_cycle(&*engine).await
+    // unregister_node_from_multi_unique_constraints moved to service_node_ops.rs
+
+    /* moved to service_schema_validation.rs
+    fn validate_property_value_type(
+        key: &str,
+        value: &crate::proto::proximadb_v1::PropertyValue,
+        schema: &crate::proto::proximadb_v1::PropertySchema,
+    ) -> Result<()> {
+        use crate::proto::proximadb_v1::property_value::Value as PV;
+        use crate::proto::proximadb_v1::PropertyType as PT;
+        match (schema.r#type, &value.value) {
+            (x, Some(PV::StringValue(_))) if x == PT::String as i32 => Ok(()),
+            (x, Some(PV::IntValue(_))) if x == PT::Integer as i32 => Ok(()),
+            (x, Some(PV::DoubleValue(_))) if x == PT::Float as i32 => Ok(()),
+            (x, Some(PV::BoolValue(_))) if x == PT::Boolean as i32 => Ok(()),
+            (x, Some(PV::ArrayValue(_))) if x == PT::Array as i32 => Ok(()),
+            (x, Some(PV::VectorValue(_))) if x == PT::Embedding as i32 => Ok(()),
+            (x, Some(PV::ObjectValue(_))) if x == PT::Json as i32 => Ok(()),
+            _ => Err(ProximaDBError::InvalidInput(format!(
+                "Property '{}' has type mismatch against schema", key
+            ))),
+        }
+    }
+
+    fn validate_property_constraints(
+        key: &str,
+        value: &crate::proto::proximadb_v1::PropertyValue,
+        constraints: &Vec<crate::proto::proximadb_v1::PropertyConstraint>,
+    ) -> Result<()> {
+        for c in constraints {
+            Self::validate_property_constraint_one(key, value, c)?;
+        }
+        Ok(())
+    }
+
+    fn validate_property_constraint_one(
+        key: &str,
+        value: &crate::proto::proximadb_v1::PropertyValue,
+        c: &crate::proto::proximadb_v1::PropertyConstraint,
+    ) -> Result<()> {
+        use crate::proto::proximadb_v1::property_value::Value as PV;
+        if let Some(ref sc) = c.constraint.as_ref() {
+            match sc {
+                crate::proto::proximadb_v1::property_constraint::Constraint::StringConstraint(sc) => {
+                    if let Some(PV::StringValue(s)) = &value.value {
+                        if let Some(min) = sc.min_length { if (s.len() as i32) < min { return Err(ProximaDBError::InvalidInput(format!("'{}' shorter than min_length", key))); } }
+                        if let Some(max) = sc.max_length { if (s.len() as i32) > max { return Err(ProximaDBError::InvalidInput(format!("'{}' longer than max_length", key))); } }
+                        if !sc.allowed_values.is_empty() && !sc.allowed_values.contains(s) { return Err(ProximaDBError::InvalidInput(format!("'{}' not in allowed_values", key))); }
+                    }
+                }
+                crate::proto::proximadb_v1::property_constraint::Constraint::NumericConstraint(nc) => {
+                    let num = match &value.value { Some(PV::IntValue(i)) => *i as f64, Some(PV::DoubleValue(d)) => *d, Some(PV::StringValue(s)) => s.parse::<f64>().unwrap_or(f64::NAN), _ => f64::NAN };
+                    if num.is_nan() { return Err(ProximaDBError::InvalidInput(format!("'{}' not numeric for numeric constraint", key))); }
+                    if let Some(min) = nc.min_value { if num < min { return Err(ProximaDBError::InvalidInput(format!("'{}' less than min_value", key))); } }
+                    if let Some(max) = nc.max_value { if num > max { return Err(ProximaDBError::InvalidInput(format!("'{}' greater than max_value", key))); } }
+                    if let Some(m) = nc.multiple_of { if m != 0.0 && (num / m).fract() != 0.0 { return Err(ProximaDBError::InvalidInput(format!("'{}' not a multiple_of {}", key, m))); } }
+                }
+                crate::proto::proximadb_v1::property_constraint::Constraint::ArrayConstraint(ac) => {
+                    if let Some(PV::ArrayValue(arr)) = &value.value {
+                        let len = arr.values.len() as i32;
+                        if let Some(min) = ac.min_items { if len < min { return Err(ProximaDBError::InvalidInput(format!("'{}' array smaller than min_items", key))); } }
+                        if let Some(max) = ac.max_items { if len > max { return Err(ProximaDBError::InvalidInput(format!("'{}' array larger than max_items", key))); } }
+                    }
+                }
+                crate::proto::proximadb_v1::property_constraint::Constraint::RegexConstraint(rc) => {
+                    if let Some(PV::StringValue(s)) = &value.value {
+                        let re = regex::RegexBuilder::new(&rc.pattern)
+                            .case_insensitive(rc.flags.contains('i'))
+                            .multi_line(rc.flags.contains('m'))
+                            .dot_matches_new_line(rc.flags.contains('s'))
+                            .build()
+                            .map_err(|e| ProximaDBError::InvalidInput(format!("Invalid regex in schema: {}", e)))?;
+                        if !re.is_match(s) { return Err(ProximaDBError::InvalidInput(format!("'{}' does not match regex", key))); }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    */
+
+    async fn enforce_cardinality_on_edge(
+        &self,
+        graph_id: &str,
+        edge: &Edge,
+        engine: &crate::graph::engines::GraphEngineImpl,
+    ) -> Result<()> {
+        let maybe_collection = self.collection_service.get_graph(graph_id).await?;
+        if let Some(coll) = maybe_collection {
+            if let Some(schema) = &coll.schema {
+                if let Some(ets) = schema
+                    .edge_types
+                    .iter()
+                    .find(|et| et.edge_type == edge.edge_type)
+                {
+                    use crate::proto::proximadb_v1::Cardinality;
+                    match ets.cardinality {
+                        x if x == Cardinality::OneToOne as i32 => {
+                            if !engine
+                                .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
+                                .is_empty()
+                            {
+                                return Err(ProximaDBError::InvalidInput(format!(
+                                    "Cardinality violation: ONE_TO_ONE allows a single '{}' from {}",
+                                    edge.edge_type, edge.from_node_id
+                                )));
+                            }
+                            if !engine
+                                .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
+                                .is_empty()
+                            {
+                                return Err(ProximaDBError::InvalidInput(format!(
+                                    "Cardinality violation: ONE_TO_ONE allows a single '{}' to {}",
+                                    edge.edge_type, edge.to_node_id
+                                )));
+                            }
+                        }
+                        x if x == Cardinality::OneToMany as i32 => {
+                            if !engine
+                                .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
+                                .is_empty()
+                            {
+                                return Err(ProximaDBError::InvalidInput(format!(
+                                    "Cardinality violation: ONE_TO_MANY allows a single incoming '{}' to {}",
+                                    edge.edge_type, edge.to_node_id
+                                )));
+                            }
+                        }
+                        x if x == Cardinality::ManyToOne as i32 => {
+                            if !engine
+                                .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
+                                .is_empty()
+                            {
+                                return Err(ProximaDBError::InvalidInput(format!(
+                                    "Cardinality violation: MANY_TO_ONE allows a single outgoing '{}' from {}",
+                                    edge.edge_type, edge.from_node_id
+                                )));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1523,7 +1459,11 @@ struct SimpleCounterProvider {
 
 impl SimpleCounterProvider {
     fn new(counter: Arc<AtomicU64>, avg_entry_size: usize, fixed_hit_rate: f64) -> Self {
-        Self { counter, avg_entry_size, fixed_hit_rate }
+        Self {
+            counter,
+            avg_entry_size,
+            fixed_hit_rate,
+        }
     }
 }
 
@@ -1539,145 +1479,11 @@ impl CacheStatsProvider for SimpleCounterProvider {
     }
 }
 
-fn extract_number_from_value(value: &crate::proto::proximadb_v1::PropertyValue) -> Option<f64> {
-    use crate::proto::proximadb_v1::property_value::Value;
-    match &value.value {
-        Some(Value::IntValue(i)) => Some(*i as f64),
-        Some(Value::DoubleValue(d)) => Some(*d),
-        Some(Value::StringValue(s)) => s.parse::<f64>().ok(),
-        _ => None,
-    }
-}
+// helpers moved to service_helpers.rs (re-exported)
 
-fn extract_string_from_value(value: &crate::proto::proximadb_v1::PropertyValue) -> Option<&str> {
-    use crate::proto::proximadb_v1::property_value::Value;
-    match &value.value {
-        Some(Value::StringValue(s)) => Some(s.as_str()),
-        _ => None,
-    }
-}
+// helpers moved to service_helpers.rs (re-exported)
 
-fn cmp_key_gt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target {
-        if let Some(k) = key.parse::<f64>().ok() {
-            return k > *t;
-        }
-    }
-    if let Some(t) = str_target {
-        return key > t;
-    }
-    false
-}
-
-fn cmp_key_ge(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target {
-        if let Some(k) = key.parse::<f64>().ok() {
-            return k >= *t;
-        }
-    }
-    if let Some(t) = str_target {
-        return key >= t;
-    }
-    false
-}
-
-fn cmp_key_lt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target {
-        if let Some(k) = key.parse::<f64>().ok() {
-            return k < *t;
-        }
-    }
-    if let Some(t) = str_target {
-        return key < t;
-    }
-    false
-}
-
-fn cmp_key_le(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target {
-        if let Some(k) = key.parse::<f64>().ok() {
-            return k <= *t;
-        }
-    }
-    if let Some(t) = str_target {
-        return key <= t;
-    }
-    false
-}
-
-fn cmp_prop_gt(
-    prop_val_opt: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::graph::PropertyValue,
-) -> bool {
-    match prop_val_opt {
-        Some(v) => extract_number_from_value(v)
-            .zip(extract_number_from_value(rhs))
-            .map(|(l, r)| l > r)
-            .unwrap_or(false),
-        None => false,
-    }
-}
-fn cmp_prop_ge(
-    prop_val_opt: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::graph::PropertyValue,
-) -> bool {
-    match prop_val_opt {
-        Some(v) => extract_number_from_value(v)
-            .zip(extract_number_from_value(rhs))
-            .map(|(l, r)| l >= r)
-            .unwrap_or(false),
-        None => false,
-    }
-}
-fn cmp_prop_lt(
-    prop_val_opt: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::graph::PropertyValue,
-) -> bool {
-    match prop_val_opt {
-        Some(v) => extract_number_from_value(v)
-            .zip(extract_number_from_value(rhs))
-            .map(|(l, r)| l < r)
-            .unwrap_or(false),
-        None => false,
-    }
-}
-fn cmp_prop_le(
-    prop_val_opt: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::graph::PropertyValue,
-) -> bool {
-    match prop_val_opt {
-        Some(v) => extract_number_from_value(v)
-            .zip(extract_number_from_value(rhs))
-            .map(|(l, r)| l <= r)
-            .unwrap_or(false),
-        None => false,
-    }
-}
-fn prop_starts_with(
-    prop_val_opt: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::graph::PropertyValue,
-) -> bool {
-    match (
-        prop_val_opt.and_then(extract_string_from_value),
-        extract_string_from_value(rhs),
-    ) {
-        (Some(l), Some(r)) => l.starts_with(r),
-        _ => false,
-    }
-}
-fn prop_contains(
-    prop_val_opt: Option<&crate::graph::PropertyValue>,
-    rhs: &crate::graph::PropertyValue,
-) -> bool {
-    match (
-        prop_val_opt.and_then(extract_string_from_value),
-        extract_string_from_value(rhs),
-    ) {
-        (Some(l), Some(r)) => l.contains(r),
-        _ => false,
-    }
-}
-
+// helpers moved to service_helpers.rs (re-exported)
 
 impl Default for GraphOperationsService {
     fn default() -> Self {
@@ -1697,6 +1503,337 @@ mod tests {
         assert_eq!(service.mode(), OperationMode::Unified);
         assert!(service.graph_enabled());
         assert!(service.vector_enabled());
+    }
+
+    fn pv_str(s: &str) -> PropertyValue {
+        PropertyValue {
+            value: Some(
+                crate::proto::proximadb_v1::property_value::Value::StringValue(s.to_string()),
+            ),
+        }
+    }
+    fn pv_int(i: i64) -> PropertyValue {
+        PropertyValue {
+            value: Some(crate::proto::proximadb_v1::property_value::Value::IntValue(
+                i,
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_schema_property_type_and_constraints() {
+        let service = GraphOperationsService::new();
+        let mut props = std::collections::HashMap::new();
+        // Define age property schema: INTEGER, 18..=120
+        props.insert(
+            "age".to_string(),
+            crate::proto::proximadb_v1::PropertySchema {
+                name: "age".to_string(),
+                r#type: crate::proto::proximadb_v1::PropertyType::Integer as i32,
+                required: true,
+                default_value: None,
+                constraints: vec![crate::proto::proximadb_v1::PropertyConstraint{
+                    constraint: Some(
+                        crate::proto::proximadb_v1::property_constraint::Constraint::NumericConstraint(
+                            crate::proto::proximadb_v1::NumericConstraint{ min_value: Some(18.0), max_value: Some(120.0), multiple_of: None }
+                        )
+                    )
+                }],
+                description: "Age".to_string(),
+            },
+        );
+        let schema = crate::proto::proximadb_v1::GraphSchema {
+            node_labels: vec![crate::proto::proximadb_v1::NodeLabelSchema {
+                label: "Person".to_string(),
+                required_properties: vec!["age".to_string()],
+                optional_properties: vec![],
+                allow_additional_properties: true,
+                property_constraints: std::collections::HashMap::new(),
+            }],
+            edge_types: vec![],
+            properties: props,
+            unique_constraints: vec![],
+            strict_mode: true,
+        };
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: "g_schema".to_string(),
+            name: Some("g_schema".to_string()),
+            description: None,
+            schema: Some(schema),
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+
+        // Wrong type (string) should fail
+        let mut n1_props = std::collections::HashMap::new();
+        n1_props.insert("age".to_string(), pv_str("twenty"));
+        let n1 = crate::proto::proximadb_v1::Node {
+            id: "n1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: n1_props,
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        assert!(service.create_node("g_schema", n1).await.is_err());
+
+        // Out of range should fail
+        let mut n2_props = std::collections::HashMap::new();
+        n2_props.insert("age".to_string(), pv_int(15));
+        let n2 = crate::proto::proximadb_v1::Node {
+            id: "n2".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: n2_props,
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        assert!(service.create_node("g_schema", n2).await.is_err());
+
+        // Valid should succeed
+        let mut n3_props = std::collections::HashMap::new();
+        n3_props.insert("age".to_string(), pv_int(25));
+        let n3 = crate::proto::proximadb_v1::Node {
+            id: "n3".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: n3_props,
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        assert!(service.create_node("g_schema", n3).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_edge_cardinality_constraints() {
+        let service = GraphOperationsService::new();
+        // Schema with ONE_TO_ONE edge type MARRIED_TO between Person
+        let edge_schema = crate::proto::proximadb_v1::EdgeTypeSchema {
+            edge_type: "MARRIED_TO".to_string(),
+            source_labels: vec!["Person".to_string()],
+            target_labels: vec!["Person".to_string()],
+            required_properties: vec![],
+            optional_properties: vec![],
+            allow_additional_properties: true,
+            cardinality: crate::proto::proximadb_v1::Cardinality::OneToOne as i32,
+            property_constraints: std::collections::HashMap::new(),
+        };
+        let schema = crate::proto::proximadb_v1::GraphSchema {
+            node_labels: vec![crate::proto::proximadb_v1::NodeLabelSchema {
+                label: "Person".to_string(),
+                required_properties: vec![],
+                optional_properties: vec![],
+                allow_additional_properties: true,
+                property_constraints: std::collections::HashMap::new(),
+            }],
+            edge_types: vec![edge_schema],
+            properties: std::collections::HashMap::new(),
+            unique_constraints: vec![],
+            strict_mode: true,
+        };
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: "g_card".to_string(),
+            name: Some("g_card".to_string()),
+            description: None,
+            schema: Some(schema),
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+        // Nodes
+        let mk = |id: &str| crate::proto::proximadb_v1::Node {
+            id: id.to_string(),
+            labels: vec!["Person".to_string()],
+            properties: std::collections::HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        for id in ["A", "B", "C", "D"] {
+            service.create_node("g_card", mk(id)).await.unwrap();
+        }
+        // First marriage A->B ok
+        let e1 = crate::proto::proximadb_v1::Edge {
+            id: "e1".to_string(),
+            from_node_id: "A".to_string(),
+            to_node_id: "B".to_string(),
+            edge_type: "MARRIED_TO".to_string(),
+            properties: std::collections::HashMap::new(),
+            weight: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        service.create_edge("g_card", e1).await.unwrap();
+        // Second marriage from A to C should fail (ONE_TO_ONE violates outgoing)
+        let e2 = crate::proto::proximadb_v1::Edge {
+            id: "e2".to_string(),
+            from_node_id: "A".to_string(),
+            to_node_id: "C".to_string(),
+            edge_type: "MARRIED_TO".to_string(),
+            properties: std::collections::HashMap::new(),
+            weight: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        assert!(service.create_edge("g_card", e2).await.is_err());
+        // Another marriage to B from D should fail (ONE_TO_ONE violates incoming)
+        let e3 = crate::proto::proximadb_v1::Edge {
+            id: "e3".to_string(),
+            from_node_id: "D".to_string(),
+            to_node_id: "B".to_string(),
+            edge_type: "MARRIED_TO".to_string(),
+            properties: std::collections::HashMap::new(),
+            weight: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        assert!(service.create_edge("g_card", e3).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_multi_unique_constraints() {
+        let service = GraphOperationsService::new();
+        // Unique on (email, tenant) for Person
+        let uc = crate::proto::proximadb_v1::UniqueConstraint {
+            name: "uniq_email_tenant".to_string(),
+            node_labels: vec!["Person".to_string()],
+            properties: vec!["email".to_string(), "tenant".to_string()],
+            description: "".to_string(),
+        };
+        let schema = crate::proto::proximadb_v1::GraphSchema {
+            node_labels: vec![crate::proto::proximadb_v1::NodeLabelSchema {
+                label: "Person".to_string(),
+                required_properties: vec![],
+                optional_properties: vec!["email".to_string(), "tenant".to_string()],
+                allow_additional_properties: true,
+                property_constraints: std::collections::HashMap::new(),
+            }],
+            edge_types: vec![],
+            properties: std::collections::HashMap::new(),
+            unique_constraints: vec![uc],
+            strict_mode: true,
+        };
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: "g_uniq".to_string(),
+            name: Some("g_uniq".to_string()),
+            description: None,
+            schema: Some(schema),
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+        let mut p1 = std::collections::HashMap::new();
+        p1.insert("email".to_string(), pv_str("a@test"));
+        p1.insert("tenant".to_string(), pv_str("t1"));
+        let mut p2 = std::collections::HashMap::new();
+        p2.insert("email".to_string(), pv_str("a@test"));
+        p2.insert("tenant".to_string(), pv_str("t1"));
+        let mut p3 = std::collections::HashMap::new();
+        p3.insert("email".to_string(), pv_str("a@test"));
+        p3.insert("tenant".to_string(), pv_str("t2"));
+        let n1 = crate::proto::proximadb_v1::Node {
+            id: "p1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: p1,
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let n2 = crate::proto::proximadb_v1::Node {
+            id: "p2".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: p2,
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let n3 = crate::proto::proximadb_v1::Node {
+            id: "p3".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: p3,
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        service.create_node("g_uniq", n1).await.unwrap();
+        assert!(service.create_node("g_uniq", n2).await.is_err());
+        assert!(service.create_node("g_uniq", n3).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_pulsar_traversal_path() {
+        let service = GraphOperationsService::new();
+        // Create graph with PULSAR engine
+        let engine_cfg = crate::proto::proximadb_v1::GraphEngineConfig {
+            engine_type: "PULSAR".to_string(),
+            memory_pool_size_mb: 0,
+            csr_cache_size_mb: 0,
+            enable_parallel_operations: true,
+            max_traversal_depth: 10,
+            advanced_config: std::collections::HashMap::new(),
+        };
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: "g_pulsar".to_string(),
+            name: Some("g_pulsar".to_string()),
+            description: None,
+            schema: None,
+            storage_config: None,
+            engine_config: Some(engine_cfg),
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+        // Create small chain A->B->C
+        let mk = |id: &str| crate::proto::proximadb_v1::Node {
+            id: id.to_string(),
+            labels: vec!["N".to_string()],
+            properties: std::collections::HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        service.create_node("g_pulsar", mk("A")).await.unwrap();
+        service.create_node("g_pulsar", mk("B")).await.unwrap();
+        service.create_node("g_pulsar", mk("C")).await.unwrap();
+        let eab = crate::proto::proximadb_v1::Edge {
+            id: "eab".to_string(),
+            from_node_id: "A".to_string(),
+            to_node_id: "B".to_string(),
+            edge_type: "X".to_string(),
+            properties: std::collections::HashMap::new(),
+            weight: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let ebc = crate::proto::proximadb_v1::Edge {
+            id: "ebc".to_string(),
+            from_node_id: "B".to_string(),
+            to_node_id: "C".to_string(),
+            edge_type: "X".to_string(),
+            properties: std::collections::HashMap::new(),
+            weight: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        service.create_edge("g_pulsar", eab).await.unwrap();
+        service.create_edge("g_pulsar", ebc).await.unwrap();
+        let tr = crate::proto::proximadb_v1::TraversalRequest {
+            graph_id: "g_pulsar".to_string(),
+            start_node_id: "A".to_string(),
+            max_depth: 2,
+            edge_types: vec![],
+            node_labels: vec![],
+            filters: vec![],
+            algorithm: crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32,
+            limit: None,
+            timeout_ms: None,
+            max_frontier: None,
+        };
+        let resp = service.traverse("g_pulsar", tr).await.unwrap();
+        assert!(resp.nodes.len() >= 2);
     }
 
     #[tokio::test]
@@ -1733,7 +1870,11 @@ mod tests {
             properties: std::collections::HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Alice".to_string())),
+                    value: Some(
+                        crate::proto::proximadb_v1::property_value::Value::StringValue(
+                            "Alice".to_string(),
+                        ),
+                    ),
                 },
             )]),
             embedding: None,

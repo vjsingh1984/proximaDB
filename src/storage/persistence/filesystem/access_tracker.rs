@@ -71,8 +71,10 @@ impl AccessPatternTracker {
         let now = Instant::now();
 
         // Update file-specific history
-        let mut entry = self.access_history.entry(path.to_string()).or_insert_with(|| {
-            FileAccessHistory {
+        let mut entry = self
+            .access_history
+            .entry(path.to_string())
+            .or_insert_with(|| FileAccessHistory {
                 access_times: VecDeque::new(),
                 total_accesses: 0,
                 read_count: 0,
@@ -80,8 +82,7 @@ impl AccessPatternTracker {
                 metadata_count: 0,
                 last_operation: operation.clone(),
                 file_size: None,
-            }
-        });
+            });
 
         // Update counts
         entry.total_accesses += 1;
@@ -169,7 +170,8 @@ impl AccessPatternTracker {
                 if entry.access_times.len() >= 2 {
                     let mut intervals = Vec::new();
                     for i in 1..entry.access_times.len() {
-                        let interval = entry.access_times[i].duration_since(entry.access_times[i - 1]);
+                        let interval =
+                            entry.access_times[i].duration_since(entry.access_times[i - 1]);
                         intervals.push(interval);
                     }
 
@@ -214,8 +216,9 @@ impl AccessPatternTracker {
 
                     // Check if this file was accessed near our target file
                     for access_time in &other_entry.value().access_times {
-                        if access_time.duration_since(*last_access) < window ||
-                           last_access.duration_since(*access_time) < window {
+                        if access_time.duration_since(*last_access) < window
+                            || last_access.duration_since(*access_time) < window
+                        {
                             correlated.push(other_entry.key().clone());
                             break;
                         }
@@ -224,7 +227,8 @@ impl AccessPatternTracker {
 
                 // Sort by access frequency
                 correlated.sort_by_key(|k| {
-                    self.access_history.get(k)
+                    self.access_history
+                        .get(k)
                         .map(|e| std::cmp::Reverse(e.total_accesses))
                         .unwrap_or(std::cmp::Reverse(0))
                 });
@@ -239,7 +243,10 @@ impl AccessPatternTracker {
     }
 
     /// Analyze access patterns for a collection
-    pub async fn analyze_collection_patterns(&self, collection_prefix: &str) -> CollectionAccessPattern {
+    pub async fn analyze_collection_patterns(
+        &self,
+        collection_prefix: &str,
+    ) -> CollectionAccessPattern {
         let mut total_accesses = 0u64;
         let mut total_reads = 0u64;
         let mut total_writes = 0u64;
@@ -317,9 +324,9 @@ pub enum AccessFrequency {
 /// Access prediction
 #[derive(Debug, Clone)]
 pub enum AccessPrediction {
-    Likely(f64),    // > 70% probability
-    Possible(f64),  // 30-70% probability
-    Unlikely(f64),  // < 30% probability
+    Likely(f64),   // > 70% probability
+    Possible(f64), // 30-70% probability
+    Unlikely(f64), // < 30% probability
 }
 
 /// Access pattern statistics
@@ -351,7 +358,9 @@ mod tests {
 
         // Record multiple accesses
         for _ in 0..6 {
-            tracker.record("hot_file.parquet", AccessOperation::Read).await;
+            tracker
+                .record("hot_file.parquet", AccessOperation::Read)
+                .await;
         }
 
         assert!(tracker.is_hot("hot_file.parquet"));
@@ -363,11 +372,17 @@ mod tests {
         let tracker = AccessPatternTracker::new();
 
         tracker.record("file1.parquet", AccessOperation::Read).await;
-        assert_eq!(tracker.get_access_frequency("file1.parquet"), AccessFrequency::Low);
+        assert_eq!(
+            tracker.get_access_frequency("file1.parquet"),
+            AccessFrequency::Low
+        );
 
         for _ in 0..5 {
             tracker.record("file2.parquet", AccessOperation::Read).await;
         }
-        assert_eq!(tracker.get_access_frequency("file2.parquet"), AccessFrequency::High);
+        assert_eq!(
+            tracker.get_access_frequency("file2.parquet"),
+            AccessFrequency::High
+        );
     }
 }

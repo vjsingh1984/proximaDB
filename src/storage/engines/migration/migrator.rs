@@ -120,8 +120,10 @@ impl EngineMigrator {
     /// Create a new migrator
     pub async fn new(config: MigrationConfig) -> Result<Self> {
         // Create source and target engines using async versions for test compatibility
-        let source_engine = StorageEngineFactory::create_from_proto_async(config.source_engine).await?;
-        let target_engine = StorageEngineFactory::create_from_proto_async(config.target_engine).await?;
+        let source_engine =
+            StorageEngineFactory::create_from_proto_async(config.source_engine).await?;
+        let target_engine =
+            StorageEngineFactory::create_from_proto_async(config.target_engine).await?;
 
         let semaphore = Arc::new(Semaphore::new(config.performance.parallel_workers));
 
@@ -396,10 +398,7 @@ impl EngineMigrator {
         &self,
         plan: &CollectionMigrationPlan,
     ) -> Result<u64> {
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await?;
+        let _permit = self.semaphore.acquire().await?;
 
         // In production, would:
         // 1. Read all records from source engine

@@ -32,8 +32,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// High-performance concurrent vector storage
 /// Used by INDEX implementations to store vector data for search operations

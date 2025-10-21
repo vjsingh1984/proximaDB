@@ -2,10 +2,10 @@
 //!
 //! Generates formatted business intelligence reports.
 
-use serde::{Deserialize, Serialize};
 use crate::ai::llm_integration::LLMIntegrationEngine;
-use std::sync::Arc;
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Report generator for business intelligence
 pub struct ReportGenerator {

@@ -10,7 +10,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{Json, IntoResponse},
+    response::{IntoResponse, Json},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

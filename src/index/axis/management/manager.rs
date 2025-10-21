@@ -1162,7 +1162,8 @@ impl AxisManager {
         }
 
         // Use helper function for distance metric conversion
-        let distance_metric = proto_distance_to_internal(collection_config.distance_metric.unwrap_or(0));
+        let distance_metric =
+            proto_distance_to_internal(collection_config.distance_metric.unwrap_or(0));
 
         // Create quantization config using collection settings with proper field mapping
         let storage_config = StorageQuantizationConfig {

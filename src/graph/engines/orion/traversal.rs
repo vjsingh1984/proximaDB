@@ -34,7 +34,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 // Using HashSet instead of BitVec for visited tracking
 // This provides better performance for sparse graphs
-use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
+use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 
 /// Traversal results containing nodes, paths, and statistics
 #[derive(Debug, Clone)]
@@ -231,16 +231,23 @@ pub async fn breadth_first_search(
             )?;
 
             // Bounded prefetch budget for adjacency of next frontier
-            let mut prefetch_budget: usize = if config.enable_prefetch { config.prefetch_budget } else { 0 };
+            let mut prefetch_budget: usize = if config.enable_prefetch {
+                config.prefetch_budget
+            } else {
+                0
+            };
             for edge in outgoing_edges {
                 // Non-blocking cache access tracking for orchestrator learning
                 if let Some(orch) = CrossCacheOrchestrator::global() {
                     let adj_key = format!("adj::{}", current_node_id);
-                    orch.pattern_tracker().track_access_async(adj_key, CacheType::GraphAdjacency);
+                    orch.pattern_tracker()
+                        .track_access_async(adj_key, CacheType::GraphAdjacency);
                     let node_key = format!("node::{}", edge.to_node_id);
-                    orch.pattern_tracker().track_access_async(node_key, CacheType::GraphNode);
+                    orch.pattern_tracker()
+                        .track_access_async(node_key, CacheType::GraphNode);
                     let edge_key = format!("edge::{}->{}", current_node_id, edge.to_node_id);
-                    orch.pattern_tracker().track_access_async(edge_key, CacheType::GraphEdge);
+                    orch.pattern_tracker()
+                        .track_access_async(edge_key, CacheType::GraphEdge);
                 }
                 // Filter by edge type if specified
                 if let Some(ref allowed_types) = config.edge_types {
@@ -417,16 +424,23 @@ pub async fn depth_first_search(
         )?;
 
         // Bounded prefetch budget for adjacency of next frontier (DFS stack)
-        let mut prefetch_budget: usize = if config.enable_prefetch { config.prefetch_budget } else { 0 };
+        let mut prefetch_budget: usize = if config.enable_prefetch {
+            config.prefetch_budget
+        } else {
+            0
+        };
         for edge in outgoing_edges.iter().rev() {
             // Non-blocking cache access tracking for orchestrator learning
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 let adj_key = format!("adj::{}", current_node_id);
-                orch.pattern_tracker().track_access_async(adj_key, CacheType::GraphAdjacency);
+                orch.pattern_tracker()
+                    .track_access_async(adj_key, CacheType::GraphAdjacency);
                 let node_key = format!("node::{}", edge.to_node_id);
-                orch.pattern_tracker().track_access_async(node_key, CacheType::GraphNode);
+                orch.pattern_tracker()
+                    .track_access_async(node_key, CacheType::GraphNode);
                 let edge_key = format!("edge::{}->{}", current_node_id, edge.to_node_id);
-                orch.pattern_tracker().track_access_async(edge_key, CacheType::GraphEdge);
+                orch.pattern_tracker()
+                    .track_access_async(edge_key, CacheType::GraphEdge);
             }
             // Filter by edge type if specified
             if let Some(ref allowed_types) = config.edge_types {
@@ -634,16 +648,23 @@ pub async fn dijkstra_shortest_path(
         )?;
 
         // Bounded prefetch budget for adjacency of next visits (Dijkstra)
-        let mut prefetch_budget: usize = if config.enable_prefetch { config.prefetch_budget } else { 0 };
+        let mut prefetch_budget: usize = if config.enable_prefetch {
+            config.prefetch_budget
+        } else {
+            0
+        };
         for edge in outgoing_edges {
             // Non-blocking cache access tracking for orchestrator learning (Dijkstra)
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 let adj_key = format!("adj::{}", current.node_id);
-                orch.pattern_tracker().track_access_async(adj_key, CacheType::GraphAdjacency);
+                orch.pattern_tracker()
+                    .track_access_async(adj_key, CacheType::GraphAdjacency);
                 let node_key = format!("node::{}", edge.to_node_id);
-                orch.pattern_tracker().track_access_async(node_key, CacheType::GraphNode);
+                orch.pattern_tracker()
+                    .track_access_async(node_key, CacheType::GraphNode);
                 let edge_key = format!("edge::{}->{}", current.node_id, edge.to_node_id);
-                orch.pattern_tracker().track_access_async(edge_key, CacheType::GraphEdge);
+                orch.pattern_tracker()
+                    .track_access_async(edge_key, CacheType::GraphEdge);
             }
             // Filter by edge type if specified
             if let Some(ref allowed_types) = config.edge_types {
@@ -781,16 +802,23 @@ pub async fn astar_shortest_path(
         )?;
 
         // Bounded prefetch budget for adjacency of likely next nodes (A*)
-        let mut prefetch_budget: usize = if config.enable_prefetch { config.prefetch_budget } else { 0 };
+        let mut prefetch_budget: usize = if config.enable_prefetch {
+            config.prefetch_budget
+        } else {
+            0
+        };
         for e in neighbors {
             // Non-blocking cache access tracking for orchestrator learning (A*)
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 let adj_key = format!("adj::{}", current.node_id);
-                orch.pattern_tracker().track_access_async(adj_key, CacheType::GraphAdjacency);
+                orch.pattern_tracker()
+                    .track_access_async(adj_key, CacheType::GraphAdjacency);
                 let node_key = format!("node::{}", e.to_node_id);
-                orch.pattern_tracker().track_access_async(node_key, CacheType::GraphNode);
+                orch.pattern_tracker()
+                    .track_access_async(node_key, CacheType::GraphNode);
                 let edge_key = format!("edge::{}->{}", current.node_id, e.to_node_id);
-                orch.pattern_tracker().track_access_async(edge_key, CacheType::GraphEdge);
+                orch.pattern_tracker()
+                    .track_access_async(edge_key, CacheType::GraphEdge);
             }
             let neighbor = &e.to_node_id;
             if closed.contains(neighbor) {
@@ -898,16 +926,23 @@ pub async fn k_shortest_paths(
                 }),
             )?;
             // Bounded prefetch budget for adjacency of likely next nodes (Yen's Dijkstra with exclusions)
-            let mut prefetch_budget: usize = if config.enable_prefetch { config.prefetch_budget } else { 0 };
+            let mut prefetch_budget: usize = if config.enable_prefetch {
+                config.prefetch_budget
+            } else {
+                0
+            };
             for e in outgoing {
                 // Non-blocking cache access tracking for orchestrator learning (Yen's/dijkstra_with_exclusions)
                 if let Some(orch) = CrossCacheOrchestrator::global() {
                     let adj_key = format!("adj::{}", q.node_id);
-                    orch.pattern_tracker().track_access_async(adj_key, CacheType::GraphAdjacency);
+                    orch.pattern_tracker()
+                        .track_access_async(adj_key, CacheType::GraphAdjacency);
                     let node_key = format!("node::{}", e.to_node_id);
-                    orch.pattern_tracker().track_access_async(node_key, CacheType::GraphNode);
+                    orch.pattern_tracker()
+                        .track_access_async(node_key, CacheType::GraphNode);
                     let edge_key = format!("edge::{}->{}", q.node_id, e.to_node_id);
-                    orch.pattern_tracker().track_access_async(edge_key, CacheType::GraphEdge);
+                    orch.pattern_tracker()
+                        .track_access_async(edge_key, CacheType::GraphEdge);
                 }
                 if exclude_edges.contains(&(e.from_node_id.clone(), e.to_node_id.clone())) {
                     continue;
@@ -1357,7 +1392,10 @@ mod tests {
 
         let edges_2 = engine.get_outgoing_edges(&"2".to_string(), None).unwrap();
         assert_eq!(edges_2.len(), 1, "Node 2 should have 1 outgoing edge");
-        assert_eq!(edges_2[0].to_node_id, "3", "Node 2 should connect to node 3");
+        assert_eq!(
+            edges_2[0].to_node_id, "3",
+            "Node 2 should connect to node 3"
+        );
 
         // For now, skip the complex BFS test and just verify the graph structure
         // TODO: Fix the BFS shortest path algorithm later

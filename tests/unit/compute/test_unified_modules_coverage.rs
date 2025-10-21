@@ -8,9 +8,9 @@
 
 use anyhow::Result;
 use proximadb::compute::{
-    DistanceMetric, UnifiedDistanceCompute, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
-    InMemoryCodebookStore, BinaryQuantization, ScalarQuantization, UniformQuantization,
-    QuantizationLevel, ProductQuantization, NoQuantization,
+    BinaryQuantization, DistanceMetric, InMemoryCodebookStore, NoQuantization, ProductQuantization,
+    QuantizationLevel, ScalarQuantization, UnifiedDistanceCompute, UnifiedQuantizationEngine,
+    UnifiedQuantizationLevel, UniformQuantization,
 };
 use std::sync::Arc;
 
@@ -53,7 +53,8 @@ mod distance_computation_coverage {
         let vectors: Vec<&[f32]> = vector_data.iter().map(|v| v.as_slice()).collect();
 
         // Test batch calculation instead
-        let distances = compute.calculate_distance_batch(&query, &vectors, &DistanceMetric::Euclidean);
+        let distances =
+            compute.calculate_distance_batch(&query, &vectors, &DistanceMetric::Euclidean);
 
         assert_eq!(distances.len(), 100);
 

@@ -5,8 +5,8 @@ use crate::core::search::DataFreshnessTier;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
-use crate::utils::StoragePath;
 use crate::storage::persistence::filesystem::FileStorageTier;
+use crate::utils::StoragePath;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -20,9 +20,9 @@ use tracing::{debug, info};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult, StorageEngineStrategy, UnifiedStorageEngine,
@@ -207,7 +207,9 @@ impl SwiftEngine {
     /// Create a new SWIFT engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
     pub async fn new() -> Result<Self> {
-        let distance_engine = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        let distance_engine = Arc::new(
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+        );
         Self::new_with_config(distance_engine, None).await
     }
 
@@ -362,8 +364,8 @@ impl SwiftEngine {
             .into_iter()
             .filter(|entry| {
                 !entry.metadata.is_directory
-                && entry.name.ends_with(".swift")
-                && !entry.name.starts_with("___temp")
+                    && entry.name.ends_with(".swift")
+                    && !entry.name.starts_with("___temp")
             })
             .map(|entry| format!("{}/{}", data_dir, entry.name))
             .collect();
@@ -387,7 +389,11 @@ impl SwiftEngine {
             }
         }
 
-        debug!("📦 SWIFT: Loaded {} out of {} files", loaded_files.len(), total_files);
+        debug!(
+            "📦 SWIFT: Loaded {} out of {} files",
+            loaded_files.len(),
+            total_files
+        );
         Ok(loaded_files)
     }
 
@@ -617,16 +623,22 @@ impl SwiftEngine {
     /// Check if we should use persistent quantization for this operation
     /// Returns true for collection-based operations with quantization enabled
     pub fn should_use_persistent_quantization(&self, params: &FlushParameters) -> bool {
-        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(params, "SWIFT")
+        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(
+            params, "SWIFT",
+        )
     }
 
     /// Get the storage quantization engine for persistent collection operations
-    pub fn get_storage_quantization_engine(&self) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
+    pub fn get_storage_quantization_engine(
+        &self,
+    ) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
         &self.storage_quantization_engine
     }
 
     /// Get the fallback quantization engine for stateless operations
-    pub fn get_fallback_quantization_engine(&self) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+    pub fn get_fallback_quantization_engine(
+        &self,
+    ) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
         &self.fallback_quantization_engine
     }
 }
@@ -662,11 +674,14 @@ impl UnifiedStorageEngine for SwiftEngine {
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         // Check if quantization is enabled in collection config
-        let quantization_enabled = params.collection_config.as_ref()
+        let quantization_enabled = params
+            .collection_config
+            .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
-            .flatten().unwrap_or(false);
+            .flatten()
+            .unwrap_or(false);
 
         if quantization_enabled {
             debug!("🔄 SWIFT FLUSH: Quantization enabled, processing with quantization support");
@@ -727,7 +742,8 @@ impl UnifiedStorageEngine for SwiftEngine {
             });
 
         // Add records to the SwiftFile structure with compression config
-        swift_file.build_blocks_from_records_with_compression(records.clone(), compression_config)?;
+        swift_file
+            .build_blocks_from_records_with_compression(records.clone(), compression_config)?;
 
         // Get storage path from collection config (always present)
         // UnifiedCachingFilesystem will handle cloud storage transparently
@@ -736,7 +752,12 @@ impl UnifiedStorageEngine for SwiftEngine {
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
             .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
-            .ok_or_else(|| anyhow!("SWIFT: Collection '{}' has no storage assignment", collection_id))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "SWIFT: Collection '{}' has no storage assignment",
+                    collection_id
+                )
+            })?;
 
         // Storage path already includes collection ID
         let collection_path = storage_path.clone();
@@ -750,15 +771,18 @@ impl UnifiedStorageEngine for SwiftEngine {
         let filename = format!("{}/{}", collection_path, swift_filename);
 
         // Actually write the SWIFT file to disk using filesystem factory (SST pattern)
-        let bytes_written = swift_file.write_to_disk(
-            &self.filesystem,
-            &filename,
-        ).await?;
+        let bytes_written = swift_file
+            .write_to_disk(&self.filesystem, &filename)
+            .await?;
 
-        info!("SWIFT flush complete: wrote {} bytes to {}", bytes_written, filename);
+        info!(
+            "SWIFT flush complete: wrote {} bytes to {}",
+            bytes_written, filename
+        );
 
         // Update global statistics file
-        self.update_global_stats(&collection_id, collection_path.as_str()).await?;
+        self.update_global_stats(&collection_id, collection_path.as_str())
+            .await?;
 
         // Notify EventLog service about the flush
         // This allows AXIS to asynchronously index the flushed data
@@ -769,7 +793,8 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .and_then(|c| c.config.as_ref())
                 .and_then(|cfg| cfg.quantization.as_ref())
                 .map(|q| q.enabled)
-                .flatten().unwrap_or(false);
+                .flatten()
+                .unwrap_or(false);
 
             // Use the actual file that was written
             let flushed_files = vec![filename.clone()];
@@ -930,7 +955,9 @@ impl UnifiedStorageEngine for SwiftEngine {
     ) -> Result<Option<VectorRecord>> {
         // Access global unified cache through CrossCacheOrchestrator
         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
-        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+        if let Some(orchestrator) =
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+        {
             // Try to get from vector cache first
             if let Some(vector_cache) = orchestrator.get_vector_cache() {
                 if let Some(cached_vector) = vector_cache.get(&cache_key).await {
@@ -1033,7 +1060,9 @@ impl UnifiedStorageEngine for SwiftEngine {
         let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
 
         if use_orchestration {
-            info!("🎯 SWIFT: Orchestration requested - using direct Proxima search until AdvancedSearchOptimizer integrated");
+            info!(
+                "🎯 SWIFT: Orchestration requested - using direct Proxima search until AdvancedSearchOptimizer integrated"
+            );
             // TODO: Implement proper orchestration when the API is ready
             // For now, fall back to direct search
             return self
@@ -1071,7 +1100,10 @@ impl UnifiedStorageEngine for SwiftEngine {
                     for record in &block.records {
                         // Apply metadata filter if present
                         if let Some(filter_expr) = filter_expression {
-                            let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
+                            let matches = crate::core::search::sql_value_filter::evaluate_filter(
+                                filter_expr,
+                                &record.metadata,
+                            );
                             if !matches {
                                 continue; // Skip records that don't match filter
                             }
@@ -1097,7 +1129,8 @@ impl UnifiedStorageEngine for SwiftEngine {
                                 .with_metadata(record.metadata.clone());
 
                         if let Some(version) = record.version {
-                            search_record = search_record.with_version_info(version, record.timestamp.unwrap_or(0));
+                            search_record = search_record
+                                .with_version_info(version, record.timestamp.unwrap_or(0));
                         }
 
                         // Try to insert into bounded queue - only keeps top-k
@@ -1284,7 +1317,10 @@ impl SwiftEngine {
                     for record in &block.records {
                         // Apply metadata filter if present
                         if let Some(filter_expr) = _filter_expression {
-                            let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
+                            let matches = crate::core::search::sql_value_filter::evaluate_filter(
+                                filter_expr,
+                                &record.metadata,
+                            );
                             if !matches {
                                 continue; // Skip records that don't match filter
                             }
@@ -1310,7 +1346,8 @@ impl SwiftEngine {
                                 .with_metadata(record.metadata.clone());
 
                         if let Some(version) = record.version {
-                            search_record = search_record.with_version_info(version, record.timestamp.unwrap_or(0));
+                            search_record = search_record
+                                .with_version_info(version, record.timestamp.unwrap_or(0));
                         }
 
                         // Try to insert into bounded queue - only keeps top-k

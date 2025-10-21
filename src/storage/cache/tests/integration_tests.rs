@@ -10,8 +10,8 @@ use super::super::*;
 // use super::super::monitoring::{CacheMonitoringDashboard, AlertManager};
 // use super::super::optimization::CacheOptimizer;
 use crate::metrics::{CacheMetricsCollector, CacheMetricsSnapshot};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::SqlValue;
+use crate::proto::proximadb_v1::VectorRecord;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -221,9 +221,7 @@ async fn test_cache_under_memory_pressure() {
         version: Some(1),
     };
     let value = serde_json::to_value(&test_record).unwrap();
-    vector_cache
-        .put_with_hooks("test".to_string(), value)
-        .await;
+    vector_cache.put_with_hooks("test".to_string(), value).await;
     let retrieved = vector_cache.get_with_hooks(&"test".to_string()).await;
     assert!(retrieved.is_some());
 }
@@ -293,7 +291,10 @@ async fn test_config_hot_reload() {
 }
 
 // Helper functions for simulating workloads
-async fn simulate_vector_workload(orchestrator: &CrossCacheOrchestrator, cache: &Arc<MetadataStore>) {
+async fn simulate_vector_workload(
+    orchestrator: &CrossCacheOrchestrator,
+    cache: &Arc<MetadataStore>,
+) {
     for i in 0..50 {
         let record = VectorRecord {
             id: format!("vec{}", i),

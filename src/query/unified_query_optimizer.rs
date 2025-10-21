@@ -631,10 +631,10 @@ struct QueryAnalysis {
 pub trait CostStrategy: Send + Sync {
     /// Calculate cost for a specific operation type
     fn calculate_cost(&self, operation: &OperationType, context: &CostContext) -> f64;
-    
+
     /// Get strategy name for debugging and metrics
     fn name(&self) -> &'static str;
-    
+
     /// Check if this strategy applies to the given context
     fn applies_to(&self, context: &CostContext) -> bool;
 }
@@ -659,10 +659,22 @@ pub struct CostContext {
 /// Operation types for cost calculation
 #[derive(Debug, Clone)]
 pub enum OperationType {
-    VectorSearch { top_k: usize, use_quantization: bool },
-    MetadataFilter { filter_count: usize, selectivity: f64 },
-    IndexBuild { index_type: String, vector_count: usize },
-    CompactionOperation { file_count: usize, total_size_mb: f64 },
+    VectorSearch {
+        top_k: usize,
+        use_quantization: bool,
+    },
+    MetadataFilter {
+        filter_count: usize,
+        selectivity: f64,
+    },
+    IndexBuild {
+        index_type: String,
+        vector_count: usize,
+    },
+    CompactionOperation {
+        file_count: usize,
+        total_size_mb: f64,
+    },
 }
 
 /// Default cost strategy implementation
@@ -671,14 +683,20 @@ pub struct DefaultCostStrategy;
 impl CostStrategy for DefaultCostStrategy {
     fn calculate_cost(&self, operation: &OperationType, context: &CostContext) -> f64 {
         match operation {
-            OperationType::VectorSearch { top_k, use_quantization } => {
+            OperationType::VectorSearch {
+                top_k,
+                use_quantization,
+            } => {
                 let base_cost = context.dataset_size as f64 * 0.001; // Base scan cost
                 let result_cost = *top_k as f64 * 0.1; // Result processing cost
                 let quantization_factor = if *use_quantization { 0.3 } else { 1.0 }; // 70% savings with quantization
-                
+
                 (base_cost + result_cost) * quantization_factor
             }
-            OperationType::MetadataFilter { filter_count, selectivity } => {
+            OperationType::MetadataFilter {
+                filter_count,
+                selectivity,
+            } => {
                 let scan_cost = context.dataset_size as f64 * selectivity * 0.0001;
                 let filter_cost = *filter_count as f64 * 0.01;
                 scan_cost + filter_cost
@@ -686,16 +704,19 @@ impl CostStrategy for DefaultCostStrategy {
             OperationType::IndexBuild { vector_count, .. } => {
                 *vector_count as f64 * context.dimension as f64 * 0.01 // Complex operation
             }
-            OperationType::CompactionOperation { file_count, total_size_mb } => {
+            OperationType::CompactionOperation {
+                file_count,
+                total_size_mb,
+            } => {
                 *file_count as f64 * 0.5 + total_size_mb * 0.1 // File I/O cost
             }
         }
     }
-    
+
     fn name(&self) -> &'static str {
         "default"
     }
-    
+
     fn applies_to(&self, _context: &CostContext) -> bool {
         true // Default strategy applies to all contexts
     }
@@ -1326,9 +1347,14 @@ impl UnifiedQueryOptimizer {
             filter_selectivity: Some(0.8),
             filters: vec![],
             has_bloom_filters: false,
-            dataset_size: context.collection.stats.as_ref().map(|s| s.vector_count as usize).unwrap_or(10000),
+            dataset_size: context
+                .collection
+                .stats
+                .as_ref()
+                .map(|s| s.vector_count as usize)
+                .unwrap_or(10000),
             estimated_memory_mb: 64.0, // Reasonable default
-            estimated_io_ops: 100, // Default estimate
+            estimated_io_ops: 100,     // Default estimate
         })
     }
 

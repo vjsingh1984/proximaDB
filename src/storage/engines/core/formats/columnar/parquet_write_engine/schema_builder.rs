@@ -6,14 +6,14 @@
 use anyhow::Result;
 use arrow::datatypes::{DataType, Field, Fields, Schema};
 use parquet::arrow::ArrowWriter;
-use parquet::file::properties::{WriterProperties, WriterPropertiesBuilder};
 use parquet::basic::{Compression, Encoding};
+use parquet::file::properties::{WriterProperties, WriterPropertiesBuilder};
 use std::sync::Arc;
 
-use crate::proto::proximadb_v1::{FilterableColumnSpec, QuantizationConfig};
-use crate::core::compression::CompressionAlgorithm;
-use crate::storage::engines::core::formats::columnar::constants::*;
 use super::writer_config::ParquetWriterConfig;
+use crate::core::compression::CompressionAlgorithm;
+use crate::proto::proximadb_v1::{FilterableColumnSpec, QuantizationConfig};
+use crate::storage::engines::core::formats::columnar::constants::*;
 
 /// Schema builder for Parquet files
 pub struct ParquetSchemaBuilder {
@@ -62,34 +62,14 @@ impl ParquetSchemaBuilder {
 
         // Quantized vectors based on configuration
         if self.config.quantization.enable_binary.unwrap_or(false) {
-            fields.push(Field::new(
-                FIELD_Q_BINARY,
-                DataType::Binary,
-                true,
-            ));
+            fields.push(Field::new(FIELD_Q_BINARY, DataType::Binary, true));
         }
 
         if self.config.quantization.enable_int8.unwrap_or(false) {
-            fields.push(Field::new(
-                FIELD_Q_INT8,
-                DataType::Binary,
-                true,
-            ));
-            fields.push(Field::new(
-                FIELD_QP_INT8_SCALE,
-                DataType::Float32,
-                true,
-            ));
-            fields.push(Field::new(
-                FIELD_QP_INT8_MIN,
-                DataType::Float32,
-                true,
-            ));
-            fields.push(Field::new(
-                FIELD_QP_INT8_MAX,
-                DataType::Float32,
-                true,
-            ));
+            fields.push(Field::new(FIELD_Q_INT8, DataType::Binary, true));
+            fields.push(Field::new(FIELD_QP_INT8_SCALE, DataType::Float32, true));
+            fields.push(Field::new(FIELD_QP_INT8_MIN, DataType::Float32, true));
+            fields.push(Field::new(FIELD_QP_INT8_MAX, DataType::Float32, true));
         }
 
         if self.config.quantization.enable_pq.unwrap_or(false) {
@@ -107,11 +87,7 @@ impl ParquetSchemaBuilder {
                 _ => FIELD_Q_PQ8, // Default to PQ8
             };
 
-            fields.push(Field::new(
-                pq_field_name,
-                DataType::Binary,
-                true,
-            ));
+            fields.push(Field::new(pq_field_name, DataType::Binary, true));
             // Note: PQ codebook is stored as file-level metadata or sidecar, not per-row
         }
 
@@ -131,12 +107,19 @@ impl ParquetSchemaBuilder {
                     crate::proto::proximadb_v1::FilterableDataType::FilterableInteger => "INTEGER",
                     crate::proto::proximadb_v1::FilterableDataType::FilterableFloat => "FLOAT",
                     crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean => "BOOLEAN",
-                    crate::proto::proximadb_v1::FilterableDataType::FilterableDatetime => "TIMESTAMP",
+                    crate::proto::proximadb_v1::FilterableDataType::FilterableDatetime => {
+                        "TIMESTAMP"
+                    }
                     _ => "STRING", // Default to string for arrays and unknown types
                 };
                 let data_type = Self::sql_type_to_arrow_type(data_type_str);
-                tracing::debug!("  Filterable column '{}': data_type_i32={}, type_str='{}', arrow_type={:?}",
-                    col_spec.name, col_spec.data_type, data_type_str, data_type);
+                tracing::debug!(
+                    "  Filterable column '{}': data_type_i32={}, type_str='{}', arrow_type={:?}",
+                    col_spec.name,
+                    col_spec.data_type,
+                    data_type_str,
+                    data_type
+                );
                 fields.push(Field::new(
                     &col_spec.name,
                     data_type,
@@ -169,9 +152,9 @@ impl ParquetSchemaBuilder {
     /// Convert SQL type string to Arrow DataType
     fn sql_type_to_arrow_type(sql_type: &str) -> DataType {
         match sql_type.to_uppercase().as_str() {
-            "INT" | "INTEGER" => DataType::Int64,  // Use Int64 to match SqlValue::Int64Value
+            "INT" | "INTEGER" => DataType::Int64, // Use Int64 to match SqlValue::Int64Value
             "BIGINT" | "LONG" => DataType::Int64,
-            "FLOAT" => DataType::Float64,  // Use Float64 to match SqlValue::NumberValue (f64)
+            "FLOAT" => DataType::Float64, // Use Float64 to match SqlValue::NumberValue (f64)
             "DOUBLE" => DataType::Float64,
             "BOOLEAN" | "BOOL" => DataType::Boolean,
             "TEXT" | "STRING" | "VARCHAR" => DataType::Utf8,
@@ -194,11 +177,17 @@ pub fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterPr
     let compression = match config.compression {
         Compression::UNCOMPRESSED => parquet::basic::Compression::UNCOMPRESSED,
         Compression::SNAPPY => parquet::basic::Compression::SNAPPY,
-        Compression::GZIP(_) => parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default()),
+        Compression::GZIP(_) => {
+            parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default())
+        }
         Compression::LZ4 => parquet::basic::Compression::LZ4,
         Compression::LZ4_RAW => parquet::basic::Compression::LZ4_RAW,
-        Compression::BROTLI(_) => parquet::basic::Compression::BROTLI(parquet::basic::BrotliLevel::default()),
-        Compression::ZSTD(_) => parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
+        Compression::BROTLI(_) => {
+            parquet::basic::Compression::BROTLI(parquet::basic::BrotliLevel::default())
+        }
+        Compression::ZSTD(_) => {
+            parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default())
+        }
         Compression::LZO => parquet::basic::Compression::LZO,
     };
     builder = builder.set_compression(compression);
@@ -213,7 +202,8 @@ pub fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterPr
 
     // Enable statistics for column pruning
     if config.enable_statistics {
-        builder = builder.set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk);
+        builder =
+            builder.set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk);
     }
 
     // Enable bloom filters for ID column
@@ -286,8 +276,7 @@ mod tests {
             },
         ];
 
-        let builder = ParquetSchemaBuilder::new(64, config)
-            .with_filterable_columns(columns);
+        let builder = ParquetSchemaBuilder::new(64, config).with_filterable_columns(columns);
         let schema = builder.build_schema().unwrap();
 
         // Check filterable columns

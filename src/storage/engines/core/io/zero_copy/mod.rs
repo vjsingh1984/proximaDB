@@ -16,15 +16,11 @@ pub mod traits;
 
 // Re-export main components
 pub use bandwidth_optimizer::BandwidthOptimizer;
-pub use config::{
-    WorkloadType, ZeroCopyIOSystemBuilder,
-};
+pub use config::{WorkloadType, ZeroCopyIOSystemBuilder};
 pub use orchestrator::ZeroCopyIOSystem;
 
 // Common traits and types
-pub use traits::{
-    DataRange, EngineMetadata, MetadataSerializer, QueryContext,
-};
+pub use traits::{DataRange, EngineMetadata, MetadataSerializer, QueryContext};
 
 use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;

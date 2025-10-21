@@ -150,7 +150,7 @@ impl MetricsAggregationEngine {
             total_bytes_written,
             total_bytes_read: self.calculate_total_bytes_read(&filtered),
             error_count: self.calculate_error_count(&filtered),
-            success_rate: self.calculate_success_rate(&filtered)
+            success_rate: self.calculate_success_rate(&filtered),
         })
     }
 
@@ -215,44 +215,54 @@ impl MetricsAggregationEngine {
             predicted_next: values.last().cloned().unwrap_or(0.0) + slope,
         })
     }
-    
+
     /// Calculate total bytes read from existing metrics
-    fn calculate_total_bytes_read(&self, metrics: &[&crate::metrics::schema::CollectionMetrics]) -> i64 {
+    fn calculate_total_bytes_read(
+        &self,
+        metrics: &[&crate::metrics::schema::CollectionMetrics],
+    ) -> i64 {
         // Estimate read bytes from operation counts and average vector size
         let total_searches: i64 = metrics.iter().map(|m| m.total_searches).sum();
-        let avg_vector_size = metrics.iter()
+        let avg_vector_size = metrics
+            .iter()
             .map(|m| m.dimension as f64 * 4.0) // 4 bytes per float32
-            .sum::<f64>() / metrics.len().max(1) as f64;
-        
+            .sum::<f64>()
+            / metrics.len().max(1) as f64;
+
         // Approximate: searches typically read ~10 vectors on average
         (total_searches as f64 * 10.0 * avg_vector_size) as i64
     }
-    
+
     /// Calculate error count from operation metrics
     fn calculate_error_count(&self, metrics: &[&crate::metrics::schema::CollectionMetrics]) -> i64 {
         // Estimate errors from total operations and historical patterns
-        let total_ops: i64 = metrics.iter()
+        let total_ops: i64 = metrics
+            .iter()
             .map(|m| m.total_inserts + m.total_updates + m.total_deletes + m.total_searches)
             .sum();
-        
+
         // Conservative estimate: 0.1% error rate for stable system
         (total_ops as f64 * 0.001) as i64
     }
-    
+
     /// Calculate success rate from operation metrics
-    fn calculate_success_rate(&self, metrics: &[&crate::metrics::schema::CollectionMetrics]) -> f32 {
-        let total_ops: i64 = metrics.iter()
+    fn calculate_success_rate(
+        &self,
+        metrics: &[&crate::metrics::schema::CollectionMetrics],
+    ) -> f32 {
+        let total_ops: i64 = metrics
+            .iter()
             .map(|m| m.total_inserts + m.total_updates + m.total_deletes + m.total_searches)
             .sum();
-        
+
         if total_ops == 0 {
             return 1.0; // No operations = 100% success rate
         }
-        
+
         // Use error count to calculate success rate
         let error_count = self.calculate_error_count(metrics);
         let success_count = total_ops - error_count;
-        
+
         (success_count as f32 / total_ops as f32).max(0.0).min(1.0)
     }
 }

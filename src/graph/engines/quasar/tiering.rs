@@ -24,9 +24,9 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::{QuasarConfig, cache::AccessPatternCache, storage_backend::ColdStorageBackend};
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{EdgeId, Node, NodeId};
+use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
 use tokio::time::{Duration, Instant};
 
 /// Manages data tiering between hot and cold storage
@@ -313,7 +313,8 @@ impl TieringManager {
         // Record promotion as a high-signal access for orchestrator learning
         if let Some(orch) = CrossCacheOrchestrator::global() {
             let node_key = format!("node::{}", node.id);
-            orch.pattern_tracker().track_access_async(node_key, CacheType::GraphNode);
+            orch.pattern_tracker()
+                .track_access_async(node_key, CacheType::GraphNode);
         }
         Ok(())
     }
@@ -569,7 +570,13 @@ mod tests {
         // Since nodes are not actually added (commented out), utilization should be 0.0
         assert_eq!(recommendations.hot_tier_utilization, 0.0); // 0/10 = 0.0 (nodes not implemented yet)
         // With 0% utilization, the recommendation should be about low usage rather than high usage
-        assert!(recommendations.recommendation_reason.contains("Utilization is low") || recommendations.recommendation_reason.contains("under") || recommendations.recommendation_reason.len() > 0);
+        assert!(
+            recommendations
+                .recommendation_reason
+                .contains("Utilization is low")
+                || recommendations.recommendation_reason.contains("under")
+                || recommendations.recommendation_reason.len() > 0
+        );
     }
 
     #[test]

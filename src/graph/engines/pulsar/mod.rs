@@ -196,8 +196,9 @@ impl PulsarGraphEngine {
 
     /// Sync version of get_shard_for_node (for use in sync contexts)
     fn get_shard_for_node_sync(&self, node_id: &NodeId) -> Result<u32> {
-        let hash_ring = self.hash_ring.try_read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire hash ring lock".to_string()))?;
+        let hash_ring = self.hash_ring.try_read().map_err(|_| {
+            ProximaDBError::Internal("Failed to acquire hash ring lock".to_string())
+        })?;
         Ok(hash_ring.get_shard(node_id))
     }
 
@@ -244,9 +245,9 @@ impl PulsarGraphEngine {
         let primary_shard_id = self.get_shard_for_node_sync(node_id)?;
         // For sync version, we can't await async operations, so we just get primary shard
         // This is acceptable for tests and simple use cases
-        let primary_shard = self.shards
-            .get(&primary_shard_id)
-            .ok_or_else(|| ProximaDBError::Internal(format!("Shard {} not found", primary_shard_id)))?;
+        let primary_shard = self.shards.get(&primary_shard_id).ok_or_else(|| {
+            ProximaDBError::Internal(format!("Shard {} not found", primary_shard_id))
+        })?;
 
         Ok(vec![Arc::clone(&primary_shard)])
     }
@@ -426,7 +427,10 @@ impl GraphEngine for PulsarGraphEngine {
         let node_id = node.id.clone();
 
         // For now, use first available shard to avoid runtime nesting issues
-        let primary_shard = self.shards.iter().next()
+        let primary_shard = self
+            .shards
+            .iter()
+            .next()
             .map(|entry| Arc::clone(entry.value()))
             .ok_or_else(|| ProximaDBError::Internal("No shards available".to_string()))?;
 
@@ -477,7 +481,9 @@ impl GraphEngine for PulsarGraphEngine {
 
     fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         let id_cloned = id.clone();
-        let result = self.execute_with_consistency_sync(id, move |shard| GraphEngine::delete_node(shard, &id_cloned))?;
+        let result = self.execute_with_consistency_sync(id, move |shard| {
+            GraphEngine::delete_node(shard, &id_cloned)
+        })?;
 
         // Update stats
         if result.is_some() {
@@ -705,8 +711,14 @@ mod tests {
         let engine = PulsarGraphEngine::new(config).unwrap();
 
         // Test nodes go to different shards
-        let node1_shard = engine.get_shard_for_node(&"node1".to_string()).await.unwrap();
-        let node2_shard = engine.get_shard_for_node(&"node2".to_string()).await.unwrap();
+        let node1_shard = engine
+            .get_shard_for_node(&"node1".to_string())
+            .await
+            .unwrap();
+        let node2_shard = engine
+            .get_shard_for_node(&"node2".to_string())
+            .await
+            .unwrap();
 
         // Shards should be within expected range
         assert!(node1_shard < 4);

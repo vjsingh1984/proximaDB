@@ -4,14 +4,14 @@
 //! Network RBAC (network/auth/rbac.rs) into a single, coherent permission system.
 
 use anyhow::{Result, anyhow};
-use dashmap::DashMap;
-use std::sync::Arc;
-use std::collections::{HashMap, HashSet};
-use tracing::info;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use tracing::info;
 
 /// Unified permission model consolidating all permission types
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ pub enum UnifiedPermission {
     ListCollections,
 
     // === VECTOR LEVEL PERMISSIONS ===
-    VectorInsert(String),      // Collection-specific vector operations
+    VectorInsert(String), // Collection-specific vector operations
     VectorDelete(String),
     VectorSearch(String),
     VectorUpdate(String),
@@ -53,14 +53,14 @@ pub enum UnifiedPermission {
     EntityDelete(String),
 
     // === GRAPH LEVEL PERMISSIONS ===
-    GraphCreateRelations(String),   // Collection-specific graph operations
+    GraphCreateRelations(String), // Collection-specific graph operations
     GraphDeleteRelations(String),
     GraphTraverse(String),
     GraphReadRelations(String),
 
     // === QUERY LEVEL PERMISSIONS ===
-    ExecuteSqlQueries(String),      // Collection-specific SQL queries
-    ExecuteSksFunctions(String),    // SKS function execution
+    ExecuteSqlQueries(String),   // Collection-specific SQL queries
+    ExecuteSksFunctions(String), // SKS function execution
 
     // === SYSTEM LEVEL PERMISSIONS ===
     ViewSystemMetrics,
@@ -86,7 +86,7 @@ pub enum UnifiedPermission {
 pub struct UnifiedRole {
     pub role_id: String,
     pub role_name: String,
-    pub tenant_id: Option<String>,  // None for system-wide roles
+    pub tenant_id: Option<String>, // None for system-wide roles
     pub permissions: HashSet<UnifiedPermission>,
     pub description: String,
     pub created_at: DateTime<Utc>,
@@ -154,9 +154,9 @@ pub struct CollectionPermissions {
 /// Field-level permissions for granular access control
 #[derive(Debug, Clone)]
 pub struct FieldLevelPermissions {
-    pub read_fields: HashMap<String, HashSet<String>>,  // role -> fields
+    pub read_fields: HashMap<String, HashSet<String>>, // role -> fields
     pub write_fields: HashMap<String, HashSet<String>>, // role -> fields
-    pub restricted_fields: HashSet<String>,             // Always restricted
+    pub restricted_fields: HashSet<String>,            // Always restricted
 }
 
 /// User role assignment
@@ -251,12 +251,14 @@ impl ConsolidatedRBACManager {
         // Get effective permissions for user
         let effective_permissions = self.get_effective_permissions(user_context).await?;
 
-        let has_permission = effective_permissions.contains(permission) ||
-                           self.check_wildcard_permissions(&effective_permissions, permission);
+        let has_permission = effective_permissions.contains(permission)
+            || self.check_wildcard_permissions(&effective_permissions, permission);
 
         // Log permission check if audit enabled
         if let Some(audit_logger) = &self.audit_logger {
-            audit_logger.log_permission_check(user_context, permission, has_permission).await?;
+            audit_logger
+                .log_permission_check(user_context, permission, has_permission)
+                .await?;
         }
 
         Ok(has_permission)
@@ -279,10 +281,10 @@ impl ConsolidatedRBACManager {
 
             // Add role-based permissions
             for role_name in &assignment.roles {
-                if let Some(permissions) = self.get_role_permissions(
-                    role_name,
-                    user_context.tenant_id.as_deref()
-                ).await? {
+                if let Some(permissions) = self
+                    .get_role_permissions(role_name, user_context.tenant_id.as_deref())
+                    .await?
+                {
                     effective_permissions.extend(permissions);
                 }
             }
@@ -327,27 +329,28 @@ impl ConsolidatedRBACManager {
     ) -> bool {
         match requested_permission {
             // Collection permissions
-            UnifiedPermission::CollectionRead(collection_id) |
-            UnifiedPermission::CollectionWrite(collection_id) |
-            UnifiedPermission::VectorRead(collection_id) |
-            UnifiedPermission::VectorInsert(collection_id) |
-            UnifiedPermission::VectorSearch(collection_id) => {
-                user_permissions.contains(&UnifiedPermission::CollectionAdmin(collection_id.clone())) ||
-                user_permissions.contains(&UnifiedPermission::SystemAdmin)
+            UnifiedPermission::CollectionRead(collection_id)
+            | UnifiedPermission::CollectionWrite(collection_id)
+            | UnifiedPermission::VectorRead(collection_id)
+            | UnifiedPermission::VectorInsert(collection_id)
+            | UnifiedPermission::VectorSearch(collection_id) => {
+                user_permissions
+                    .contains(&UnifiedPermission::CollectionAdmin(collection_id.clone()))
+                    || user_permissions.contains(&UnifiedPermission::SystemAdmin)
             }
 
             // Domain permissions
-            UnifiedPermission::DomainRead(domain_id) |
-            UnifiedPermission::DomainWrite(domain_id) => {
-                user_permissions.contains(&UnifiedPermission::DomainAdmin(domain_id.clone())) ||
-                user_permissions.contains(&UnifiedPermission::TenantAdmin) ||
-                user_permissions.contains(&UnifiedPermission::SystemAdmin)
+            UnifiedPermission::DomainRead(domain_id)
+            | UnifiedPermission::DomainWrite(domain_id) => {
+                user_permissions.contains(&UnifiedPermission::DomainAdmin(domain_id.clone()))
+                    || user_permissions.contains(&UnifiedPermission::TenantAdmin)
+                    || user_permissions.contains(&UnifiedPermission::SystemAdmin)
             }
 
             // Tenant permissions
             UnifiedPermission::TenantRead | UnifiedPermission::TenantWrite => {
-                user_permissions.contains(&UnifiedPermission::TenantAdmin) ||
-                user_permissions.contains(&UnifiedPermission::SystemAdmin)
+                user_permissions.contains(&UnifiedPermission::TenantAdmin)
+                    || user_permissions.contains(&UnifiedPermission::SystemAdmin)
             }
 
             _ => false,
@@ -375,7 +378,9 @@ impl ConsolidatedRBACManager {
                 UnifiedPermission::TenantAdmin,
                 UnifiedPermission::CollectionCreate,
                 UnifiedPermission::AuditRead,
-            ].into_iter().collect(),
+            ]
+            .into_iter()
+            .collect(),
             description: "Tenant administration access".to_string(),
             created_at: Utc::now(),
             created_by: "system".to_string(),
@@ -390,7 +395,9 @@ impl ConsolidatedRBACManager {
                 UnifiedPermission::ListCollections,
                 UnifiedPermission::ReadCollectionMetadata("*".to_string()),
                 UnifiedPermission::ViewSystemHealth,
-            ].into_iter().collect(),
+            ]
+            .into_iter()
+            .collect(),
             description: "Basic collection access".to_string(),
             created_at: Utc::now(),
             created_by: "system".to_string(),
@@ -398,11 +405,17 @@ impl ConsolidatedRBACManager {
         };
 
         // Insert default roles
-        self.system_roles.insert("system_admin".to_string(), system_admin_role);
-        self.system_roles.insert("tenant_admin".to_string(), tenant_admin_role);
-        self.system_roles.insert("collection_user".to_string(), collection_user_role);
+        self.system_roles
+            .insert("system_admin".to_string(), system_admin_role);
+        self.system_roles
+            .insert("tenant_admin".to_string(), tenant_admin_role);
+        self.system_roles
+            .insert("collection_user".to_string(), collection_user_role);
 
-        info!("Initialized {} default system roles", self.system_roles.len());
+        info!(
+            "Initialized {} default system roles",
+            self.system_roles.len()
+        );
     }
 
     /// Assign role to user
@@ -415,7 +428,8 @@ impl ConsolidatedRBACManager {
     ) -> Result<()> {
         // Validate role exists
         let role_exists = if let Some(tenant_id) = tenant_id {
-            self.tenant_roles.get(tenant_id)
+            self.tenant_roles
+                .get(tenant_id)
                 .map(|roles| roles.contains_key(role_name))
                 .unwrap_or(false)
         } else {
@@ -437,20 +451,20 @@ impl ConsolidatedRBACManager {
             expires_at: None,
         };
 
-        self.user_role_assignments.insert(user_id.to_string(), assignment);
+        self.user_role_assignments
+            .insert(user_id.to_string(), assignment);
 
         // Log role assignment
         if let Some(audit_logger) = &self.audit_logger {
-            audit_logger.log_role_assignment(
-                user_id,
-                tenant_id,
-                &[role_name.to_string()],
-                assigned_by,
-            ).await?;
+            audit_logger
+                .log_role_assignment(user_id, tenant_id, &[role_name.to_string()], assigned_by)
+                .await?;
         }
 
-        info!("Assigned role '{}' to user '{}' in tenant '{:?}'",
-              role_name, user_id, tenant_id);
+        info!(
+            "Assigned role '{}' to user '{}' in tenant '{:?}'",
+            role_name, user_id, tenant_id
+        );
 
         Ok(())
     }
@@ -476,7 +490,8 @@ impl ConsolidatedRBACManager {
 
         // Ensure tenant roles map exists
         if !self.tenant_roles.contains_key(tenant_id) {
-            self.tenant_roles.insert(tenant_id.to_string(), Arc::new(DashMap::new()));
+            self.tenant_roles
+                .insert(tenant_id.to_string(), Arc::new(DashMap::new()));
         }
 
         // Insert role
@@ -484,7 +499,10 @@ impl ConsolidatedRBACManager {
             tenant_roles.insert(role_name.to_string(), role);
         }
 
-        info!("Created custom role '{}' for tenant '{}'", role_name, tenant_id);
+        info!(
+            "Created custom role '{}' for tenant '{}'",
+            role_name, tenant_id
+        );
         Ok(())
     }
 
@@ -496,11 +514,21 @@ impl ConsolidatedRBACManager {
         permission_type: CollectionPermissionType,
     ) -> Result<bool> {
         let permission = match permission_type {
-            CollectionPermissionType::Read => UnifiedPermission::CollectionRead(collection_id.to_string()),
-            CollectionPermissionType::Write => UnifiedPermission::CollectionWrite(collection_id.to_string()),
-            CollectionPermissionType::Admin => UnifiedPermission::CollectionAdmin(collection_id.to_string()),
-            CollectionPermissionType::VectorInsert => UnifiedPermission::VectorInsert(collection_id.to_string()),
-            CollectionPermissionType::VectorSearch => UnifiedPermission::VectorSearch(collection_id.to_string()),
+            CollectionPermissionType::Read => {
+                UnifiedPermission::CollectionRead(collection_id.to_string())
+            }
+            CollectionPermissionType::Write => {
+                UnifiedPermission::CollectionWrite(collection_id.to_string())
+            }
+            CollectionPermissionType::Admin => {
+                UnifiedPermission::CollectionAdmin(collection_id.to_string())
+            }
+            CollectionPermissionType::VectorInsert => {
+                UnifiedPermission::VectorInsert(collection_id.to_string())
+            }
+            CollectionPermissionType::VectorSearch => {
+                UnifiedPermission::VectorSearch(collection_id.to_string())
+            }
         };
 
         self.check_permission(user_context, &permission).await
@@ -515,7 +543,10 @@ impl ConsolidatedRBACManager {
         let mut accessible_collections = Vec::new();
 
         // Check if user has system admin (access to all)
-        if user_context.effective_permissions.contains(&UnifiedPermission::SystemAdmin) {
+        if user_context
+            .effective_permissions
+            .contains(&UnifiedPermission::SystemAdmin)
+        {
             // Return all collections for system admin
             // This would need integration with collection service
             return Ok(vec!["*".to_string()]); // Placeholder
@@ -524,9 +555,9 @@ impl ConsolidatedRBACManager {
         // Check specific collection permissions
         for permission in &user_context.effective_permissions {
             match permission {
-                UnifiedPermission::CollectionRead(coll_id) |
-                UnifiedPermission::CollectionWrite(coll_id) |
-                UnifiedPermission::CollectionAdmin(coll_id) => {
+                UnifiedPermission::CollectionRead(coll_id)
+                | UnifiedPermission::CollectionWrite(coll_id)
+                | UnifiedPermission::CollectionAdmin(coll_id) => {
                     accessible_collections.push(coll_id.clone());
                 }
                 _ => {}
@@ -582,7 +613,9 @@ mod tests {
             effective_permissions: vec![
                 UnifiedPermission::CollectionRead("test_collection".to_string()),
                 UnifiedPermission::VectorSearch("test_collection".to_string()),
-            ].into_iter().collect(),
+            ]
+            .into_iter()
+            .collect(),
             auth_method: AuthMethod::JWT,
             session_id: "session_123".to_string(),
             expires_at: None,
@@ -591,17 +624,20 @@ mod tests {
         };
 
         // Test permission checking
-        let can_read = rbac_manager.check_permission(
-            &user_context,
-            &UnifiedPermission::CollectionRead("test_collection".to_string())
-        ).await.unwrap();
+        let can_read = rbac_manager
+            .check_permission(
+                &user_context,
+                &UnifiedPermission::CollectionRead("test_collection".to_string()),
+            )
+            .await
+            .unwrap();
 
         assert!(can_read);
 
-        let cannot_admin = rbac_manager.check_permission(
-            &user_context,
-            &UnifiedPermission::SystemAdmin
-        ).await.unwrap();
+        let cannot_admin = rbac_manager
+            .check_permission(&user_context, &UnifiedPermission::SystemAdmin)
+            .await
+            .unwrap();
 
         assert!(!cannot_admin);
     }
@@ -612,13 +648,15 @@ mod tests {
         let rbac_manager = ConsolidatedRBACManager::new(config);
 
         // User with admin permission should have access to specific operations
-        let admin_permissions = vec![
-            UnifiedPermission::CollectionAdmin("test_collection".to_string()),
-        ].into_iter().collect();
+        let admin_permissions = vec![UnifiedPermission::CollectionAdmin(
+            "test_collection".to_string(),
+        )]
+        .into_iter()
+        .collect();
 
         let has_read = rbac_manager.check_wildcard_permissions(
             &admin_permissions,
-            &UnifiedPermission::CollectionRead("test_collection".to_string())
+            &UnifiedPermission::CollectionRead("test_collection".to_string()),
         );
 
         assert!(has_read);
@@ -630,12 +668,9 @@ mod tests {
         let rbac_manager = ConsolidatedRBACManager::new(config);
 
         // Assign role to user
-        let result = rbac_manager.assign_role_to_user(
-            "test_user",
-            Some("test_tenant"),
-            "collection_user",
-            "admin"
-        ).await;
+        let result = rbac_manager
+            .assign_role_to_user("test_user", Some("test_tenant"), "collection_user", "admin")
+            .await;
 
         assert!(result.is_ok());
 

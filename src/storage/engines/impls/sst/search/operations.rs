@@ -19,15 +19,15 @@
 //! Low-level search operations and utilities for the SST engine.
 //! Provides atomic search operations and file-level search coordination.
 
+use anyhow::{Context, Result};
 use std::sync::Arc;
-use anyhow::{Result, Context};
 use tracing::{debug, info, warn};
 
-use crate::storage::engines::impls::sst::SstEngine;
-use crate::core::search::results::OptimizedSearchRecord;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::FilterExpression;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::compute::distance_computation::DistanceMetric;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::storage::engines::impls::sst::SstEngine;
 
 /// Low-level search operations
 pub struct SearchOperations {
@@ -51,7 +51,9 @@ impl SearchOperations {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!("🔍 SearchOps: Searching SSTable file: {}", file_path);
 
-        let results = self.engine.sstable_reader()
+        let results = self
+            .engine
+            .sstable_reader()
             .search_with_filter(
                 file_path,
                 query_vector,
@@ -63,7 +65,11 @@ impl SearchOperations {
             .await
             .context("Failed to search SSTable file")?;
 
-        debug!("📊 SearchOps: Found {} results in {}", results.len(), file_path);
+        debug!(
+            "📊 SearchOps: Found {} results in {}",
+            results.len(),
+            file_path
+        );
         Ok(results)
     }
 
@@ -76,7 +82,10 @@ impl SearchOperations {
         distance_metric: DistanceMetric,
         filter_expression: Option<&FilterExpression>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        debug!("🔍 SearchOps: Searching {} SSTable files in parallel", file_paths.len());
+        debug!(
+            "🔍 SearchOps: Searching {} SSTable files in parallel",
+            file_paths.len()
+        );
 
         // Use bounded priority queue to maintain only top-k results
         let mut priority_queue = BoundedPriorityQueue::new(k);
@@ -108,7 +117,10 @@ impl SearchOperations {
                     }
                 }
                 Err(e) => {
-                    warn!("⚠️ SearchOps: Failed to search file {}: {}", file_paths[i], e);
+                    warn!(
+                        "⚠️ SearchOps: Failed to search file {}: {}",
+                        file_paths[i], e
+                    );
                     // Continue with other files
                 }
             }
@@ -117,8 +129,11 @@ impl SearchOperations {
         // Extract results from bounded queue
         let results = priority_queue.into_sorted_vec();
 
-        info!("📊 SearchOps: Parallel search completed, {} results from {} candidates",
-              results.len(), total_candidates);
+        info!(
+            "📊 SearchOps: Parallel search completed, {} results from {} candidates",
+            results.len(),
+            total_candidates
+        );
         Ok(results)
     }
 
@@ -148,14 +163,13 @@ impl SearchOperations {
     }
 
     /// Check if a vector exists in a specific file using bloom filter
-    async fn check_vector_exists_in_file(
-        &self,
-        file_path: &str,
-        vector_id: &str,
-    ) -> Result<bool> {
+    async fn check_vector_exists_in_file(&self, file_path: &str, vector_id: &str) -> Result<bool> {
         // This would use the bloom filter to quickly check existence
         // For now, we'll implement a simple check
-        debug!("🔍 Checking if vector {} exists in {}", vector_id, file_path);
+        debug!(
+            "🔍 Checking if vector {} exists in {}",
+            vector_id, file_path
+        );
 
         // In a real implementation, this would:
         // 1. Read the bloom filter from the SSTable footer
@@ -192,18 +206,24 @@ impl SearchOperations {
         distance_metric: DistanceMetric,
         filter_expression: Option<&FilterExpression>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        debug!("🎯 SearchOps: Range query with max distance: {}", max_distance);
+        debug!(
+            "🎯 SearchOps: Range query with max distance: {}",
+            max_distance
+        );
 
         let mut all_results = Vec::new();
 
         for file_path in file_paths {
-            match self.search_sstable_file(
-                file_path,
-                query_vector,
-                10000, // Large k to get all candidates
-                distance_metric,
-                filter_expression,
-            ).await {
+            match self
+                .search_sstable_file(
+                    file_path,
+                    query_vector,
+                    10000, // Large k to get all candidates
+                    distance_metric,
+                    filter_expression,
+                )
+                .await
+            {
                 Ok(results) => {
                     // Filter results by distance threshold
                     let filtered: Vec<_> = results
@@ -211,7 +231,11 @@ impl SearchOperations {
                         .filter(|r| r.score <= max_distance)
                         .collect();
 
-                    debug!("📊 Found {} results within range in {}", filtered.len(), file_path);
+                    debug!(
+                        "📊 Found {} results within range in {}",
+                        filtered.len(),
+                        file_path
+                    );
                     all_results.extend(filtered);
                 }
                 Err(e) => {
@@ -222,11 +246,16 @@ impl SearchOperations {
 
         // Sort by score
         all_results.sort_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        info!("📊 SearchOps: Range query completed, {} results within distance {}",
-              all_results.len(), max_distance);
+        info!(
+            "📊 SearchOps: Range query completed, {} results within distance {}",
+            all_results.len(),
+            max_distance
+        );
         Ok(all_results)
     }
 
@@ -258,7 +287,10 @@ impl SearchOperations {
         }
 
         if k > 10000 {
-            warn!("⚠️ SearchOps: Large k value ({}), performance may be impacted", k);
+            warn!(
+                "⚠️ SearchOps: Large k value ({}), performance may be impacted",
+                k
+            );
         }
 
         // Validate distance metric compatibility
@@ -267,7 +299,10 @@ impl SearchOperations {
                 // These are supported
             }
             _ => {
-                return Err(anyhow::anyhow!("Unsupported distance metric: {:?}", distance_metric));
+                return Err(anyhow::anyhow!(
+                    "Unsupported distance metric: {:?}",
+                    distance_metric
+                ));
             }
         }
 
@@ -290,9 +325,9 @@ pub struct SearchOperationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
     #[tokio::test]
     async fn test_validate_search_params() {
@@ -301,14 +336,23 @@ mod tests {
 
         // Test valid parameters
         let query_vector = vec![1.0, 2.0, 3.0];
-        assert!(ops.validate_search_params(&query_vector, 10, DistanceMetric::Cosine).is_ok());
+        assert!(
+            ops.validate_search_params(&query_vector, 10, DistanceMetric::Cosine)
+                .is_ok()
+        );
 
         // Test empty vector
         let empty_vector = vec![];
-        assert!(ops.validate_search_params(&empty_vector, 10, DistanceMetric::Cosine).is_err());
+        assert!(
+            ops.validate_search_params(&empty_vector, 10, DistanceMetric::Cosine)
+                .is_err()
+        );
 
         // Test zero k
-        assert!(ops.validate_search_params(&query_vector, 0, DistanceMetric::Cosine).is_err());
+        assert!(
+            ops.validate_search_params(&query_vector, 0, DistanceMetric::Cosine)
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -322,10 +366,13 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 }

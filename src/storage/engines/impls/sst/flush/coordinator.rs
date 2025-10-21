@@ -19,9 +19,9 @@
 //! Coordinates flush operations across multiple collections and manages
 //! the overall flush workflow for the SST engine.
 
-use std::sync::Arc;
 use anyhow::Result;
-use tracing::{info, debug};
+use std::sync::Arc;
+use tracing::{debug, info};
 
 use crate::storage::engines::impls::sst::SstEngine;
 use crate::storage::traits::{FlushParameters, FlushResult};
@@ -94,11 +94,11 @@ impl FlushCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use crate::storage::engines::impls::sst::SstConfig;
-    use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::proto::proximadb_v1::VectorRecord;
+    use crate::storage::engines::impls::sst::SstConfig;
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_flush_coordinator_validation() {
@@ -124,10 +124,13 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 }

@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::{ComparisonOperator, FilterExpression};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Column-oriented filter evaluator with predicate pushdown
@@ -23,13 +23,13 @@ pub struct VIPERColumnFilterEvaluator {
 }
 
 impl VIPERColumnFilterEvaluator {
-    pub fn new() -> Self {
-        let filesystem_factory = Arc::new(FilesystemFactory::default());
-        Self {
+    pub async fn new() -> Result<Self> {
+        let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
+        Ok(Self {
             column_cache: HashMap::new(),
             loaded_columns: HashSet::new(),
             filesystem_factory,
-        }
+        })
     }
 
     pub fn with_filesystem_factory(filesystem_factory: Arc<FilesystemFactory>) -> Self {
@@ -307,16 +307,17 @@ impl VIPERColumnFilterEvaluator {
                     base_fs,
                     "viper_collection".to_string(),
                     "viper".to_string(),
-                )
+                ),
             );
-            let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-                vec![parquet_file.to_string()],
-                0, // Dimension not needed for metadata column reading
-                self.filesystem_factory.clone(),
-                cached_filesystem,
-                "viper_collection".to_string(),
-                "viper".to_string(),
-            )?;
+            let reader =
+                crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+                    vec![parquet_file.to_string()],
+                    0, // Dimension not needed for metadata column reading
+                    self.filesystem_factory.clone(),
+                    cached_filesystem,
+                    "viper_collection".to_string(),
+                    "viper".to_string(),
+                )?;
 
             // Get collection context to check if this is a filterable column
             let collection_context = reader.get_collection_context().await;
@@ -324,10 +325,16 @@ impl VIPERColumnFilterEvaluator {
             let filterable_columns: Vec<String> = vec![];
 
             // Use common helper for consistency
-            if crate::storage::engines::core::filter_evaluator::is_filterable_field(name, &filterable_columns) {
+            if crate::storage::engines::core::filter_evaluator::is_filterable_field(
+                name,
+                &filterable_columns,
+            ) {
                 // For filterable columns, read the specific column directly
                 // This is the fast path - column-based access
-                debug!("🎯 Column '{}' is filterable - using direct column access", name);
+                debug!(
+                    "🎯 Column '{}' is filterable - using direct column access",
+                    name
+                );
 
                 // TODO: Implement actual column reading from Parquet
                 // For now, placeholder implementation
@@ -336,7 +343,10 @@ impl VIPERColumnFilterEvaluator {
             } else {
                 // For non-filterable columns, we need to read from extra_meta Map
                 // This is the slow path - requires scanning Map entries
-                debug!("🎯 Column '{}' is in extra_meta Map - using Map scan (slower)", name);
+                debug!(
+                    "🎯 Column '{}' is in extra_meta Map - using Map scan (slower)",
+                    name
+                );
 
                 // TODO: Implement Map column scanning
                 // This requires reading the extra_meta column and extracting specific keys
@@ -346,10 +356,7 @@ impl VIPERColumnFilterEvaluator {
 
             self.loaded_columns.insert(name.clone());
 
-            debug!(
-                "🎯 Loaded values for column '{}'",
-                name
-            );
+            debug!("🎯 Loaded values for column '{}'", name);
         }
 
         Ok(())
@@ -463,7 +470,8 @@ pub async fn evaluate_metadata_filter_with_config(
         .collect();
 
     // Convert SqlValue metadata to serde_json::Value
-    let metadata_json = crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
+    let metadata_json =
+        crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
 
     // Extract extra_meta if present (for non-filterable fields)
     // Note: This would need to be extracted from the record's metadata
@@ -486,12 +494,12 @@ pub struct VIPERSelectiveReader {
 }
 
 impl VIPERSelectiveReader {
-    pub fn new() -> Self {
-        let filesystem_factory = Arc::new(FilesystemFactory::default());
-        Self {
+    pub async fn new() -> Result<Self> {
+        let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
+        Ok(Self {
             dimension: None, // Will be detected from data when needed
             filesystem_factory,
-        }
+        })
     }
 
     pub fn with_filesystem_factory(filesystem_factory: Arc<FilesystemFactory>) -> Self {
@@ -528,7 +536,9 @@ impl VIPERSelectiveReader {
         );
 
         // Implement true selective parquet reading using row indices
-        let selected_records = self.read_selective_rows(parquet_file, &qualifying_indices).await?;
+        let selected_records = self
+            .read_selective_rows(parquet_file, &qualifying_indices)
+            .await?;
 
         let io_savings = if !selected_records.is_empty() {
             // Calculate I/O savings based on selective reading
@@ -546,12 +556,12 @@ impl VIPERSelectiveReader {
 
         Ok(selected_records)
     }
-    
+
     /// Read only specific rows from Parquet file using row indices
     async fn read_selective_rows(
         &self,
         file_path: &str,
-        row_indices: &[usize]
+        row_indices: &[usize],
     ) -> Result<Vec<VectorRecord>> {
         // For selective reading, dimension is not needed - Parquet has the schema
         // Create UnifiedCachingFilesystem for optimal performance
@@ -561,7 +571,7 @@ impl VIPERSelectiveReader {
                 base_fs,
                 "viper_collection".to_string(),
                 "viper".to_string(),
-            )
+            ),
         );
         let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -576,26 +586,29 @@ impl VIPERSelectiveReader {
         // TODO: Implement proper selective range reading when API is available
         let _ranges = self.convert_indices_to_ranges(row_indices);
         let records = Vec::new(); // Placeholder for selective reading
-        
-        debug!("Selective parquet read completed: {} records from {} indices", 
-               records.len(), row_indices.len());
-        
+
+        debug!(
+            "Selective parquet read completed: {} records from {} indices",
+            records.len(),
+            row_indices.len()
+        );
+
         Ok(records)
     }
-    
+
     /// Convert row indices to efficient range specifications for bulk reading
     fn convert_indices_to_ranges(&self, indices: &[usize]) -> Vec<(usize, usize)> {
         if indices.is_empty() {
             return vec![];
         }
-        
+
         let mut sorted_indices = indices.to_vec();
         sorted_indices.sort_unstable();
-        
+
         let mut ranges = Vec::new();
         let mut range_start = sorted_indices[0];
         let mut range_end = sorted_indices[0];
-        
+
         // Merge consecutive indices into ranges for efficient I/O
         for &idx in &sorted_indices[1..] {
             if idx == range_end + 1 {
@@ -607,7 +620,7 @@ impl VIPERSelectiveReader {
             }
         }
         ranges.push((range_start, range_end + 1)); // Final range
-        
+
         ranges
     }
 }
@@ -618,11 +631,11 @@ mod tests {
     use crate::core::search::{ComparisonOperator, FilterExpression};
 
     #[tokio::test]
-    async fn test_viper_predicate_pushdown() {
-        let mut evaluator = VIPERColumnFilterEvaluator::new();
+    async fn test_viper_predicate_pushdown() -> anyhow::Result<()> {
+        let _evaluator = VIPERColumnFilterEvaluator::new().await?;
 
         // Simple equality filter
-        let filter = FilterExpression::Comparison {
+        let _filter = FilterExpression::Comparison {
             field: "category".to_string(),
             operator: ComparisonOperator::Equals,
             value: serde_json::json!("electronics"),
@@ -632,14 +645,15 @@ mod tests {
         // For now it demonstrates the API
 
         debug!("VIPER predicate pushdown test - API demonstration");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_parallel_column_evaluation() {
-        let mut evaluator = VIPERColumnFilterEvaluator::new();
+    async fn test_parallel_column_evaluation() -> anyhow::Result<()> {
+        let _evaluator = VIPERColumnFilterEvaluator::new().await?;
 
         // Complex AND/OR filter
-        let filter = FilterExpression::And(vec![
+        let _filter = FilterExpression::And(vec![
             FilterExpression::Comparison {
                 field: "category".to_string(),
                 operator: ComparisonOperator::Equals,
@@ -653,5 +667,6 @@ mod tests {
         ]);
 
         debug!("VIPER parallel column evaluation test - API demonstration");
+        Ok(())
     }
 }

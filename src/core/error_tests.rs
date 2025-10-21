@@ -12,9 +12,8 @@ mod tests {
     fn test_vector_db_error_display() {
         // Test each error variant's display formatting
 
-        let storage_err = VectorDBError::Storage(StorageError::SstEngine(
-            "SST compaction failed".to_string(),
-        ));
+        let storage_err =
+            VectorDBError::Storage(StorageError::SstEngine("SST compaction failed".to_string()));
         assert_eq!(
             storage_err.to_string(),
             "Storage error: SST engine error: SST compaction failed"
@@ -58,11 +57,7 @@ mod tests {
         assert!(io_err.to_string().contains("Disk I/O error"));
 
         let corruption_err = StorageError::Corruption("Checksum mismatch".to_string());
-        assert!(
-            corruption_err
-                .to_string()
-                .contains("Corruption detected")
-        );
+        assert!(corruption_err.to_string().contains("Corruption detected"));
 
         let exists_err = StorageError::AlreadyExists("collection_1".to_string());
         assert_eq!(

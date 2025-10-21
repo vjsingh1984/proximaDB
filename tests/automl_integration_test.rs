@@ -5,30 +5,24 @@
 
 //! Integration tests for AutoML Framework
 
-use proximadb::automl::{
-    AutoMLCoordinator, AutoMLConfig, AutoMLService,
-    WorkloadAnalyzer, WorkloadPattern,
-    OptimizationPipeline, OptimizationGoal,
-    HyperparameterTuner, TuningConfig,
-};
+use proximadb::automl::optimization::OptimizationStrategy;
 use proximadb::automl::prediction::{
-    PerformancePredictor, FeatureVector, TrainingSample, TargetMetric,
+    FeatureVector, PerformancePredictor, TargetMetric, TrainingSample,
 };
-use proximadb::automl::optimization::{
-    OptimizationStrategy,
-};
-use proximadb::automl::tuning::{
-    TuningAlgorithm, ProximaDBHyperparameters, ParameterValue,
+use proximadb::automl::tuning::{ParameterValue, ProximaDBHyperparameters, TuningAlgorithm};
+use proximadb::automl::{
+    AutoMLConfig, AutoMLCoordinator, AutoMLService, HyperparameterTuner, OptimizationGoal,
+    OptimizationPipeline, TuningConfig, WorkloadAnalyzer, WorkloadPattern,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_automl_coordinator_lifecycle() {
     let config = AutoMLConfig {
         enabled: true,
-        min_data_points: 10, // Low for testing
+        min_data_points: 10,           // Low for testing
         optimization_interval_secs: 1, // Fast for testing
         min_improvement_threshold: 1.0,
         max_concurrent_optimizations: 2,
@@ -51,10 +45,7 @@ async fn test_automl_coordinator_lifecycle() {
     assert!(status.enabled);
 
     // Stop the coordinator with timeout
-    let stop_result = tokio::time::timeout(
-        Duration::from_secs(35),
-        coordinator.stop()
-    ).await;
+    let stop_result = tokio::time::timeout(Duration::from_secs(35), coordinator.stop()).await;
 
     assert!(stop_result.is_ok(), "Coordinator stop timed out");
     assert!(stop_result.unwrap().is_ok(), "Coordinator stop failed");
@@ -70,9 +61,18 @@ async fn test_workload_pattern_detection() {
 
     // Simulate read-heavy workload
     for i in 0..20 {
-        analyzer.record_metric("test_collection", "reads_per_sec", 1000.0 + i as f64).await.unwrap();
-        analyzer.record_metric("test_collection", "writes_per_sec", 10.0).await.unwrap();
-        analyzer.record_metric("test_collection", "query_latency_ms", 5.0).await.unwrap();
+        analyzer
+            .record_metric("test_collection", "reads_per_sec", 1000.0 + i as f64)
+            .await
+            .unwrap();
+        analyzer
+            .record_metric("test_collection", "writes_per_sec", 10.0)
+            .await
+            .unwrap();
+        analyzer
+            .record_metric("test_collection", "query_latency_ms", 5.0)
+            .await
+            .unwrap();
     }
 
     let pattern = analyzer.analyze_workload("test_collection").await.unwrap();
@@ -90,9 +90,18 @@ async fn test_workload_pattern_transitions() {
 
     // Start with write-heavy pattern
     for _ in 0..15 {
-        analyzer.record_metric("test_collection", "reads_per_sec", 10.0).await.unwrap();
-        analyzer.record_metric("test_collection", "writes_per_sec", 1000.0).await.unwrap();
-        analyzer.record_metric("test_collection", "query_latency_ms", 20.0).await.unwrap();
+        analyzer
+            .record_metric("test_collection", "reads_per_sec", 10.0)
+            .await
+            .unwrap();
+        analyzer
+            .record_metric("test_collection", "writes_per_sec", 1000.0)
+            .await
+            .unwrap();
+        analyzer
+            .record_metric("test_collection", "query_latency_ms", 20.0)
+            .await
+            .unwrap();
     }
 
     let pattern = analyzer.analyze_workload("test_collection").await.unwrap();
@@ -107,9 +116,18 @@ async fn test_workload_pattern_transitions() {
     // ratio = (150 + 500*N) / (15000 + 500*N)
     // For ratio >= 0.5: 150 + 500*N >= 0.5 * (15000 + 500*N) => N >= 29.4
     for _ in 0..35 {
-        analyzer.record_metric("test_collection", "reads_per_sec", 500.0).await.unwrap();
-        analyzer.record_metric("test_collection", "writes_per_sec", 500.0).await.unwrap();
-        analyzer.record_metric("test_collection", "query_latency_ms", 10.0).await.unwrap();
+        analyzer
+            .record_metric("test_collection", "reads_per_sec", 500.0)
+            .await
+            .unwrap();
+        analyzer
+            .record_metric("test_collection", "writes_per_sec", 500.0)
+            .await
+            .unwrap();
+        analyzer
+            .record_metric("test_collection", "query_latency_ms", 10.0)
+            .await
+            .unwrap();
     }
 
     let pattern = analyzer.analyze_workload("test_collection").await.unwrap();
@@ -123,9 +141,9 @@ async fn test_performance_prediction() {
     // Create training samples
     for i in 0..100 {
         let features = FeatureVector::from_characteristics(
-            1000 * (i + 1),  // vector_count
-            128,             // dimension
-            0.1,             // sparsity
+            1000 * (i + 1),         // vector_count
+            128,                    // dimension
+            0.1,                    // sparsity
             2.0 + (i as f64 * 0.1), // read_write_ratio
         );
 
@@ -139,15 +157,25 @@ async fn test_performance_prediction() {
     }
 
     // Train model
-    predictor.train_model("test_collection", "linear").await.unwrap();
+    predictor
+        .train_model("test_collection", "linear")
+        .await
+        .unwrap();
 
     // Make prediction
     let test_features = FeatureVector::from_characteristics(5000, 128, 0.1, 3.0);
-    let prediction = predictor.predict("test_collection", &test_features).await.unwrap();
+    let prediction = predictor
+        .predict("test_collection", &test_features)
+        .await
+        .unwrap();
 
     // After training on latency values from 50-149, prediction should be a finite number
     // Simple linear regression may produce various outputs depending on convergence
-    assert!(prediction.value.is_finite(), "Prediction should be finite, got: {}", prediction.value);
+    assert!(
+        prediction.value.is_finite(),
+        "Prediction should be finite, got: {}",
+        prediction.value
+    );
     assert_eq!(prediction.model_type, "LinearRegression");
 }
 
@@ -164,12 +192,15 @@ async fn test_optimization_pipeline_grid_search() {
         config.get("param1").unwrap_or(&100.0) * -1.0
     };
 
-    let best_config = pipeline.optimize(
-        "test_collection",
-        OptimizationGoal::MinimizeLatency,
-        OptimizationStrategy::GridSearch,
-        WorkloadPattern::ReadHeavy,
-    ).await.unwrap();
+    let best_config = pipeline
+        .optimize(
+            "test_collection",
+            OptimizationGoal::MinimizeLatency,
+            OptimizationStrategy::GridSearch,
+            WorkloadPattern::ReadHeavy,
+        )
+        .await
+        .unwrap();
 
     assert_eq!(best_config.engine.engine_type, "SST"); // Default for read-heavy
 
@@ -183,12 +214,15 @@ async fn test_optimization_pipeline_random_search() {
 
     pipeline.start().await.unwrap();
 
-    let best_config = pipeline.optimize(
-        "test_collection",
-        OptimizationGoal::MaximizeThroughput,
-        OptimizationStrategy::RandomSearch { budget: 10 },
-        WorkloadPattern::WriteHeavy,
-    ).await.unwrap();
+    let best_config = pipeline
+        .optimize(
+            "test_collection",
+            OptimizationGoal::MaximizeThroughput,
+            OptimizationStrategy::RandomSearch { budget: 10 },
+            WorkloadPattern::WriteHeavy,
+        )
+        .await
+        .unwrap();
 
     // Should have selected configuration for write-heavy workload
     assert!(best_config.index.algorithm == "LSH" || best_config.index.algorithm == "HNSW");
@@ -205,7 +239,9 @@ async fn test_hyperparameter_tuning_tpe() {
         min_improvement: 0.01,
         parallel_trials: false,
         max_parallel_trials: 1,
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Add HNSW parameters
     for param in ProximaDBHyperparameters::hnsw_params() {
@@ -221,7 +257,8 @@ async fn test_hyperparameter_tuning_tpe() {
         Ok(100.0 - m_value) // Higher score for lower M
     };
 
-    let best_params = tuner.with_algorithm(TuningAlgorithm::TPE)
+    let best_params = tuner
+        .with_algorithm(TuningAlgorithm::TPE)
         .tune(objective)
         .await
         .unwrap();
@@ -239,7 +276,9 @@ async fn test_hyperparameter_tuning_grid() {
         min_improvement: 0.01,
         parallel_trials: false,
         max_parallel_trials: 1,
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Add quantization parameters
     for param in ProximaDBHyperparameters::quantization_params() {
@@ -261,7 +300,8 @@ async fn test_hyperparameter_tuning_grid() {
         }
     };
 
-    let best_params = tuner.with_algorithm(TuningAlgorithm::Grid)
+    let best_params = tuner
+        .with_algorithm(TuningAlgorithm::Grid)
         .tune(objective)
         .await
         .unwrap();
@@ -318,12 +358,15 @@ async fn test_optimization_goals() {
     ];
 
     for goal in goals {
-        let config = pipeline.optimize(
-            "test_collection",
-            goal.clone(),
-            OptimizationStrategy::RandomSearch { budget: 5 },
-            WorkloadPattern::Mixed,
-        ).await.unwrap();
+        let config = pipeline
+            .optimize(
+                "test_collection",
+                goal.clone(),
+                OptimizationStrategy::RandomSearch { budget: 5 },
+                WorkloadPattern::Mixed,
+            )
+            .await
+            .unwrap();
 
         // Verify we got a configuration
         assert!(!config.index.algorithm.is_empty());
@@ -340,15 +383,24 @@ async fn test_workload_prediction() {
     // Create a trend - increasing reads
     for i in 0..20 {
         let reads = 100.0 + (i as f64 * 10.0);
-        analyzer.record_metric("test_collection", "reads_per_sec", reads).await.unwrap();
-        analyzer.record_metric("test_collection", "writes_per_sec", 50.0).await.unwrap();
+        analyzer
+            .record_metric("test_collection", "reads_per_sec", reads)
+            .await
+            .unwrap();
+        analyzer
+            .record_metric("test_collection", "writes_per_sec", 50.0)
+            .await
+            .unwrap();
     }
 
     // Current pattern
     let current = analyzer.analyze_workload("test_collection").await.unwrap();
 
     // Predict future (1 hour)
-    let future = analyzer.predict_pattern("test_collection", 3600).await.unwrap();
+    let future = analyzer
+        .predict_pattern("test_collection", 3600)
+        .await
+        .unwrap();
 
     // With increasing reads, should predict read-heavy pattern
     assert_eq!(future, WorkloadPattern::ReadHeavy);
@@ -363,12 +415,15 @@ async fn test_optimization_history() {
 
     // Run multiple optimizations
     for i in 0..3 {
-        let _ = pipeline.optimize(
-            &format!("collection_{}", i),
-            OptimizationGoal::Balanced,
-            OptimizationStrategy::RandomSearch { budget: 3 },
-            WorkloadPattern::Mixed,
-        ).await.unwrap();
+        let _ = pipeline
+            .optimize(
+                &format!("collection_{}", i),
+                OptimizationGoal::Balanced,
+                OptimizationStrategy::RandomSearch { budget: 3 },
+                WorkloadPattern::Mixed,
+            )
+            .await
+            .unwrap();
     }
 
     // Check history
@@ -405,12 +460,14 @@ async fn test_concurrent_optimizations() {
     // Test sequential optimizations instead of concurrent to avoid lifetime issues
     for i in 0..3 {
         let collection_name = format!("collection_{}", i);
-        let result = pipeline.optimize(
-            &collection_name,
-            OptimizationGoal::MinimizeLatency,
-            OptimizationStrategy::RandomSearch { budget: 5 },
-            WorkloadPattern::Mixed,
-        ).await;
+        let result = pipeline
+            .optimize(
+                &collection_name,
+                OptimizationGoal::MinimizeLatency,
+                OptimizationStrategy::RandomSearch { budget: 5 },
+                WorkloadPattern::Mixed,
+            )
+            .await;
         assert!(result.is_ok());
     }
 
@@ -436,9 +493,18 @@ mod test_utils {
         };
 
         for _ in 0..points {
-            analyzer.record_metric(collection_id, "reads_per_sec", reads).await.unwrap();
-            analyzer.record_metric(collection_id, "writes_per_sec", writes).await.unwrap();
-            analyzer.record_metric(collection_id, "query_latency_ms", 10.0).await.unwrap();
+            analyzer
+                .record_metric(collection_id, "reads_per_sec", reads)
+                .await
+                .unwrap();
+            analyzer
+                .record_metric(collection_id, "writes_per_sec", writes)
+                .await
+                .unwrap();
+            analyzer
+                .record_metric(collection_id, "query_latency_ms", 10.0)
+                .await
+                .unwrap();
         }
     }
 }

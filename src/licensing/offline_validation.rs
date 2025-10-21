@@ -16,7 +16,10 @@ impl OfflineLicenseValidator {
         Ok(Self)
     }
 
-    pub async fn validate_offline_license(&self, _license: &LicenseInfo) -> Result<LicenseStatus, anyhow::Error> {
+    pub async fn validate_offline_license(
+        &self,
+        _license: &LicenseInfo,
+    ) -> Result<LicenseStatus, anyhow::Error> {
         Ok(LicenseStatus::Valid)
     }
 

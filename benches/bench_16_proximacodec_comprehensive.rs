@@ -8,7 +8,7 @@
 //! - SIMD (NEON on ARM, AVX2/AVX-512 on x86)
 //! - GPU (Metal on macOS, CUDA on Linux, ROCm on AMD, OpenCL fallback)
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::time::Instant;
 
 // ProximaCodec unified API
@@ -16,7 +16,7 @@ use proximadb::storage::engines::core::ops::proximacodec::{ProximaCodec, types::
 
 // Baseline implementations (for direct comparisons)
 use proximadb::storage::engines::core::ops::proximacodec::impls::baseline::functions::{
-    raw, delta, double_delta, frame_of_ref, zigzag,
+    delta, double_delta, frame_of_ref, raw, zigzag,
 };
 
 // SIMD implementations (for direct comparisons)
@@ -46,7 +46,7 @@ fn generate_normalized(num_vectors: usize, dimension: usize) -> Vec<f32> {
             let mut hasher = state.build_hasher();
             i.hash(&mut hasher);
             let hash = hasher.finish();
-            ((hash % 2000) as f32 / 1000.0) - 1.0  // Range: [-1.0, 1.0]
+            ((hash % 2000) as f32 / 1000.0) - 1.0 // Range: [-1.0, 1.0]
         })
         .collect()
 }
@@ -151,7 +151,10 @@ fn get_platform_info() -> String {
         return format!("{} {} (CUDA GPU)", os, arch);
     }
 
-    #[cfg(all(target_arch = "aarch64", not(all(feature = "metal", target_os = "macos"))))]
+    #[cfg(all(
+        target_arch = "aarch64",
+        not(all(feature = "metal", target_os = "macos"))
+    ))]
     {
         return format!("{} {} (NEON SIMD)", os, arch);
     }
@@ -236,7 +239,8 @@ fn bench_double_delta_all_variants(c: &mut Criterion) {
             |b, vals| {
                 b.iter(|| {
                     let encoded = simd::simd_double_delta_encode_f32(black_box(vals)).unwrap();
-                    let _decoded = simd::simd_double_delta_decode_f32(&encoded, vals.len()).unwrap();
+                    let _decoded =
+                        simd::simd_double_delta_decode_f32(&encoded, vals.len()).unwrap();
                 })
             },
         );
@@ -249,7 +253,8 @@ fn bench_double_delta_all_variants(c: &mut Criterion) {
             |b, vals| {
                 b.iter(|| {
                     let encoded = metal::metal_double_delta_encode_f32(black_box(vals)).unwrap();
-                    let _decoded = metal::metal_double_delta_decode_f32(&encoded, vals.len()).unwrap();
+                    let _decoded =
+                        metal::metal_double_delta_decode_f32(&encoded, vals.len()).unwrap();
                 })
             },
         );
@@ -262,7 +267,8 @@ fn bench_double_delta_all_variants(c: &mut Criterion) {
             |b, vals| {
                 b.iter(|| {
                     let encoded = cuda::cuda_double_delta_encode_f32(black_box(vals)).unwrap();
-                    let _decoded = cuda::cuda_double_delta_decode_f32(&encoded, vals.len()).unwrap();
+                    let _decoded =
+                        cuda::cuda_double_delta_decode_f32(&encoded, vals.len()).unwrap();
                 })
             },
         );
@@ -370,8 +376,16 @@ fn bench_frame_of_reference_all_variants(c: &mut Criterion) {
             &values,
             |b, vals| {
                 b.iter(|| {
-                    let encoded = simd::simd_frame_of_reference_encode_f32(black_box(vals), reference, bits).unwrap();
-                    let _decoded = simd::simd_frame_of_reference_decode_f32(&encoded, reference, bits, vals.len()).unwrap();
+                    let encoded =
+                        simd::simd_frame_of_reference_encode_f32(black_box(vals), reference, bits)
+                            .unwrap();
+                    let _decoded = simd::simd_frame_of_reference_decode_f32(
+                        &encoded,
+                        reference,
+                        bits,
+                        vals.len(),
+                    )
+                    .unwrap();
                 })
             },
         );
@@ -383,8 +397,19 @@ fn bench_frame_of_reference_all_variants(c: &mut Criterion) {
             &values,
             |b, vals| {
                 b.iter(|| {
-                    let encoded = metal::metal_frame_of_reference_encode_f32(black_box(vals), reference, bits).unwrap();
-                    let _decoded = metal::metal_frame_of_reference_decode_f32(&encoded, reference, bits, vals.len()).unwrap();
+                    let encoded = metal::metal_frame_of_reference_encode_f32(
+                        black_box(vals),
+                        reference,
+                        bits,
+                    )
+                    .unwrap();
+                    let _decoded = metal::metal_frame_of_reference_decode_f32(
+                        &encoded,
+                        reference,
+                        bits,
+                        vals.len(),
+                    )
+                    .unwrap();
                 })
             },
         );
@@ -396,8 +421,16 @@ fn bench_frame_of_reference_all_variants(c: &mut Criterion) {
             &values,
             |b, vals| {
                 b.iter(|| {
-                    let encoded = cuda::cuda_frame_of_reference_encode_f32(black_box(vals), reference, bits).unwrap();
-                    let _decoded = cuda::cuda_frame_of_reference_decode_f32(&encoded, reference, bits, vals.len()).unwrap();
+                    let encoded =
+                        cuda::cuda_frame_of_reference_encode_f32(black_box(vals), reference, bits)
+                            .unwrap();
+                    let _decoded = cuda::cuda_frame_of_reference_decode_f32(
+                        &encoded,
+                        reference,
+                        bits,
+                        vals.len(),
+                    )
+                    .unwrap();
                 })
             },
         );
@@ -438,7 +471,8 @@ fn bench_zigzag_all_variants(c: &mut Criterion) {
             |b, vals| {
                 b.iter(|| {
                     let encoded = simd::simd_zigzag_encode_f32(black_box(vals), bits).unwrap();
-                    let _decoded = simd::simd_zigzag_decode_f32(&encoded, bits, vals.len()).unwrap();
+                    let _decoded =
+                        simd::simd_zigzag_decode_f32(&encoded, bits, vals.len()).unwrap();
                 })
             },
         );
@@ -451,7 +485,8 @@ fn bench_zigzag_all_variants(c: &mut Criterion) {
             |b, vals| {
                 b.iter(|| {
                     let encoded = metal::metal_zigzag_encode_f32(black_box(vals), bits).unwrap();
-                    let _decoded = metal::metal_zigzag_decode_f32(&encoded, bits, vals.len()).unwrap();
+                    let _decoded =
+                        metal::metal_zigzag_decode_f32(&encoded, bits, vals.len()).unwrap();
                 })
             },
         );
@@ -464,7 +499,8 @@ fn bench_zigzag_all_variants(c: &mut Criterion) {
             |b, vals| {
                 b.iter(|| {
                     let encoded = cuda::cuda_zigzag_encode_f32(black_box(vals), bits).unwrap();
-                    let _decoded = cuda::cuda_zigzag_decode_f32(&encoded, bits, vals.len()).unwrap();
+                    let _decoded =
+                        cuda::cuda_zigzag_decode_f32(&encoded, bits, vals.len()).unwrap();
                 })
             },
         );
@@ -486,8 +522,10 @@ fn bench_summary_large_batch(c: &mut Criterion) {
 
     let values = generate_time_series(column_size, 1);
 
-    println!("\n📊 Summary: Column with {} values (1 dimension across {} vectors)",
-             column_size, column_size);
+    println!(
+        "\n📊 Summary: Column with {} values (1 dimension across {} vectors)",
+        column_size, column_size
+    );
     println!("Platform: {}\n", get_platform_info());
 
     // DoubleDelta variants
@@ -540,41 +578,87 @@ struct CompressionMetrics {
 
 /// Analyze compression ratios for ALL encoding schemes across ALL data patterns
 fn bench_compression_analysis(c: &mut Criterion) {
-    println!("\n╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                    ProximaCodec Comprehensive Compression Analysis                                           ║");
-    println!("║         Testing Column Encoding (1 dimension across N vectors)                                               ║");
-    println!("╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝\n");
+    println!(
+        "\n╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗"
+    );
+    println!(
+        "║                    ProximaCodec Comprehensive Compression Analysis                                           ║"
+    );
+    println!(
+        "║         Testing Column Encoding (1 dimension across N vectors)                                               ║"
+    );
+    println!(
+        "╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝\n"
+    );
 
     let codec = ProximaCodec::global();
 
     // Test column sizes (number of vectors per column)
     let column_size = 1024; // Number of vectors (rows in column)
 
-    println!("Testing: Single column with {} values (1 dimension across {} vectors)\n",
-             column_size, column_size);
+    println!(
+        "Testing: Single column with {} values (1 dimension across {} vectors)\n",
+        column_size, column_size
+    );
 
     let mut all_results: Vec<CompressionMetrics> = Vec::new();
 
     // Data pattern generators - now generate single columns
     let patterns: Vec<(&str, Box<dyn Fn(usize) -> Vec<f32>>)> = vec![
-        ("Normalized", Box::new(|size| generate_normalized(size, 1).into_iter().collect())),
-        ("Sinusoidal", Box::new(|size| generate_sinusoidal(size, 1).into_iter().collect())),
-        ("Time-Series", Box::new(|size| generate_time_series(size, 1).into_iter().collect())),
-        ("Sequential", Box::new(|size| generate_sequential(size, 1).into_iter().collect())),
-        ("Random", Box::new(|size| generate_random(size, 1).into_iter().collect())),
-        ("Sparse", Box::new(|size| generate_sparse(size, 1).into_iter().collect())),
-        ("Constant", Box::new(|size| generate_constant(size, 1).into_iter().collect())),
-        ("Clustered", Box::new(|size| generate_clustered(size, 1).into_iter().collect())),
+        (
+            "Normalized",
+            Box::new(|size| generate_normalized(size, 1).into_iter().collect()),
+        ),
+        (
+            "Sinusoidal",
+            Box::new(|size| generate_sinusoidal(size, 1).into_iter().collect()),
+        ),
+        (
+            "Time-Series",
+            Box::new(|size| generate_time_series(size, 1).into_iter().collect()),
+        ),
+        (
+            "Sequential",
+            Box::new(|size| generate_sequential(size, 1).into_iter().collect()),
+        ),
+        (
+            "Random",
+            Box::new(|size| generate_random(size, 1).into_iter().collect()),
+        ),
+        (
+            "Sparse",
+            Box::new(|size| generate_sparse(size, 1).into_iter().collect()),
+        ),
+        (
+            "Constant",
+            Box::new(|size| generate_constant(size, 1).into_iter().collect()),
+        ),
+        (
+            "Clustered",
+            Box::new(|size| generate_clustered(size, 1).into_iter().collect()),
+        ),
     ];
 
     // Encoding schemes to test
     // Only lossless encoding schemes (perfect roundtrip for f32)
     let schemes: Vec<(&'static str, ProximaScheme)> = vec![
-        ("Raw", ProximaScheme::Raw),  // Identity encoding (baseline)
+        ("Raw", ProximaScheme::Raw), // Identity encoding (baseline)
         ("Delta", ProximaScheme::Delta { base: 0 }),
-        ("DoubleDelta", ProximaScheme::DoubleDelta { first_value: 0, first_delta: 0 }),
-        ("BitPacked-32", ProximaScheme::BitPacked { bits: 32 }),  // Lossless for f32 (full precision)
-        ("PForDelta", ProximaScheme::PForDelta { majority_bits: 20, base: 0 }),
+        (
+            "DoubleDelta",
+            ProximaScheme::DoubleDelta {
+                first_value: 0,
+                first_delta: 0,
+            },
+        ),
+        ("BitPacked-32", ProximaScheme::BitPacked { bits: 32 }), // Lossless for f32 (full precision)
+        (
+            "PForDelta",
+            ProximaScheme::PForDelta {
+                majority_bits: 20,
+                base: 0,
+            },
+        ),
         ("Simple8b", ProximaScheme::Simple8b),
         ("VByte", ProximaScheme::VByte),
         ("SparseBitmap", ProximaScheme::SparseBitmap),
@@ -585,8 +669,12 @@ fn bench_compression_analysis(c: &mut Criterion) {
 
     // Test all combinations
     for (pattern_name, gen_fn) in &patterns {
-        println!("\n═══ {} Data Pattern ({} floats = {} bytes) ═══",
-                 pattern_name, column_size, column_size * 4);
+        println!(
+            "\n═══ {} Data Pattern ({} floats = {} bytes) ═══",
+            pattern_name,
+            column_size,
+            column_size * 4
+        );
 
         let values = gen_fn(column_size);
         let original_bytes = values.len() * std::mem::size_of::<f32>();
@@ -634,12 +722,19 @@ fn bench_compression_analysis(c: &mut Criterion) {
 }
 
 fn print_compression_summary(results: &[CompressionMetrics]) {
-    println!("\n\n╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                            COMPREHENSIVE COMPRESSION SUMMARY TABLE                                           ║");
-    println!("╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝\n");
+    println!(
+        "\n\n╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗"
+    );
+    println!(
+        "║                            COMPREHENSIVE COMPRESSION SUMMARY TABLE                                           ║"
+    );
+    println!(
+        "╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝\n"
+    );
 
     // Group by pattern
-    let patterns: Vec<&str> = results.iter()
+    let patterns: Vec<&str> = results
+        .iter()
         .map(|r| r.pattern_name)
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
@@ -647,64 +742,85 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
 
     for pattern in &patterns {
         println!("\n═══ {} Data Pattern ═══", pattern);
-        println!("{:<20} {:>12} {:>12} {:>15} {:>15} {:>15}",
-                 "Scheme", "Original", "Encoded", "Compression", "Encode (µs)", "Decode (µs)");
+        println!(
+            "{:<20} {:>12} {:>12} {:>15} {:>15} {:>15}",
+            "Scheme", "Original", "Encoded", "Compression", "Encode (µs)", "Decode (µs)"
+        );
         println!("{}", "─".repeat(105));
 
-        let mut pattern_results: Vec<_> = results.iter()
+        let mut pattern_results: Vec<_> = results
+            .iter()
             .filter(|r| r.pattern_name == *pattern)
             .collect();
 
         // Sort by compression ratio (best first)
-        pattern_results.sort_by(|a, b| b.compression_ratio.partial_cmp(&a.compression_ratio).unwrap());
+        pattern_results.sort_by(|a, b| {
+            b.compression_ratio
+                .partial_cmp(&a.compression_ratio)
+                .unwrap()
+        });
 
         for result in pattern_results {
-            println!("{:<20} {:>12} {:>12} {:>14.1}% {:>15.2} {:>15.2}",
-                     result.scheme_name,
-                     format_bytes(result.original_bytes),
-                     format_bytes(result.encoded_bytes),
-                     result.compression_ratio * 100.0,
-                     result.encode_time_us,
-                     result.decode_time_us);
+            println!(
+                "{:<20} {:>12} {:>12} {:>14.1}% {:>15.2} {:>15.2}",
+                result.scheme_name,
+                format_bytes(result.original_bytes),
+                format_bytes(result.encoded_bytes),
+                result.compression_ratio * 100.0,
+                result.encode_time_us,
+                result.decode_time_us
+            );
         }
     }
 
     // Best schemes per pattern (weighted: 20% encode + 40% decode + 40% compression)
-    println!("\n\n═══ 🏆 BEST SCHEME PER DATA PATTERN (20% Encode + 40% Decode + 40% Compression) ═══\n");
-    println!("{:<20} {:<24} {:>15} {:>13} {:>13} {:>10}",
-             "Data Pattern", "Recommended Scheme", "Compression", "Encode (µs)", "Decode (µs)", "Score");
+    println!(
+        "\n\n═══ 🏆 BEST SCHEME PER DATA PATTERN (20% Encode + 40% Decode + 40% Compression) ═══\n"
+    );
+    println!(
+        "{:<20} {:<24} {:>15} {:>13} {:>13} {:>10}",
+        "Data Pattern", "Recommended Scheme", "Compression", "Encode (µs)", "Decode (µs)", "Score"
+    );
     println!("{}", "─".repeat(110));
 
     for pattern in &patterns {
         // Only consider schemes with positive compression (no expansion)
-        let pattern_results: Vec<_> = results.iter()
+        let pattern_results: Vec<_> = results
+            .iter()
             .filter(|r| r.pattern_name == *pattern && r.compression_ratio > 0.0)
             .collect();
 
         if pattern_results.is_empty() {
-            println!("{:<20} {:<20} {:>15} {:>13} {:>13} {:>10}",
-                     pattern, "None (all expand)", "N/A", "N/A", "N/A", "N/A");
+            println!(
+                "{:<20} {:<20} {:>15} {:>13} {:>13} {:>10}",
+                pattern, "None (all expand)", "N/A", "N/A", "N/A", "N/A"
+            );
             continue;
         }
 
         // Find min times for normalization
-        let min_encode_time = pattern_results.iter()
+        let min_encode_time = pattern_results
+            .iter()
             .map(|r| r.encode_time_us)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(1.0);
 
-        let min_decode_time = pattern_results.iter()
+        let min_decode_time = pattern_results
+            .iter()
             .map(|r| r.decode_time_us)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(1.0);
 
         // Calculate composite score: 40% decode + 40% compression + 20% encode
-        let mut scored_results: Vec<_> = pattern_results.iter()
+        let mut scored_results: Vec<_> = pattern_results
+            .iter()
             .map(|r| {
                 let compression_score = r.compression_ratio; // Already filtered for > 0
                 let encode_speed_score = (min_encode_time / r.encode_time_us).min(1.0);
                 let decode_speed_score = (min_decode_time / r.decode_time_us).min(1.0);
-                let composite_score = (decode_speed_score * 0.4) + (compression_score * 0.4) + (encode_speed_score * 0.2);
+                let composite_score = (decode_speed_score * 0.4)
+                    + (compression_score * 0.4)
+                    + (encode_speed_score * 0.2);
                 (r, composite_score)
             })
             .collect();
@@ -714,17 +830,22 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
 
         if let Some((best, _score)) = scored_results.first() {
             // Check if Delta is within 5% compression of best and prefer it for speed
-            let best_compression = pattern_results.iter()
-                .max_by(|a, b| a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap())
+            let best_compression = pattern_results
+                .iter()
+                .max_by(|a, b| {
+                    a.compression_ratio
+                        .partial_cmp(&b.compression_ratio)
+                        .unwrap()
+                })
                 .unwrap();
 
-            let delta_result = pattern_results.iter()
-                .find(|r| r.scheme_name == "Delta");
+            let delta_result = pattern_results.iter().find(|r| r.scheme_name == "Delta");
 
             let chosen = if let Some(delta) = delta_result {
                 // If Delta is within 5% of best compression, prefer Delta for speed
                 if (best_compression.compression_ratio - delta.compression_ratio).abs() <= 0.05
-                    && delta.encode_time_us < best.encode_time_us {
+                    && delta.encode_time_us < best.encode_time_us
+                {
                     delta
                 } else {
                     best
@@ -737,19 +858,24 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
             let compression_score = chosen.compression_ratio;
             let encode_speed_score = (min_encode_time / chosen.encode_time_us).min(1.0);
             let decode_speed_score = (min_decode_time / chosen.decode_time_us).min(1.0);
-            let final_score = (decode_speed_score * 0.4) + (compression_score * 0.4) + (encode_speed_score * 0.2);
+            let final_score =
+                (decode_speed_score * 0.4) + (compression_score * 0.4) + (encode_speed_score * 0.2);
 
-            println!("{:<20} {:<20} {:>14.1}% {:>13.2} {:>13.2} {:>10.3}",
-                     pattern,
-                     chosen.scheme_name,
-                     chosen.compression_ratio * 100.0,
-                     chosen.encode_time_us,
-                     chosen.decode_time_us,
-                     final_score);
+            println!(
+                "{:<20} {:<20} {:>14.1}% {:>13.2} {:>13.2} {:>10.3}",
+                pattern,
+                chosen.scheme_name,
+                chosen.compression_ratio * 100.0,
+                chosen.encode_time_us,
+                chosen.decode_time_us,
+                final_score
+            );
         }
     }
 
-    println!("\n═══════════════════════════════════════════════════════════════════════════════════\n");
+    println!(
+        "\n═══════════════════════════════════════════════════════════════════════════════════\n"
+    );
 }
 
 fn format_bytes(bytes: usize) -> String {

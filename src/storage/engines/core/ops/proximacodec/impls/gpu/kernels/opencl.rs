@@ -35,10 +35,13 @@ pub struct OpenCLContext {
 impl OpenCLContext {
     /// Create new OpenCL context
     pub fn new(total_vectors: usize, dimension: usize) -> Result<Self> {
-        let config = GpuBatchConfig::for_backend(&HardwareBackend::OpenCL, total_vectors, dimension);
+        let config =
+            GpuBatchConfig::for_backend(&HardwareBackend::OpenCL, total_vectors, dimension);
 
-        debug!("🌐 [OpenCL] Initializing context: {} vectors, dim={}",
-               total_vectors, dimension);
+        debug!(
+            "🌐 [OpenCL] Initializing context: {} vectors, dim={}",
+            total_vectors, dimension
+        );
 
         Ok(Self { config })
     }
@@ -70,13 +73,21 @@ impl OpenCLContext {
 /// }
 /// ```
 pub fn opencl_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
-    trace!("🔧 [OpenCL] Delta encode: {} values, base={}", values.len(), base);
+    trace!(
+        "🔧 [OpenCL] Delta encode: {} values, base={}",
+        values.len(),
+        base
+    );
 
     // TODO: Real OpenCL implementation using clCreateBuffer/clEnqueueNDRangeKernel
     // For now, use CPU fallback
     let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
 
-    debug!("✅ [OpenCL] Delta encoded {} values → {} deltas", values.len(), deltas.len());
+    debug!(
+        "✅ [OpenCL] Delta encoded {} values → {} deltas",
+        values.len(),
+        deltas.len()
+    );
     Ok(deltas)
 }
 
@@ -97,12 +108,20 @@ pub fn opencl_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 /// }
 /// ```
 pub fn opencl_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
-    trace!("🔧 [OpenCL] Delta decode: {} deltas, base={}", deltas.len(), base);
+    trace!(
+        "🔧 [OpenCL] Delta decode: {} deltas, base={}",
+        deltas.len(),
+        base
+    );
 
     // TODO: Real OpenCL implementation
     let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
 
-    debug!("✅ [OpenCL] Delta decoded {} deltas → {} values", deltas.len(), values.len());
+    debug!(
+        "✅ [OpenCL] Delta decoded {} deltas → {} values",
+        deltas.len(),
+        values.len()
+    );
     Ok(values)
 }
 
@@ -135,14 +154,22 @@ pub fn opencl_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 /// }
 /// ```
 pub fn opencl_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [OpenCL] BitPacked encode: {} values, {}b/val", values.len(), bits);
+    trace!(
+        "🔧 [OpenCL] BitPacked encode: {} values, {}b/val",
+        values.len(),
+        bits
+    );
 
     // TODO: Real OpenCL implementation with atomic operations
     let total_bits = values.len() * bits as usize;
     let byte_count = (total_bits + 7) / 8;
     let mut result = vec![0u8; byte_count];
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
 
     for (i, &value) in values.iter().enumerate() {
         let bit_offset = i * bits as usize;
@@ -157,16 +184,29 @@ pub fn opencl_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         }
     }
 
-    debug!("✅ [OpenCL] BitPacked encoded {} values → {} bytes", values.len(), result.len());
+    debug!(
+        "✅ [OpenCL] BitPacked encoded {} values → {} bytes",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
 /// OpenCL BitPacked decoding for f32
 pub fn opencl_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [OpenCL] BitPacked decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
+    trace!(
+        "🔧 [OpenCL] BitPacked decode: {} bytes, {}b/val, count={}",
+        packed.len(),
+        bits,
+        count
+    );
 
     // TODO: Real OpenCL implementation
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
     let mut result = Vec::with_capacity(count);
 
     for i in 0..count {
@@ -188,7 +228,11 @@ pub fn opencl_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Resul
         result.push(f32::from_bits(value & mask));
     }
 
-    debug!("✅ [OpenCL] BitPacked decoded {} bytes → {} values", packed.len(), result.len());
+    debug!(
+        "✅ [OpenCL] BitPacked decoded {} bytes → {} values",
+        packed.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -197,9 +241,17 @@ pub fn opencl_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Resul
 // ============================================================================
 
 /// OpenCL FrameOfReference encoding
-pub fn opencl_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [OpenCL] FrameOfReference encode: {} values, ref={}, {}b/val",
-           values.len(), reference, bits);
+pub fn opencl_frame_of_reference_encode_f32(
+    values: &[f32],
+    reference: i64,
+    bits: u8,
+) -> Result<Vec<u8>> {
+    trace!(
+        "🔧 [OpenCL] FrameOfReference encode: {} values, ref={}, {}b/val",
+        values.len(),
+        reference,
+        bits
+    );
 
     // Step 1: Compute offsets (parallel in OpenCL kernel)
     let reference_f32 = reference as f32;
@@ -210,7 +262,11 @@ pub fn opencl_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits
     let byte_count = (total_bits + 7) / 8;
     let mut result = vec![0u8; byte_count];
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
 
     for (i, &offset) in offsets.iter().enumerate() {
         let bit_offset = i * bits as usize;
@@ -225,18 +281,35 @@ pub fn opencl_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits
         }
     }
 
-    debug!("✅ [OpenCL] FrameOfReference encoded {} values → {} bytes",
-           values.len(), result.len());
+    debug!(
+        "✅ [OpenCL] FrameOfReference encoded {} values → {} bytes",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
 /// OpenCL FrameOfReference decoding
-pub fn opencl_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [OpenCL] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
-           packed.len(), reference, bits, count);
+pub fn opencl_frame_of_reference_decode_f32(
+    packed: &[u8],
+    reference: i64,
+    bits: u8,
+    count: usize,
+) -> Result<Vec<f32>> {
+    trace!(
+        "🔧 [OpenCL] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
+        packed.len(),
+        reference,
+        bits,
+        count
+    );
 
     // Step 1: Bit-unpack offsets
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
     let mut offsets = Vec::with_capacity(count);
 
     for i in 0..count {
@@ -260,10 +333,16 @@ pub fn opencl_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits:
 
     // Step 2: Add reference back (parallel in OpenCL)
     let reference_f32 = reference as f32;
-    let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+    let values: Vec<f32> = offsets
+        .iter()
+        .map(|&offset| offset as f32 + reference_f32)
+        .collect();
 
-    debug!("✅ [OpenCL] FrameOfReference decoded {} bytes → {} values",
-           packed.len(), values.len());
+    debug!(
+        "✅ [OpenCL] FrameOfReference decoded {} bytes → {} values",
+        packed.len(),
+        values.len()
+    );
     Ok(values)
 }
 
@@ -288,21 +367,32 @@ pub fn opencl_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits:
 /// }
 /// ```
 pub fn opencl_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [OpenCL] Zigzag encode: {} values, {}b/val", values.len(), bits);
+    trace!(
+        "🔧 [OpenCL] Zigzag encode: {} values, {}b/val",
+        values.len(),
+        bits
+    );
 
     // TODO: Real OpenCL implementation
-    let zigzag: Vec<i64> = values.iter().map(|&v| {
-        let n = v.to_bits() as i32;
-        let zz = (n << 1) ^ (n >> 31);
-        zz as i64
-    }).collect();
+    let zigzag: Vec<i64> = values
+        .iter()
+        .map(|&v| {
+            let n = v.to_bits() as i32;
+            let zz = (n << 1) ^ (n >> 31);
+            zz as i64
+        })
+        .collect();
 
     // Bit-pack zigzag values
     let total_bits = zigzag.len() * bits as usize;
     let byte_count = (total_bits + 7) / 8;
     let mut result = vec![0u8; byte_count];
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
 
     for (i, &zz) in zigzag.iter().enumerate() {
         let bit_offset = i * bits as usize;
@@ -317,16 +407,29 @@ pub fn opencl_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         }
     }
 
-    debug!("✅ [OpenCL] Zigzag encoded {} values → {} bytes", values.len(), result.len());
+    debug!(
+        "✅ [OpenCL] Zigzag encoded {} values → {} bytes",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
 /// OpenCL Zigzag decoding
 pub fn opencl_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [OpenCL] Zigzag decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
+    trace!(
+        "🔧 [OpenCL] Zigzag decode: {} bytes, {}b/val, count={}",
+        packed.len(),
+        bits,
+        count
+    );
 
     // Step 1: Bit-unpack
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
     let mut zigzag = Vec::with_capacity(count);
 
     for i in 0..count {
@@ -349,12 +452,19 @@ pub fn opencl_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result
     }
 
     // Step 2: Reverse zigzag (parallel in OpenCL)
-    let values: Vec<f32> = zigzag.iter().map(|&zz| {
-        let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
-        f32::from_bits(n as u32)
-    }).collect();
+    let values: Vec<f32> = zigzag
+        .iter()
+        .map(|&zz| {
+            let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
+            f32::from_bits(n as u32)
+        })
+        .collect();
 
-    debug!("✅ [OpenCL] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
+    debug!(
+        "✅ [OpenCL] Zigzag decoded {} bytes → {} values",
+        packed.len(),
+        values.len()
+    );
     Ok(values)
 }
 
@@ -363,18 +473,36 @@ pub fn opencl_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result
 // ============================================================================
 
 /// OpenCL PForDelta encoding (stub - complex kernel)
-pub fn opencl_pfor_delta_encode_f32(values: &[f32], majority_bits: u8, base: i64) -> Result<Vec<u8>> {
-    trace!("🔧 [OpenCL] PForDelta encode: {} values, {}b majority, base={}",
-           values.len(), majority_bits, base);
+pub fn opencl_pfor_delta_encode_f32(
+    values: &[f32],
+    majority_bits: u8,
+    base: i64,
+) -> Result<Vec<u8>> {
+    trace!(
+        "🔧 [OpenCL] PForDelta encode: {} values, {}b majority, base={}",
+        values.len(),
+        majority_bits,
+        base
+    );
 
     // TODO: Real OpenCL implementation
     anyhow::bail!("OpenCL PForDelta encoding not yet implemented - use SIMD fallback")
 }
 
 /// OpenCL PForDelta decoding (stub - complex kernel)
-pub fn opencl_pfor_delta_decode_f32(data: &[u8], majority_bits: u8, base: i64, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [OpenCL] PForDelta decode: {} bytes, {}b majority, base={}, count={}",
-           data.len(), majority_bits, base, count);
+pub fn opencl_pfor_delta_decode_f32(
+    data: &[u8],
+    majority_bits: u8,
+    base: i64,
+    count: usize,
+) -> Result<Vec<f32>> {
+    trace!(
+        "🔧 [OpenCL] PForDelta decode: {} bytes, {}b majority, base={}, count={}",
+        data.len(),
+        majority_bits,
+        base,
+        count
+    );
 
     // TODO: Real OpenCL implementation
     anyhow::bail!("OpenCL PForDelta decoding not yet implemented - use SIMD fallback")

@@ -61,8 +61,8 @@ use crate::core::hardware_capabilities::get_hardware_capabilities;
 
 // Import bloom filter types from common
 use super::common::{
-    CentroidStats, ColumnarCentroids, DistanceBounds, ProximaMetadata, NeighborType,
-    RaptorFooter, RowGroupBloomFilter, RowGroupNeighbor,
+    CentroidStats, ColumnarCentroids, DistanceBounds, NeighborType, ProximaMetadata, RaptorFooter,
+    RowGroupBloomFilter, RowGroupNeighbor,
 };
 use super::matrix_builder::MatrixBuilder;
 use crate::compute::distance_computation::DistanceMetric;
@@ -72,7 +72,9 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
 // ProximaCodec system for encoding/decoding
-use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, types::ProximaScheme};
+use crate::storage::engines::core::ops::proximacodec::{
+    ProximaCodec, analysis, types::ProximaScheme,
+};
 use crate::storage::persistence::filesystem::FileSystem;
 
 // Import AXIS clustering for reuse
@@ -130,9 +132,9 @@ struct RowPageBuffer {
 /// Stores both FP32 and quantized vectors for full reconstruction
 struct CompactRow {
     // Core fields from VectorRecord
-    id: String,                       // VectorRecord.id (string)
-    vector: Vec<f32>,                 // VectorRecord.vector (original FP32)
-    quantized_vector: Vec<u8>,        // VectorRecord.quantized_vector (pre-quantized)
+    id: String,                // VectorRecord.id (string)
+    vector: Vec<f32>,          // VectorRecord.vector (original FP32)
+    quantized_vector: Vec<u8>, // VectorRecord.quantized_vector (pre-quantized)
     // TODO: Migrate to HashMap<String, SqlValue> for typed metadata (requires refactoring encoding/decoding logic)
     metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs as byte arrays)
 
@@ -343,7 +345,6 @@ impl IvfClusteringBuilder {
             edges,                  // Local graph connectivity within cluster
         });
     }
-
 
     /// Advanced k²+p×(k+p) clustering with hardware-aware parameter selection and component boosting
     ///
@@ -2312,72 +2313,72 @@ mod minimal_hnsw_tests {
         // for group in &rowgroups {
         //     let cohesion = builder.calculate_cohesion(group);
         //     assert!(cohesion < 1.0, "Row groups should have good cohesion");
+    }
+}
+
+#[test]
+fn test_uniqueness_guarantee() {
+    let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+    let mut builder = IvfClusteringBuilder::new(5, hw_caps);
+
+    // Add 10 nodes
+    for i in 0..10 {
+        let edges = if i > 0 {
+            vec![EdgeWithDistance {
+                target_node_id: i - 1,
+                target_vector_id: format!("vec_{}", i - 1),
+                distance: 0.1,
+            }]
+        } else {
+            vec![]
+        };
+        builder.add_node(format!("vec_{}", i), edges);
+    }
+
+    // TODO: cluster_into_rowgroups method needs to be implemented
+    // Temporary placeholder for compilation
+    let rowgroups = vec![vec![0, 1, 2], vec![3, 4, 5], vec![6, 7, 8, 9]]; // Placeholder clustering
+
+    // Verify each ID exists in exactly one row group
+    let mut id_count = vec![0; 10];
+    for group in &rowgroups {
+        for &node_idx in group {
+            id_count[node_idx as usize] += 1;
         }
     }
 
-    #[test]
-    fn test_uniqueness_guarantee() {
-        let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
-        let mut builder = IvfClusteringBuilder::new(5, hw_caps);
-
-        // Add 10 nodes
-        for i in 0..10 {
-            let edges = if i > 0 {
-                vec![EdgeWithDistance {
-                    target_node_id: i - 1,
-                    target_vector_id: format!("vec_{}", i - 1),
-                    distance: 0.1,
-                }]
-            } else {
-                vec![]
-            };
-            builder.add_node(format!("vec_{}", i), edges);
-        }
-
-        // TODO: cluster_into_rowgroups method needs to be implemented
-        // Temporary placeholder for compilation
-        let rowgroups = vec![vec![0, 1, 2], vec![3, 4, 5], vec![6, 7, 8, 9]]; // Placeholder clustering
-
-        // Verify each ID exists in exactly one row group
-        let mut id_count = vec![0; 10];
-        for group in &rowgroups {
-            for &node_idx in group {
-                id_count[node_idx as usize] += 1;
-            }
-        }
-
-        for count in id_count {
-            assert_eq!(count, 1, "Each ID should appear exactly once");
-        }
+    for count in id_count {
+        assert_eq!(count, 1, "Each ID should appear exactly once");
     }
+}
 
-    #[test]
-    fn test_memory_reduction() {
-        // Calculate memory usage for 1M vectors
-        let num_vectors = 1_000_000;
-        let dimension = 1536;
+#[test]
+fn test_memory_reduction() {
+    // Calculate memory usage for 1M vectors
+    let num_vectors = 1_000_000;
+    let dimension = 1536;
 
-        // Legacy approach: full vectors
-        let legacy_per_node = dimension * 4 + 32 + 64; // vector + id + edges
-        let legacy_total = (num_vectors as i64) * (legacy_per_node as i64);
+    // Legacy approach: full vectors
+    let legacy_per_node = dimension * 4 + 32 + 64; // vector + id + edges
+    let legacy_total = (num_vectors as i64) * (legacy_per_node as i64);
 
-        // Minimal approach: ID only
-        let minimal_per_node = 32 + 8 + 64; // id + location + edges  
-        let minimal_total = num_vectors * minimal_per_node;
+    // Minimal approach: ID only
+    let minimal_per_node = 32 + 8 + 64; // id + location + edges  
+    let minimal_total = num_vectors * minimal_per_node;
 
-        let reduction_percent = (1.0 - (minimal_total as f64 / legacy_total as f64)) * 100.0;
+    let reduction_percent = (1.0 - (minimal_total as f64 / legacy_total as f64)) * 100.0;
 
-        assert!(
-            reduction_percent > 95.0,
-            "Should achieve >95% memory reduction"
-        );
-        println!("Memory reduction: {:.1}%", reduction_percent);
-        println!(
-            "Legacy: {} MB, Minimal: {} MB",
-            legacy_total / (1024 * 1024),
-            minimal_total / (1024 * 1024)
-        );
-    }
+    assert!(
+        reduction_percent > 95.0,
+        "Should achieve >95% memory reduction"
+    );
+    println!("Memory reduction: {:.1}%", reduction_percent);
+    println!(
+        "Legacy: {} MB, Minimal: {} MB",
+        legacy_total / (1024 * 1024),
+        minimal_total / (1024 * 1024)
+    );
+}
 
 impl RaptorWriter {
     pub async fn new(
@@ -2430,7 +2431,7 @@ impl RaptorWriter {
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 enable_hardware_acceleration: config.enable_simd,
                 distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
-                ..Default::default()  // INT8 by default, PQ requires explicit config
+                ..Default::default() // INT8 by default, PQ requires explicit config
             };
 
         // Initialize quantization engine
@@ -2575,14 +2576,24 @@ impl RaptorWriter {
             .iter()
             .map(|(key, value)| {
                 let value_bytes = match &value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.as_bytes().to_vec(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_le_bytes().to_vec(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => vec![if *b { 1 } else { 0 }],
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_le_bytes().to_vec(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                        s.as_bytes().to_vec()
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                        n.to_le_bytes().to_vec()
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        vec![if *b { 1 } else { 0 }]
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        i.to_le_bytes().to_vec()
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => b.clone(),
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => Vec::new(),
                     Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => Vec::new(), // TODO: serialize arrays
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => Vec::new(), // TODO: serialize objects
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        Vec::new()
+                    } // TODO: serialize objects
                     None => Vec::new(),
                 };
                 (key.clone(), value_bytes)
@@ -2940,11 +2951,13 @@ impl RaptorWriter {
 
             // Override lossy schemes with lossless alternatives
             let scheme = match &detected_scheme {
-                ProximaScheme::Simple8b | ProximaScheme::RunLength |
-                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
-                ProximaScheme::PForDelta { .. } => {
-                    ProximaScheme::Delta { base: 0 }  // Lossless fallback
-                },
+                ProximaScheme::Simple8b
+                | ProximaScheme::RunLength
+                | ProximaScheme::VByte
+                | ProximaScheme::Zigzag { .. }
+                | ProximaScheme::PForDelta { .. } => {
+                    ProximaScheme::Delta { base: 0 } // Lossless fallback
+                }
                 _ => detected_scheme.clone(),
             };
 
@@ -3096,11 +3109,11 @@ impl RaptorWriter {
 
             // Override lossy schemes
             let scheme = match &detected_scheme {
-                ProximaScheme::Simple8b | ProximaScheme::RunLength |
-                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
-                ProximaScheme::PForDelta { .. } => {
-                    ProximaScheme::Delta { base: 0 }
-                },
+                ProximaScheme::Simple8b
+                | ProximaScheme::RunLength
+                | ProximaScheme::VByte
+                | ProximaScheme::Zigzag { .. }
+                | ProximaScheme::PForDelta { .. } => ProximaScheme::Delta { base: 0 },
                 _ => detected_scheme.clone(),
             };
 
@@ -3146,7 +3159,8 @@ impl RaptorWriter {
                         // Use ProximaCodec for binary quantized data
                         let codec = ProximaCodec::global();
                         let column_i32: Vec<i32> = column.iter().map(|&v| v as i32).collect();
-                        let encoded_column = codec.encode_i32(&column_i32, ProximaScheme::BitPacked { bits: 8 })?;
+                        let encoded_column =
+                            codec.encode_i32(&column_i32, ProximaScheme::BitPacked { bits: 8 })?;
                         encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
                         encoded.extend(&encoded_column);
                     }
@@ -3166,7 +3180,8 @@ impl RaptorWriter {
                         // Use ProximaCodec for INT8 quantized data
                         let codec = ProximaCodec::global();
                         let column_i32: Vec<i32> = column.iter().map(|&v| v as i32).collect();
-                        let encoded_column = codec.encode_i32(&column_i32, ProximaScheme::BitPacked { bits: 8 })?;
+                        let encoded_column =
+                            codec.encode_i32(&column_i32, ProximaScheme::BitPacked { bits: 8 })?;
                         encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
                         encoded.extend(&encoded_column);
                     }
@@ -3281,7 +3296,8 @@ impl RaptorWriter {
         let timestamps: Vec<u32> = page.rows.iter().map(|r| r.timestamp).collect();
         let codec = ProximaCodec::global();
         let timestamps_i32: Vec<i32> = timestamps.iter().map(|&v| v as i32).collect();
-        let encoded_timestamps = codec.encode_i32(&timestamps_i32, ProximaScheme::Delta { base: 0 })?;
+        let encoded_timestamps =
+            codec.encode_i32(&timestamps_i32, ProximaScheme::Delta { base: 0 })?;
         encoded.extend(&encoded_timestamps);
 
         // Updated_at column (optional)
@@ -3304,7 +3320,8 @@ impl RaptorWriter {
             }
             let codec = ProximaCodec::global();
             let updated_i32: Vec<i32> = updated_values.iter().map(|&v| v as i32).collect();
-            let encoded_updated = codec.encode_i32(&updated_i32, ProximaScheme::Delta { base: 0 })?;
+            let encoded_updated =
+                codec.encode_i32(&updated_i32, ProximaScheme::Delta { base: 0 })?;
             encoded.extend(&encoded_updated);
         }
 
@@ -3327,7 +3344,8 @@ impl RaptorWriter {
             }
             let codec = ProximaCodec::global();
             let expires_i32: Vec<i32> = expires_values.iter().map(|&v| v as i32).collect();
-            let encoded_expires = codec.encode_i32(&expires_i32, ProximaScheme::Delta { base: 0 })?;
+            let encoded_expires =
+                codec.encode_i32(&expires_i32, ProximaScheme::Delta { base: 0 })?;
             encoded.extend(&encoded_expires);
         }
 
@@ -3350,7 +3368,8 @@ impl RaptorWriter {
             }
             let codec = ProximaCodec::global();
             let versions_i32: Vec<i32> = version_values.iter().map(|&v| v as i32).collect();
-            let encoded_versions = codec.encode_i32(&versions_i32, ProximaScheme::Delta { base: 0 })?;
+            let encoded_versions =
+                codec.encode_i32(&versions_i32, ProximaScheme::Delta { base: 0 })?;
             encoded.extend(&encoded_versions);
         }
 
@@ -3835,11 +3854,11 @@ impl RaptorWriter {
 
             // Override lossy schemes
             let codec_scheme = match &detected_scheme {
-                ProximaScheme::Simple8b | ProximaScheme::RunLength |
-                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
-                ProximaScheme::PForDelta { .. } => {
-                    ProximaScheme::Delta { base: 0 }
-                },
+                ProximaScheme::Simple8b
+                | ProximaScheme::RunLength
+                | ProximaScheme::VByte
+                | ProximaScheme::Zigzag { .. }
+                | ProximaScheme::PForDelta { .. } => ProximaScheme::Delta { base: 0 },
                 _ => detected_scheme.clone(),
             };
 
@@ -3920,7 +3939,10 @@ impl RaptorWriter {
         // Track total vectors flushed
         let mut total_flushed = 0;
 
-        tracing::debug!("RAPTOR flush: Starting with {} nodes", self.ivf_builder.nodes.len());
+        tracing::debug!(
+            "RAPTOR flush: Starting with {} nodes",
+            self.ivf_builder.nodes.len()
+        );
 
         // Build IVF clusters before flushing (if we have enough vectors)
         // For small collections (<1000 vectors), skip clustering but still create a single row group
@@ -3928,8 +3950,10 @@ impl RaptorWriter {
             // Minimum vectors needed for effective clustering
             self.build_ivf_clusters()?;
         } else if !self.ivf_builder.nodes.is_empty() {
-            tracing::debug!("RAPTOR flush: Small collection with {} vectors, creating single row group",
-                          self.ivf_builder.nodes.len());
+            tracing::debug!(
+                "RAPTOR flush: Small collection with {} vectors, creating single row group",
+                self.ivf_builder.nodes.len()
+            );
         }
 
         // Flush any pending row page
@@ -4145,11 +4169,11 @@ impl RaptorWriter {
 
             // Override lossy schemes
             let scheme = match &detected_scheme {
-                ProximaScheme::Simple8b | ProximaScheme::RunLength |
-                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
-                ProximaScheme::PForDelta { .. } => {
-                    ProximaScheme::Delta { base: 0 }
-                },
+                ProximaScheme::Simple8b
+                | ProximaScheme::RunLength
+                | ProximaScheme::VByte
+                | ProximaScheme::Zigzag { .. }
+                | ProximaScheme::PForDelta { .. } => ProximaScheme::Delta { base: 0 },
                 _ => detected_scheme.clone(),
             };
 
@@ -4216,7 +4240,10 @@ impl RaptorWriter {
         self.flush().await?;
 
         // Update file metadata with row groups
-        tracing::debug!("RAPTOR finalize: Updating metadata with {} row groups", self.row_groups.len());
+        tracing::debug!(
+            "RAPTOR finalize: Updating metadata with {} row groups",
+            self.row_groups.len()
+        );
         self.file_metadata.row_groups = self.row_groups.clone();
         self.file_metadata.total_vectors = self.row_groups.iter().map(|rg| rg.vector_count).sum();
 
@@ -4932,11 +4959,11 @@ impl RaptorWriter {
 
                     // Override lossy schemes
                     let scheme = match &detected_scheme {
-                        ProximaScheme::Simple8b | ProximaScheme::RunLength |
-                        ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
-                        ProximaScheme::PForDelta { .. } => {
-                            ProximaScheme::Delta { base: 0 }
-                        },
+                        ProximaScheme::Simple8b
+                        | ProximaScheme::RunLength
+                        | ProximaScheme::VByte
+                        | ProximaScheme::Zigzag { .. }
+                        | ProximaScheme::PForDelta { .. } => ProximaScheme::Delta { base: 0 },
                         _ => detected_scheme.clone(),
                     };
 

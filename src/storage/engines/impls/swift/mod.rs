@@ -160,12 +160,10 @@ pub mod unified_strategy_reader;
 
 // Re-export main engine type and cache
 pub use engine::SwiftEngine;
-pub use unified_strategy_reader::{
-    UnifiedSWIFTReader, DirectSWIFTReader, CachedSWIFTReader
-};
 pub use superblock_cache::{
     CachedSuperBlockMetadata, OptimalTreePath, SwiftSuperBlockCache, TreeNavigationHints,
 };
+pub use unified_strategy_reader::{CachedSWIFTReader, DirectSWIFTReader, UnifiedSWIFTReader};
 
 use anyhow::{Result, anyhow};
 // use std::collections::HashMap; // Unused import
@@ -180,13 +178,15 @@ use crate::core::bloom::SstableBloomFilter;
 // Proxima encoding for columnar vector optimization
 
 // ProximaCodec system for encoding/decoding
-use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
+use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import Proxima common structures (SWIFT uses hierarchical structure)
 // Note: ProximaDataBlock provides the block structure with encoding support
-use crate::storage::engines::core::formats::proximablocks::block_structures::{ProximaDataBlock, ProximaBlockMetadata};
+use crate::storage::engines::core::formats::proximablocks::block_structures::{
+    ProximaBlockMetadata, ProximaDataBlock,
+};
 
 /// ✅ SWIFT-specific metadata using Proxima composition pattern (like HELIX and SST)
 /// This follows the same pattern as HelixBlockMetadata and SstBlockMetadata but for SWIFT SuperBlock optimizations
@@ -265,16 +265,26 @@ impl SuperBlock {
         if !self.blocks.is_empty() {
             // Merge column statistics
             for (column, block_stats) in &block.metadata.column_stats {
-                if let Some(existing_stats) = self.swift_metadata.proxima_metadata.column_stats.get_mut(column) {
+                if let Some(existing_stats) = self
+                    .swift_metadata
+                    .proxima_metadata
+                    .column_stats
+                    .get_mut(column)
+                {
                     // Update min/max values
-                    if let (Some(block_min), Some(existing_min)) = (&block_stats.min_value, &existing_stats.min_value) {
+                    if let (Some(block_min), Some(existing_min)) =
+                        (&block_stats.min_value, &existing_stats.min_value)
+                    {
                         // Use JSON comparison for consistency
                         use std::cmp::Ordering;
                         let cmp = match (block_min, existing_min) {
-                            (serde_json::Value::Number(n1), serde_json::Value::Number(n2)) => {
-                                n1.as_f64().partial_cmp(&n2.as_f64()).unwrap_or(Ordering::Equal)
+                            (serde_json::Value::Number(n1), serde_json::Value::Number(n2)) => n1
+                                .as_f64()
+                                .partial_cmp(&n2.as_f64())
+                                .unwrap_or(Ordering::Equal),
+                            (serde_json::Value::String(s1), serde_json::Value::String(s2)) => {
+                                s1.cmp(s2)
                             }
-                            (serde_json::Value::String(s1), serde_json::Value::String(s2)) => s1.cmp(s2),
                             _ => Ordering::Equal,
                         };
                         if cmp == Ordering::Less {
@@ -285,7 +295,10 @@ impl SuperBlock {
                     existing_stats.null_count += block_stats.null_count;
                 } else {
                     // Add new column statistics
-                    self.swift_metadata.proxima_metadata.column_stats.insert(column.clone(), block_stats.clone());
+                    self.swift_metadata
+                        .proxima_metadata
+                        .column_stats
+                        .insert(column.clone(), block_stats.clone());
                 }
             }
 
@@ -330,7 +343,6 @@ pub struct SwiftFile {
 
     /// Memory management
     memory_manager: Arc<MemoryManager>,
-
     // Note: simd_encoder removed - encoding now done via ProximaCodec per-operation
 }
 
@@ -506,7 +518,8 @@ impl SwiftFile {
             // - 🚀 Automatic Quantization (if enabled)
             // Use centralized compression config conversion from Proxima
             use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
-            let mut compression_config = RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
+            let mut compression_config =
+                RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
 
             // Enable SIMD optimization for SWIFT (low-latency focus)
             compression_config.vector_layout = crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
@@ -515,7 +528,7 @@ impl SwiftFile {
             let block = ProximaDataBlock::new_with_engine_profile(
                 chunk.to_vec(),
                 compression_config,
-                EngineProfile::Swift
+                EngineProfile::Swift,
             );
 
             // ❌ REMOVED: Manual quantization processing - Proxima handles this automatically!
@@ -587,7 +600,10 @@ impl SwiftFile {
         for chunk in records.chunks(records_per_block) {
             // Use centralized compression config conversion from Proxima
             use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
-            let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config.as_ref());
+            let mut block_compression_config =
+                RowBasedCompressionConfig::create_block_config_from_proto(
+                    compression_config.as_ref(),
+                );
 
             // Enable SIMD optimization for SWIFT (hierarchical low-latency focus)
             block_compression_config.vector_layout = crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
@@ -597,12 +613,16 @@ impl SwiftFile {
             let block = ProximaDataBlock::new_with_engine_profile(
                 chunk.to_vec(),
                 block_compression_config,
-                EngineProfile::Swift
+                EngineProfile::Swift,
             );
 
             // ❌ REMOVED: Manual quantization processing - Proxima handles this automatically!
             // ❌ REMOVED: Manual vector collection - unnecessary with Proxima
-            debug!("Stored {} records in block {} using Proxima auto-capabilities", chunk.len(), block_id);
+            debug!(
+                "Stored {} records in block {} using Proxima auto-capabilities",
+                chunk.len(),
+                block_id
+            );
 
             // Update ID index
             for (idx, record) in chunk.iter().enumerate() {
@@ -733,9 +753,9 @@ impl SwiftFile {
     /// Serialize SwiftFile to bytes for disk persistence
     /// Uses Proxima block serialization similar to SST for optimal performance
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        use bytes::BytesMut;
-        use crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig;
         use crate::core::compression::CompressionAlgorithm;
+        use crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig;
+        use bytes::BytesMut;
 
         let mut buffer = BytesMut::new();
 
@@ -768,7 +788,10 @@ impl SwiftFile {
 
                 // Store bloom filter for later aggregation if generated
                 if let Some(bloom) = bloom_data {
-                    debug!("✅ SWIFT: Generated bloom filter for block: {} bytes", bloom.len());
+                    debug!(
+                        "✅ SWIFT: Generated bloom filter for block: {} bytes",
+                        bloom.len()
+                    );
                 }
             }
 
@@ -828,17 +851,18 @@ impl SwiftFile {
 
         // Use atomic writer for safe persistence (same as SST writer.rs:584)
         let atomic_writer = AtomicWriteExecutorFactory::create_production_executor();
-        atomic_writer
-            .write_atomic(&*fs, path, &data, None)
-            .await?;
+        atomic_writer.write_atomic(&*fs, path, &data, None).await?;
 
         Ok(bytes_written)
     }
 
     /// Deserialize SwiftFile from bytes with optional collection config for type-safe metadata
-    pub fn deserialize(data: &[u8], collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Self> {
-        use std::io::{Cursor, Read};
+    pub fn deserialize(
+        data: &[u8],
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<Self> {
         use bytes::Buf;
+        use std::io::{Cursor, Read};
 
         let mut cursor = Cursor::new(data);
 
@@ -971,11 +995,13 @@ impl SwiftFile {
                 base_fs,
                 collection_id.to_string(),
                 "swift".to_string(),
-            )
+            ),
         );
 
         // Read with caching (unified_fs implements FileSystem trait)
-        let data = unified_fs.read(path).await
+        let data = unified_fs
+            .read(path)
+            .await
             .map_err(|e| anyhow!("Failed to read file: {}", e))?;
 
         // Deserialize from cached data with collection config

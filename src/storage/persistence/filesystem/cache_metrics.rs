@@ -98,7 +98,10 @@ impl CacheMetrics {
         let mut entry = self.cache_metrics.entry(cache_type.clone()).or_default();
         entry.misses += 1;
 
-        trace!("Cache miss for {:?}, total misses: {}", cache_type, entry.misses);
+        trace!(
+            "Cache miss for {:?}, total misses: {}",
+            cache_type, entry.misses
+        );
     }
 
     /// Record a cache eviction
@@ -151,7 +154,11 @@ impl CacheMetrics {
             patterns.unique_files_accessed.insert(path.to_string());
 
             // Update access distribution
-            if let Some(entry) = patterns.access_distribution.iter_mut().find(|(p, _)| p == path) {
+            if let Some(entry) = patterns
+                .access_distribution
+                .iter_mut()
+                .find(|(p, _)| p == path)
+            {
                 entry.1 += 1;
             } else {
                 patterns.access_distribution.push((path.to_string(), 1));
@@ -159,7 +166,9 @@ impl CacheMetrics {
 
             // Keep only top 100 accessed files
             if patterns.access_distribution.len() > 100 {
-                patterns.access_distribution.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+                patterns
+                    .access_distribution
+                    .sort_by_key(|(_, count)| std::cmp::Reverse(*count));
                 patterns.access_distribution.truncate(100);
             }
         }
@@ -213,7 +222,8 @@ impl CacheMetrics {
         let patterns = self.access_patterns.read().await;
         report.unique_files = patterns.unique_files_accessed.len();
         report.total_accesses = patterns.total_accesses;
-        report.top_accessed_files = patterns.access_distribution
+        report.top_accessed_files = patterns
+            .access_distribution
             .iter()
             .take(10)
             .map(|(path, count)| (path.clone(), *count))
@@ -286,24 +296,41 @@ impl MetricsReport {
 
         output.push_str(&format!("=== Cache Metrics Report ===\n"));
         output.push_str(&format!("Uptime: {:?}\n", self.uptime));
-        output.push_str(&format!("Overall Hit Rate: {:.2}%\n", self.overall_hit_rate * 100.0));
-        output.push_str(&format!("Total Hits: {} | Misses: {}\n", self.total_hits, self.total_misses));
-        output.push_str(&format!("Bytes Served: {} | Stored: {}\n",
+        output.push_str(&format!(
+            "Overall Hit Rate: {:.2}%\n",
+            self.overall_hit_rate * 100.0
+        ));
+        output.push_str(&format!(
+            "Total Hits: {} | Misses: {}\n",
+            self.total_hits, self.total_misses
+        ));
+        output.push_str(&format!(
+            "Bytes Served: {} | Stored: {}\n",
             format_bytes(self.total_bytes_served),
-            format_bytes(self.total_bytes_stored)));
-        output.push_str(&format!("Unique Files: {} | Total Accesses: {}\n", self.unique_files, self.total_accesses));
-        output.push_str(&format!("\nLatency (μs): Hit={} Miss={} P95={} P99={}\n",
-            self.avg_hit_latency_us, self.avg_miss_latency_us,
-            self.p95_latency_us, self.p99_latency_us));
+            format_bytes(self.total_bytes_stored)
+        ));
+        output.push_str(&format!(
+            "Unique Files: {} | Total Accesses: {}\n",
+            self.unique_files, self.total_accesses
+        ));
+        output.push_str(&format!(
+            "\nLatency (μs): Hit={} Miss={} P95={} P99={}\n",
+            self.avg_hit_latency_us,
+            self.avg_miss_latency_us,
+            self.p95_latency_us,
+            self.p99_latency_us
+        ));
 
         output.push_str("\nPer-Cache Metrics:\n");
         for metric in &self.cache_metrics {
-            output.push_str(&format!("  {}: Hit Rate={:.2}% Hits={} Misses={} Evictions={}\n",
+            output.push_str(&format!(
+                "  {}: Hit Rate={:.2}% Hits={} Misses={} Evictions={}\n",
                 metric.cache_type,
                 metric.hit_rate * 100.0,
                 metric.hits,
                 metric.misses,
-                metric.evictions));
+                metric.evictions
+            ));
         }
 
         if !self.top_accessed_files.is_empty() {

@@ -10,4 +10,4 @@ pub use filesystem_metadata_store::{FilesystemMetadata, FilesystemMetadataStore}
 pub use index_node_cache::IndexNodeCache;
 pub use metadata_store::MetadataStore;
 pub use query_cache::QueryCache;
-pub use vector_cache::{VectorCache, VectorCacheKey, CachedVector};
+pub use vector_cache::{CachedVector, VectorCache, VectorCacheKey};

@@ -132,13 +132,19 @@ impl CollectionService {
     }
 
     /// Set tenant manager for multi-tenant support
-    pub fn with_tenant_manager(mut self, tenant_manager: Arc<crate::storage::tenant::TenantManager>) -> Self {
+    pub fn with_tenant_manager(
+        mut self,
+        tenant_manager: Arc<crate::storage::tenant::TenantManager>,
+    ) -> Self {
         self.tenant_manager = Some(tenant_manager);
         self
     }
 
     /// Set RBAC enforcer for permission validation
-    pub fn with_rbac_enforcer(mut self, rbac_enforcer: Arc<crate::storage::tenant::EnhancedRBACManager>) -> Self {
+    pub fn with_rbac_enforcer(
+        mut self,
+        rbac_enforcer: Arc<crate::storage::tenant::EnhancedRBACManager>,
+    ) -> Self {
         self.rbac_enforcer = Some(rbac_enforcer);
         self
     }
@@ -150,7 +156,8 @@ impl CollectionService {
         &self,
         config: &crate::proto::proximadb_v1::CollectionConfig,
     ) -> Result<CollectionServiceResponse> {
-        self.create_collection_with_tenant_context(config, None).await
+        self.create_collection_with_tenant_context(config, None)
+            .await
     }
 
     /// Get collection with tenant validation
@@ -167,8 +174,10 @@ impl CollectionService {
                 let collection_tenant = tenant_ctx.tenant_id.clone(); // Placeholder
 
                 if collection_tenant != tenant_ctx.tenant_id {
-                    warn!("🚨 Cross-tenant access attempt blocked: user tenant {} tried to access collection owned by tenant {}",
-                          tenant_ctx.tenant_id, collection_tenant);
+                    warn!(
+                        "🚨 Cross-tenant access attempt blocked: user tenant {} tried to access collection owned by tenant {}",
+                        tenant_ctx.tenant_id, collection_tenant
+                    );
                     return Ok(None); // Return None instead of error for get operations
                 }
 
@@ -181,14 +190,18 @@ impl CollectionService {
                     };
 
                     if !permission_result.allowed {
-                        warn!("🚨 RBAC access denied for tenant {} to collection {}",
-                              tenant_ctx.tenant_id, collection_name);
+                        warn!(
+                            "🚨 RBAC access denied for tenant {} to collection {}",
+                            tenant_ctx.tenant_id, collection_name
+                        );
                         return Ok(None);
                     }
                 }
 
-                debug!("✅ Tenant validation passed for collection access: tenant={}, collection={}",
-                       tenant_ctx.tenant_id, collection_name);
+                debug!(
+                    "✅ Tenant validation passed for collection access: tenant={}, collection={}",
+                    tenant_ctx.tenant_id, collection_name
+                );
             }
         }
 
@@ -213,9 +226,11 @@ impl CollectionService {
 
                 if collection_tenant != tenant_ctx.tenant_id {
                     return Ok(CollectionServiceResponse::error(
-                        format!("Cross-tenant delete attempt denied: collection {} not owned by tenant {}",
-                               collection_name, tenant_ctx.tenant_id),
-                        0 // processing_time_us
+                        format!(
+                            "Cross-tenant delete attempt denied: collection {} not owned by tenant {}",
+                            collection_name, tenant_ctx.tenant_id
+                        ),
+                        0, // processing_time_us
                     ));
                 }
 
@@ -229,15 +244,19 @@ impl CollectionService {
 
                     if !permission_result.allowed {
                         return Ok(CollectionServiceResponse::error(
-                            format!("Permission denied: tenant {} cannot delete collections",
-                                   tenant_ctx.tenant_id),
-                            0 // processing_time_us
+                            format!(
+                                "Permission denied: tenant {} cannot delete collections",
+                                tenant_ctx.tenant_id
+                            ),
+                            0, // processing_time_us
                         ));
                     }
                 }
 
-                debug!("✅ Tenant validation passed for collection deletion: tenant={}, collection={}",
-                       tenant_ctx.tenant_id, collection_name);
+                debug!(
+                    "✅ Tenant validation passed for collection deletion: tenant={}, collection={}",
+                    tenant_ctx.tenant_id, collection_name
+                );
             }
         }
 
@@ -246,7 +265,7 @@ impl CollectionService {
         Ok(CollectionServiceResponse::success(
             "deleted".to_string(), // collection_uuid
             "deleted".to_string(), // storage_path
-            0 // processing_time_us
+            0,                     // processing_time_us
         ))
     }
 
@@ -275,7 +294,7 @@ impl CollectionService {
                 if !resource_check.allowed {
                     return Ok(CollectionServiceResponse::error(
                         format!("Tenant resource limit exceeded: {}", resource_check.reason),
-                        0 // processing_time_us
+                        0, // processing_time_us
                     ));
                 }
 
@@ -290,12 +309,15 @@ impl CollectionService {
                     if !permission_result.allowed {
                         return Ok(CollectionServiceResponse::error(
                             format!("Permission denied: {}", permission_result.reason),
-                            0 // processing_time_us
+                            0, // processing_time_us
                         ));
                     }
                 }
 
-                debug!("✅ Tenant validation passed for collection creation: tenant={}", tenant_ctx.tenant_id);
+                debug!(
+                    "✅ Tenant validation passed for collection creation: tenant={}",
+                    tenant_ctx.tenant_id
+                );
             }
         }
 
@@ -305,14 +327,23 @@ impl CollectionService {
         // NEW: Add tenant metadata to collection if tenant context is provided
         if let Some(tenant_ctx) = tenant_context {
             // Add tenant ID to collection tags for tenant isolation (metadata field doesn't exist)
-            enriched_config.tags.push(format!("tenant:{}", tenant_ctx.tenant_id));
-            enriched_config.tags.push("tenant_isolated:true".to_string());
-            enriched_config.tags.push(format!("created_at:{}", chrono::Utc::now().to_rfc3339()));
+            enriched_config
+                .tags
+                .push(format!("tenant:{}", tenant_ctx.tenant_id));
+            enriched_config
+                .tags
+                .push("tenant_isolated:true".to_string());
+            enriched_config
+                .tags
+                .push(format!("created_at:{}", chrono::Utc::now().to_rfc3339()));
 
             // Set owner field if available
             enriched_config.owner = Some(tenant_ctx.tenant_id.clone());
 
-            debug!("✅ Added tenant metadata to collection: tenant_id={}", tenant_ctx.tenant_id);
+            debug!(
+                "✅ Added tenant metadata to collection: tenant_id={}",
+                tenant_ctx.tenant_id
+            );
         }
 
         // Ensure storage_config exists and set compression within it
@@ -392,10 +423,14 @@ impl CollectionService {
                 use crate::storage::engine_capabilities::EngineCapabilities;
 
                 // Convert engine type to enum
-                let engine = EngineCapabilities::engine_from_int(config.storage_engine.unwrap_or(StorageEngine::Sst as i32));
+                let engine = EngineCapabilities::engine_from_int(
+                    config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+                );
 
                 // Try to convert compression algorithm from i32
-                if let Ok(algorithm) = CompressionAlgorithm::try_from(storage_cfg.compression.unwrap_or(0)) {
+                if let Ok(algorithm) =
+                    CompressionAlgorithm::try_from(storage_cfg.compression.unwrap_or(0))
+                {
                     if !EngineCapabilities::is_compression_supported(engine, algorithm) {
                         let engine_name = EngineCapabilities::get_engine_name(engine);
                         let unsupported =
@@ -476,7 +511,11 @@ impl CollectionService {
 
         // Get storage location - use provided or pick randomly from config
         let base_location = if let Some(ref storage_config) = enriched_config.storage_config {
-            if storage_config.storage_path.as_ref().map_or(false, |p| !p.is_empty()) {
+            if storage_config
+                .storage_path
+                .as_ref()
+                .map_or(false, |p| !p.is_empty())
+            {
                 // User provided storage location
                 storage_config.storage_path.clone().unwrap_or_default()
             } else {
@@ -678,15 +717,16 @@ impl CollectionService {
             .config
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
-        let indexing_algorithm: crate::core::IndexingAlgorithm = match config.primary_index.as_deref().unwrap_or("default") {
-            "hnsw" => "hnsw".to_string(),
-            "ivf" => "ivf".to_string(),
-            "pq" => "pq".to_string(),
-            "flat" => "flat".to_string(),
-            "annoy" => "annoy".to_string(),
-            "lsh" => "lsh".to_string(),
-            _ => "hnsw".to_string(),
-        };
+        let indexing_algorithm: crate::core::IndexingAlgorithm =
+            match config.primary_index.as_deref().unwrap_or("default") {
+                "hnsw" => "hnsw".to_string(),
+                "ivf" => "ivf".to_string(),
+                "pq" => "pq".to_string(),
+                "flat" => "flat".to_string(),
+                "annoy" => "annoy".to_string(),
+                "lsh" => "lsh".to_string(),
+                _ => "hnsw".to_string(),
+            };
 
         let algorithm_str = match indexing_algorithm.as_str() {
             "hnsw" => "HNSW",
@@ -750,20 +790,23 @@ impl CollectionService {
                     // Override with algorithm-specific parameters
                     if let Some(hnsw_config) = &first_index.hnsw_config {
                         hints["ef_search"] = serde_json::json!(hnsw_config.ef_search);
-                        hints["max_candidates"] = serde_json::json!(hnsw_config.ef_search.unwrap_or(100) * 2);
+                        hints["max_candidates"] =
+                            serde_json::json!(hnsw_config.ef_search.unwrap_or(100) * 2);
                     }
                     if let Some(ivf_config) = &first_index.ivf_config {
                         hints["n_probe"] = serde_json::json!(ivf_config.n_probe);
-                        hints["max_candidates"] = serde_json::json!(ivf_config.n_probe.unwrap_or(10) * 100);
+                        hints["max_candidates"] =
+                            serde_json::json!(ivf_config.n_probe.unwrap_or(10) * 100);
                     }
                 }
 
                 // Add storage engine specific hints
-                hints["storage_engine"] = match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
-                    1 => serde_json::json!("VIPER"),
-                    2 => serde_json::json!("LSM"),
-                    _ => serde_json::json!("LSM"),
-                };
+                hints["storage_engine"] =
+                    match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
+                        1 => serde_json::json!("VIPER"),
+                        2 => serde_json::json!("LSM"),
+                        _ => serde_json::json!("LSM"),
+                    };
 
                 Ok(Some(hints))
             } else {
@@ -1591,7 +1634,8 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)
@@ -1647,7 +1691,11 @@ mod tests {
         let result = service.create_collection(&short_name).await.unwrap();
         assert!(!result.success);
         assert!(
-            result.error_code.as_ref().unwrap().contains("INVALID_NAME_LENGTH"),
+            result
+                .error_code
+                .as_ref()
+                .unwrap()
+                .contains("INVALID_NAME_LENGTH"),
             "Error code should contain INVALID_NAME_LENGTH, got: {:?}",
             result.error_code
         );
@@ -1669,7 +1717,11 @@ mod tests {
         let result = service.create_collection(&invalid_dimension).await.unwrap();
         assert!(!result.success);
         assert!(
-            result.error_code.as_ref().unwrap().contains("INVALID_DIMENSION"),
+            result
+                .error_code
+                .as_ref()
+                .unwrap()
+                .contains("INVALID_DIMENSION"),
             "Error code should contain INVALID_DIMENSION, got: {:?}",
             result.error_code
         );
@@ -1698,7 +1750,8 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)
@@ -1750,7 +1803,11 @@ mod tests {
 
             if !should_succeed {
                 assert!(
-                    result.error_code.as_ref().unwrap().contains(expected_error_code),
+                    result
+                        .error_code
+                        .as_ref()
+                        .unwrap()
+                        .contains(expected_error_code),
                     "Name '{}' error code mismatch: expected to contain '{}', got '{:?}'",
                     name,
                     expected_error_code,

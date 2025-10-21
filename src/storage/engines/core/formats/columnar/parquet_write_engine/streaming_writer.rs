@@ -3,10 +3,10 @@
 //! This module provides streaming write capabilities for Parquet files,
 //! optimized for large datasets with batch processing and row group management.
 
-use anyhow::{anyhow, Context, Result};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use anyhow::{Context, Result, anyhow};
 use arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, Int64Array,
-    RecordBatch, StringArray, UInt32Array,
+    ArrayRef, BinaryArray, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
@@ -16,20 +16,18 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::formats::columnar::{
-    metadata_collector::MetadataCollector,
-    native_metadata::NativeMetadataHandler,
-};
 use crate::storage::engines::core::formats::columnar::ColumnarFilterableSpec;
+use crate::storage::engines::core::formats::columnar::{
+    metadata_collector::MetadataCollector, native_metadata::NativeMetadataHandler,
+};
 
 use super::{
+    implicit_id_generator::IdLessLookup,
+    schema_builder::{ParquetSchemaBuilder, create_writer_properties},
     writer_config::ParquetWriterConfig,
     writer_statistics::StreamingParquetWriterStats,
-    schema_builder::{ParquetSchemaBuilder, create_writer_properties},
-    implicit_id_generator::IdLessLookup,
 };
 
 /// Streaming Parquet writer optimized for columnar engines
@@ -46,7 +44,8 @@ pub struct StreamingParquetWriter {
     id_bloom_filters: Vec<crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
 
     /// Metadata bloom filters for other columns
-    metadata_bloom_filters: HashMap<String, crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
+    metadata_bloom_filters:
+        HashMap<String, crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
 
     file_path: String,
 
@@ -68,13 +67,13 @@ pub struct StreamingParquetWriter {
 
 impl StreamingParquetWriter {
     /// Create new streaming writer with optional filterable columns
-    pub fn new<P: AsRef<Path>>(
+    pub async fn new<P: AsRef<Path>>(
         file_path: P,
         dimension: usize,
         config: ParquetWriterConfig,
         filterable_columns: Option<&[crate::proto::proximadb_v1::FilterableColumnSpec]>,
     ) -> Result<Self> {
-        let filesystem_factory = Arc::new(FilesystemFactory::default());
+        let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
         Self::with_filesystem_factory(
             file_path,
             dimension,
@@ -93,22 +92,30 @@ impl StreamingParquetWriter {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         let file_path_str = file_path.as_ref().to_string_lossy().to_string();
-        info!("Creating streaming Parquet writer with filesystem API: {}", file_path_str);
+        info!(
+            "Creating streaming Parquet writer with filesystem API: {}",
+            file_path_str
+        );
 
         // Convert proto filterable columns to columnar format
         let columnar_filterable: Vec<ColumnarFilterableSpec> = filterable_columns
-            .map(|cols| cols.iter().map(ColumnarFilterableSpec::from_proto).collect())
+            .map(|cols| {
+                cols.iter()
+                    .map(ColumnarFilterableSpec::from_proto)
+                    .collect()
+            })
             .unwrap_or_else(Vec::new);
 
         // Build optimized schema
         let mut schema_builder = ParquetSchemaBuilder::new(dimension, config.clone());
 
         // Convert ColumnarFilterableSpec to proto FilterableColumnSpec for schema builder
-        let proto_filterable: Vec<crate::proto::proximadb_v1::FilterableColumnSpec> = columnar_filterable
-            .iter()
-            .map(|spec| {
-                // Manual conversion since to_proto doesn't exist
-                crate::proto::proximadb_v1::FilterableColumnSpec {
+        let proto_filterable: Vec<crate::proto::proximadb_v1::FilterableColumnSpec> =
+            columnar_filterable
+                .iter()
+                .map(|spec| {
+                    // Manual conversion since to_proto doesn't exist
+                    crate::proto::proximadb_v1::FilterableColumnSpec {
                     name: spec.name.clone(),
                     data_type: match spec.data_type {
                         crate::storage::engines::core::formats::columnar::schema::FilterableData::String => 1,   // FILTERABLE_STRING = 1
@@ -122,8 +129,8 @@ impl StreamingParquetWriter {
                     estimated_cardinality: spec.estimated_cardinality.map(|c| c as u32),  // Convert Option<usize> to Option<u32>
                     supports_range: false,
                 }
-            })
-            .collect();
+                })
+                .collect();
 
         if !proto_filterable.is_empty() {
             schema_builder = schema_builder.with_filterable_columns(proto_filterable);
@@ -175,12 +182,16 @@ impl StreamingParquetWriter {
         debug!(
             "Writing batch of {} records, dimension={}",
             records.len(),
-            if !records.is_empty() { records[0].vector.len() } else { 0 }
+            if !records.is_empty() {
+                records[0].vector.len()
+            } else {
+                0
+            }
         );
 
         // Collect metadata samples for type inference
-        if self.native_metadata_handler.is_some()
-            && self.metadata_samples.len() < 100  // Default metadata inference sample size
+        if self.native_metadata_handler.is_some() && self.metadata_samples.len() < 100
+        // Default metadata inference sample size
         {
             self.collect_metadata_samples(records)?;
         }
@@ -244,7 +255,10 @@ impl StreamingParquetWriter {
         self.total_records_written += self.current_batch.len() as u64;
         self.current_batch.clear();
 
-        debug!("Flushed batch, total records: {}", self.total_records_written);
+        debug!(
+            "Flushed batch, total records: {}",
+            self.total_records_written
+        );
         Ok(())
     }
 
@@ -257,9 +271,7 @@ impl StreamingParquetWriter {
         let mut arrays: Vec<ArrayRef> = Vec::new();
 
         // ID column
-        let ids: Vec<Option<String>> = records.iter()
-            .map(|r| Some(r.id.clone()))
-            .collect();
+        let ids: Vec<Option<String>> = records.iter().map(|r| Some(r.id.clone())).collect();
         arrays.push(Arc::new(StringArray::from(ids)));
 
         // Row group offset and row index
@@ -270,7 +282,7 @@ impl StreamingParquetWriter {
 
         // Vector data - Create List array of Float32 (non-nullable items)
         // Create fixed-size list array (more efficient for vectors with known dimension)
-        use arrow_array::{Float32Array, FixedSizeListArray};
+        use arrow_array::{FixedSizeListArray, Float32Array};
 
         // Flatten all vectors into a single array
         let mut values = Vec::with_capacity(records.len() * self.dimension);
@@ -292,56 +304,64 @@ impl StreamingParquetWriter {
             self.dimension as i32,
             Arc::new(values_array),
             None,
-        ).expect("Failed to create fixed-size list array");
+        )
+        .expect("Failed to create fixed-size list array");
 
         arrays.push(Arc::new(fixed_list_array));
 
         // Add quantization arrays if enabled using UnifiedQuantizationEngine
-        if self.config.quantization.enable_binary.unwrap_or(false) || self.config.quantization.enable_int8.unwrap_or(false) || self.config.quantization.enable_pq.unwrap_or(false) {
+        if self.config.quantization.enable_binary.unwrap_or(false)
+            || self.config.quantization.enable_int8.unwrap_or(false)
+            || self.config.quantization.enable_pq.unwrap_or(false)
+        {
             self.add_quantization_arrays(&mut arrays, records)?;
         }
 
         // Timestamp
-        let timestamps: Vec<i64> = records.iter()
+        let timestamps: Vec<i64> = records
+            .iter()
             .map(|r| r.timestamp.unwrap_or(0) as i64)
             .collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
 
         // Updated at (optional)
-        let updated_at: Vec<Option<i64>> = records.iter()
+        let updated_at: Vec<Option<i64>> = records
+            .iter()
             .map(|r| r.updated_at.map(|v| v as i64))
             .collect();
         arrays.push(Arc::new(Int64Array::from(updated_at)));
 
         // Expires at (optional)
-        let expires_at: Vec<Option<i64>> = records.iter()
+        let expires_at: Vec<Option<i64>> = records
+            .iter()
             .map(|r| r.expires_at.map(|v| v as i64))
             .collect();
         arrays.push(Arc::new(Int64Array::from(expires_at)));
 
         // Version (optional)
-        let versions: Vec<Option<u32>> = records.iter()
-            .map(|r| r.version)
-            .collect();
+        let versions: Vec<Option<u32>> = records.iter().map(|r| r.version).collect();
         arrays.push(Arc::new(UInt32Array::from(versions)));
 
         // Source (optional)
-        let sources: Vec<Option<String>> = records.iter()
-            .map(|r| r.source.clone())
-            .collect();
+        let sources: Vec<Option<String>> = records.iter().map(|r| r.source.clone()).collect();
         arrays.push(Arc::new(StringArray::from(sources)));
 
         // Add filterable column arrays if specified
         if !self.filterable_columns.is_empty() {
-            use arrow_array::{BooleanArray, Int32Array, Int64Array, Float64Array};
             use crate::storage::engines::core::formats::columnar::schema::FilterableData;
+            use arrow_array::{BooleanArray, Float64Array, Int32Array, Int64Array};
 
-            debug!("Writing {} filterable columns for {} records", self.filterable_columns.len(), records.len());
+            debug!(
+                "Writing {} filterable columns for {} records",
+                self.filterable_columns.len(),
+                records.len()
+            );
             for col_spec in &self.filterable_columns {
                 // Create array based on column data type with proper typing
                 let array: ArrayRef = match col_spec.data_type {
                     FilterableData::String => {
-                        let values: Vec<Option<String>> = records.iter()
+                        let values: Vec<Option<String>> = records
+                            .iter()
                             .map(|r| {
                                 r.metadata.get(&col_spec.name).and_then(|sql_value| {
                                     if let Some(value) = &sql_value.value {
@@ -357,9 +377,10 @@ impl StreamingParquetWriter {
                             })
                             .collect();
                         Arc::new(StringArray::from(values))
-                    },
+                    }
                     FilterableData::Integer => {
-                        let values: Vec<Option<i64>> = records.iter()
+                        let values: Vec<Option<i64>> = records
+                            .iter()
                             .map(|r| {
                                 r.metadata.get(&col_spec.name).and_then(|sql_value| {
                                     if let Some(value) = &sql_value.value {
@@ -376,9 +397,10 @@ impl StreamingParquetWriter {
                             })
                             .collect();
                         Arc::new(Int64Array::from(values))
-                    },
+                    }
                     FilterableData::Float => {
-                        let values: Vec<Option<f64>> = records.iter()
+                        let values: Vec<Option<f64>> = records
+                            .iter()
                             .map(|r| {
                                 r.metadata.get(&col_spec.name).and_then(|sql_value| {
                                     if let Some(value) = &sql_value.value {
@@ -395,9 +417,10 @@ impl StreamingParquetWriter {
                             })
                             .collect();
                         Arc::new(Float64Array::from(values))
-                    },
+                    }
                     FilterableData::Boolean => {
-                        let values: Vec<Option<bool>> = records.iter()
+                        let values: Vec<Option<bool>> = records
+                            .iter()
                             .map(|r| {
                                 r.metadata.get(&col_spec.name).and_then(|sql_value| {
                                     if let Some(value) = &sql_value.value {
@@ -413,10 +436,11 @@ impl StreamingParquetWriter {
                             })
                             .collect();
                         Arc::new(BooleanArray::from(values))
-                    },
+                    }
                     FilterableData::Datetime => {
                         // Timestamp as Int64 (microseconds)
-                        let values: Vec<Option<i64>> = records.iter()
+                        let values: Vec<Option<i64>> = records
+                            .iter()
                             .map(|r| {
                                 r.metadata.get(&col_spec.name).and_then(|sql_value| {
                                     if let Some(value) = &sql_value.value {
@@ -432,10 +456,11 @@ impl StreamingParquetWriter {
                             })
                             .collect();
                         Arc::new(Int64Array::from(values))
-                    },
+                    }
                     _ => {
                         // Default to string for unsupported types
-                        let values: Vec<Option<String>> = records.iter()
+                        let values: Vec<Option<String>> = records
+                            .iter()
                             .map(|r| {
                                 r.metadata.get(&col_spec.name).and_then(|sql_value| {
                                     if let Some(value) = &sql_value.value {
@@ -451,7 +476,7 @@ impl StreamingParquetWriter {
                             })
                             .collect();
                         Arc::new(StringArray::from(values))
-                    },
+                    }
                 };
 
                 arrays.push(array);
@@ -475,13 +500,17 @@ impl StreamingParquetWriter {
         let mut current_offset = 0i32;
 
         // Build set of filterable column names for exclusion
-        let filterable_names: std::collections::HashSet<String> = self.filterable_columns
+        let filterable_names: std::collections::HashSet<String> = self
+            .filterable_columns
             .iter()
             .map(|col| col.name.clone())
             .collect();
 
-        debug!("Writing metadata for {} records (excluding {} filterable columns)",
-            records.len(), filterable_names.len());
+        debug!(
+            "Writing metadata for {} records (excluding {} filterable columns)",
+            records.len(),
+            filterable_names.len()
+        );
 
         // Build the key-value pairs for each record's metadata
         for (idx, record) in records.iter().enumerate() {
@@ -489,8 +518,10 @@ impl StreamingParquetWriter {
             let metadata_count = record.metadata.len();
 
             if idx < 3 || metadata_count > 0 {
-                trace!("Record {} (id={}) has {} metadata entries",
-                    idx, record.id, metadata_count);
+                trace!(
+                    "Record {} (id={}) has {} metadata entries",
+                    idx, record.id, metadata_count
+                );
             }
 
             // Add only non-filterable metadata entries for this record
@@ -539,27 +570,21 @@ impl StreamingParquetWriter {
         let struct_array = StructArray::try_new(
             struct_fields.into(),
             vec![Arc::new(keys_array), Arc::new(values_array)],
-            None
-        ).expect("Failed to create struct array");
+            None,
+        )
+        .expect("Failed to create struct array");
 
         // Create offsets buffer from the offsets vector
-        let offsets = unsafe {
-            arrow_buffer::OffsetBuffer::<i32>::new_unchecked(map_offsets.into())
-        };
+        let offsets =
+            unsafe { arrow_buffer::OffsetBuffer::<i32>::new_unchecked(map_offsets.into()) };
 
         let map_field = Field::new(
             "entries",
             DataType::Struct(vec![key_field, value_field].into()),
-            false
+            false,
         );
 
-        let map_array = MapArray::new(
-            Arc::new(map_field),
-            offsets,
-            struct_array,
-            None,
-            false
-        );
+        let map_array = MapArray::new(Arc::new(map_field), offsets, struct_array, None, false);
 
         arrays.push(Arc::new(map_array));
 
@@ -570,7 +595,11 @@ impl StreamingParquetWriter {
             Ok(batch) => Ok(batch),
             Err(e) => {
                 error!("RecordBatch creation error: {}", e);
-                error!("Schema field count: {}, Array count: {}", self.schema.fields().len(), array_count);
+                error!(
+                    "Schema field count: {}, Array count: {}",
+                    self.schema.fields().len(),
+                    array_count
+                );
                 for (i, field) in self.schema.fields().iter().enumerate() {
                     error!("  Field {}: {} ({:?})", i, field.name(), field.data_type());
                 }
@@ -580,9 +609,15 @@ impl StreamingParquetWriter {
     }
 
     /// Add quantization arrays to the record batch using UnifiedQuantizationEngine
-    fn add_quantization_arrays(&self, arrays: &mut Vec<ArrayRef>, records: &[VectorRecord]) -> Result<()> {
-        use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+    fn add_quantization_arrays(
+        &self,
+        arrays: &mut Vec<ArrayRef>,
+        records: &[VectorRecord],
+    ) -> Result<()> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::compute::quantization::unified::{
+            InMemoryCodebookStore, UnifiedQuantizationEngine,
+        };
         use arrow::array::BinaryBuilder;
 
         // Create a quantization engine for this batch with in-memory codebook
@@ -648,7 +683,10 @@ impl StreamingParquetWriter {
             let estimated_items = self.config.bloom_filter_ndv.max(100000);
             // BloomFilter::new expects different parameters
             // Using default configuration for now
-            let bloom = crate::storage::engines::core::formats::columnar::id_index::BloomFilter::new(1000, 0.01);  // expected_items, false_positive_rate
+            let bloom =
+                crate::storage::engines::core::formats::columnar::id_index::BloomFilter::new(
+                    1000, 0.01,
+                ); // expected_items, false_positive_rate
             self.id_bloom_filters.push(bloom);
         }
 
@@ -664,14 +702,15 @@ impl StreamingParquetWriter {
     /// Collect metadata samples for type inference
     fn collect_metadata_samples(&mut self, records: &[VectorRecord]) -> Result<()> {
         for record in records {
-            if !record.metadata.is_empty() &&
-               self.metadata_samples.len() < 100 { // Default metadata inference sample size
+            if !record.metadata.is_empty() && self.metadata_samples.len() < 100 {
+                // Default metadata inference sample size
                 // Convert metadata to JSON for sampling
                 let metadata_map = self.convert_metadata_to_json(&record.metadata)?;
                 self.metadata_samples.push(metadata_map);
 
                 // Perform type inference once we have enough samples
-                if self.metadata_samples.len() >= 100 { // Default metadata inference sample size
+                if self.metadata_samples.len() >= 100 {
+                    // Default metadata inference sample size
                     self.infer_metadata_types()?;
                 }
             }
@@ -692,7 +731,7 @@ impl StreamingParquetWriter {
                 let json_value = match value {
                     Value::StringValue(s) => serde_json::Value::String(s.clone()),
                     Value::NumberValue(f) => serde_json::Value::Number(
-                        serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0))
+                        serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)),
                     ),
                     Value::BoolValue(b) => serde_json::Value::Bool(*b),
                     Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
@@ -708,7 +747,10 @@ impl StreamingParquetWriter {
     /// Infer metadata types from collected samples
     fn infer_metadata_types(&mut self) -> Result<()> {
         if let Some(ref mut handler) = self.native_metadata_handler {
-            info!("Inferring metadata types from {} samples", self.metadata_samples.len());
+            info!(
+                "Inferring metadata types from {} samples",
+                self.metadata_samples.len()
+            );
             handler.analyze_metadata(&self.metadata_samples)?;
             self.metadata_samples.clear();
         }
@@ -716,7 +758,13 @@ impl StreamingParquetWriter {
     }
 
     /// Finalize the writer and return statistics and data
-    pub async fn finalize(mut self) -> Result<(StreamingParquetWriterStats, Vec<u8>, Option<Box<dyn MetadataCollector>>)> {
+    pub async fn finalize(
+        mut self,
+    ) -> Result<(
+        StreamingParquetWriterStats,
+        Vec<u8>,
+        Option<Box<dyn MetadataCollector>>,
+    )> {
         // Flush any remaining records
         if !self.current_batch.is_empty() {
             self.flush_current_batch().await?;
@@ -737,10 +785,12 @@ impl StreamingParquetWriter {
 
         // Calculate compression ratio by comparing vector column compressed size to uncompressed size
         // Uncompressed vector size = dimensions × 4 bytes × record_count
-        let uncompressed_vector_size = (self.dimension * 4 * self.total_records_written as usize) as u64;
+        let uncompressed_vector_size =
+            (self.dimension * 4 * self.total_records_written as usize) as u64;
 
         // Extract compressed vector column size from Parquet metadata
-        let compressed_vector_size = extract_vector_column_compressed_size(&written_data, uncompressed_vector_size)?;
+        let compressed_vector_size =
+            extract_vector_column_compressed_size(&written_data, uncompressed_vector_size)?;
 
         // Calculate compression ratio as space savings: 1 - (compressed/uncompressed)
         // This aligns with standard compression literature
@@ -770,7 +820,9 @@ impl StreamingParquetWriter {
             row_groups_written: total_row_groups as usize,
             avg_row_group_size: if total_row_groups > 0 {
                 self.total_records_written as usize / total_row_groups as usize
-            } else { 0 },
+            } else {
+                0
+            },
             min_row_group_size: 0,
             max_row_group_size: 0,
             bloom_filter_count: self.id_bloom_filters.len(),
@@ -793,11 +845,14 @@ impl StreamingParquetWriter {
 }
 
 /// Extract compressed size of vector column from Parquet metadata
-fn extract_vector_column_compressed_size(parquet_data: &[u8], fallback_uncompressed: u64) -> Result<u64> {
+fn extract_vector_column_compressed_size(
+    parquet_data: &[u8],
+    fallback_uncompressed: u64,
+) -> Result<u64> {
+    use crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_FP32;
+    use bytes::Bytes;
     use parquet::file::reader::FileReader;
     use parquet::file::serialized_reader::SerializedFileReader;
-    use bytes::Bytes;
-    use crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_FP32;
 
     // Create a reader from the bytes
     let bytes = Bytes::copy_from_slice(parquet_data);
@@ -875,7 +930,10 @@ impl StreamingWriterBuilder {
     }
 
     /// Set filterable columns
-    pub fn with_filterable_columns(mut self, columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>) -> Self {
+    pub fn with_filterable_columns(
+        mut self,
+        columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>,
+    ) -> Self {
         self.filterable_columns = Some(columns);
         self
     }
@@ -887,10 +945,12 @@ impl StreamingWriterBuilder {
     }
 
     /// Build the writer
-    pub fn build(self) -> Result<StreamingParquetWriter> {
-        let file_path = self.file_path
+    pub async fn build(self) -> Result<StreamingParquetWriter> {
+        let file_path = self
+            .file_path
             .ok_or_else(|| anyhow!("File path is required"))?;
-        let dimension = self.dimension
+        let dimension = self
+            .dimension
             .ok_or_else(|| anyhow!("Dimension is required"))?;
 
         match self.filesystem_factory {
@@ -901,12 +961,15 @@ impl StreamingWriterBuilder {
                 self.filterable_columns.as_deref(),
                 factory,
             ),
-            None => StreamingParquetWriter::new(
-                file_path,
-                dimension,
-                self.config,
-                self.filterable_columns.as_deref(),
-            ),
+            None => {
+                StreamingParquetWriter::new(
+                    file_path,
+                    dimension,
+                    self.config,
+                    self.filterable_columns.as_deref(),
+                )
+                .await
+            }
         }
     }
 }

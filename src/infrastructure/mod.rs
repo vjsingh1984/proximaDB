@@ -235,6 +235,6 @@ pub use adaptive_structures::{
 };
 
 pub use deployment_automation::{
-    DeploymentConfig, DeploymentManager, DeploymentStatus, Environment,
-    ServiceConfig, InfrastructureConfig, HealthCheckConfig,
+    DeploymentConfig, DeploymentManager, DeploymentStatus, Environment, HealthCheckConfig,
+    InfrastructureConfig, ServiceConfig,
 };

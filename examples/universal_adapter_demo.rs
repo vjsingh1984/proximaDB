@@ -4,8 +4,8 @@
 //! with all storage engines (NOVA, SWIFT, VIPER, SST, RAPTOR, HELIX) and shows
 //! the PQ and INT8 optimized distance computations with progressive refinement.
 
-use proximadb::utils::Uuid;
 use anyhow::Result;
+use proximadb::utils::Uuid;
 use std::collections::HashMap;
 use std::time::Instant;
 

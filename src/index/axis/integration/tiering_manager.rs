@@ -1257,7 +1257,9 @@ mod tests {
         // Create a proper IndexBackend using the same pattern as adaptive_structures tests
         let tier_manager = Arc::new({
             let global_tier = Arc::new(GlobalTier::new());
-            crate::infrastructure::adaptive_structures::UniversalTier::new(global_tier).await.unwrap()
+            crate::infrastructure::adaptive_structures::UniversalTier::new(global_tier)
+                .await
+                .unwrap()
         });
         let index_backend = Arc::new(
             crate::infrastructure::adaptive_structures::IndexBackend::<String, Vec<u8>>::new_dashmap(
@@ -1284,14 +1286,16 @@ mod tests {
         );
 
         let memory = InfrastructureTier::Memory;
-        let nvme = InfrastructureTier::NvmeSsd { mount_path: "/fast".to_string() };
+        let nvme = InfrastructureTier::NvmeSsd {
+            mount_path: "/fast".to_string(),
+        };
         let cloud = InfrastructureTier::CloudStandard {
             provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                 bucket: "proximadb-indexes".to_string(),
                 storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,
                 lifecycle_enabled: true,
             },
-            region: "us-west-2".to_string()
+            region: "us-west-2".to_string(),
         };
 
         assert!(tiering_manager.tier_order(&memory) < tiering_manager.tier_order(&nvme));
@@ -1299,9 +1303,13 @@ mod tests {
     }
 
     // Helper functions for the test
-    fn create_test_unified_tier_policy() -> crate::infrastructure::adaptive_structures::UnifiedTierPolicy {
+    fn create_test_unified_tier_policy()
+    -> crate::infrastructure::adaptive_structures::UnifiedTierPolicy {
         crate::infrastructure::adaptive_structures::UnifiedTierPolicy {
-            eviction_policy: crate::infrastructure::adaptive_structures::EvictionPolicy::SizeBased { max_memory_mb: 100 },
+            eviction_policy:
+                crate::infrastructure::adaptive_structures::EvictionPolicy::SizeBased {
+                    max_memory_mb: 100,
+                },
             promotion_criteria: crate::infrastructure::adaptive_structures::PromotionCriteria {
                 min_access_frequency: 10,
                 frequency_window: std::time::Duration::from_secs(60),
@@ -1323,7 +1331,8 @@ mod tests {
         }
     }
 
-    fn create_test_adaptive_store_config() -> crate::infrastructure::adaptive_structures::AdaptiveStoreConfig {
+    fn create_test_adaptive_store_config()
+    -> crate::infrastructure::adaptive_structures::AdaptiveStoreConfig {
         crate::infrastructure::adaptive_structures::AdaptiveStoreConfig {
             collection_id: "test_tiering".to_string(),
             backend_type: crate::infrastructure::adaptive_structures::BackendType::Index {

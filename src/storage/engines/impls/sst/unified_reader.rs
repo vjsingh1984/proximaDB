@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 use super::readers::sst_query_engine::UnifiedSstableReader;
 
@@ -107,7 +107,9 @@ impl UnifiedSSTReader {
         Self::new(
             filesystem_factory,
             collection_id,
-            ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            ReadAccessStrategy::CachedSearch {
+                prefetch_metadata: true,
+            },
         )
     }
 
@@ -138,11 +140,15 @@ impl UnifiedSSTReader {
             ReadAccessStrategy::DirectStream => {
                 // TODO: Implement true streaming read that bypasses cache
                 // For now, use the inner reader
-                self.inner_reader.read_all_records_for_compaction(&[file_path.to_string()]).await
+                self.inner_reader
+                    .read_all_records_for_compaction(&[file_path.to_string()])
+                    .await
             }
             _ => {
                 // Use cached read path
-                self.inner_reader.read_all_records_for_compaction(&[file_path.to_string()]).await
+                self.inner_reader
+                    .read_all_records_for_compaction(&[file_path.to_string()])
+                    .await
             }
         }
     }
@@ -202,7 +208,9 @@ impl DirectSSTReader {
     /// Read entire file directly without caching
     pub async fn read_file_direct(&self, file_path: &str) -> Result<Vec<u8>> {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
-        fs.read(file_path).await.map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))
+        fs.read(file_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))
     }
 
     /// Stream records directly from file
@@ -228,10 +236,7 @@ pub struct CachedSSTReader {
 }
 
 impl CachedSSTReader {
-    pub fn new(
-        filesystem_factory: Arc<FilesystemFactory>,
-        collection_id: String,
-    ) -> Result<Self> {
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String) -> Result<Self> {
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let cached_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
@@ -262,22 +267,29 @@ mod tests {
     #[tokio::test]
     async fn test_unified_reader_strategy_selection() {
         // Test that correct strategy is selected for different use cases
-        let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
+        let factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .unwrap(),
+        );
 
         // Compaction should use DirectStream
-        let compaction_reader = UnifiedSSTReader::for_compaction(
-            factory.clone(),
-            "test_collection".to_string(),
-        ).unwrap();
-        assert_eq!(compaction_reader.strategy(), &ReadAccessStrategy::DirectStream);
+        let compaction_reader =
+            UnifiedSSTReader::for_compaction(factory.clone(), "test_collection".to_string())
+                .unwrap();
+        assert_eq!(
+            compaction_reader.strategy(),
+            &ReadAccessStrategy::DirectStream
+        );
         assert!(!compaction_reader.is_using_cache());
 
         // Search should use CachedSearch
-        let search_reader = UnifiedSSTReader::for_search(
-            factory.clone(),
-            "test_collection".to_string(),
-        ).unwrap();
-        matches!(search_reader.strategy(), ReadAccessStrategy::CachedSearch { .. });
+        let search_reader =
+            UnifiedSSTReader::for_search(factory.clone(), "test_collection".to_string()).unwrap();
+        matches!(
+            search_reader.strategy(),
+            ReadAccessStrategy::CachedSearch { .. }
+        );
         assert!(search_reader.is_using_cache());
     }
 }

@@ -3,16 +3,16 @@
 //! Tests all filtering scenarios with typed metadata to ensure SWIFT engine
 //! properly preserves and filters on all data types (String, Integer, Float, Boolean).
 
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::{
-    Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType,
-    sql_value::Value, VectorRecord, SqlValue,
+    Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue, VectorRecord,
+    sql_value::Value,
 };
-use serde_json::json;
 use proximadb::storage::engines::impls::swift::SwiftEngine;
-use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
-use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
+use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -157,7 +157,9 @@ async fn test_swift_string_equals_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     // Insert test data
     let vectors = create_test_vectors("test_swift_filter", 100);
@@ -201,7 +203,9 @@ async fn test_swift_number_less_than_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_swift_filter", 100);
     let params = FlushParameters {
@@ -240,7 +244,9 @@ async fn test_swift_boolean_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_swift_filter", 100);
     let params = FlushParameters {
@@ -279,7 +285,9 @@ async fn test_swift_integer_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_swift_filter", 100);
     let params = FlushParameters {
@@ -318,7 +326,9 @@ async fn test_swift_and_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_swift_filter", 100);
     let params = FlushParameters {
@@ -358,7 +368,11 @@ async fn test_swift_and_filter() {
     // cat_5: indices 5,15,25,35,45,55,65,75,85,95 (all odd)
     // enabled=true: even indices
     // Intersection: NONE (mutually exclusive)
-    assert_eq!(results.len(), 0, "Expected 0 results for mutually exclusive AND");
+    assert_eq!(
+        results.len(),
+        0,
+        "Expected 0 results for mutually exclusive AND"
+    );
 }
 
 #[tokio::test]
@@ -366,7 +380,9 @@ async fn test_swift_or_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_swift_filter", 100);
     let params = FlushParameters {
@@ -414,7 +430,9 @@ async fn test_swift_not_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_swift_filter", 50); // Smaller dataset for NOT
     let params = FlushParameters {
@@ -453,7 +471,9 @@ async fn test_swift_complex_nested_filter() {
     let temp_dir = TempDir::new().unwrap();
     let collection = create_test_collection(&temp_dir);
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SwiftEngine::new_with_config(distance_compute, None).await.unwrap();
+    let engine = SwiftEngine::new_with_config(distance_compute, None)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_swift_filter", 100);
     let params = FlushParameters {

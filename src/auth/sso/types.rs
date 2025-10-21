@@ -1,6 +1,6 @@
 //! SSO type definitions - clean and simple
 
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -50,25 +50,25 @@ pub struct EnterpriseUserContext {
     pub user_id: String,
     pub email: String,
     pub display_name: String,
-    
+
     /// Tenant association
     pub tenant_id: String,
     pub organization_id: String,
-    
+
     /// Roles and permissions
     pub roles: Vec<String>,
     pub permissions: HashSet<String>,
-    
+
     /// Security context
     pub security_clearance: SecurityClearance,
     pub department: Option<String>,
     pub cost_center: Option<String>,
-    
+
     /// Session information
     pub session_id: String,
     pub login_timestamp: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
-    
+
     /// Provider-specific context
     pub provider_context: ProviderUserContext,
 }
@@ -132,12 +132,12 @@ impl SSOToken {
             issued_at: now,
         }
     }
-    
+
     /// Check if token is expired
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.expires_at
     }
-    
+
     /// Check if token expires soon (within 5 minutes)
     pub fn expires_soon(&self) -> bool {
         Utc::now() + Duration::minutes(5) > self.expires_at
@@ -168,18 +168,17 @@ impl EnterpriseUserContext {
             },
         }
     }
-    
+
     /// Check if user has specific permission
     pub fn has_permission(&self, permission: &str) -> bool {
-        self.permissions.contains(permission) || 
-        self.permissions.contains("system_admin")
+        self.permissions.contains(permission) || self.permissions.contains("system_admin")
     }
-    
+
     /// Check if user has role
     pub fn has_role(&self, role: &str) -> bool {
         self.roles.contains(&role.to_string())
     }
-    
+
     /// Update last activity timestamp
     pub fn update_activity(&mut self) {
         self.last_activity = Utc::now();
@@ -198,7 +197,7 @@ mod tests {
             "test_user".to_string(),
             3600, // 1 hour
         );
-        
+
         assert_eq!(token.provider, SSOProvider::AWSIAM);
         assert_eq!(token.user_id, "test_user");
         assert!(!token.is_expired());
@@ -207,7 +206,7 @@ mod tests {
     #[test]
     fn test_enterprise_user_context() {
         let context = EnterpriseUserContext::system_admin();
-        
+
         assert_eq!(context.user_id, "system");
         assert!(context.has_permission("system_admin"));
         assert!(context.has_role("system_admin"));

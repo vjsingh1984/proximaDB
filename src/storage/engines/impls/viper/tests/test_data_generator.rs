@@ -16,9 +16,7 @@ use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 // Also import columnar exports for future migration
-use crate::storage::engines::core::formats::columnar::{
-    BatchParquetWriter, ParquetWriterConfig,
-};
+use crate::storage::engines::core::formats::columnar::{BatchParquetWriter, ParquetWriterConfig};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
@@ -270,7 +268,10 @@ impl TestDataGenerator {
             Field::new("collection_id", DataType::Utf8, false),
             Field::new(
                 crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,
-                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), self.config.dimension as i32),
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    self.config.dimension as i32,
+                ),
                 true,
             ), // Both field and items are nullable
             Field::new("timestamp", DataType::Int64, true),
@@ -329,7 +330,8 @@ impl TestDataGenerator {
 
         // Create non-nullable Float32 arrays manually to match schema
         use arrow_array::builder::FixedSizeListBuilder;
-        let mut list_builder = FixedSizeListBuilder::new(Float32Builder::new(), self.config.dimension as i32);
+        let mut list_builder =
+            FixedSizeListBuilder::new(Float32Builder::new(), self.config.dimension as i32);
         for vector in &vectors {
             for &val in vector {
                 list_builder.values().append_value(val);
@@ -396,19 +398,24 @@ impl TestDataGenerator {
         }
 
         // Add metadata columns
-        let categories: ArrayRef =
-            Arc::new(StringArray::from_iter(metadata.iter().map(|m| {
-                m.get("category").and_then(|v| v.as_str()).map(|s| s.to_string())
-            })));
+        let categories: ArrayRef = Arc::new(StringArray::from_iter(metadata.iter().map(|m| {
+            m.get("category")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })));
         columns.push(categories);
 
         let prices: ArrayRef = Arc::new(Int64Array::from_iter(
-            metadata.iter().map(|m| m.get("price").and_then(|v| v.as_i64())),
+            metadata
+                .iter()
+                .map(|m| m.get("price").and_then(|v| v.as_i64())),
         ));
         columns.push(prices);
 
         let scores: ArrayRef = Arc::new(Float64Array::from_iter(
-            metadata.iter().map(|m| m.get("score").and_then(|v| v.as_f64())),
+            metadata
+                .iter()
+                .map(|m| m.get("score").and_then(|v| v.as_f64())),
         ));
         columns.push(scores);
 

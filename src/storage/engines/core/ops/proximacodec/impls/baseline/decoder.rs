@@ -25,202 +25,112 @@ impl RawDecoder for BaselineDecoder {
         matches!(
             scheme,
             ProximaScheme::Raw
-            | ProximaScheme::Delta { .. }
-            | ProximaScheme::BitPacked { .. }
-            | ProximaScheme::FrameOfReference { .. }
-            | ProximaScheme::SparseBitmap
-            | ProximaScheme::SparseCOO
-            | ProximaScheme::RunLength
-            | ProximaScheme::PForDelta { .. }
-            | ProximaScheme::Zigzag { .. }
-            | ProximaScheme::DoubleDelta { .. }
-            | ProximaScheme::PForDoubleDelta { .. }
-            | ProximaScheme::Gorilla
-            | ProximaScheme::VByte
-            | ProximaScheme::Dictionary
-            | ProximaScheme::Simple8b
-            | ProximaScheme::Adaptive
+                | ProximaScheme::Delta { .. }
+                | ProximaScheme::BitPacked { .. }
+                | ProximaScheme::FrameOfReference { .. }
+                | ProximaScheme::SparseBitmap
+                | ProximaScheme::SparseCOO
+                | ProximaScheme::RunLength
+                | ProximaScheme::PForDelta { .. }
+                | ProximaScheme::Zigzag { .. }
+                | ProximaScheme::DoubleDelta { .. }
+                | ProximaScheme::PForDoubleDelta { .. }
+                | ProximaScheme::Gorilla
+                | ProximaScheme::VByte
+                | ProximaScheme::Dictionary
+                | ProximaScheme::Simple8b
+                | ProximaScheme::Adaptive
         )
     }
 
     fn decode_f32(&self, data: &[u8], scheme: &ProximaScheme, count: usize) -> Result<Vec<f32>> {
         match scheme {
-            ProximaScheme::Delta { .. } => {
-                functions::delta::decode_f32(data, count)
-            }
-            ProximaScheme::BitPacked { bits } => {
-                functions::bitpack::decode_f32(data, *bits, count)
-            }
+            ProximaScheme::Delta { .. } => functions::delta::decode_f32(data, count),
+            ProximaScheme::BitPacked { bits } => functions::bitpack::decode_f32(data, *bits, count),
             ProximaScheme::FrameOfReference { .. } => {
                 functions::frame_of_ref::decode_f32(data, count)
             }
-            ProximaScheme::SparseBitmap => {
-                functions::sparse_bitmap::decode_f32(data, count)
-            }
-            ProximaScheme::SparseCOO => {
-                functions::sparse_coo::decode_f32(data, count)
-            }
-            ProximaScheme::Raw => {
-                functions::raw::decode_f32(data)
-            }
-            ProximaScheme::RunLength => {
-                functions::run_length::decode_f32(data)
-            }
-            ProximaScheme::PForDelta { .. } => {
-                functions::pfor_delta::decode_f32(data, count)
-            }
-            ProximaScheme::Zigzag { .. } => {
-                functions::zigzag::decode_f32(data, count)
-            }
-            ProximaScheme::DoubleDelta { .. } => {
-                functions::double_delta::decode_f32(data, count)
-            }
+            ProximaScheme::SparseBitmap => functions::sparse_bitmap::decode_f32(data, count),
+            ProximaScheme::SparseCOO => functions::sparse_coo::decode_f32(data, count),
+            ProximaScheme::Raw => functions::raw::decode_f32(data),
+            ProximaScheme::RunLength => functions::run_length::decode_f32(data),
+            ProximaScheme::PForDelta { .. } => functions::pfor_delta::decode_f32(data, count),
+            ProximaScheme::Zigzag { .. } => functions::zigzag::decode_f32(data, count),
+            ProximaScheme::DoubleDelta { .. } => functions::double_delta::decode_f32(data, count),
             ProximaScheme::PForDoubleDelta { .. } => {
                 functions::pfor_double_delta::decode_f32(data, count)
             }
-            ProximaScheme::Gorilla => {
-                functions::gorilla::decode_f32(data, count)
-            }
-            ProximaScheme::VByte => {
-                functions::vbyte::decode_f32(data, count)
-            }
-            ProximaScheme::Dictionary => {
-                functions::dictionary::decode_f32(data, count)
-            }
-            ProximaScheme::Simple8b => {
-                functions::simple8b::decode_f32(data, count)
-            }
-            ProximaScheme::Adaptive => {
-                functions::adaptive::decode_f32(data, count)
-            }
-            _ => {
-                Err(anyhow::anyhow!(
-                    "Scheme {} not yet implemented for f32",
-                    scheme.name()
-                ))
-            }
+            ProximaScheme::Gorilla => functions::gorilla::decode_f32(data, count),
+            ProximaScheme::VByte => functions::vbyte::decode_f32(data, count),
+            ProximaScheme::Dictionary => functions::dictionary::decode_f32(data, count),
+            ProximaScheme::Simple8b => functions::simple8b::decode_f32(data, count),
+            ProximaScheme::Adaptive => functions::adaptive::decode_f32(data, count),
+            _ => Err(anyhow::anyhow!(
+                "Scheme {} not yet implemented for f32",
+                scheme.name()
+            )),
         }
     }
 
     fn decode_i64(&self, data: &[u8], scheme: &ProximaScheme, count: usize) -> Result<Vec<i64>> {
         match scheme {
-            ProximaScheme::Delta { .. } => {
-                functions::delta::decode_i64(data, count)
-            }
-            ProximaScheme::BitPacked { bits } => {
-                functions::bitpack::decode_i64(data, *bits, count)
-            }
+            ProximaScheme::Delta { .. } => functions::delta::decode_i64(data, count),
+            ProximaScheme::BitPacked { bits } => functions::bitpack::decode_i64(data, *bits, count),
             ProximaScheme::FrameOfReference { .. } => {
                 functions::frame_of_ref::decode_i64(data, count)
             }
-            ProximaScheme::SparseBitmap => {
-                functions::sparse_bitmap::decode_i64(data, count)
-            }
-            ProximaScheme::SparseCOO => {
-                functions::sparse_coo::decode_i64(data, count)
-            }
-            ProximaScheme::Raw => {
-                functions::raw::decode_i64(data)
-            }
-            ProximaScheme::RunLength => {
-                functions::run_length::decode_i64(data)
-            }
-            ProximaScheme::PForDelta { .. } => {
-                functions::pfor_delta::decode_i64(data, count)
-            }
-            ProximaScheme::Zigzag { .. } => {
-                functions::zigzag::decode_i64(data, count)
-            }
-            ProximaScheme::DoubleDelta { .. } => {
-                functions::double_delta::decode_i64(data, count)
-            }
+            ProximaScheme::SparseBitmap => functions::sparse_bitmap::decode_i64(data, count),
+            ProximaScheme::SparseCOO => functions::sparse_coo::decode_i64(data, count),
+            ProximaScheme::Raw => functions::raw::decode_i64(data),
+            ProximaScheme::RunLength => functions::run_length::decode_i64(data),
+            ProximaScheme::PForDelta { .. } => functions::pfor_delta::decode_i64(data, count),
+            ProximaScheme::Zigzag { .. } => functions::zigzag::decode_i64(data, count),
+            ProximaScheme::DoubleDelta { .. } => functions::double_delta::decode_i64(data, count),
             ProximaScheme::PForDoubleDelta { .. } => {
                 functions::pfor_double_delta::decode_i64(data, count)
             }
-            ProximaScheme::Gorilla => {
-                functions::gorilla::decode_i64(data, count)
-            }
-            ProximaScheme::VByte => {
-                functions::vbyte::decode_i64(data, count)
-            }
-            ProximaScheme::Dictionary => {
-                functions::dictionary::decode_i64(data, count)
-            }
-            ProximaScheme::Simple8b => {
-                functions::simple8b::decode_i64(data, count)
-            }
-            ProximaScheme::Adaptive => {
-                functions::adaptive::decode_i64(data, count)
-            }
+            ProximaScheme::Gorilla => functions::gorilla::decode_i64(data, count),
+            ProximaScheme::VByte => functions::vbyte::decode_i64(data, count),
+            ProximaScheme::Dictionary => functions::dictionary::decode_i64(data, count),
+            ProximaScheme::Simple8b => functions::simple8b::decode_i64(data, count),
+            ProximaScheme::Adaptive => functions::adaptive::decode_i64(data, count),
 
             // TODO: Implement remaining schemes
-            _ => {
-                Err(anyhow::anyhow!(
-                    "Scheme {} not yet implemented for i64",
-                    scheme.name()
-                ))
-            }
+            _ => Err(anyhow::anyhow!(
+                "Scheme {} not yet implemented for i64",
+                scheme.name()
+            )),
         }
     }
 
     fn decode_i32(&self, data: &[u8], scheme: &ProximaScheme, count: usize) -> Result<Vec<i32>> {
         match scheme {
-            ProximaScheme::Delta { .. } => {
-                functions::delta::decode_i32(data, count)
-            }
-            ProximaScheme::BitPacked { bits } => {
-                functions::bitpack::decode_i32(data, *bits, count)
-            }
+            ProximaScheme::Delta { .. } => functions::delta::decode_i32(data, count),
+            ProximaScheme::BitPacked { bits } => functions::bitpack::decode_i32(data, *bits, count),
             ProximaScheme::FrameOfReference { .. } => {
                 functions::frame_of_ref::decode_i32(data, count)
             }
-            ProximaScheme::SparseBitmap => {
-                functions::sparse_bitmap::decode_i32(data, count)
-            }
-            ProximaScheme::SparseCOO => {
-                functions::sparse_coo::decode_i32(data, count)
-            }
-            ProximaScheme::Raw => {
-                functions::raw::decode_i32(data)
-            }
-            ProximaScheme::RunLength => {
-                functions::run_length::decode_i32(data)
-            }
-            ProximaScheme::PForDelta { .. } => {
-                functions::pfor_delta::decode_i32(data, count)
-            }
-            ProximaScheme::Zigzag { .. } => {
-                functions::zigzag::decode_i32(data, count)
-            }
-            ProximaScheme::DoubleDelta { .. } => {
-                functions::double_delta::decode_i32(data, count)
-            }
+            ProximaScheme::SparseBitmap => functions::sparse_bitmap::decode_i32(data, count),
+            ProximaScheme::SparseCOO => functions::sparse_coo::decode_i32(data, count),
+            ProximaScheme::Raw => functions::raw::decode_i32(data),
+            ProximaScheme::RunLength => functions::run_length::decode_i32(data),
+            ProximaScheme::PForDelta { .. } => functions::pfor_delta::decode_i32(data, count),
+            ProximaScheme::Zigzag { .. } => functions::zigzag::decode_i32(data, count),
+            ProximaScheme::DoubleDelta { .. } => functions::double_delta::decode_i32(data, count),
             ProximaScheme::PForDoubleDelta { .. } => {
                 functions::pfor_double_delta::decode_i32(data, count)
             }
-            ProximaScheme::Gorilla => {
-                functions::gorilla::decode_i32(data, count)
-            }
-            ProximaScheme::VByte => {
-                functions::vbyte::decode_i32(data, count)
-            }
-            ProximaScheme::Dictionary => {
-                functions::dictionary::decode_i32(data, count)
-            }
-            ProximaScheme::Simple8b => {
-                functions::simple8b::decode_i32(data, count)
-            }
-            ProximaScheme::Adaptive => {
-                functions::adaptive::decode_i32(data, count)
-            }
+            ProximaScheme::Gorilla => functions::gorilla::decode_i32(data, count),
+            ProximaScheme::VByte => functions::vbyte::decode_i32(data, count),
+            ProximaScheme::Dictionary => functions::dictionary::decode_i32(data, count),
+            ProximaScheme::Simple8b => functions::simple8b::decode_i32(data, count),
+            ProximaScheme::Adaptive => functions::adaptive::decode_i32(data, count),
 
             // TODO: Implement remaining schemes
-            _ => {
-                Err(anyhow::anyhow!(
-                    "Scheme {} not yet implemented for i32",
-                    scheme.name()
-                ))
-            }
+            _ => Err(anyhow::anyhow!(
+                "Scheme {} not yet implemented for i32",
+                scheme.name()
+            )),
         }
     }
 }
@@ -237,13 +147,22 @@ mod tests {
         assert!(decoder.supports(&ProximaScheme::Raw));
         assert!(decoder.supports(&ProximaScheme::Delta { base: 0 }));
         assert!(decoder.supports(&ProximaScheme::BitPacked { bits: 16 }));
-        assert!(decoder.supports(&ProximaScheme::FrameOfReference { reference: 0, bits: 16 }));
+        assert!(decoder.supports(&ProximaScheme::FrameOfReference {
+            reference: 0,
+            bits: 16
+        }));
         assert!(decoder.supports(&ProximaScheme::SparseBitmap));
         assert!(decoder.supports(&ProximaScheme::SparseCOO));
         assert!(decoder.supports(&ProximaScheme::RunLength));
-        assert!(decoder.supports(&ProximaScheme::PForDelta { majority_bits: 16, base: 0 }));
+        assert!(decoder.supports(&ProximaScheme::PForDelta {
+            majority_bits: 16,
+            base: 0
+        }));
         assert!(decoder.supports(&ProximaScheme::Zigzag { bits: 32 }));
-        assert!(decoder.supports(&ProximaScheme::DoubleDelta { first_value: 0, first_delta: 0 }));
+        assert!(decoder.supports(&ProximaScheme::DoubleDelta {
+            first_value: 0,
+            first_delta: 0
+        }));
         assert!(decoder.supports(&ProximaScheme::Gorilla));
         assert!(decoder.supports(&ProximaScheme::VByte));
         assert!(decoder.supports(&ProximaScheme::Dictionary));
@@ -418,7 +337,10 @@ mod tests {
 
         let encoder = BaselineEncoder;
         let values = vec![1000i64, 1001, 1002, 1003];
-        let scheme = ProximaScheme::FrameOfReference { reference: 1000, bits: 16 };
+        let scheme = ProximaScheme::FrameOfReference {
+            reference: 1000,
+            bits: 16,
+        };
 
         let encoded = encoder.encode_i64(&values, &scheme).unwrap();
 
@@ -439,7 +361,10 @@ mod tests {
 
         let encoder = BaselineEncoder;
         let values = vec![500i32, 501, 502, 503, 504];
-        let scheme = ProximaScheme::FrameOfReference { reference: 500, bits: 16 };
+        let scheme = ProximaScheme::FrameOfReference {
+            reference: 500,
+            bits: 16,
+        };
 
         let encoded = encoder.encode_i32(&values, &scheme).unwrap();
 

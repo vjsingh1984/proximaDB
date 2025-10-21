@@ -142,10 +142,10 @@ pub struct IndexDefinition {
 pub enum IndexType {
     BTree,
     Hash,
-    Gin,   // For JSON, arrays
-    Gist,  // For geometric data
+    Gin,    // For JSON, arrays
+    Gist,   // For geometric data
     SpGist, // Space-partitioned GIST
-    Brin,  // Block range indexes
+    Brin,   // Block range indexes
     Vector, // For vector similarity
 }
 
@@ -187,16 +187,22 @@ impl RelationalSchema {
             // Validate columns exist
             let from_table = &self.tables[&fk.from_table];
             let to_table = &self.tables[&fk.to_table];
-            
+
             for col in &fk.from_columns {
                 if !from_table.columns.contains_key(col) {
-                    return Err(SchemaValidationError::ColumnNotFound(fk.from_table.clone(), col.clone()));
+                    return Err(SchemaValidationError::ColumnNotFound(
+                        fk.from_table.clone(),
+                        col.clone(),
+                    ));
                 }
             }
-            
+
             for col in &fk.to_columns {
                 if !to_table.columns.contains_key(col) {
-                    return Err(SchemaValidationError::ColumnNotFound(fk.to_table.clone(), col.clone()));
+                    return Err(SchemaValidationError::ColumnNotFound(
+                        fk.to_table.clone(),
+                        col.clone(),
+                    ));
                 }
             }
         }
@@ -205,7 +211,10 @@ impl RelationalSchema {
         for (table_name, table) in &self.tables {
             for pk_col in &table.primary_key {
                 if !table.columns.contains_key(pk_col) {
-                    return Err(SchemaValidationError::ColumnNotFound(table_name.clone(), pk_col.clone()));
+                    return Err(SchemaValidationError::ColumnNotFound(
+                        table_name.clone(),
+                        pk_col.clone(),
+                    ));
                 }
             }
         }
@@ -217,10 +226,14 @@ impl RelationalSchema {
     pub fn generate_create_table_sql(&self, table_name: &str) -> Option<String> {
         if let Some(table) = self.tables.get(table_name) {
             let mut sql = format!("CREATE TABLE {} (", table_name);
-            
+
             let mut column_defs = Vec::new();
             for (col_name, col_def) in &table.columns {
-                let mut col_sql = format!("{} {}", col_name, self.sql_type_to_string(&col_def.data_type));
+                let mut col_sql = format!(
+                    "{} {}",
+                    col_name,
+                    self.sql_type_to_string(&col_def.data_type)
+                );
                 if !col_def.nullable {
                     col_sql.push_str(" NOT NULL");
                 }
@@ -229,14 +242,14 @@ impl RelationalSchema {
                 }
                 column_defs.push(col_sql);
             }
-            
+
             if !table.primary_key.is_empty() {
                 column_defs.push(format!("PRIMARY KEY ({})", table.primary_key.join(", ")));
             }
-            
+
             sql.push_str(&column_defs.join(", "));
             sql.push(')');
-            
+
             Some(sql)
         } else {
             None
@@ -308,10 +321,16 @@ impl std::fmt::Display for SchemaValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             SchemaValidationError::TableNotFound(table) => write!(f, "Table not found: {}", table),
-            SchemaValidationError::ColumnNotFound(table, column) => write!(f, "Column {} not found in table {}", column, table),
+            SchemaValidationError::ColumnNotFound(table, column) => {
+                write!(f, "Column {} not found in table {}", column, table)
+            }
             SchemaValidationError::DuplicateTable(table) => write!(f, "Duplicate table: {}", table),
-            SchemaValidationError::DuplicateColumn(table, column) => write!(f, "Duplicate column {} in table {}", column, table),
-            SchemaValidationError::InvalidConstraint(msg) => write!(f, "Invalid constraint: {}", msg),
+            SchemaValidationError::DuplicateColumn(table, column) => {
+                write!(f, "Duplicate column {} in table {}", column, table)
+            }
+            SchemaValidationError::InvalidConstraint(msg) => {
+                write!(f, "Invalid constraint: {}", msg)
+            }
         }
     }
 }

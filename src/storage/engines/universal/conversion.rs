@@ -3,12 +3,12 @@
 //! This module provides conversion utilities between different storage formats
 //! and quantization formats used by storage engines.
 
+use crate::core::memory::pool::VectorMemoryPool;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, trace, warn};
-use crate::core::memory::pool::VectorMemoryPool;
 
 /// Storage formats supported by the universal adapter
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

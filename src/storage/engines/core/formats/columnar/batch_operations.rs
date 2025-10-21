@@ -8,8 +8,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::{ColumnarConfig, ParquetLocation, UnifiedParquetReader};
-use crate::core::memory::pool::VectorMemoryPool;
 use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
 
 /// Batch operations for columnar storage
@@ -55,7 +55,9 @@ impl ColumnarBatchOperations {
         _ids: &[String],
     ) -> Result<Vec<VectorRecord>> {
         // TODO: Re-implement when batch_id_lookup API is available
-        Err(anyhow::anyhow!("BatchOperations temporarily disabled due to API changes"))
+        Err(anyhow::anyhow!(
+            "BatchOperations temporarily disabled due to API changes"
+        ))
     }
 
     /// Batch write vectors to columnar format
@@ -475,22 +477,27 @@ mod tests {
         );
 
         // Create UnifiedCachingFilesystem for testing
-        let base_fs = filesystem_factory.get_filesystem("file:///tmp/test").unwrap();
+        let base_fs = filesystem_factory
+            .get_filesystem("file:///tmp/test")
+            .unwrap();
         let cached_filesystem = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
                 base_fs,
                 "test_collection".to_string(),
                 "test".to_string(),
-            )
+            ),
         );
-        let parquet_reader = Arc::new(UnifiedParquetReader::new(
-            vec![],
-            128,
-            filesystem_factory,
-            cached_filesystem,
-            "test_collection".to_string(),
-            "test".to_string(),
-        ).unwrap());
+        let parquet_reader = Arc::new(
+            UnifiedParquetReader::new(
+                vec![],
+                128,
+                filesystem_factory,
+                cached_filesystem,
+                "test_collection".to_string(),
+                "test".to_string(),
+            )
+            .unwrap(),
+        );
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let config = ColumnarConfig::default();
@@ -542,22 +549,27 @@ mod tests {
             );
 
             // Create UnifiedCachingFilesystem for testing
-        let base_fs = filesystem_factory.get_filesystem("file:///tmp/test").unwrap();
-        let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-                base_fs,
-                "test_collection".to_string(),
-                "test".to_string(),
-            )
-        );
-        let parquet_reader = Arc::new(UnifiedParquetReader::new(
-            vec![],
-            128,
-            filesystem_factory,
-            cached_filesystem,
-            "test_collection".to_string(),
-            "test".to_string(),
-        ).unwrap());
+            let base_fs = filesystem_factory
+                .get_filesystem("file:///tmp/test")
+                .unwrap();
+            let cached_filesystem = Arc::new(
+                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                    base_fs,
+                    "test_collection".to_string(),
+                    "test".to_string(),
+                ),
+            );
+            let parquet_reader = Arc::new(
+                UnifiedParquetReader::new(
+                    vec![],
+                    128,
+                    filesystem_factory,
+                    cached_filesystem,
+                    "test_collection".to_string(),
+                    "test".to_string(),
+                )
+                .unwrap(),
+            );
             let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
             let memory_pool = Arc::new(VectorMemoryPool::new());
             let config = ColumnarConfig::default();

@@ -19,10 +19,10 @@
 //! Provides query optimization for PULSAR engine with shard-aware planning.
 //! For MVP: Single-node optimization with interfaces ready for distributed expansion.
 
+use crate::graph::engines::GraphEngine;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::graph::engines::GraphEngine;
 
 use super::PulsarGraphEngine;
 use crate::core::error::ProximaDBError;

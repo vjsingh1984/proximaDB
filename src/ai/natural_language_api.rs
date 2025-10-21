@@ -1,35 +1,35 @@
 //! Natural Language Business Intelligence API - Market Leadership Implementation
-//! 
+//!
 //! TODO 1: Complete Natural Language Business Intelligence API
 //! Business Driver: 89% of enterprises want conversational business intelligence
 //! Market Impact: AI-native platform differentiation
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 use crate::ai::llm::AIIntelligenceFoundation;
 // QueryComplexityAnalyzer is defined locally in this file
-use crate::storage::tenant::BusinessContext;
 use crate::auth::sso::EnterpriseUserContext;
+use crate::storage::tenant::BusinessContext;
 
 /// Natural Language Business Intelligence API for conversational enterprise analytics
 pub struct NaturalLanguageBusinessIntelligenceAPI {
     /// AI intelligence foundation
     ai_foundation: Arc<AIIntelligenceFoundation>,
-    
+
     /// Natural language query processor
     nl_query_processor: Arc<NaturalLanguageQueryProcessor>,
-    
+
     /// Business intelligence translator
     bi_translator: Arc<BusinessIntelligenceTranslator>,
-    
+
     /// Enterprise conversation manager
     conversation_manager: Arc<EnterpriseConversationManager>,
-    
+
     /// Response validator for enterprise compliance
     response_validator: Arc<EnterpriseResponseValidator>,
 }
@@ -38,13 +38,13 @@ pub struct NaturalLanguageBusinessIntelligenceAPI {
 pub struct NaturalLanguageQueryProcessor {
     /// Query parsing with business context
     query_parser: Arc<BusinessContextQueryParser>,
-    
+
     /// Intent classification for enterprise queries
     intent_classifier: Arc<EnterpriseIntentClassifier>,
-    
+
     /// Entity extraction with regulatory awareness
     entity_extractor: Arc<RegulatoryAwareEntityExtractor>,
-    
+
     /// Query complexity analyzer
     complexity_analyzer: Arc<QueryComplexityAnalyzer>,
 }
@@ -53,13 +53,13 @@ pub struct NaturalLanguageQueryProcessor {
 pub struct BusinessIntelligenceTranslator {
     /// Translation rules by business domain
     domain_translation_rules: Arc<DashMap<String, DomainTranslationRules>>,
-    
+
     /// Regulatory compliance translator
     compliance_translator: Arc<ComplianceQueryTranslator>,
-    
+
     /// Cross-domain query composer
     cross_domain_composer: Arc<CrossDomainQueryComposer>,
-    
+
     /// Performance optimizer for translated queries
     query_optimizer: Arc<TranslatedQueryOptimizer>,
 }
@@ -75,7 +75,7 @@ impl NaturalLanguageBusinessIntelligenceAPI {
             response_validator: Arc::new(EnterpriseResponseValidator::new()?),
         })
     }
-    
+
     /// Process natural language business question with AI intelligence
     pub async fn ask_business_question(
         &self,
@@ -84,44 +84,53 @@ impl NaturalLanguageBusinessIntelligenceAPI {
         business_context: &BusinessContext,
         user_context: &EnterpriseUserContext,
     ) -> Result<ConversationalBusinessAnswer> {
-        info!("Processing natural language business question: {}", question);
-        
+        info!(
+            "Processing natural language business question: {}",
+            question
+        );
+
         // Step 1: Parse and understand natural language query
-        let parsed_query = self.nl_query_processor.parse_enterprise_query(
-            question,
-            business_context,
-            user_context,
-        ).await?;
-        
+        let parsed_query = self
+            .nl_query_processor
+            .parse_enterprise_query(question, business_context, user_context)
+            .await?;
+
         // Step 2: Translate to structured business intelligence query
-        let structured_query = self.bi_translator.translate_to_structured_query(
-            &parsed_query,
-            business_context,
-            user_context,
-        ).await?;
-        
+        let structured_query = self
+            .bi_translator
+            .translate_to_structured_query(&parsed_query, business_context, user_context)
+            .await?;
+
         // Step 3: Execute with Release 1 domain intelligence
-        let domain_intelligence_result = self.execute_with_domain_intelligence(
-            tenant_id,
-            &structured_query,
-            business_context,
-            user_context,
-        ).await?;
-        
+        let domain_intelligence_result = self
+            .execute_with_domain_intelligence(
+                tenant_id,
+                &structured_query,
+                business_context,
+                user_context,
+            )
+            .await?;
+
         // Step 4: Generate AI-powered conversational answer
-        let ai_answer = self.ai_foundation.process_natural_language_business_query(
-            tenant_id,
-            question,
-            business_context,
-            user_context,
-        ).await?;
-        
+        let ai_answer = self
+            .ai_foundation
+            .process_natural_language_business_query(
+                tenant_id,
+                question,
+                business_context,
+                user_context,
+            )
+            .await?;
+
         // Step 5: Validate response for enterprise compliance
-        let validated_response = self.response_validator.validate_enterprise_response(
-            &ai_answer.ai_generated_answer.answer_text,
-            business_context,
-            user_context,
-        ).await?;
+        let validated_response = self
+            .response_validator
+            .validate_enterprise_response(
+                &ai_answer.ai_generated_answer.answer_text,
+                business_context,
+                user_context,
+            )
+            .await?;
 
         // Extract values before moving validated_response
         let confidence_score = validated_response.confidence_score;
@@ -135,7 +144,8 @@ impl NaturalLanguageBusinessIntelligenceAPI {
                 frameworks_validated: self.extract_compliance_frameworks(business_context),
                 compliance_score: 0.96,
                 audit_trail_generated: true,
-                regulatory_notes: self.generate_regulatory_notes(&validated_response, business_context),
+                regulatory_notes: self
+                    .generate_regulatory_notes(&validated_response, business_context),
             },
             conversation_metadata: ConversationMetadata {
                 query_complexity: parsed_query.complexity_analysis.complexity_score,
@@ -147,7 +157,7 @@ impl NaturalLanguageBusinessIntelligenceAPI {
             generated_for: user_context.user_id.clone(),
         })
     }
-    
+
     /// Start conversational analytics session
     pub async fn start_conversational_analytics_session(
         &self,
@@ -157,18 +167,19 @@ impl NaturalLanguageBusinessIntelligenceAPI {
         user_context: &EnterpriseUserContext,
     ) -> Result<ConversationalAnalyticsSession> {
         // Create conversational session with business context
-        let session = self.conversation_manager.create_conversational_session(
-            tenant_id,
-            user_context,
-            business_context,
-        ).await?;
-        
-        info!("Started conversational analytics session {} for tenant {}", 
-              session.session_id, tenant_id);
-        
+        let session = self
+            .conversation_manager
+            .create_conversational_session(tenant_id, user_context, business_context)
+            .await?;
+
+        info!(
+            "Started conversational analytics session {} for tenant {}",
+            session.session_id, tenant_id
+        );
+
         Ok(session)
     }
-    
+
     /// Continue conversational analytics with context awareness
     pub async fn continue_conversation(
         &self,
@@ -177,34 +188,42 @@ impl NaturalLanguageBusinessIntelligenceAPI {
         user_context: &EnterpriseUserContext,
     ) -> Result<ConversationalBusinessAnswer> {
         // Get conversation context
-        let _conversation_context = self.conversation_manager.get_conversation_context(session_id).await?;
+        let _conversation_context = self
+            .conversation_manager
+            .get_conversation_context(session_id)
+            .await?;
 
         // Process follow-up with conversation history - simplified for now
-        let follow_up_result = self.ask_business_question(
-            "tenant_default", // Default tenant for now
-            follow_up_question,
-            &crate::storage::tenant::BusinessContext {
-                primary_function: "general_business".to_string(),
-                data_sensitivity: crate::storage::tenant::DataSensitivityLevel::Internal,
-                performance_requirements: crate::storage::tenant::context::PerformanceRequirements {
-                    latency_requirement_ms: 1000,
-                    throughput_requirement_qps: 100,
-                    availability_requirement: 0.99,
+        let follow_up_result = self
+            .ask_business_question(
+                "tenant_default", // Default tenant for now
+                follow_up_question,
+                &crate::storage::tenant::BusinessContext {
+                    primary_function: "general_business".to_string(),
+                    data_sensitivity: crate::storage::tenant::DataSensitivityLevel::Internal,
+                    performance_requirements:
+                        crate::storage::tenant::context::PerformanceRequirements {
+                            latency_requirement_ms: 1000,
+                            throughput_requirement_qps: 100,
+                            availability_requirement: 0.99,
+                        },
                 },
-            },
-            user_context,
-        ).await?;
-        
+                user_context,
+            )
+            .await?;
+
         // Update conversation context
-        self.conversation_manager.update_conversation_context(
-            session_id,
-            follow_up_question,
-            &follow_up_result.ai_answer.response_text,
-        ).await?;
-        
+        self.conversation_manager
+            .update_conversation_context(
+                session_id,
+                follow_up_question,
+                &follow_up_result.ai_answer.response_text,
+            )
+            .await?;
+
         Ok(follow_up_result)
     }
-    
+
     // Helper methods
     async fn execute_with_domain_intelligence(
         &self,
@@ -215,14 +234,15 @@ impl NaturalLanguageBusinessIntelligenceAPI {
     ) -> Result<DomainIntelligenceResult> {
         // Execute structured query with Release 1 domain intelligence
         // This integrates with existing DomainKnowledgeGraph implementation
-        
+
         Ok(DomainIntelligenceResult {
             entities_analyzed: 150,
             relationships_analyzed: 450,
             cross_domain_correlations: 23,
             supporting_evidence: vec![
                 "Basel III capital adequacy calculation based on risk-weighted assets".to_string(),
-                "Cross-domain correlation between trading positions and customer relationships".to_string(),
+                "Cross-domain correlation between trading positions and customer relationships"
+                    .to_string(),
                 "Regulatory compliance validation with SOX internal controls".to_string(),
             ],
             knowledge_sources: vec![
@@ -231,38 +251,47 @@ impl NaturalLanguageBusinessIntelligenceAPI {
                 "Customer Intelligence Domain: Relationship value analysis".to_string(),
             ],
             business_intelligence_insights: vec![
-                "Portfolio concentration risk in emerging markets exceeds regulatory guidelines".to_string(),
-                "Customer relationship strength correlates with trading volume (r=0.73)".to_string(),
-                "Risk-adjusted returns show 15% improvement opportunity through diversification".to_string(),
+                "Portfolio concentration risk in emerging markets exceeds regulatory guidelines"
+                    .to_string(),
+                "Customer relationship strength correlates with trading volume (r=0.73)"
+                    .to_string(),
+                "Risk-adjusted returns show 15% improvement opportunity through diversification"
+                    .to_string(),
             ],
         })
     }
-    
+
     fn extract_compliance_frameworks(&self, business_context: &BusinessContext) -> Vec<String> {
         match business_context.primary_function.as_str() {
-            s if s.contains("risk") || s.contains("trading") => vec!["basel_iii".to_string(), "sox".to_string()],
-            s if s.contains("clinical") || s.contains("medical") => vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()],
+            s if s.contains("risk") || s.contains("trading") => {
+                vec!["basel_iii".to_string(), "sox".to_string()]
+            }
+            s if s.contains("clinical") || s.contains("medical") => {
+                vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()]
+            }
             _ => vec!["soc2".to_string(), "gdpr".to_string()],
         }
     }
-    
+
     fn generate_regulatory_notes(
         &self,
         _validated_response: &ValidatedEnterpriseResponse,
         business_context: &BusinessContext,
     ) -> Vec<String> {
         let mut notes = Vec::new();
-        
+
         if business_context.primary_function.contains("risk") {
-            notes.push("This analysis complies with Basel III capital adequacy requirements".to_string());
+            notes.push(
+                "This analysis complies with Basel III capital adequacy requirements".to_string(),
+            );
             notes.push("SOX internal controls validated for financial data access".to_string());
         }
-        
+
         if business_context.primary_function.contains("clinical") {
             notes.push("HIPAA minimum necessary standard applied to patient data".to_string());
             notes.push("Clinical decision support meets FDA CFR Part 11 requirements".to_string());
         }
-        
+
         notes.push("Comprehensive audit trail generated for regulatory review".to_string());
         notes
     }
@@ -277,23 +306,23 @@ impl NaturalLanguageQueryProcessor {
         user_context: &EnterpriseUserContext,
     ) -> Result<ParsedEnterpriseQuery> {
         // Parse query with business context understanding
-        let business_entities = self.entity_extractor.extract_business_entities(
-            question,
-            business_context,
-        ).await?;
+        let business_entities = self
+            .entity_extractor
+            .extract_business_entities(question, business_context)
+            .await?;
 
         // Classify business intent
-        let business_intent = self.intent_classifier.classify_business_intent(
-            question,
-            business_context,
-        ).await?;
+        let business_intent = self
+            .intent_classifier
+            .classify_business_intent(question, business_context)
+            .await?;
 
         // Analyze query complexity
-        let complexity_analysis = self.complexity_analyzer.analyze_query_complexity(
-            question,
-            &business_entities,
-        ).await?;
-        
+        let complexity_analysis = self
+            .complexity_analyzer
+            .analyze_query_complexity(question, &business_entities)
+            .await?;
+
         let primary_intent = business_intent.primary_intent.clone();
         Ok(ParsedEnterpriseQuery {
             original_question: question.to_string(),
@@ -304,27 +333,41 @@ impl NaturalLanguageQueryProcessor {
             cross_domain_requirements: self.identify_cross_domain_requirements(&primary_intent),
         })
     }
-    
+
     fn extract_regulatory_requirements(&self, business_context: &BusinessContext) -> Vec<String> {
         match business_context.primary_function.as_str() {
-            s if s.contains("risk") => vec!["basel_iii_capital_calculation".to_string(), "sox_internal_controls".to_string()],
-            s if s.contains("clinical") => vec!["hipaa_minimum_necessary".to_string(), "patient_consent_validation".to_string()],
+            s if s.contains("risk") => vec![
+                "basel_iii_capital_calculation".to_string(),
+                "sox_internal_controls".to_string(),
+            ],
+            s if s.contains("clinical") => vec![
+                "hipaa_minimum_necessary".to_string(),
+                "patient_consent_validation".to_string(),
+            ],
             _ => vec!["data_privacy_compliance".to_string()],
         }
     }
-    
+
     fn identify_cross_domain_requirements(&self, primary_intent: &str) -> Vec<String> {
         match primary_intent {
-            "risk_analysis" => vec!["risk_management".to_string(), "trading_operations".to_string()],
-            "customer_analysis" => vec!["customer_intelligence".to_string(), "product_analytics".to_string()],
-            "compliance_analysis" => vec!["regulatory_compliance".to_string(), "audit_management".to_string()],
+            "risk_analysis" => vec![
+                "risk_management".to_string(),
+                "trading_operations".to_string(),
+            ],
+            "customer_analysis" => vec![
+                "customer_intelligence".to_string(),
+                "product_analytics".to_string(),
+            ],
+            "compliance_analysis" => vec![
+                "regulatory_compliance".to_string(),
+                "audit_management".to_string(),
+            ],
             _ => vec!["general_business".to_string()],
         }
     }
 }
 
 impl BusinessIntelligenceTranslator {
-    
     /// Translate natural language to structured business intelligence query
     async fn translate_to_structured_query(
         &self,
@@ -333,25 +376,28 @@ impl BusinessIntelligenceTranslator {
         user_context: &EnterpriseUserContext,
     ) -> Result<StructuredBusinessQuery> {
         // Apply domain-specific translation rules
-        let domain_query = self.apply_domain_translation_rules(
-            parsed_query,
-            business_context,
-        ).await?;
-        
+        let domain_query = self
+            .apply_domain_translation_rules(parsed_query, business_context)
+            .await?;
+
         // Add compliance constraints
-        let compliance_enhanced_query = self.compliance_translator.add_compliance_constraints(
-            &format!("{:?}", domain_query),
-            business_context,
-        ).await?;
-        
+        let compliance_enhanced_query = self
+            .compliance_translator
+            .add_compliance_constraints(&format!("{:?}", domain_query), business_context)
+            .await?;
+
         // Optimize for cross-domain execution if needed
         let final_query = if parsed_query.cross_domain_requirements.len() > 1 {
             StructuredBusinessQuery {
                 domain_queries: vec![domain_query],
-                cross_domain_composition: Some(self.cross_domain_composer.compose_cross_domain_query(
-                    &compliance_enhanced_query,
-                    &parsed_query.cross_domain_requirements,
-                ).await?),
+                cross_domain_composition: Some(
+                    self.cross_domain_composer
+                        .compose_cross_domain_query(
+                            &compliance_enhanced_query,
+                            &parsed_query.cross_domain_requirements,
+                        )
+                        .await?,
+                ),
                 regulatory_constraints: parsed_query.regulatory_requirements.clone(),
                 performance_requirements: QueryPerformanceRequirements {
                     max_latency_ms: 5000,
@@ -371,10 +417,10 @@ impl BusinessIntelligenceTranslator {
                 },
             }
         };
-        
+
         Ok(final_query)
     }
-    
+
     async fn apply_domain_translation_rules(
         &self,
         parsed_query: &ParsedEnterpriseQuery,
@@ -384,25 +430,30 @@ impl BusinessIntelligenceTranslator {
         match business_context.primary_function.as_str() {
             "enterprise_risk_assessment" => {
                 self.translate_risk_management_query(parsed_query).await
-            },
-            "customer_relationship_management" => {
-                self.translate_customer_intelligence_query(parsed_query).await
-            },
-            "clinical_care" => {
-                self.translate_clinical_intelligence_query(parsed_query).await
-            },
-            _ => {
-                self.translate_general_business_query(parsed_query).await
             }
+            "customer_relationship_management" => {
+                self.translate_customer_intelligence_query(parsed_query)
+                    .await
+            }
+            "clinical_care" => {
+                self.translate_clinical_intelligence_query(parsed_query)
+                    .await
+            }
+            _ => self.translate_general_business_query(parsed_query).await,
         }
     }
-    
-    async fn translate_risk_management_query(&self, parsed_query: &ParsedEnterpriseQuery) -> Result<DomainStructuredQuery> {
+
+    async fn translate_risk_management_query(
+        &self,
+        parsed_query: &ParsedEnterpriseQuery,
+    ) -> Result<DomainStructuredQuery> {
         // Translate risk management natural language queries
         Ok(DomainStructuredQuery {
             domain: "risk_management".to_string(),
             query_type: QueryType::RiskAnalysis,
-            entities: parsed_query.business_entities.iter()
+            entities: parsed_query
+                .business_entities
+                .iter()
                 .filter(|e| e.entity_name.contains("risk") || e.entity_name.contains("portfolio"))
                 .cloned()
                 .collect(),
@@ -418,13 +469,18 @@ impl BusinessIntelligenceTranslator {
             },
         })
     }
-    
-    async fn translate_customer_intelligence_query(&self, parsed_query: &ParsedEnterpriseQuery) -> Result<DomainStructuredQuery> {
+
+    async fn translate_customer_intelligence_query(
+        &self,
+        parsed_query: &ParsedEnterpriseQuery,
+    ) -> Result<DomainStructuredQuery> {
         // Translate customer intelligence natural language queries
         Ok(DomainStructuredQuery {
             domain: "customer_intelligence".to_string(),
             query_type: QueryType::CustomerAnalysis,
-            entities: parsed_query.business_entities.iter()
+            entities: parsed_query
+                .business_entities
+                .iter()
                 .filter(|e| e.entity_name.contains("customer") || e.entity_name.contains("segment"))
                 .cloned()
                 .collect(),
@@ -440,14 +496,21 @@ impl BusinessIntelligenceTranslator {
             },
         })
     }
-    
-    async fn translate_clinical_intelligence_query(&self, parsed_query: &ParsedEnterpriseQuery) -> Result<DomainStructuredQuery> {
+
+    async fn translate_clinical_intelligence_query(
+        &self,
+        parsed_query: &ParsedEnterpriseQuery,
+    ) -> Result<DomainStructuredQuery> {
         // Translate clinical intelligence natural language queries
         Ok(DomainStructuredQuery {
             domain: "clinical_care".to_string(),
             query_type: QueryType::ClinicalAnalysis,
-            entities: parsed_query.business_entities.iter()
-                .filter(|e| e.entity_name.contains("patient") || e.entity_name.contains("treatment"))
+            entities: parsed_query
+                .business_entities
+                .iter()
+                .filter(|e| {
+                    e.entity_name.contains("patient") || e.entity_name.contains("treatment")
+                })
                 .cloned()
                 .collect(),
             operations: vec![
@@ -462,8 +525,11 @@ impl BusinessIntelligenceTranslator {
             },
         })
     }
-    
-    async fn translate_general_business_query(&self, parsed_query: &ParsedEnterpriseQuery) -> Result<DomainStructuredQuery> {
+
+    async fn translate_general_business_query(
+        &self,
+        parsed_query: &ParsedEnterpriseQuery,
+    ) -> Result<DomainStructuredQuery> {
         // Translate general business intelligence queries
         Ok(DomainStructuredQuery {
             domain: "general_business".to_string(),
@@ -584,8 +650,8 @@ pub enum ConversationalSessionType {
 }
 
 // Import proper types from other modules
-pub use crate::ai::nlp::BusinessEntity;
 pub use crate::ai::llm::BusinessIntent;
+pub use crate::ai::nlp::BusinessEntity;
 // Foundation structs for Natural Language API
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -670,7 +736,11 @@ impl QueryComplexityAnalyzer {
         Ok(QueryComplexityAnalysis {
             complexity_score,
             estimated_processing_time: (complexity_score * 3000.0) as u64,
-            resource_requirements: if complexity_score > 0.7 { "high".to_string() } else { "medium".to_string() },
+            resource_requirements: if complexity_score > 0.7 {
+                "high".to_string()
+            } else {
+                "medium".to_string()
+            },
         })
     }
 }
@@ -879,7 +949,11 @@ impl CrossDomainQueryComposer {
         cross_domain_requirements: &[String],
     ) -> Result<CrossDomainComposition> {
         Ok(CrossDomainComposition {
-            composed_query: format!("{} CROSS_DOMAIN({})", compliance_query, cross_domain_requirements.join(", ")),
+            composed_query: format!(
+                "{} CROSS_DOMAIN({})",
+                compliance_query,
+                cross_domain_requirements.join(", ")
+            ),
             domain_mappings: cross_domain_requirements.to_vec(),
         })
     }
@@ -898,8 +972,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_natural_language_api_creation() {
-        let ai_foundation = Arc::new(crate::ai::llm::AIIntelligenceFoundation::new().await.unwrap());
-        let nl_api = NaturalLanguageBusinessIntelligenceAPI::new(ai_foundation).await.unwrap();
+        let ai_foundation = Arc::new(
+            crate::ai::llm::AIIntelligenceFoundation::new()
+                .await
+                .unwrap(),
+        );
+        let nl_api = NaturalLanguageBusinessIntelligenceAPI::new(ai_foundation)
+            .await
+            .unwrap();
         // Basic validation that NL API was created
         assert!(true);
     }
@@ -907,7 +987,7 @@ mod tests {
     #[tokio::test]
     async fn test_risk_management_query_translation() {
         let nl_processor = NaturalLanguageQueryProcessor::new().await.unwrap();
-        
+
         let business_context = BusinessContext {
             primary_function: "enterprise_risk_assessment".to_string(),
             data_sensitivity: DataSensitivityLevel::Confidential,
@@ -917,18 +997,32 @@ mod tests {
                 availability_requirement: 0.999,
             },
         };
-        
+
         let user_context = EnterpriseUserContext::system_admin();
-        
-        let parsed = nl_processor.parse_enterprise_query(
-            "What is our portfolio risk exposure in emerging markets?",
-            &business_context,
-            &user_context,
-        ).await.unwrap();
-        
-        assert_eq!(parsed.original_question, "What is our portfolio risk exposure in emerging markets?");
-        assert!(parsed.cross_domain_requirements.contains(&"risk_management".to_string()));
-        assert!(parsed.regulatory_requirements.contains(&"basel_iii_capital_calculation".to_string()));
+
+        let parsed = nl_processor
+            .parse_enterprise_query(
+                "What is our portfolio risk exposure in emerging markets?",
+                &business_context,
+                &user_context,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            parsed.original_question,
+            "What is our portfolio risk exposure in emerging markets?"
+        );
+        assert!(
+            parsed
+                .cross_domain_requirements
+                .contains(&"risk_management".to_string())
+        );
+        assert!(
+            parsed
+                .regulatory_requirements
+                .contains(&"basel_iii_capital_calculation".to_string())
+        );
     }
 
     #[test]
@@ -936,7 +1030,7 @@ mod tests {
         let risk_query = QueryType::RiskAnalysis;
         let customer_query = QueryType::CustomerAnalysis;
         let clinical_query = QueryType::ClinicalAnalysis;
-        
+
         assert!(matches!(risk_query, QueryType::RiskAnalysis));
         assert!(matches!(customer_query, QueryType::CustomerAnalysis));
         assert!(matches!(clinical_query, QueryType::ClinicalAnalysis));
@@ -953,7 +1047,7 @@ mod tests {
                 "SOX internal controls applied".to_string(),
             ],
         };
-        
+
         assert_eq!(compliance.frameworks_validated.len(), 2);
         assert!(compliance.compliance_score > 0.9);
         assert!(compliance.audit_trail_generated);

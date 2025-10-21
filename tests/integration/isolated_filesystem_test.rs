@@ -7,8 +7,6 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-
-
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};

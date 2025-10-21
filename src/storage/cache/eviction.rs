@@ -21,11 +21,11 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::time::{interval, Instant};
+use tokio::time::{Instant, interval};
 use tracing::{debug, info, warn};
 
-use crate::storage::traits::{UnifiedMetricsCollector, MetricsOperationType};
-use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
+use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
+use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 
 /// Cache eviction policies for different memory management strategies
 #[derive(Debug, Clone)]
@@ -146,7 +146,8 @@ impl AccessTracker {
         // Sort by access time (oldest first)
         items.sort_by_key(|(_, time)| *time);
 
-        items.into_iter()
+        items
+            .into_iter()
             .take(count)
             .map(|(key, _)| key.clone())
             .collect()
@@ -155,14 +156,16 @@ impl AccessTracker {
     /// Get least frequently used items
     pub async fn get_lfu_items(&self, count: usize, min_access_count: u64) -> Vec<String> {
         let access_counts = self.access_counts.read().await;
-        let mut items: Vec<_> = access_counts.iter()
+        let mut items: Vec<_> = access_counts
+            .iter()
             .filter(|(_, count)| **count < min_access_count)
             .collect();
 
         // Sort by access count (lowest first)
         items.sort_by_key(|(_, count)| **count);
 
-        items.into_iter()
+        items
+            .into_iter()
             .take(count)
             .map(|(key, _)| key.clone())
             .collect()
@@ -173,7 +176,8 @@ impl AccessTracker {
         let creation_times = self.creation_times.read().await;
         let now = SystemTime::now();
 
-        creation_times.iter()
+        creation_times
+            .iter()
             .filter_map(|(key, &created_time)| {
                 if let Ok(age) = now.duration_since(created_time) {
                     if age > max_age {
@@ -229,7 +233,7 @@ impl CacheEvictor {
                     batch_size: 100,
                 },
                 EvictionPolicy::TTL {
-                    max_age_seconds: 3600, // 1 hour
+                    max_age_seconds: 3600,         // 1 hour
                     cleanup_interval_seconds: 300, // 5 minutes
                 },
             ],
@@ -247,7 +251,10 @@ impl CacheEvictor {
     pub async fn start_eviction(&self) -> Result<()> {
         let mut eviction_interval = interval(self.check_interval);
 
-        info!("🗑️ Cache eviction started with {} policies", self.eviction_policies.len());
+        info!(
+            "🗑️ Cache eviction started with {} policies",
+            self.eviction_policies.len()
+        );
 
         loop {
             eviction_interval.tick().await;
@@ -257,8 +264,8 @@ impl CacheEvictor {
                 // Report error to unified metrics
                 self.metrics_collector.record(
                     MetricsOperationType::Delete, // Use Delete as closest operation type
-                    0, // duration not applicable for error
-                    false, // success = false for error
+                    0,                            // duration not applicable for error
+                    false,                        // success = false for error
                     None,
                 );
             }
@@ -296,7 +303,10 @@ impl CacheEvictor {
         );
 
         if total_evicted > 0 {
-            info!("🗑️ Cache eviction cycle completed: {} items evicted in {:?}", total_evicted, cycle_duration);
+            info!(
+                "🗑️ Cache eviction cycle completed: {} items evicted in {:?}",
+                total_evicted, cycle_duration
+            );
         }
 
         Ok(())
@@ -305,20 +315,41 @@ impl CacheEvictor {
     /// Execute specific eviction policy
     async fn execute_policy(&self, policy: &EvictionPolicy) -> Result<u64> {
         match policy {
-            EvictionPolicy::LRU { max_items, batch_size } => {
-                self.evict_lru(*max_items, *batch_size).await
+            EvictionPolicy::LRU {
+                max_items,
+                batch_size,
+            } => self.evict_lru(*max_items, *batch_size).await,
+            EvictionPolicy::LFU {
+                max_items,
+                min_access_count,
+                frequency_window_hours,
+            } => {
+                self.evict_lfu(*max_items, *min_access_count, *frequency_window_hours)
+                    .await
             }
-            EvictionPolicy::LFU { max_items, min_access_count, frequency_window_hours } => {
-                self.evict_lfu(*max_items, *min_access_count, *frequency_window_hours).await
+            EvictionPolicy::ARC {
+                target_size,
+                recent_size,
+                frequent_size,
+            } => {
+                self.evict_arc(*target_size, *recent_size, *frequent_size)
+                    .await
             }
-            EvictionPolicy::ARC { target_size, recent_size, frequent_size } => {
-                self.evict_arc(*target_size, *recent_size, *frequent_size).await
-            }
-            EvictionPolicy::TTL { max_age_seconds, cleanup_interval_seconds: _ } => {
-                self.evict_ttl(*max_age_seconds).await
-            }
-            EvictionPolicy::PatternBased { use_ml_predictions, pattern_window_hours, eviction_threshold } => {
-                self.evict_pattern_based(*use_ml_predictions, *pattern_window_hours, *eviction_threshold).await
+            EvictionPolicy::TTL {
+                max_age_seconds,
+                cleanup_interval_seconds: _,
+            } => self.evict_ttl(*max_age_seconds).await,
+            EvictionPolicy::PatternBased {
+                use_ml_predictions,
+                pattern_window_hours,
+                eviction_threshold,
+            } => {
+                self.evict_pattern_based(
+                    *use_ml_predictions,
+                    *pattern_window_hours,
+                    *eviction_threshold,
+                )
+                .await
             }
         }
     }
@@ -347,13 +378,21 @@ impl CacheEvictor {
     }
 
     /// Evict using LFU policy
-    async fn evict_lfu(&self, max_items: usize, min_access_count: u64, _window_hours: u64) -> Result<u64> {
+    async fn evict_lfu(
+        &self,
+        max_items: usize,
+        min_access_count: u64,
+        _window_hours: u64,
+    ) -> Result<u64> {
         if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
             let current_size = query_cache.size().await;
 
             if current_size > max_items {
                 let to_evict = current_size - max_items;
-                let lfu_items = self.access_tracker.get_lfu_items(to_evict, min_access_count).await;
+                let lfu_items = self
+                    .access_tracker
+                    .get_lfu_items(to_evict, min_access_count)
+                    .await;
 
                 for item in &lfu_items {
                     let _ = query_cache.remove_by_string(item).await;
@@ -370,7 +409,12 @@ impl CacheEvictor {
     }
 
     /// Evict using ARC policy (simplified implementation)
-    async fn evict_arc(&self, target_size: usize, _recent_size: usize, _frequent_size: usize) -> Result<u64> {
+    async fn evict_arc(
+        &self,
+        target_size: usize,
+        _recent_size: usize,
+        _frequent_size: usize,
+    ) -> Result<u64> {
         // TODO: Implement full ARC algorithm
         // For now, use LRU as fallback
         self.evict_lru(target_size, target_size / 10).await
@@ -390,7 +434,10 @@ impl CacheEvictor {
 
             self.access_tracker.remove_tracking(&expired_items).await;
 
-            debug!("🗑️ TTL eviction: {} expired items removed", expired_items.len());
+            debug!(
+                "🗑️ TTL eviction: {} expired items removed",
+                expired_items.len()
+            );
             return Ok(expired_items.len() as u64);
         }
 
@@ -398,7 +445,12 @@ impl CacheEvictor {
     }
 
     /// Evict using pattern-based predictions
-    async fn evict_pattern_based(&self, _use_ml: bool, _window_hours: u64, _threshold: f64) -> Result<u64> {
+    async fn evict_pattern_based(
+        &self,
+        _use_ml: bool,
+        _window_hours: u64,
+        _threshold: f64,
+    ) -> Result<u64> {
         // TODO: Implement pattern-based eviction using access pattern analysis
         // This would require:
         // 1. Analyze historical access patterns
@@ -433,7 +485,10 @@ impl CacheEvictor {
             }
         }
 
-        tracing::info!("Immediate eviction completed: {} items evicted", total_evicted);
+        tracing::info!(
+            "Immediate eviction completed: {} items evicted",
+            total_evicted
+        );
         Ok(())
     }
 }
@@ -463,7 +518,7 @@ impl Default for CacheEvictionConfig {
                     batch_size: 100,
                 },
                 EvictionPolicy::TTL {
-                    max_age_seconds: 3600, // 1 hour
+                    max_age_seconds: 3600,         // 1 hour
                     cleanup_interval_seconds: 300, // 5 minutes
                 },
             ],

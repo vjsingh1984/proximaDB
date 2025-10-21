@@ -61,9 +61,9 @@ def main():
         
         collection = client.create_collection(collection_name, config)
         print(f"✅ Collection created: {collection.id}")
-        print(f"   - Dimension: {collection.dimension}")
-        print(f"   - Distance metric: {collection.distance_metric}")
-        print(f"   - Storage engine: {collection.storage_engine}")
+        print(f"   - Dimension: {collection.config.dimension}")
+        print(f"   - Distance metric: {collection.config.distance_metric}")
+        print(f"   - Storage engine: {collection.config.storage_engine}")
         
         # Step 2: Get sample documents with real BERT embeddings
         print("\n📚 Loading sample documents with BERT embeddings...")
@@ -73,29 +73,33 @@ def main():
         
         # Insert single vector from first document
         print("\n📝 Inserting single vector...")
-        
-        vector = VectorRecord(
+
+        first_vector = VectorRecord(
             id=first_doc['id'],
             vector=first_doc['embedding'],
-            metadata=first_doc['metadata']
+            metadata=first_doc['metadata'],
+            source=first_doc['text'],  # Store original text as source
+            version=1
         )
-        
-        response = client.insert_vector(collection_name, vector)
-        print(f"✅ Vector inserted successfully: {vector.id}")
+        response = client.insert_vectors(collection_name, [first_vector])
+        print(f"✅ Vector inserted successfully: {first_doc['id']}")
         print(f"   - Text: {first_doc['text'][:60]}...")
-        print(f"   - Category: {vector.metadata['category']}")
+        print(f"   - Category: {first_doc['metadata']['category']}")
+        print(f"   - Source stored: {len(first_doc['text'])} characters")
         
         # Step 3: Insert multiple vectors from sample documents
         print("\n📝 Inserting multiple vectors...")
         
         vectors = []
         remaining_docs = sample_documents[1:]  # Skip first doc already inserted
-        
+
         for doc in remaining_docs:
             vec = VectorRecord(
                 id=doc['id'],
                 vector=doc['embedding'],
-                metadata=doc['metadata']
+                metadata=doc['metadata'],
+                source=doc['text'],  # Store original text as source
+                version=1
             )
             vectors.append(vec)
         
@@ -114,10 +118,10 @@ def main():
             include_metadata=True
         )
         
-        print(f"✅ Retrieved vector: {retrieved.id}")
-        print(f"   - Document type: {retrieved.metadata['document_type']}")
-        print(f"   - Category: {retrieved.metadata['category']}")
-        print(f"   - Vector dimension: {len(retrieved.vector)}")
+        print(f"✅ Retrieved vector: {retrieved['id']}")
+        print(f"   - Document type: {retrieved['metadata']['document_type']}")
+        print(f"   - Category: {retrieved['metadata']['category']}")
+        print(f"   - Vector dimension: {len(retrieved['vector'])}")
         
         # Step 5: Semantic search with query
         print("\n🔎 Performing semantic search...")
@@ -129,14 +133,14 @@ def main():
         
         print(f"   Query: '{query_text}'")
         
-        results = client.search_vectors(
-            collection_name=collection_name,
-            query_vector=query_vector,
+        results = client.search(
+            collection_id=collection_name,
+            vector=query_vector,
             top_k=5
         )
-        
-        print(f"\n✅ Found {len(results.results)} semantically similar documents:")
-        for i, result in enumerate(results.results):
+
+        print(f"\n✅ Found {len(results)} semantically similar documents:")
+        for i, result in enumerate(results):
             # Find the original text from sample documents
             original_doc = next((doc for doc in sample_documents if doc['id'] == result.id), None)
             text_preview = original_doc['text'][:80] + "..." if original_doc else "N/A"
@@ -149,28 +153,31 @@ def main():
         print("\n🔎 Searching with metadata filtering...")
         
         # Get more results to filter manually for demonstration
-        all_results = client.search_vectors(
-            collection_name=collection_name,
-            query_vector=query_vector,
+        all_results = client.search(
+            collection_id=collection_name,
+            vector=query_vector,
             top_k=10
         )
         
         # Filter for AI/ML category documents
-        filtered_results_list = []
-        for result in all_results.results:
-            if (result.metadata.get('category') == 'ai_ml' and 
-                result.metadata.get('document_type') == 'article'):
-                filtered_results_list.append(result)
-        
-        # Create a simple results container
-        class FilteredResults:
-            def __init__(self, results):
-                self.results = results[:5]  # Limit to 5 results
-        
-        filtered_results = FilteredResults(filtered_results_list)
-        
-        print(f"\n✅ Found {len(filtered_results.results)} AI/ML articles:")
-        for result in filtered_results.results:
+        filtered_results = []
+        for result in all_results:
+            # Handle both string values and dict-wrapped values
+            category = result.metadata.get('category')
+            if isinstance(category, dict):
+                category = category.get('string_value', category)
+
+            doc_type = result.metadata.get('document_type')
+            if isinstance(doc_type, dict):
+                doc_type = doc_type.get('string_value', doc_type)
+
+            if category == 'ai_ml' and doc_type == 'article':
+                filtered_results.append(result)
+                if len(filtered_results) >= 5:  # Limit to 5 results
+                    break
+
+        print(f"\n✅ Found {len(filtered_results)} AI/ML articles:")
+        for result in filtered_results:
             original_doc = next((doc for doc in sample_documents if doc['id'] == result.id), None)
             text_preview = original_doc['text'][:60] + "..." if original_doc else "N/A"
             
@@ -179,24 +186,25 @@ def main():
         
         # Step 7: Update a vector (upsert)
         print("\n📝 Updating vector metadata...")
-        
+
+        updated_metadata = {
+            **first_doc['metadata'],
+            "updated": True,
+            "last_modified": "2025-08-05T11:00:00Z",
+            "version": "1.1"
+        }
+
+        # Update vector (upsert functionality)
         updated_vector = VectorRecord(
             id=first_doc['id'],
             vector=first_doc['embedding'],  # Keep same vector
-            metadata={
-                **first_doc['metadata'],
-                "updated": True,
-                "last_modified": "2025-08-05T11:00:00Z",
-                "version": "1.1"
-            }
+            metadata=updated_metadata,
+            source=first_doc['text'],  # Keep original source
+            version=2  # Increment version
         )
-        
-        # Update vector (upsert functionality)
-        response = client.insert_vector(
-            collection_name,
-            updated_vector
-        )
+        response = client.insert_vectors(collection_name, [updated_vector])
         print("✅ Vector updated successfully with additional metadata")
+        print(f"   - Version incremented to 2")
         
         # Step 8: Delete a vector
         print("\n🗑️  Deleting a vector...")
@@ -228,20 +236,26 @@ def main():
             print("-" * 60)
             
             query_embedding = generate_query_embedding(query_text)
-            
-            results = client.search_vectors(
-                collection_name=collection_name,
-                query_vector=query_embedding,
+
+            results = client.search(
+                collection_id=collection_name,
+                vector=query_embedding,
                 top_k=2
             )
-            
+
             query_scores = []
-            
-            for j, result in enumerate(results.results):
+
+            for j, result in enumerate(results):
                 original_doc = next((doc for doc in sample_documents if doc['id'] == result.id), None)
                 if original_doc:
                     query_scores.append(result.score)
-                    search_summary['categories_found'].add(result.metadata.get('category'))
+
+                    # Extract category value, handling dict-wrapped values
+                    category = result.metadata.get('category')
+                    if isinstance(category, dict):
+                        category = category.get('string_value', str(category))
+                    search_summary['categories_found'].add(category)
+
                     search_summary['metadata_fields_analyzed'].update(result.metadata.keys())
                     
                     print(f"\n  📋 Match #{j+1}:")

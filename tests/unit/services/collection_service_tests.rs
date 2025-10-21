@@ -5,9 +5,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::core::config::StorageConfig;
-use proximadb::proto::proximadb_v1::{
-    CollectionConfig, DistanceMetric, StorageEngine,
-};
+use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::metadata::backends::universal_backend::{
     UniversalMetadataBackend, UniversalMetadataConfig,
@@ -99,7 +97,9 @@ async fn test_get_collection() -> Result<()> {
     assert!(create_response.success);
 
     // Get by name
-    let collection = service.get_collection_with_tenant_context("test_get", None).await?;
+    let collection = service
+        .get_collection_with_tenant_context("test_get", None)
+        .await?;
     assert!(collection.is_some());
 
     let collection = collection.unwrap();
@@ -172,7 +172,9 @@ async fn test_delete_collection() -> Result<()> {
     assert!(delete_response.success);
 
     // Verify it's gone
-    let collection = service.get_collection_with_tenant_context("test_delete", None).await?;
+    let collection = service
+        .get_collection_with_tenant_context("test_delete", None)
+        .await?;
     assert!(collection.is_none());
 
     Ok(())

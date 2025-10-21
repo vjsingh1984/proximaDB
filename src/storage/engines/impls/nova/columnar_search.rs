@@ -13,8 +13,7 @@ use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistan
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
-    FilterCondition, MetadataFilter,
-    columnar_query_engine::unified_reader::UnifiedParquetReader,
+    FilterCondition, MetadataFilter, columnar_query_engine::unified_reader::UnifiedParquetReader,
 };
 
 use super::{
@@ -427,7 +426,10 @@ impl NovaColumnarSearch {
             // batch is Vec<VectorRecord>, process each record
             for record in batch {
                 // Create distance compute instance and compute distance
-                let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(distance_metric.clone());
+                let distance_compute =
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                        distance_metric.clone(),
+                    );
                 let distance_result = distance_compute.calculate_distance(
                     query_vector,
                     &record.vector,
@@ -453,7 +455,7 @@ impl NovaColumnarSearch {
                 vector_id: candidate.vector_id.clone(),
                 score: candidate.similarity,
                 similarity: Some(1.0 - candidate.similarity), // Convert similarity back to distance
-                vector: None, // Will be loaded later
+                vector: None,                                 // Will be loaded later
                 metadata: Default::default(),
                 debug_info: None,
                 version: None,
@@ -479,8 +481,8 @@ impl NovaColumnarSearch {
             if let Some(record) = self
                 .load_record_by_id(nova_file, &candidate.vector_id)
                 .await?
-                {
-                    results.push((record, candidate.score));
+            {
+                results.push((record, candidate.score));
             }
         }
 
@@ -569,19 +571,19 @@ impl NovaColumnarSearch {
                 // TODO: Implement proper quantized vector access
                 // For now, skip binary processing
                 {
-                        // Skip binary distance computation for now
-                        let hamming_distance = 0.0;
+                    // Skip binary distance computation for now
+                    let hamming_distance = 0.0;
 
-                        candidates.push(SearchCandidate {
-                            row_group_id: rg_idx,
-                            row_offset: 0,
-                            similarity: 1.0 - (hamming_distance as f32 / 256.0),
-                            vector_id: Some(record.id.clone()),
-                        });
+                    candidates.push(SearchCandidate {
+                        row_group_id: rg_idx,
+                        row_offset: 0,
+                        similarity: 1.0 - (hamming_distance as f32 / 256.0),
+                        vector_id: Some(record.id.clone()),
+                    });
 
-                        if candidates.len() > max_candidates {
-                            candidates.pop();
-                        }
+                    if candidates.len() > max_candidates {
+                        candidates.pop();
+                    }
                     // Removed extra brace - not needed since we removed if let
                 }
             }
@@ -782,7 +784,9 @@ impl NovaColumnarSearch {
             for candidate in &group_candidates {
                 if let Some(record) =
                     // Find record by ID or index
-                    batch.iter().find(|r| &r.id == candidate.vector_id.as_ref().unwrap_or(&String::new()))
+                    batch
+                        .iter()
+                        .find(|r| &r.id == candidate.vector_id.as_ref().unwrap_or(&String::new()))
                         .cloned()
                 {
                     batch_records.push(record);
@@ -792,11 +796,13 @@ impl NovaColumnarSearch {
             // Batch compute distances if we have vectors
             if !batch_records.is_empty() {
                 // Collect vector references after all records are collected
-                let batch_vectors: Vec<&[f32]> = batch_records.iter()
-                    .map(|r| r.vector.as_slice())
-                    .collect();
+                let batch_vectors: Vec<&[f32]> =
+                    batch_records.iter().map(|r| r.vector.as_slice()).collect();
 
-                let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(distance_metric.clone());
+                let distance_compute =
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                        distance_metric.clone(),
+                    );
                 let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,
                     &batch_vectors,

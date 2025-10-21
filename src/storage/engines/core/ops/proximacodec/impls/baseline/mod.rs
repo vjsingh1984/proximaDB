@@ -11,9 +11,9 @@
 //! 2. Reference implementation for correctness testing
 //! 3. Compatibility layer for cross-platform support
 
-pub mod encoder;
 pub mod decoder;
+pub mod encoder;
 pub mod functions;
 
-pub use encoder::BaselineEncoder;
 pub use decoder::BaselineDecoder;
+pub use encoder::BaselineEncoder;

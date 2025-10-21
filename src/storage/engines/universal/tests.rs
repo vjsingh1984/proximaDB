@@ -5,11 +5,11 @@ mod tests {
         AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
         UniversalDistanceAdapter,
     };
-    use crate::storage::engines::universal::config::StorageEngineConfig;
-    use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
     use crate::storage::engines::universal::adapter::{
         HardwareAccelerationManager, OptimizationStrategy,
     };
+    use crate::storage::engines::universal::config::StorageEngineConfig;
+    use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
     use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;
     use crate::storage::engines::universal::storage_integration::{
         EngineType, NOVAAdapter, PRISMAdapter,
@@ -123,7 +123,8 @@ mod tests {
         let manager = HardwareAccelerationManager::new((*capabilities).clone());
         // Test the manager was created successfully
         // No get_optimization_strategy method exists, so just test creation was successful
-        let _strategy = manager.select_strategy(&crate::storage::engines::universal::conversion::StorageFormat::FP32);
+        let _strategy = manager
+            .select_strategy(&crate::storage::engines::universal::conversion::StorageFormat::FP32);
         // Just verify it compiles and works
     }
 
@@ -166,7 +167,10 @@ mod tests {
     }
 
     // Helper function to create test vector records
-    fn create_test_vectors(count: usize, dimension: usize) -> Vec<crate::proto::proximadb_v1::VectorRecord> {
+    fn create_test_vectors(
+        count: usize,
+        dimension: usize,
+    ) -> Vec<crate::proto::proximadb_v1::VectorRecord> {
         let mut vectors = Vec::new();
         for i in 0..count {
             vectors.push(crate::proto::proximadb_v1::VectorRecord {
@@ -208,7 +212,10 @@ mod tests {
 
         // TODO: Memory usage estimation - estimate_memory_usage method needs to be implemented
         // For now, just test that the adapter was created successfully
-        assert!(true, "Memory usage estimation test placeholder - needs implementation");
+        assert!(
+            true,
+            "Memory usage estimation test placeholder - needs implementation"
+        );
     }
 }
 
@@ -217,11 +224,11 @@ pub use crate::storage::engines::universal::adapter::{
     AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
     UniversalDistanceAdapter,
 };
-pub use crate::storage::engines::universal::config::StorageEngineConfig;
-pub use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
 pub use crate::storage::engines::universal::adapter::{
     HardwareAccelerationManager, OptimizationStrategy,
 };
+pub use crate::storage::engines::universal::config::StorageEngineConfig;
+pub use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
 pub use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;
 pub use crate::storage::engines::universal::storage_integration::{
     EngineType, NOVAAdapter, PRISMAdapter,
@@ -236,8 +243,8 @@ pub mod test_utils {
     };
     use crate::storage::engines::universal::conversion::StorageFormat;
     use crate::storage::engines::universal::storage_integration::EngineType;
-    use std::collections::HashMap;
     use crate::utils::uuid::Uuid;
+    use std::collections::HashMap;
 
     pub fn create_test_candidate_vector(id: Uuid, dimension: usize) -> CandidateVector {
         let data: Vec<u8> = (0..dimension * 4).map(|i| (i % 256) as u8).collect();
@@ -257,9 +264,7 @@ pub mod test_utils {
     ) -> DistanceComputationRequest {
         let query_vector = (0..query_dimension).map(|i| i as f32 * 0.1).collect();
         let candidates = (0..candidate_count)
-            .map(|_| {
-                create_test_candidate_vector(Uuid::new_v4(), query_dimension)
-            })
+            .map(|_| create_test_candidate_vector(Uuid::new_v4(), query_dimension))
             .collect();
 
         DistanceComputationRequest {

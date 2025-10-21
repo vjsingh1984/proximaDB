@@ -10,13 +10,13 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-
-
 use anyhow::Result;
 use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
-use common::integration_test_helpers::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
+use common::integration_test_helpers::{
+    MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations,
+};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::{StorageEngine, VectorRecord};
@@ -46,7 +46,10 @@ async fn test_isolated_sst_vector_insert_flush_search() -> Result<()> {
     // DEBUG: Check paths
     if let Some(ref collection_config) = flush_params.collection_config {
         if let Some(ref storage_assignment) = collection_config.storage_assignment {
-            eprintln!("BASIC TEST - FLUSH path = {}", storage_assignment.primary_path);
+            eprintln!(
+                "BASIC TEST - FLUSH path = {}",
+                storage_assignment.primary_path
+            );
             let data_dir = std::path::Path::new(&storage_assignment.primary_path).join("data");
             eprintln!("BASIC TEST - Data dir = {:?}", data_dir);
         }
@@ -63,13 +66,20 @@ async fn test_isolated_sst_vector_insert_flush_search() -> Result<()> {
             let data_dir = std::path::Path::new(&storage_assignment.primary_path).join("data");
 
             // Try to find .sst files recursively
-            eprintln!("BASIC TEST - Searching for .sst files in {:?} and subdirectories:", data_dir);
+            eprintln!(
+                "BASIC TEST - Searching for .sst files in {:?} and subdirectories:",
+                data_dir
+            );
             if let Ok(entries) = std::fs::read_dir(&data_dir) {
                 let mut found_any = false;
                 for entry in entries {
                     if let Ok(entry) = entry {
                         let path = entry.path();
-                        eprintln!("  Found: {:?} (is_dir: {})", entry.file_name(), path.is_dir());
+                        eprintln!(
+                            "  Found: {:?} (is_dir: {})",
+                            entry.file_name(),
+                            path.is_dir()
+                        );
                         found_any = true;
 
                         // If it's a directory, check inside it
@@ -105,7 +115,10 @@ async fn test_isolated_sst_vector_insert_flush_search() -> Result<()> {
 
     // DEBUG: Check search paths
     if let Some(ref storage_assignment) = collection.storage_assignment {
-        eprintln!("BASIC TEST - SEARCH path = {}", storage_assignment.primary_path);
+        eprintln!(
+            "BASIC TEST - SEARCH path = {}",
+            storage_assignment.primary_path
+        );
     }
 
     let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
@@ -163,13 +176,22 @@ async fn test_isolated_sst_metadata_based_filtering() -> Result<()> {
     // DEBUG: Print flush storage path
     if let Some(ref collection_config) = flush_params.collection_config {
         if let Some(ref storage_assignment) = collection_config.storage_assignment {
-            eprintln!("FLUSH storage_assignment.primary_path = {}", storage_assignment.primary_path);
-            eprintln!("FLUSH storage_assignment.base_location = {}", storage_assignment.base_location);
+            eprintln!(
+                "FLUSH storage_assignment.primary_path = {}",
+                storage_assignment.primary_path
+            );
+            eprintln!(
+                "FLUSH storage_assignment.base_location = {}",
+                storage_assignment.base_location
+            );
         }
     }
 
     let result = engine.do_flush(&flush_params).await?;
-    eprintln!("Flush result: success={}, entries_flushed={:?}, collections_affected={:?}", result.success, result.entries_flushed, result.collections_affected);
+    eprintln!(
+        "Flush result: success={}, entries_flushed={:?}, collections_affected={:?}",
+        result.success, result.entries_flushed, result.collections_affected
+    );
     assert!(result.success, "Flush should succeed");
 
     // Wait for atomic commit to complete (files are moved from staging to final location)
@@ -211,8 +233,14 @@ async fn test_isolated_sst_metadata_based_filtering() -> Result<()> {
 
     // DEBUG: Print search storage path
     if let Some(ref storage_assignment) = collection.storage_assignment {
-        eprintln!("SEARCH storage_assignment.primary_path = {}", storage_assignment.primary_path);
-        eprintln!("SEARCH storage_assignment.base_location = {}", storage_assignment.base_location);
+        eprintln!(
+            "SEARCH storage_assignment.primary_path = {}",
+            storage_assignment.primary_path
+        );
+        eprintln!(
+            "SEARCH storage_assignment.base_location = {}",
+            storage_assignment.base_location
+        );
     }
 
     let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
@@ -495,17 +523,15 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
     let vectors: Vec<VectorRecord> = (0..num_vectors)
         .map(|i| VectorRecord {
             id: format!("{}_vec_{}", env.collection_id(), i),
-            vector: vec![
-                (i * 2) as f32,
-                (i * 2 + 1) as f32,
-                (i * 2 + 2) as f32,
-            ],
+            vector: vec![(i * 2) as f32, (i * 2 + 1) as f32, (i * 2 + 2) as f32],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
                 metadata.insert(
                     "index".to_string(),
                     proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64)),
+                        value: Some(
+                            proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64),
+                        ),
                     },
                 );
                 metadata
@@ -533,7 +559,10 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
 
     let flush_result = engine.do_flush(&flush_params).await?;
     assert!(flush_result.success, "Single batch flush should succeed");
-    debug!("✅ Flushed {} vectors in single batch", flush_result.entries_flushed.unwrap_or(0));
+    debug!(
+        "✅ Flushed {} vectors in single batch",
+        flush_result.entries_flushed.unwrap_or(0)
+    );
 
     // STEP 2: Spawn concurrent READ operations (searches)
     let mut handles = Vec::new();
@@ -967,13 +996,21 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                         metadata.insert(
                             "batch".to_string(),
                             proximadb::proto::proximadb_v1::SqlValue {
-                                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(batch as f64)),
+                                value: Some(
+                                    proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        batch as f64,
+                                    ),
+                                ),
                             },
                         );
                         metadata.insert(
                             "id_mod_10".to_string(),
                             proximadb::proto::proximadb_v1::SqlValue {
-                                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue((global_id % 10) as f64)),
+                                value: Some(
+                                    proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        (global_id % 10) as f64,
+                                    ),
+                                ),
                             },
                         );
                         metadata

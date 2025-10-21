@@ -137,78 +137,119 @@ impl InMemoryRelationsStore {
     pub async fn load_from_storage(&self, collection_id: &str) -> Result<()> {
         // Use ORION graph engine to load relationships from persistent storage
         // This leverages the existing graph storage infrastructure
-        
+
         // TODO: Implement proper graph storage integration when ORION engine is ready
-        debug!("Relationships loading deferred for collection: {}", collection_id);
-        
+        debug!(
+            "Relationships loading deferred for collection: {}",
+            collection_id
+        );
+
         Ok(())
     }
 
     /// Convert ORION Edge to SKS Relation
-    fn convert_edge_to_relation(&self, edge: &crate::proto::proximadb_v1::Edge) -> Result<Relation> {
+    fn convert_edge_to_relation(
+        &self,
+        edge: &crate::proto::proximadb_v1::Edge,
+    ) -> Result<Relation> {
         // Convert proto Edge to proto Relation
         Ok(Relation {
             source_entity_id: edge.from_node_id.clone(),
             target_entity_id: edge.to_node_id.clone(),
             relation_type: edge.edge_type.clone(),
-            properties: edge.properties.iter().map(|(k, v)| {
-                let string_value = match &v.value {
-                    Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
-                    Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
-                    Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => d.to_string(),
-                    Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
-                    _ => "null".to_string(),
-                };
-                (k.clone(), string_value)
-            }).collect(),
+            properties: edge
+                .properties
+                .iter()
+                .map(|(k, v)| {
+                    let string_value = match &v.value {
+                        Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
+                            s.clone()
+                        }
+                        Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
+                            i.to_string()
+                        }
+                        Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                            d.to_string()
+                        }
+                        Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
+                            b.to_string()
+                        }
+                        _ => "null".to_string(),
+                    };
+                    (k.clone(), string_value)
+                })
+                .collect(),
             weight: edge.weight.unwrap_or(0.0) as f32,
             created_at_ms: edge.created_at_ms,
         })
     }
-    
+
     /// Persist a relationship to storage using ORION engine
     async fn persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         // Use ORION graph engine for persistence instead of direct file I/O
         {
             let graph_engine = &self.storage_engine;
             let edge = crate::proto::proximadb_v1::Edge {
-                id: format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id),
+                id: format!(
+                    "{}:{}:{}",
+                    relation.source_entity_id, relation.relation_type, relation.target_entity_id
+                ),
                 from_node_id: relation.source_entity_id.clone(),
                 to_node_id: relation.target_entity_id.clone(),
                 edge_type: relation.relation_type.clone(),
-                properties: relation.properties.iter().map(|(k, v)| {
-                    (k.clone(), crate::proto::proximadb_v1::PropertyValue {
-                        value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(v.clone()))
+                properties: relation
+                    .properties
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            crate::proto::proximadb_v1::PropertyValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::property_value::Value::StringValue(
+                                        v.clone(),
+                                    ),
+                                ),
+                            },
+                        )
                     })
-                }).collect(),
+                    .collect(),
                 weight: Some(relation.weight as f64),
                 created_at_ms: relation.created_at_ms,
                 updated_at_ms: chrono::Utc::now().timestamp_millis(),
             };
-            
+
             // TODO: Implement graph persistence when graph storage is available
             // graph_engine.insert_edge(Arc::new(edge))?;
-            debug!("Persisted relation to ORION: {} -> {}", 
-                   relation.source_entity_id, relation.target_entity_id);
+            debug!(
+                "Persisted relation to ORION: {} -> {}",
+                relation.source_entity_id, relation.target_entity_id
+            );
         }
-        
+
         Ok(())
     }
-    
+
     /// Remove a relationship from storage using ORION engine  
     async fn remove_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         {
             let graph_engine = &self.storage_engine;
-            let edge_id = format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id);
+            let edge_id = format!(
+                "{}:{}:{}",
+                relation.source_entity_id, relation.relation_type, relation.target_entity_id
+            );
             // TODO: Implement graph deletion when graph storage is available
             // graph_engine.delete_edge(&edge_id)?;
             debug!("Removed relation from ORION: {}", edge_id);
         }
         Ok(())
     }
-    
+
     /// Legacy persist method - now delegates to ORION
-    async fn _legacy_persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
+    async fn _legacy_persist_relation(
+        &self,
+        collection_id: &str,
+        relation: &Relation,
+    ) -> Result<()> {
         let _key = Self::relation_key(
             collection_id,
             &relation.source_entity_id,
@@ -231,12 +272,20 @@ impl crate::storage::entity_store::RelationsStore for InMemoryRelationsStore {
         <Self as RelationsStore>::add_relation(self, collection_id, relation).await
     }
 
-    async fn get_relations(&self, collection_id: &str, entity_id: &str) -> anyhow::Result<Vec<Relation>> {
+    async fn get_relations(
+        &self,
+        collection_id: &str,
+        entity_id: &str,
+    ) -> anyhow::Result<Vec<Relation>> {
         // Delegate to the full trait implementation
         <Self as RelationsStore>::get_relations(self, collection_id, entity_id).await
     }
 
-    async fn delete_all_relations(&self, collection_id: &str, entity_id: &str) -> anyhow::Result<()> {
+    async fn delete_all_relations(
+        &self,
+        collection_id: &str,
+        entity_id: &str,
+    ) -> anyhow::Result<()> {
         // Delegate to the full trait implementation
         <Self as RelationsStore>::delete_all_relations(self, collection_id, entity_id).await
     }

@@ -7,8 +7,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::FilterExpression;
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
 /// Fast in-memory filter evaluator for row-oriented SST data
@@ -542,17 +542,20 @@ mod tests {
                     let sql_value = match value {
                         crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(s)
-                        },
+                        }
                         crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
                             crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)
-                        },
+                        }
                         crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                             crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)
-                        },
+                        }
                     };
-                    map_metadata.insert(item.key, crate::proto::proximadb_v1::SqlValue {
-                        value: Some(sql_value)
-                    });
+                    map_metadata.insert(
+                        item.key,
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(sql_value),
+                        },
+                    );
                 }
             }
 

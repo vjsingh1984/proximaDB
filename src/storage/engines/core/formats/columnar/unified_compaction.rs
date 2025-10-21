@@ -4,25 +4,25 @@
 // without unnecessary conversions to/from VectorRecord
 
 use anyhow::{Context, Result};
-use arrow_array::{RecordBatch, StringArray, Int64Array, ArrayRef, Array, UInt32Array};
+use arrow_array::{Array, ArrayRef, Int64Array, RecordBatch, StringArray, UInt32Array};
+use arrow_ord::sort::{SortOptions, sort_to_indices};
 use arrow_schema::Schema;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use parquet::arrow::ArrowWriter;
-use parquet::file::properties::WriterProperties;
-use parquet::basic::Compression;
 use arrow_select::concat::concat_batches;
 use arrow_select::take::take;
-use arrow_ord::sort::{sort_to_indices, SortOptions};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::fs::File;
-use tracing::{debug, info, warn};
 use chrono::Utc;
+use parquet::arrow::ArrowWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::basic::Compression;
+use parquet::file::properties::WriterProperties;
+use std::collections::HashMap;
+use std::fs::File;
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
-use super::{FIELD_ID, FIELD_VERSION, FIELD_TIMESTAMP, FIELD_EXPIRES_AT};
 use super::metadata_collector::MetadataCollector;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use super::{FIELD_EXPIRES_AT, FIELD_ID, FIELD_TIMESTAMP, FIELD_VERSION};
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Version continuity enforcement mode for MVCC
 #[derive(Debug, Clone, Copy)]
@@ -56,14 +56,14 @@ impl From<ColumnarCompactionResult> for crate::storage::traits::CompactionResult
     fn from(val: ColumnarCompactionResult) -> Self {
         crate::storage::traits::CompactionResult {
             success: true,
-            collections_affected: vec![],  // Will be filled by the caller
+            collections_affected: vec![], // Will be filled by the caller
             entries_processed: Some(val.entries_processed),
             entries_removed: Some(val.entries_removed),
             bytes_read: Some(val.bytes_read),
             bytes_written: Some(val.bytes_written),
-            input_files: None, // Will be filled by the caller
+            input_files: None,     // Will be filled by the caller
             output_files: Some(1), // Always produces one output file
-            duration_ms: None, // Will be filled by the caller
+            duration_ms: None,     // Will be filled by the caller
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
         }
@@ -98,17 +98,24 @@ impl UnifiedColumnarCompaction {
         engine_name: &str, // "VIPER", "NOVA", etc. for logging
         mut metadata_collector: Option<Box<dyn MetadataCollector>>, // For NOVA hierarchical metadata
     ) -> Result<ColumnarCompactionResult> {
-        info!("[{}] Starting columnar compaction for collection {}", engine_name, collection_id);
+        info!(
+            "[{}] Starting columnar compaction for collection {}",
+            engine_name, collection_id
+        );
 
         // Discover input files if not provided
         let input_files = if input_files.is_empty() {
-            self.discover_files(collection_id, collection_config, engine_name).await?
+            self.discover_files(collection_id, collection_config, engine_name)
+                .await?
         } else {
             input_files
         };
 
         if input_files.is_empty() {
-            info!("[{}] No files to compact for collection {}", engine_name, collection_id);
+            info!(
+                "[{}] No files to compact for collection {}",
+                engine_name, collection_id
+            );
             return Ok(ColumnarCompactionResult {
                 input_files: vec![],
                 output_files: vec![],
@@ -124,27 +131,36 @@ impl UnifiedColumnarCompaction {
             self.read_all_records(&input_files).await?;
 
         // Deduplicate with MVCC directly on Arrow batches
-        let (deduped_batch, expired_count) = self.deduplicate_arrow_batches(all_batches, schema.clone())?;
+        let (deduped_batch, expired_count) =
+            self.deduplicate_arrow_batches(all_batches, schema.clone())?;
         let entries_removed = total_records - deduped_batch.num_rows() as u64 + expired_count;
 
         // Generate output filename
-        let output_path = self.generate_output_filename(collection_id, engine_name, collection_config).await?;
+        let output_path = self
+            .generate_output_filename(collection_id, engine_name, collection_config)
+            .await?;
 
         // Write compacted batch with sorting and bloom filters
-        let bytes_written = self.write_compacted_arrow_batch(
-            &output_path,
-            &deduped_batch,
-            schema,
-            collection_config,
-            &mut metadata_collector,
-        ).await?;
+        let bytes_written = self
+            .write_compacted_arrow_batch(
+                &output_path,
+                &deduped_batch,
+                schema,
+                collection_config,
+                &mut metadata_collector,
+            )
+            .await?;
 
         // Atomic replacement
-        self.atomic_file_replacement(&input_files, &output_path).await?;
+        self.atomic_file_replacement(&input_files, &output_path)
+            .await?;
 
         info!(
             "[{}] Compaction complete: {} -> {} records ({} removed)",
-            engine_name, total_records, deduped_batch.num_rows(), entries_removed
+            engine_name,
+            total_records,
+            deduped_batch.num_rows(),
+            entries_removed
         );
 
         Ok(ColumnarCompactionResult {
@@ -182,7 +198,11 @@ impl UnifiedColumnarCompaction {
 
         // Simple strategy: compact if we have more than 4 files
         if files.len() <= 4 {
-            debug!("[{}] Only {} files, no compaction needed", engine_name, files.len());
+            debug!(
+                "[{}] Only {} files, no compaction needed",
+                engine_name,
+                files.len()
+            );
             return Ok(vec![]);
         }
 
@@ -208,8 +228,7 @@ impl UnifiedColumnarCompaction {
             total_bytes += file_data.len() as u64;
 
             let file_bytes = bytes::Bytes::from(file_data);
-            let reader = ParquetRecordBatchReaderBuilder::try_new(file_bytes.clone())?
-                .build()?;
+            let reader = ParquetRecordBatchReaderBuilder::try_new(file_bytes.clone())?.build()?;
 
             if schema.is_none() {
                 // Get schema from reader's metadata
@@ -232,7 +251,6 @@ impl UnifiedColumnarCompaction {
         ))
     }
 
-
     /// Apply quantization to a batch of records during compaction
     /// This recalculates quantization for merged data distribution
     async fn apply_quantization_to_batch(
@@ -240,12 +258,14 @@ impl UnifiedColumnarCompaction {
         batch: &RecordBatch,
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<RecordBatch> {
-        use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
         use crate::compute::distance_computation::DistanceMetric;
+        use crate::compute::quantization::storage_engine::{
+            StorageQuantizationConfig, StorageQuantizationEngine,
+        };
         use crate::core::memory::pool::VectorMemoryPool;
         use crate::storage::engines::core::formats::columnar::constants;
-        use arrow_array::{Float32Array, FixedSizeListArray, BinaryArray, builder::BinaryBuilder};
         use arrow::array::ArrayRef;
+        use arrow_array::{BinaryArray, FixedSizeListArray, Float32Array, builder::BinaryBuilder};
         use std::sync::Arc;
 
         // Extract vector column from batch
@@ -254,27 +274,27 @@ impl UnifiedColumnarCompaction {
             .or_else(|| batch.column_by_name("vector"))
             .ok_or_else(|| anyhow::anyhow!("No vector column found"))?;
 
-        let vectors: Vec<Vec<f32>> = if let Some(fixed_list) = vector_column.as_any().downcast_ref::<FixedSizeListArray>() {
-            let values = fixed_list.values()
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .ok_or_else(|| anyhow::anyhow!("Invalid vector values"))?;
+        let vectors: Vec<Vec<f32>> =
+            if let Some(fixed_list) = vector_column.as_any().downcast_ref::<FixedSizeListArray>() {
+                let values = fixed_list
+                    .values()
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid vector values"))?;
 
-            let dim = fixed_list.value_length() as usize;
-            let mut all_vectors = Vec::with_capacity(batch.num_rows());
+                let dim = fixed_list.value_length() as usize;
+                let mut all_vectors = Vec::with_capacity(batch.num_rows());
 
-            for i in 0..batch.num_rows() {
-                let start = i * dim;
-                let end = start + dim;
-                let vector: Vec<f32> = (start..end)
-                    .map(|j| values.value(j))
-                    .collect();
-                all_vectors.push(vector);
-            }
-            all_vectors
-        } else {
-            return Err(anyhow::anyhow!("Vector column is not FixedSizeList"));
-        };
+                for i in 0..batch.num_rows() {
+                    let start = i * dim;
+                    let end = start + dim;
+                    let vector: Vec<f32> = (start..end).map(|j| values.value(j)).collect();
+                    all_vectors.push(vector);
+                }
+                all_vectors
+            } else {
+                return Err(anyhow::anyhow!("Vector column is not FixedSizeList"));
+            };
 
         // Get distance metric from config
         let distance_metric = collection_config
@@ -296,14 +316,18 @@ impl UnifiedColumnarCompaction {
         if let Some(q_config) = quantization_config {
             // Parse quantization config to determine levels
             // Default: Binary + INT8 for fast pre-filtering
-            config.filter_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::Binary);
-            config.fast_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8());
+            config.filter_level =
+                Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::Binary);
+            config.fast_level =
+                Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8());
 
             // PQ only if explicitly enabled due to training cost
             if q_config.enable_pq.unwrap_or(false) {
-                config.primary_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
-                    q_config.pq_segments.unwrap_or(1).max(1) as u8
-                ));
+                config.primary_level = Some(
+                    crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
+                        q_config.pq_segments.unwrap_or(1).max(1) as u8,
+                    ),
+                );
             }
         }
 
@@ -315,11 +339,14 @@ impl UnifiedColumnarCompaction {
 
         // Use batch configuration for optimal performance
         let batch_config = crate::storage::strategy::BatchConfig {
-            batch_size: 1024,  // Optimal for SIMD and cache locality
+            batch_size: 1024, // Optimal for SIMD and cache locality
             batch_timeout_ms: 100,
         };
 
-        info!("🔬 Training quantization on {} vectors for compaction", vectors.len());
+        info!(
+            "🔬 Training quantization on {} vectors for compaction",
+            vectors.len()
+        );
 
         // Train on a sample if dataset is large (PQ training doesn't need all vectors)
         let training_vectors = if vectors.len() > 10000 {
@@ -333,8 +360,11 @@ impl UnifiedColumnarCompaction {
         engine.train(&training_vectors).await?;
 
         // Quantize in batches for memory efficiency and SIMD performance
-        info!("⚡ Quantizing {} vectors in batches of {} with SIMD optimization",
-              vectors.len(), batch_config.batch_size);
+        info!(
+            "⚡ Quantizing {} vectors in batches of {} with SIMD optimization",
+            vectors.len(),
+            batch_config.batch_size
+        );
 
         let mut quantized_results = Vec::with_capacity(vectors.len());
 
@@ -356,7 +386,10 @@ impl UnifiedColumnarCompaction {
             tokio::task::yield_now().await;
         }
 
-        info!("✅ Quantized {} vectors with SIMD acceleration", quantized_results.len());
+        info!(
+            "✅ Quantized {} vectors with SIMD acceleration",
+            quantized_results.len()
+        );
 
         // Build new columns for quantized vectors
         let mut columns: Vec<(String, ArrayRef)> = Vec::new();
@@ -379,8 +412,14 @@ impl UnifiedColumnarCompaction {
                     binary_builder.append_null();
                 }
             }
-            columns.push((constants::FIELD_Q_BINARY.to_string(), Arc::new(binary_builder.finish())));
-            info!("✅ Added {} column with recalculated binary quantization", constants::FIELD_Q_BINARY);
+            columns.push((
+                constants::FIELD_Q_BINARY.to_string(),
+                Arc::new(binary_builder.finish()),
+            ));
+            info!(
+                "✅ Added {} column with recalculated binary quantization",
+                constants::FIELD_Q_BINARY
+            );
         }
 
         // Add INT8 quantized column if present
@@ -393,8 +432,14 @@ impl UnifiedColumnarCompaction {
                     int8_builder.append_null();
                 }
             }
-            columns.push((constants::FIELD_Q_INT8.to_string(), Arc::new(int8_builder.finish())));
-            info!("✅ Added {} column with recalculated INT8 quantization", constants::FIELD_Q_INT8);
+            columns.push((
+                constants::FIELD_Q_INT8.to_string(),
+                Arc::new(int8_builder.finish()),
+            ));
+            info!(
+                "✅ Added {} column with recalculated INT8 quantization",
+                constants::FIELD_Q_INT8
+            );
         }
 
         // Add PQ quantized column if present
@@ -407,38 +452,53 @@ impl UnifiedColumnarCompaction {
                     pq_builder.append_null();
                 }
             }
-            columns.push((constants::FIELD_Q_PQ8.to_string(), Arc::new(pq_builder.finish())));
-            info!("✅ Added {} column with retrained PQ codebooks", constants::FIELD_Q_PQ8);
+            columns.push((
+                constants::FIELD_Q_PQ8.to_string(),
+                Arc::new(pq_builder.finish()),
+            ));
+            info!(
+                "✅ Added {} column with retrained PQ codebooks",
+                constants::FIELD_Q_PQ8
+            );
         }
 
         // Create new schema with quantized columns
         let mut fields = batch.schema().fields().to_vec();
 
         // Add new fields if they don't exist
-        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_BINARY) &&
-           columns.iter().any(|(name, _)| name == constants::FIELD_Q_BINARY) {
+        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_BINARY)
+            && columns
+                .iter()
+                .any(|(name, _)| name == constants::FIELD_Q_BINARY)
+        {
             fields.push(Arc::new(arrow::datatypes::Field::new(
                 constants::FIELD_Q_BINARY,
                 arrow::datatypes::DataType::Binary,
-                true
+                true,
             )));
         }
 
-        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_INT8) &&
-           columns.iter().any(|(name, _)| name == constants::FIELD_Q_INT8) {
+        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_INT8)
+            && columns
+                .iter()
+                .any(|(name, _)| name == constants::FIELD_Q_INT8)
+        {
             fields.push(Arc::new(arrow::datatypes::Field::new(
                 constants::FIELD_Q_INT8,
                 arrow::datatypes::DataType::Binary,
-                true
+                true,
             )));
         }
 
-        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_PQ8) &&
-           columns.iter().any(|(name, _)| name == constants::FIELD_Q_PQ8) {
+        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_PQ8)
+            && columns
+                .iter()
+                .any(|(name, _)| name == constants::FIELD_Q_PQ8)
+        {
             fields.push(Arc::new(arrow::datatypes::Field::new(
                 constants::FIELD_Q_PQ8,
                 arrow::datatypes::DataType::Binary,
-                true
+                true,
             )));
         }
 
@@ -467,19 +527,23 @@ impl UnifiedColumnarCompaction {
 
         // Process all batches to find latest versions
         for (batch_idx, batch) in batches.iter().enumerate() {
-            let id_array = batch.column_by_name(FIELD_ID)
+            let id_array = batch
+                .column_by_name(FIELD_ID)
                 .context("Missing ID column")?
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .context("ID column has wrong type")?;
 
-            let version_array = batch.column_by_name(FIELD_VERSION)
+            let version_array = batch
+                .column_by_name(FIELD_VERSION)
                 .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
 
-            let timestamp_array = batch.column_by_name(FIELD_TIMESTAMP)
+            let timestamp_array = batch
+                .column_by_name(FIELD_TIMESTAMP)
                 .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
 
-            let expires_at_array = batch.column_by_name(FIELD_EXPIRES_AT)
+            let expires_at_array = batch
+                .column_by_name(FIELD_EXPIRES_AT)
                 .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
 
             for row_idx in 0..batch.num_rows() {
@@ -501,23 +565,41 @@ impl UnifiedColumnarCompaction {
 
                 let id = id_array.value(row_idx);
                 let version = version_array
-                    .map(|v| if v.is_valid(row_idx) { v.value(row_idx) } else { 0 })
+                    .map(|v| {
+                        if v.is_valid(row_idx) {
+                            v.value(row_idx)
+                        } else {
+                            0
+                        }
+                    })
                     .unwrap_or(0);
                 let timestamp = timestamp_array
-                    .map(|t| if t.is_valid(row_idx) { t.value(row_idx) } else { 0 })
+                    .map(|t| {
+                        if t.is_valid(row_idx) {
+                            t.value(row_idx)
+                        } else {
+                            0
+                        }
+                    })
                     .unwrap_or(0);
 
                 // Check version continuity
                 if !self.check_version_continuity(id, version, &latest_records) {
                     version_violations += 1;
-                    warn!("Version continuity violation for ID '{}': version {}", id, version);
+                    warn!(
+                        "Version continuity violation for ID '{}': version {}",
+                        id, version
+                    );
                     continue;
                 }
 
                 // MVCC resolution: higher version or timestamp wins
                 if let Some(&(_, _, existing_ver, existing_ts)) = latest_records.get(id) {
-                    if version > existing_ver || (version == existing_ver && timestamp > existing_ts) {
-                        latest_records.insert(id.to_string(), (batch_idx, row_idx, version, timestamp));
+                    if version > existing_ver
+                        || (version == existing_ver && timestamp > existing_ts)
+                    {
+                        latest_records
+                            .insert(id.to_string(), (batch_idx, row_idx, version, timestamp));
                     }
                 } else {
                     latest_records.insert(id.to_string(), (batch_idx, row_idx, version, timestamp));
@@ -526,7 +608,10 @@ impl UnifiedColumnarCompaction {
         }
 
         if version_violations > 0 {
-            warn!("Version continuity: {} violations detected", version_violations);
+            warn!(
+                "Version continuity: {} violations detected",
+                version_violations
+            );
         }
 
         // Build result batch by selecting deduplicated rows
@@ -543,18 +628,16 @@ impl UnifiedColumnarCompaction {
         latest: &HashMap<String, (usize, usize, i64, i64)>,
     ) -> bool {
         match self.version_continuity {
-            VersionContinuityMode::Strict => {
-                match latest.get(id) {
-                    Some(&(_, _, existing_ver, _)) => version == existing_ver || version == existing_ver + 1,
-                    None => version == 0 || version == 1,
+            VersionContinuityMode::Strict => match latest.get(id) {
+                Some(&(_, _, existing_ver, _)) => {
+                    version == existing_ver || version == existing_ver + 1
                 }
-            }
-            VersionContinuityMode::Relaxed { max_jump } => {
-                match latest.get(id) {
-                    Some(&(_, _, existing_ver, _)) => version <= existing_ver + max_jump,
-                    None => version <= max_jump,
-                }
-            }
+                None => version == 0 || version == 1,
+            },
+            VersionContinuityMode::Relaxed { max_jump } => match latest.get(id) {
+                Some(&(_, _, existing_ver, _)) => version <= existing_ver + max_jump,
+                None => version <= max_jump,
+            },
             VersionContinuityMode::Disabled => true,
         }
     }
@@ -634,13 +717,19 @@ impl UnifiedColumnarCompaction {
 
         let final_batch = if quantization_enabled {
             // Implement quantization-aware compaction using StorageQuantizationEngine
-            match self.apply_quantization_to_batch(&sorted_batch, collection_config).await {
+            match self
+                .apply_quantization_to_batch(&sorted_batch, collection_config)
+                .await
+            {
                 Ok(quantized_batch) => {
                     info!("✅ Applied quantization during compaction");
                     quantized_batch
-                },
+                }
                 Err(e) => {
-                    warn!("⚠️ Quantization during compaction failed: {}, using original vectors", e);
+                    warn!(
+                        "⚠️ Quantization during compaction failed: {}, using original vectors",
+                        e
+                    );
                     sorted_batch
                 }
             }
@@ -662,14 +751,14 @@ impl UnifiedColumnarCompaction {
                 // ID column always gets bloom filter
                 props_builder = props_builder.set_column_bloom_filter_enabled(
                     parquet::schema::types::ColumnPath::from(FIELD_ID),
-                    true
+                    true,
                 );
 
                 // Add bloom filters for each filterable column
                 for col in filterable_cols {
                     props_builder = props_builder.set_column_bloom_filter_enabled(
                         parquet::schema::types::ColumnPath::from(col.name.as_str()),
-                        true
+                        true,
                     );
                 }
             }
@@ -721,7 +810,9 @@ impl UnifiedColumnarCompaction {
             debug!("Wrote NOVA metadata sidecar to {}", sidecar_path);
         }
 
-        let bytes_written = metadata.row_groups.iter()
+        let bytes_written = metadata
+            .row_groups
+            .iter()
             .map(|rg| rg.total_byte_size)
             .sum::<i64>() as u64;
 
@@ -768,7 +859,12 @@ impl UnifiedColumnarCompaction {
     }
 
     /// Generate output filename using unified FilenameCodec
-    async fn generate_output_filename(&self, collection_id: &str, _engine_name: &str, collection_config: Option<&crate::proto::proximadb_v1::Collection>) -> Result<String> {
+    async fn generate_output_filename(
+        &self,
+        collection_id: &str,
+        _engine_name: &str,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<String> {
         let codec = FilenameCodec::new();
         let filename = codec.generate(1, "parquet"); // L1 for compacted files
 

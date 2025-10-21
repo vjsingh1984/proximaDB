@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, Instant};
+use std::time::{Instant, SystemTime};
 
 use dashmap::DashMap;
 use tokio::sync::RwLock;
@@ -77,7 +77,9 @@ impl DiskCacheManager {
         if let Some(mut entry) = self.entries.get_mut(key) {
             entry.last_accessed = Instant::now();
             entry.access_count += 1;
-            self.stats.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.stats
+                .hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
             let path = entry.local_path.clone();
             if path.exists() {
@@ -86,7 +88,9 @@ impl DiskCacheManager {
             }
         }
 
-        self.stats.misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         None
     }
 
@@ -95,7 +99,9 @@ impl DiskCacheManager {
         if let Some(path) = self.get(key).await {
             match tokio::fs::read(&path).await {
                 Ok(data) => {
-                    self.stats.bytes_saved.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                    self.stats
+                        .bytes_saved
+                        .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
                     Some(data)
                 }
                 Err(e) => {
@@ -116,7 +122,8 @@ impl DiskCacheManager {
         // Check if we need to evict
         let mut current_size = self.current_size.write().await;
         if *current_size + size > self.max_size_bytes {
-            self.evict_lru(*current_size + size - self.max_size_bytes).await;
+            self.evict_lru(*current_size + size - self.max_size_bytes)
+                .await;
             *current_size = self.current_size.read().await.clone();
         }
 
@@ -155,7 +162,8 @@ impl DiskCacheManager {
 
     /// Invalidate all entries with prefix
     pub async fn invalidate_prefix(&self, prefix: &str) {
-        let keys_to_remove: Vec<String> = self.entries
+        let keys_to_remove: Vec<String> = self
+            .entries
             .iter()
             .filter(|entry| entry.key().starts_with(prefix))
             .map(|entry| entry.key().clone())
@@ -180,9 +188,16 @@ impl DiskCacheManager {
 
     /// Evict least recently used entries
     async fn evict_lru(&self, bytes_needed: usize) {
-        let mut entries: Vec<(String, Instant, usize)> = self.entries
+        let mut entries: Vec<(String, Instant, usize)> = self
+            .entries
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().last_accessed, entry.value().size))
+            .map(|entry| {
+                (
+                    entry.key().clone(),
+                    entry.value().last_accessed,
+                    entry.value().size,
+                )
+            })
             .collect();
 
         // Sort by last accessed time (oldest first)
@@ -196,7 +211,9 @@ impl DiskCacheManager {
 
             self.invalidate(&key).await;
             freed += size;
-            self.stats.evictions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.stats
+                .evictions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -205,8 +222,14 @@ impl DiskCacheManager {
         DiskCacheStatistics {
             hits: self.stats.hits.load(std::sync::atomic::Ordering::Relaxed),
             misses: self.stats.misses.load(std::sync::atomic::Ordering::Relaxed),
-            evictions: self.stats.evictions.load(std::sync::atomic::Ordering::Relaxed),
-            bytes_saved: self.stats.bytes_saved.load(std::sync::atomic::Ordering::Relaxed),
+            evictions: self
+                .stats
+                .evictions
+                .load(std::sync::atomic::Ordering::Relaxed),
+            bytes_saved: self
+                .stats
+                .bytes_saved
+                .load(std::sync::atomic::Ordering::Relaxed),
             entries: self.entries.len(),
         }
     }

@@ -4,7 +4,7 @@ use chrono::{Duration, Utc};
 use proximadb::core::search::multi_tier_deduplication::{
     DataFreshnessTier, DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate,
 };
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -31,9 +31,12 @@ fn test_basic_deduplication() {
         vector: vec![1.0, 0.0, 0.0],
         metadata: {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("type".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue("test".to_string())),
-            });
+            metadata.insert(
+                "type".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue("test".to_string())),
+                },
+            );
             metadata
         },
         timestamp: Some(Utc::now().timestamp_micros()),
@@ -147,12 +150,18 @@ fn test_metadata_filtering() {
             vector: vec![1.0, 0.0],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("science".to_string())),
-                });
-                metadata.insert("published".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("true".to_string())),
-                });
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("science".to_string())),
+                    },
+                );
+                metadata.insert(
+                    "published".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("true".to_string())),
+                    },
+                );
                 metadata
             },
             timestamp: Some(Utc::now().timestamp_micros()),
@@ -166,12 +175,18 @@ fn test_metadata_filtering() {
             vector: vec![0.0, 1.0],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("history".to_string())),
-                });
-                metadata.insert("published".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("true".to_string())),
-                });
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("history".to_string())),
+                    },
+                );
+                metadata.insert(
+                    "published".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("true".to_string())),
+                    },
+                );
                 metadata
             },
             timestamp: Some(Utc::now().timestamp_micros()),
@@ -219,12 +234,18 @@ fn test_simple_metadata_query() {
             vector: vec![1.0, 0.0],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("language".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("en".to_string())),
-                });
-                metadata.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("tech".to_string())),
-                });
+                metadata.insert(
+                    "language".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("en".to_string())),
+                    },
+                );
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("tech".to_string())),
+                    },
+                );
                 metadata
             },
             timestamp: Some(Utc::now().timestamp_micros()),
@@ -238,12 +259,18 @@ fn test_simple_metadata_query() {
             vector: vec![0.0, 1.0],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("language".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("fr".to_string())),
-                });
-                metadata.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("tech".to_string())),
-                });
+                metadata.insert(
+                    "language".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("fr".to_string())),
+                    },
+                );
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("tech".to_string())),
+                    },
+                );
                 metadata
             },
             timestamp: Some(Utc::now().timestamp_micros()),
@@ -415,9 +442,12 @@ fn test_complex_deduplication_scenario() {
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("version".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(version.to_string())),
-                    });
+                    metadata.insert(
+                        "version".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(version.to_string())),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some(Utc::now().timestamp_micros()),
@@ -456,9 +486,12 @@ fn test_complex_deduplication_scenario() {
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("version".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(version.to_string())),
-                    });
+                    metadata.insert(
+                        "version".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(version.to_string())),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some(Utc::now().timestamp_micros()),

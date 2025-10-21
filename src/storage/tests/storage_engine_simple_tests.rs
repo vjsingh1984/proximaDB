@@ -17,9 +17,14 @@ fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
         vector,
         metadata: {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("test_key".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string()))
-            });
+            metadata.insert(
+                "test_key".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "test_value".to_string(),
+                    )),
+                },
+            );
             metadata
         },
         timestamp: Some(chrono::Utc::now().timestamp()),

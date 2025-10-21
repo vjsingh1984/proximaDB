@@ -126,8 +126,10 @@ async fn test_metrics_recording() {
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     let snapshot = cache.metrics().get_snapshot().await;
-    eprintln!("Snapshot: total_operations={}, cache_hits={}, cache_misses={}",
-        snapshot.total_operations, snapshot.cache_hits, snapshot.cache_misses);
+    eprintln!(
+        "Snapshot: total_operations={}, cache_hits={}, cache_misses={}",
+        snapshot.total_operations, snapshot.cache_hits, snapshot.cache_misses
+    );
     assert_eq!(snapshot.total_operations, 3, "Should have 1 put + 2 gets");
     assert_eq!(snapshot.cache_misses, 1);
     assert!(snapshot.cache_hits > 0);

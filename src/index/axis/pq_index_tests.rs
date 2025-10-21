@@ -10,9 +10,9 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::index::axis::index_factory::IndexFactory;
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
+    use crate::proto::proximadb_v1::VectorRecord;
     use tracing::{debug, error, info};
 
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {

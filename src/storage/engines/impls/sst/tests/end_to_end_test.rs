@@ -9,31 +9,24 @@
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::collections::HashMap;
     use anyhow::Result;
+    use std::collections::HashMap;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
-    use crate::storage::engines::impls::sst::{
-        core::SstEngine,
-        SstConfig,
-    };
-    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-    use crate::compute::distance_computation::{
-        engine::UnifiedDistanceCompute,
-        DistanceMetric,
-    };
-    use crate::proto::proximadb_v1::{
-        VectorRecord, Collection, CollectionConfig, StorageAssignment,
-        StorageConfig, SqlValue, FilterableColumnSpec, FilterableDataType,
-    };
-    use crate::storage::traits::{
-        UnifiedStorageEngine, StorageQueryContext, FlushParameters,
-        StorageQueryMetadata,
-    };
+    use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
     use crate::core::search::SearchParams;
-    use crate::core::search::{FilterExpression, ComparisonOperator};
-    use tracing::{info, debug};
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::proto::proximadb_v1::{
+        Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
+        StorageAssignment, StorageConfig, VectorRecord,
+    };
+    use crate::storage::engines::impls::sst::{SstConfig, core::SstEngine};
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::traits::{
+        FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
+    };
+    use tracing::{debug, info};
 
     #[tokio::test]
     async fn test_sst_engine_end_to_end_flush_and_search() -> Result<()> {
@@ -58,11 +51,9 @@ mod tests {
         let sst_config = SstConfig::default();
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        let engine = SstEngine::new_with_config(
-            sst_config,
-            filesystem.clone(),
-            distance_compute.clone()
-        ).await?;
+        let engine =
+            SstEngine::new_with_config(sst_config, filesystem.clone(), distance_compute.clone())
+                .await?;
 
         info!("✅ SST engine created successfully");
 
@@ -82,13 +73,19 @@ mod tests {
             let mut metadata = HashMap::new();
             metadata.insert(
                 "category".to_string(),
-                SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    format!("cat_{}", i % 10)
-                ))}
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        format!("cat_{}", i % 10),
+                    )),
+                },
             );
             metadata.insert(
                 "index".to_string(),
-                SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64))}
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                        i as f64,
+                    )),
+                },
             );
 
             vectors.push(VectorRecord {
@@ -103,7 +100,10 @@ mod tests {
             });
         }
 
-        info!("📊 Created {} test vectors with {} dimensions", num_vectors, dimension);
+        info!(
+            "📊 Created {} test vectors with {} dimensions",
+            num_vectors, dimension
+        );
 
         // Create collection configuration
         let collection = Collection {
@@ -163,16 +163,19 @@ mod tests {
             "Should write non-zero bytes"
         );
 
-        info!("✅ Flush successful: {} vectors, {} bytes written",
-              flush_result.entries_flushed.unwrap_or(0),
-              flush_result.bytes_written.unwrap_or(0));
+        info!(
+            "✅ Flush successful: {} vectors, {} bytes written",
+            flush_result.entries_flushed.unwrap_or(0),
+            flush_result.bytes_written.unwrap_or(0)
+        );
 
         // Verify SST files were created on disk
         let data_path = format!("{}/{}/data", base_path, collection_id);
         let fs = filesystem.get_filesystem(&format!("file://{}", data_path))?;
         let files = fs.list(&format!("file://{}", data_path)).await?;
 
-        let sst_files: Vec<_> = files.iter()
+        let sst_files: Vec<_> = files
+            .iter()
             .filter(|f| f.name.ends_with(".sst") || f.name.ends_with(".sstable"))
             .collect();
 
@@ -213,12 +216,16 @@ mod tests {
 
         // Verify results have scores (don't validate exact range as different metrics use different scales)
         for result in &search_results {
-            assert!(result.score.is_finite(), "Score should be finite, got {}", result.score);
+            assert!(
+                result.score.is_finite(),
+                "Score should be finite, got {}",
+                result.score
+            );
         }
 
         info!("✅ Search returned {} results", search_results.len());
         for (i, result) in search_results.iter().take(5).enumerate() {
-            info!("  #{}: {} (score: {:.4})", i+1, result.id, result.score);
+            info!("  #{}: {} (score: {:.4})", i + 1, result.id, result.score);
         }
 
         // Step 3: Search with metadata filter (TODO: Fix metadata filtering)
@@ -275,8 +282,9 @@ mod tests {
         let engine2 = SstEngine::new_with_config(
             SstConfig::default(),
             filesystem.clone(),
-            Arc::new(UnifiedDistanceCompute::default())
-        ).await?;
+            Arc::new(UnifiedDistanceCompute::default()),
+        )
+        .await?;
 
         // Search with the new engine instance
         let persistence_ctx = StorageQueryContext {
@@ -291,13 +299,20 @@ mod tests {
         let persistence_results = engine2.search_vectors_unified(&persistence_ctx).await?;
 
         // The key test: new engine instance can read flushed data
-        assert!(!persistence_results.is_empty(),
-                "New engine instance should find persisted data");
-        assert_eq!(persistence_results.len(), search_results.len(),
-                "New engine should find same number of results");
+        assert!(
+            !persistence_results.is_empty(),
+            "New engine instance should find persisted data"
+        );
+        assert_eq!(
+            persistence_results.len(),
+            search_results.len(),
+            "New engine should find same number of results"
+        );
 
-        info!("✅ Data persistence verified - new engine found {} results",
-              persistence_results.len());
+        info!(
+            "✅ Data persistence verified - new engine found {} results",
+            persistence_results.len()
+        );
 
         info!("🎉 SST engine end-to-end test completed successfully!");
 
@@ -316,15 +331,14 @@ mod tests {
 
         let mut fs_config = FilesystemConfig::default();
         fs_config.default_fs = Some(format!("file://{}", base_path));
-        let filesystem = Arc::new(
-            FilesystemFactory::create(fs_config).await?
-        );
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
 
         let engine = SstEngine::new_with_config(
             SstConfig::default(),
             filesystem,
-            Arc::new(UnifiedDistanceCompute::default())
-        ).await?;
+            Arc::new(UnifiedDistanceCompute::default()),
+        )
+        .await?;
 
         let collection = Collection {
             id: "empty_collection".to_string(),

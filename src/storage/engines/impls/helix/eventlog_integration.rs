@@ -7,8 +7,8 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::index::axis::eventlog::StorageEngineType;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::events::log::{EventLogService, event_log_service};
 use crate::storage::engines::FlushParameters;
 

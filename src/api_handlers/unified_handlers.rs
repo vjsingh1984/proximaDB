@@ -80,7 +80,8 @@ pub struct UnifiedHandlers {
     /// Metrics query service for collection statistics and optimization hints
     pub metrics_query_service: Option<Arc<MetricsQueryService>>,
     /// Optional hybrid runtime configuration (weights, seeding). Thread-safe.
-    pub hybrid_runtime: std::sync::Arc<std::sync::RwLock<Option<crate::core::config::HybridRuntimeConfig>>>,
+    pub hybrid_runtime:
+        std::sync::Arc<std::sync::RwLock<Option<crate::core::config::HybridRuntimeConfig>>>,
 }
 
 impl UnifiedHandlers {
@@ -95,9 +96,11 @@ impl UnifiedHandlers {
         vector_operations_service: Arc<VectorOperationsService>,
     ) -> Self {
         let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
-        let graph_operations_service = Arc::new(crate::graph::GraphOperationsService::new_with_collection_service(
-            graph_collection_service.clone()
-        ));
+        let graph_operations_service = Arc::new(
+            crate::graph::GraphOperationsService::new_with_collection_service(
+                graph_collection_service.clone(),
+            ),
+        );
 
         Self {
             collection_service,
@@ -116,9 +119,11 @@ impl UnifiedHandlers {
         metrics_query_service: Arc<MetricsQueryService>,
     ) -> Self {
         let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
-        let graph_operations_service = Arc::new(crate::graph::GraphOperationsService::new_with_collection_service(
-            graph_collection_service.clone()
-        ));
+        let graph_operations_service = Arc::new(
+            crate::graph::GraphOperationsService::new_with_collection_service(
+                graph_collection_service.clone(),
+            ),
+        );
 
         Self {
             collection_service,
@@ -137,7 +142,8 @@ impl UnifiedHandlers {
         config: &crate::core::config::Config,
     ) -> Self {
         let mut s = Self::new(collection_service, vector_operations_service);
-        s.graph_operations_service = Arc::new(crate::graph::GraphOperationsService::from_config(config));
+        s.graph_operations_service =
+            Arc::new(crate::graph::GraphOperationsService::from_config(config));
         if let Some(h) = &config.hybrid {
             s.set_hybrid_runtime(h.clone());
         }
@@ -146,7 +152,9 @@ impl UnifiedHandlers {
 
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)
     pub fn set_hybrid_runtime(&self, cfg: crate::core::config::HybridRuntimeConfig) {
-        if let Ok(mut guard) = self.hybrid_runtime.write() { *guard = Some(cfg); }
+        if let Ok(mut guard) = self.hybrid_runtime.write() {
+            *guard = Some(cfg);
+        }
     }
 
     /// Handle any collection operation with unified logic
@@ -392,8 +400,7 @@ impl UnifiedHandlers {
                 tracing::error!("Failed to process vector batch: {:?}", e);
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
-                        as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
                     metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                         total_processed: 0,
                         successful_count: 0,
@@ -729,17 +736,28 @@ impl UnifiedHandlers {
                                 .first()
                                 .cloned()
                                 .unwrap_or_else(|| String::new()), // Use first for now, need to handle multiple starts
-                            max_depth: if graph_req.max_depth == 0 { 3 } else { graph_req.max_depth },
+                            max_depth: if graph_req.max_depth == 0 {
+                                3
+                            } else {
+                                graph_req.max_depth
+                            },
                             edge_types: graph_req.edge_types,
                             node_labels: graph_req.node_labels,
                             filters: graph_req.filters,
-                            algorithm: if graph_req.algorithm == 0 { 1 } else { graph_req.algorithm }, // Default to BFS (1)
+                            algorithm: if graph_req.algorithm == 0 {
+                                1
+                            } else {
+                                graph_req.algorithm
+                            }, // Default to BFS (1)
                             limit: request.limit,
                             max_frontier: None,
                             timeout_ms: None,
                         };
 
-                        let traversal_response = self.graph_operations_service.traverse("default", traversal_request).await?;
+                        let traversal_response = self
+                            .graph_operations_service
+                            .traverse("default", traversal_request)
+                            .await?;
                         nodes.extend(traversal_response.nodes);
                         edges.extend(traversal_response.edges);
                         paths.extend(traversal_response.paths);
@@ -1084,8 +1102,6 @@ impl UnifiedHandlers {
         }))
     }
 
-    
-
     /// Execute SQL and return v1 ExecuteSqlResponse directly (typed rows and params)
     pub async fn execute_sql_v1(
         &self,
@@ -1274,8 +1290,6 @@ impl UnifiedHandlers {
         }
     }
 
-    
-
     /// Execute SQL using sql_frontend (new authoritative path with HashMap optimization)
     ///
     /// This method implements the unified query layer specified in query_sql_alignment_consolidated.adoc
@@ -1311,8 +1325,13 @@ impl UnifiedHandlers {
             .map_err(|e| anyhow::anyhow!("SQL lowering failed: {}", e))?;
 
         // 3. Analyze the query semantically
-        let analyzer = crate::query::semantic_analysis::analyzer::Analyzer::new(self.collection_service.clone());
-        analyzer.analyze(&query_ast).await.map_err(|e| anyhow!("Semantic analysis failed: {}", e))?;
+        let analyzer = crate::query::semantic_analysis::analyzer::Analyzer::new(
+            self.collection_service.clone(),
+        );
+        analyzer
+            .analyze(&query_ast)
+            .await
+            .map_err(|e| anyhow!("Semantic analysis failed: {}", e))?;
 
         // 4. Create unified query engine with vector and graph services
         let graph_service = self.graph_operations_service.clone();

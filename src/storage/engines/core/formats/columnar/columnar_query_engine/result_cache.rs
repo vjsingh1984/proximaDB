@@ -69,7 +69,8 @@ impl QueryCache {
                 // Simple eviction: if cache is full, clear some entries
                 if cache.len() >= self.capacity {
                     // Remove oldest entries (simple eviction, not true LRU)
-                    let keys_to_remove: Vec<String> = cache.keys().take(cache.len() / 2).cloned().collect();
+                    let keys_to_remove: Vec<String> =
+                        cache.keys().take(cache.len() / 2).cloned().collect();
                     for k in keys_to_remove {
                         cache.remove(&k);
                     }

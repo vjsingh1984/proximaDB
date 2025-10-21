@@ -25,8 +25,8 @@
 //! - **Plan Caching**: Cache query plans for repeated queries
 //! - **Statistics Integration**: Use real-time statistics for accurate cost estimates
 
-use super::ast::CompiledPattern;
 use super::QueryResult;
+use super::ast::CompiledPattern;
 use crate::core::error::VectorDBError;
 use crate::graph::GraphMemoryPool;
 use crate::utils::Uuid;
@@ -400,7 +400,7 @@ impl QueryPlanner {
             // Use length of property values as a rough estimate for stats
             let unique_values = prop_values.len() as u64;
             let total_entries = prop_values.len() as u64;
-            
+
             stats
                 .property_selectivity
                 .insert(prop_name.clone(), unique_values);
@@ -425,7 +425,7 @@ impl QueryPlanner {
             // Use length of property values as a rough estimate for stats
             let unique_values = prop_values.len() as u64;
             let total_entries = prop_values.len() as u64;
-            
+
             stats
                 .property_selectivity
                 .insert(prop_name.clone(), unique_values);

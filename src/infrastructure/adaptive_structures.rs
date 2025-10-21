@@ -1454,24 +1454,55 @@ mod tests {
             create_default_unified_tier_policy(),
             create_default_adaptive_store_config("test_crud"),
             tier_manager,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // CREATE: Insert new key-value pairs
-        assert_eq!(backend.insert("key1".to_string(), "value1".to_string()).await.unwrap(), None);
-        assert_eq!(backend.insert("key2".to_string(), "value2".to_string()).await.unwrap(), None);
+        assert_eq!(
+            backend
+                .insert("key1".to_string(), "value1".to_string())
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            backend
+                .insert("key2".to_string(), "value2".to_string())
+                .await
+                .unwrap(),
+            None
+        );
 
         // READ: Get values by key
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
-        assert_eq!(backend.get(&"key2".to_string()).await, Some("value2".to_string()));
+        assert_eq!(
+            backend.get(&"key1".to_string()).await,
+            Some("value1".to_string())
+        );
+        assert_eq!(
+            backend.get(&"key2".to_string()).await,
+            Some("value2".to_string())
+        );
         assert_eq!(backend.get(&"nonexistent".to_string()).await, None);
 
         // UPDATE: Replace existing value
-        assert_eq!(backend.insert("key1".to_string(), "updated".to_string()).await.unwrap(),
-                   Some("value1".to_string()));
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
+        assert_eq!(
+            backend
+                .insert("key1".to_string(), "updated".to_string())
+                .await
+                .unwrap(),
+            Some("value1".to_string())
+        );
+        assert_eq!(
+            backend.get(&"key1".to_string()).await,
+            Some("updated".to_string())
+        );
 
         // DELETE: Remove key-value pairs
-        assert_eq!(backend.remove(&"key1".to_string()).await, Some("updated".to_string()));
+        assert_eq!(
+            backend.remove(&"key1".to_string()).await,
+            Some("updated".to_string())
+        );
         assert_eq!(backend.get(&"key1".to_string()).await, None);
 
         // Utility methods
@@ -1495,7 +1526,9 @@ mod tests {
             create_default_unified_tier_policy(),
             create_default_adaptive_store_config("test_buffer"),
             tier_manager,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Buffer writes without immediate insertion
         for i in 0..500 {
@@ -1504,7 +1537,11 @@ mod tests {
         }
 
         // Verify buffered writes are not in storage yet
-        assert_eq!(backend.len().await, 0, "Storage should be empty before flush");
+        assert_eq!(
+            backend.len().await,
+            0,
+            "Storage should be empty before flush"
+        );
 
         // Manually flush buffer
         let flushed_count = backend.flush_write_buffer().await.unwrap();
@@ -1533,21 +1570,35 @@ mod tests {
         let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
         let backend = CacheBackend::<String, String>::new_moka(
             "test_cache".to_string(),
-            100, // max_capacity
+            100,  // max_capacity
             None, // time_to_live
             None, // time_to_idle
             create_default_unified_tier_policy(),
             create_default_adaptive_store_config("test_cache"),
             tier_manager,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Test basic operations
-        backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
+        backend
+            .insert("key1".to_string(), "value1".to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get(&"key1".to_string()).await,
+            Some("value1".to_string())
+        );
 
         // Test update
-        backend.insert("key1".to_string(), "updated".to_string()).await.unwrap();
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
+        backend
+            .insert("key1".to_string(), "updated".to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get(&"key1".to_string()).await,
+            Some("updated".to_string())
+        );
 
         // Test remove
         let removed = backend.remove(&"key1".to_string()).await;
@@ -1556,7 +1607,10 @@ mod tests {
 
         // Test clear
         for i in 0..10 {
-            backend.insert(format!("key{}", i), format!("value{}", i)).await.unwrap();
+            backend
+                .insert(format!("key{}", i), format!("value{}", i))
+                .await
+                .unwrap();
         }
 
         // Moka cache entry_count() may have async lag, so verify by checking if we can get values
@@ -1581,11 +1635,19 @@ mod tests {
             create_default_unified_tier_policy(),
             create_default_adaptive_store_config("test_metrics"),
             tier_manager,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Perform mixed operations
-        backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
-        backend.insert("key2".to_string(), "value2".to_string()).await.unwrap();
+        backend
+            .insert("key1".to_string(), "value1".to_string())
+            .await
+            .unwrap();
+        backend
+            .insert("key2".to_string(), "value2".to_string())
+            .await
+            .unwrap();
         backend.get(&"key1".to_string()).await; // Hit
         backend.get(&"nonexistent".to_string()).await; // Miss
         backend.remove(&"key2".to_string()).await;
@@ -1596,7 +1658,11 @@ mod tests {
         assert_eq!(metrics.misses, 1);
         // Operations should be at least 5 (2 inserts + 2 gets + 1 remove)
         // May be higher due to internal operations
-        assert!(metrics.operations >= 5, "Expected at least 5 operations, got {}", metrics.operations);
+        assert!(
+            metrics.operations >= 5,
+            "Expected at least 5 operations, got {}",
+            metrics.operations
+        );
 
         // Check workload metrics
         let workload = backend.workload_metrics().await;
@@ -1609,14 +1675,18 @@ mod tests {
     async fn test_concurrent_index_backend_access() {
         let global_tier = Arc::new(GlobalTier::new());
         let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
-        let backend = Arc::new(IndexBackend::<i32, i32>::new_dashmap(
-            "test_concurrent".to_string(),
-            1000,
-            None,
-            create_default_unified_tier_policy(),
-            create_default_adaptive_store_config("test_concurrent"),
-            tier_manager,
-        ).await.unwrap());
+        let backend = Arc::new(
+            IndexBackend::<i32, i32>::new_dashmap(
+                "test_concurrent".to_string(),
+                1000,
+                None,
+                create_default_unified_tier_policy(),
+                create_default_adaptive_store_config("test_concurrent"),
+                tier_manager,
+            )
+            .await
+            .unwrap(),
+        );
 
         // Spawn multiple concurrent tasks
         let mut handles = vec![];

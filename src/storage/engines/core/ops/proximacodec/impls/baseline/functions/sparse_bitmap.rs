@@ -156,14 +156,18 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
     let bitmap_bytes = (count + 7) / 8;
 
     if data.len() < 4 + bitmap_bytes {
-        return Err(anyhow::anyhow!("SparseBitmap decode: insufficient bitmap data"));
+        return Err(anyhow::anyhow!(
+            "SparseBitmap decode: insufficient bitmap data"
+        ));
     }
 
     let bitmap = &data[4..4 + bitmap_bytes];
     let values_start = 4 + bitmap_bytes;
 
     if data.len() < values_start + num_nonzero * 4 {
-        return Err(anyhow::anyhow!("SparseBitmap decode: insufficient value data"));
+        return Err(anyhow::anyhow!(
+            "SparseBitmap decode: insufficient value data"
+        ));
     }
 
     // Initialize result with zeros
@@ -210,14 +214,18 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
     let bitmap_bytes = (count + 7) / 8;
 
     if data.len() < 4 + bitmap_bytes {
-        return Err(anyhow::anyhow!("SparseBitmap decode: insufficient bitmap data"));
+        return Err(anyhow::anyhow!(
+            "SparseBitmap decode: insufficient bitmap data"
+        ));
     }
 
     let bitmap = &data[4..4 + bitmap_bytes];
     let values_start = 4 + bitmap_bytes;
 
     if data.len() < values_start + num_nonzero * 8 {
-        return Err(anyhow::anyhow!("SparseBitmap decode: insufficient value data"));
+        return Err(anyhow::anyhow!(
+            "SparseBitmap decode: insufficient value data"
+        ));
     }
 
     // Initialize result with zeros

@@ -39,18 +39,21 @@ mod tests {
                             )
                         }
                     }
-                    serde_json::Value::Bool(b) => {
-                        Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(*b))
-                    }
+                    serde_json::Value::Bool(b) => Some(
+                        proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
+                    ),
                     _ => Some(
                         proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
                             value.to_string(),
                         ),
                     ),
                 };
-                (key.clone(), proximadb::proto::proximadb_v1::SqlValue {
-                    value: metadata_value,
-                })
+                (
+                    key.clone(),
+                    proximadb::proto::proximadb_v1::SqlValue {
+                        value: metadata_value,
+                    },
+                )
             })
             .collect();
 

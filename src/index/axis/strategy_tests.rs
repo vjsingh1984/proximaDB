@@ -1,8 +1,8 @@
 //! Unit tests for AXIS Strategy Selection
 
+use super::management::strategy::{CollectionStatistics, IndexStrategyBuilder, QueryPatterns};
 use super::types::*;
 use super::*;
-use super::management::strategy::{CollectionStatistics, QueryPatterns, IndexStrategyBuilder};
 use std::collections::HashMap;
 
 // Removed outdated OptimizationConfig tests; configuration lives in optimizers

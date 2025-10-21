@@ -70,10 +70,8 @@ fn encode_pfor_double_delta_i32_base(wire_values: &[i32], base: i32) -> Result<V
     }
 
     // Find optimal bit width for 90% of double deltas
-    let mut sorted_double_deltas: Vec<u64> = double_deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .collect();
+    let mut sorted_double_deltas: Vec<u64> =
+        double_deltas.iter().map(|&d| d.unsigned_abs()).collect();
     sorted_double_deltas.sort_unstable();
 
     let percentile_90_idx = if sorted_double_deltas.len() > 1 {
@@ -82,7 +80,10 @@ fn encode_pfor_double_delta_i32_base(wire_values: &[i32], base: i32) -> Result<V
         0
     };
 
-    let threshold = sorted_double_deltas.get(percentile_90_idx).copied().unwrap_or(0);
+    let threshold = sorted_double_deltas
+        .get(percentile_90_idx)
+        .copied()
+        .unwrap_or(0);
     let bits = if threshold == 0 {
         1
     } else {
@@ -146,10 +147,7 @@ fn encode_pfor_double_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<V
     result.extend_from_slice(&base.to_le_bytes());
 
     // Compute first deltas
-    let first_deltas: Vec<i64> = wire_values
-        .iter()
-        .map(|&v| v.wrapping_sub(base))
-        .collect();
+    let first_deltas: Vec<i64> = wire_values.iter().map(|&v| v.wrapping_sub(base)).collect();
 
     result.extend_from_slice(&first_deltas[0].to_le_bytes());
 
@@ -161,10 +159,8 @@ fn encode_pfor_double_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<V
     }
 
     // Find optimal bit width for 90% of double deltas
-    let mut sorted_double_deltas: Vec<u64> = double_deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .collect();
+    let mut sorted_double_deltas: Vec<u64> =
+        double_deltas.iter().map(|&d| d.unsigned_abs()).collect();
     sorted_double_deltas.sort_unstable();
 
     let percentile_90_idx = if sorted_double_deltas.len() > 1 {
@@ -173,7 +169,10 @@ fn encode_pfor_double_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<V
         0
     };
 
-    let threshold = sorted_double_deltas.get(percentile_90_idx).copied().unwrap_or(0);
+    let threshold = sorted_double_deltas
+        .get(percentile_90_idx)
+        .copied()
+        .unwrap_or(0);
     let bits = if threshold == 0 {
         1
     } else {
@@ -271,15 +270,13 @@ fn decode_pfor_double_delta_i32_base(data: &[u8], count: usize) -> Result<Vec<i3
 
     if count == 1 {
         let delta = i64::from_le_bytes([
-            data[4], data[5], data[6], data[7],
-            data[8], data[9], data[10], data[11],
+            data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11],
         ]);
         return Ok(vec![((base as i64) + delta) as i32]);
     }
 
     let first_delta = i64::from_le_bytes([
-        data[4], data[5], data[6], data[7],
-        data[8], data[9], data[10], data[11],
+        data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11],
     ]);
 
     let bits = data[12];
@@ -289,7 +286,9 @@ fn decode_pfor_double_delta_i32_base(data: &[u8], count: usize) -> Result<Vec<i3
     let bitpacked_bytes = ((double_delta_count * bits as usize) + 7) / 8;
 
     if data.len() < 17 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PForDoubleDelta decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PForDoubleDelta decode: insufficient data for patches"
+        ));
     }
 
     let bitpacked_data = &data[17..17 + bitpacked_bytes];
@@ -348,21 +347,18 @@ fn decode_pfor_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i6
     }
 
     let base = i64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 
     if count == 1 {
         let delta = i64::from_le_bytes([
-            data[8], data[9], data[10], data[11],
-            data[12], data[13], data[14], data[15],
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
         ]);
         return Ok(vec![base.wrapping_add(delta)]);
     }
 
     let first_delta = i64::from_le_bytes([
-        data[8], data[9], data[10], data[11],
-        data[12], data[13], data[14], data[15],
+        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
     ]);
 
     let bits = data[16];
@@ -372,7 +368,9 @@ fn decode_pfor_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i6
     let bitpacked_bytes = ((double_delta_count * bits as usize) + 7) / 8;
 
     if data.len() < 21 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PForDoubleDelta decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PForDoubleDelta decode: insufficient data for patches"
+        ));
     }
 
     let bitpacked_data = &data[21..21 + bitpacked_bytes];
@@ -465,13 +463,22 @@ mod tests {
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
-            assert_eq!(orig.to_bits(), dec.to_bits(), "Mismatch: {} != {}", orig, dec);
+            assert_eq!(
+                orig.to_bits(),
+                dec.to_bits(),
+                "Mismatch: {} != {}",
+                orig,
+                dec
+            );
         }
 
         println!("Linear sequence compression:");
         println!("  Original: {} bytes", values.len() * 4);
         println!("  Encoded:  {} bytes", encoded.len());
-        println!("  Ratio:    {:.1}%", (encoded.len() as f64 / (values.len() * 4) as f64) * 100.0);
+        println!(
+            "  Ratio:    {:.1}%",
+            (encoded.len() as f64 / (values.len() * 4) as f64) * 100.0
+        );
     }
 
     #[test]
@@ -490,14 +497,17 @@ mod tests {
         println!("Smooth embeddings compression:");
         println!("  Original: {} bytes", values.len() * 4);
         println!("  Encoded:  {} bytes", encoded.len());
-        println!("  Ratio:    {:.1}%", (encoded.len() as f64 / (values.len() * 4) as f64) * 100.0);
+        println!(
+            "  Ratio:    {:.1}%",
+            (encoded.len() as f64 / (values.len() * 4) as f64) * 100.0
+        );
     }
 
     #[test]
     fn test_pfor_double_delta_with_outliers() {
         // Mostly linear with some outliers
         let mut values: Vec<f32> = (0..100).map(|i| (i as f32) * 0.01).collect();
-        values[50] = 5.0;  // Outlier
+        values[50] = 5.0; // Outlier
         values[75] = -2.0; // Outlier
 
         let encoded = encode_f32(&values, 0).unwrap();
@@ -511,7 +521,10 @@ mod tests {
         println!("With outliers compression:");
         println!("  Original: {} bytes", values.len() * 4);
         println!("  Encoded:  {} bytes", encoded.len());
-        println!("  Ratio:    {:.1}%", (encoded.len() as f64 / (values.len() * 4) as f64) * 100.0);
+        println!(
+            "  Ratio:    {:.1}%",
+            (encoded.len() as f64 / (values.len() * 4) as f64) * 100.0
+        );
     }
 
     #[test]

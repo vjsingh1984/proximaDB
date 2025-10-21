@@ -10,9 +10,9 @@ use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
@@ -98,9 +98,10 @@ pub async fn search_sstable(
         k,
         distance_metric,
         distance_compute,
-        collection, // Pass collection for type-safe metadata deserialization
+        collection,        // Pass collection for type-safe metadata deserialization
         filter_expression, // Pass FilterExpression for type-safe filtering
-    ).await?;
+    )
+    .await?;
 
     // Convert the search results to OptimizedSearchRecord format
     let mut results = Vec::new();

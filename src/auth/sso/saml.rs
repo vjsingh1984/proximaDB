@@ -3,11 +3,11 @@
 //! Provides SSO authentication using any SAML 2.0 compatible identity provider
 //! including Okta, Auth0, Ping Identity, ADFS, and custom SAML implementations.
 
-use super::types::{EnterpriseUserContext, SecurityClearance, ProviderUserContext};
+use super::types::{EnterpriseUserContext, ProviderUserContext, SecurityClearance};
 use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc};
 use tracing::debug;
 
 /// SAML 2.0 provider configuration
@@ -121,12 +121,12 @@ impl SAMLIntegration {
         }
 
         if config.idp_certificate.is_empty() {
-            return Err(anyhow!("SAML IdP certificate is required for signature validation"));
+            return Err(anyhow!(
+                "SAML IdP certificate is required for signature validation"
+            ));
         }
 
-        Ok(Self {
-            config,
-        })
+        Ok(Self { config })
     }
 
     /// Validate SAML assertion and resolve user context
@@ -139,7 +139,10 @@ impl SAMLIntegration {
         // 5. Map attributes to ProximaDB user context
         // 6. Apply role mappings based on SAML groups
 
-        debug!("Validating SAML assertion: {}", &saml_response[..std::cmp::min(50, saml_response.len())]);
+        debug!(
+            "Validating SAML assertion: {}",
+            &saml_response[..std::cmp::min(50, saml_response.len())]
+        );
 
         // Placeholder implementation for now
         self.simulate_saml_validation(saml_response).await
@@ -195,7 +198,10 @@ impl SAMLIntegration {
     }
 
     /// Extract user attributes from SAML assertion
-    fn extract_user_attributes(&self, _assertion: &SAMLAssertion) -> Result<HashMap<String, Vec<String>>> {
+    fn extract_user_attributes(
+        &self,
+        _assertion: &SAMLAssertion,
+    ) -> Result<HashMap<String, Vec<String>>> {
         // Placeholder for SAML attribute extraction
         // Real implementation would parse XML and extract AttributeStatement values
         Ok(HashMap::new())
@@ -212,7 +218,12 @@ impl SAMLIntegration {
         let user_id = attributes
             .get(&mappings.user_id_attribute)
             .and_then(|values| values.first())
-            .ok_or_else(|| anyhow!("Required user ID attribute '{}' not found", mappings.user_id_attribute))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "Required user ID attribute '{}' not found",
+                    mappings.user_id_attribute
+                )
+            })?;
 
         // Extract email
         let email = attributes
@@ -366,11 +377,16 @@ mod tests {
         let integration = SAMLIntegration::new(config).unwrap();
 
         // Test with non-empty SAML response
-        let result = integration.validate_assertion("<saml:Response>test</saml:Response>").await;
+        let result = integration
+            .validate_assertion("<saml:Response>test</saml:Response>")
+            .await;
         assert!(result.is_ok());
 
         let user_context = result.unwrap();
-        assert!(matches!(user_context.provider_context, ProviderUserContext::Generic { .. }));
+        assert!(matches!(
+            user_context.provider_context,
+            ProviderUserContext::Generic { .. }
+        ));
         assert_eq!(user_context.tenant_id, "saml_tenant");
         assert!(user_context.roles.contains(&"saml_user".to_string()));
 

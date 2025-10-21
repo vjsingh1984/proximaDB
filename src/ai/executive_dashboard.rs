@@ -3,17 +3,17 @@
 //! Complete integration of AI capabilities with business intelligence
 //! to create working executive dashboards with natural language querying.
 
-use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMConfig};
-use crate::ai::llm_integration::types::LLMRequestContext;
-use crate::ai::natural_language::{NLQueryTranslator, TranslationResult};
-use crate::ai::natural_language::translator::UserContext;
 use crate::ai::business_intelligence::BusinessIntelligenceEngine;
 use crate::ai::business_intelligence::engine::ExecutiveDashboard;
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
+use crate::ai::llm_integration::types::LLMRequestContext;
+use crate::ai::llm_integration::{LLMConfig, LLMIntegrationEngine, LLMRequest};
+use crate::ai::natural_language::translator::UserContext;
+use crate::ai::natural_language::{NLQueryTranslator, TranslationResult};
 use anyhow::{Result, anyhow};
-use tracing::{info, debug, warn};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 /// Complete executive dashboard with AI integration
 #[derive(Clone)]
@@ -54,7 +54,10 @@ pub enum TimePeriod {
     LastMonth,
     LastQuarter,
     LastYear,
-    Custom { start: DateTime<Utc>, end: DateTime<Utc> },
+    Custom {
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    },
 }
 
 /// Focus areas for dashboard insights
@@ -128,21 +131,32 @@ impl AIExecutiveDashboard {
 
         // Initialize LLM engine with all providers
         let llm_config = LLMConfig::default();
-        let llm_engine = Arc::new(LLMIntegrationEngine::new(llm_config).await
-            .map_err(|e| anyhow!("Failed to initialize LLM engine: {}", e))?);
+        let llm_engine = Arc::new(
+            LLMIntegrationEngine::new(llm_config)
+                .await
+                .map_err(|e| anyhow!("Failed to initialize LLM engine: {}", e))?,
+        );
 
         // Initialize natural language translator
-        let nl_translator = Arc::new(NLQueryTranslator::new(
-            llm_engine.clone(),
-            crate::ai::natural_language::translator::TranslatorConfig::default(),
-        ).await.map_err(|e| anyhow!("Failed to initialize NL translator: {}", e))?);
+        let nl_translator = Arc::new(
+            NLQueryTranslator::new(
+                llm_engine.clone(),
+                crate::ai::natural_language::translator::TranslatorConfig::default(),
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to initialize NL translator: {}", e))?,
+        );
 
         // Initialize business intelligence engine
-        let bi_engine = Arc::new(BusinessIntelligenceEngine::new(
-            llm_engine.clone(),
-            nl_translator.clone(),
-            crate::ai::business_intelligence::engine::BIEngineConfig::default(),
-        ).await.map_err(|e| anyhow!("Failed to initialize BI engine: {}", e))?);
+        let bi_engine = Arc::new(
+            BusinessIntelligenceEngine::new(
+                llm_engine.clone(),
+                nl_translator.clone(),
+                crate::ai::business_intelligence::engine::BIEngineConfig::default(),
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to initialize BI engine: {}", e))?,
+        );
 
         info!("✅ AI Executive Dashboard initialized with full AI capabilities");
 
@@ -155,13 +169,22 @@ impl AIExecutiveDashboard {
     }
 
     /// Generate complete AI-powered executive dashboard
-    pub async fn generate_dashboard(&self, request: ExecutiveDashboardRequest) -> Result<AIExecutiveDashboardResponse> {
+    pub async fn generate_dashboard(
+        &self,
+        request: ExecutiveDashboardRequest,
+    ) -> Result<AIExecutiveDashboardResponse> {
         let start_time = std::time::Instant::now();
 
-        info!("🎯 Generating AI executive dashboard for tenant: {}", request.tenant_id);
+        info!(
+            "🎯 Generating AI executive dashboard for tenant: {}",
+            request.tenant_id
+        );
 
         // Step 1: Generate base executive dashboard using BI engine
-        let base_dashboard = self.bi_engine.generate_executive_dashboard(&request.user_context).await
+        let base_dashboard = self
+            .bi_engine
+            .generate_executive_dashboard(&request.user_context)
+            .await
             .map_err(|e| anyhow!("Failed to generate base dashboard: {}", e))?;
 
         // Step 2: Generate natural language insights for focus areas
@@ -169,13 +192,16 @@ impl AIExecutiveDashboard {
 
         // Step 3: Process custom natural language queries if provided
         let custom_results = if let Some(ref custom_queries) = request.custom_queries {
-            self.process_custom_queries(custom_queries, &request.user_context).await?
+            self.process_custom_queries(custom_queries, &request.user_context)
+                .await?
         } else {
             vec![]
         };
 
         // Step 4: Generate AI-powered recommendations
-        let ai_recommendations = self.generate_ai_recommendations(&base_dashboard, &nl_insights).await?;
+        let ai_recommendations = self
+            .generate_ai_recommendations(&base_dashboard, &nl_insights)
+            .await?;
 
         let generation_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -188,35 +214,54 @@ impl AIExecutiveDashboard {
             generation_time_ms,
         };
 
-        info!("✅ AI executive dashboard generated in {}ms with {} insights and {} recommendations",
-              generation_time_ms, response.natural_language_insights.len(), response.ai_recommendations.len());
+        info!(
+            "✅ AI executive dashboard generated in {}ms with {} insights and {} recommendations",
+            generation_time_ms,
+            response.natural_language_insights.len(),
+            response.ai_recommendations.len()
+        );
 
         Ok(response)
     }
 
     /// Generate natural language insights for focus areas
-    async fn generate_natural_language_insights(&self, request: &ExecutiveDashboardRequest) -> Result<Vec<NaturalLanguageInsight>> {
+    async fn generate_natural_language_insights(
+        &self,
+        request: &ExecutiveDashboardRequest,
+    ) -> Result<Vec<NaturalLanguageInsight>> {
         let mut insights = Vec::new();
 
         // Generate insights for each focus area
         for focus_area in &request.focus_areas {
-            let focus_insights = self.generate_focus_area_insights(focus_area, &request.user_context).await?;
+            let focus_insights = self
+                .generate_focus_area_insights(focus_area, &request.user_context)
+                .await?;
             insights.extend(focus_insights);
         }
 
         // Generate general business intelligence insights
-        let general_insights = self.generate_general_business_insights(&request.user_context).await?;
+        let general_insights = self
+            .generate_general_business_insights(&request.user_context)
+            .await?;
         insights.extend(general_insights);
 
         // Sort by confidence and limit
-        insights.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        insights.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         insights.truncate(self.config.max_insights_per_dashboard);
 
         Ok(insights)
     }
 
     /// Generate insights for specific focus area
-    async fn generate_focus_area_insights(&self, focus_area: &FocusArea, user_context: &UserContext) -> Result<Vec<NaturalLanguageInsight>> {
+    async fn generate_focus_area_insights(
+        &self,
+        focus_area: &FocusArea,
+        user_context: &UserContext,
+    ) -> Result<Vec<NaturalLanguageInsight>> {
         let questions = match focus_area {
             FocusArea::Revenue => vec![
                 "What is our total revenue this month compared to last month?",
@@ -259,7 +304,10 @@ impl AIExecutiveDashboard {
         let mut focus_insights = Vec::new();
 
         for question in questions {
-            match self.process_natural_language_question(question, user_context).await {
+            match self
+                .process_natural_language_question(question, user_context)
+                .await
+            {
                 Ok(insight) => {
                     focus_insights.push(insight);
                 }
@@ -273,18 +321,29 @@ impl AIExecutiveDashboard {
     }
 
     /// Process a natural language question into actionable insight
-    async fn process_natural_language_question(&self, question: &str, user_context: &UserContext) -> Result<NaturalLanguageInsight> {
+    async fn process_natural_language_question(
+        &self,
+        question: &str,
+        user_context: &UserContext,
+    ) -> Result<NaturalLanguageInsight> {
         debug!("🤔 Processing NL question: {}", question);
 
         // Step 1: Translate natural language to SQL
-        let translation_result = self.nl_translator.translate_to_sql(question, user_context).await
+        let translation_result = self
+            .nl_translator
+            .translate_to_sql(question, user_context)
+            .await
             .map_err(|e| anyhow!("NL translation failed for '{}': {}", question, e))?;
 
         // Step 2: Execute SQL query (placeholder - would execute against real database)
-        let query_result = self.execute_sql_query(&translation_result.sql, user_context).await?;
+        let query_result = self
+            .execute_sql_query(&translation_result.sql, user_context)
+            .await?;
 
         // Step 3: Generate business explanation using AI
-        let business_explanation = self.generate_business_explanation(question, &query_result, &translation_result).await?;
+        let business_explanation = self
+            .generate_business_explanation(question, &query_result, &translation_result)
+            .await?;
 
         Ok(NaturalLanguageInsight {
             question: question.to_string(),
@@ -297,8 +356,15 @@ impl AIExecutiveDashboard {
     }
 
     /// Execute SQL query and return business-friendly results
-    async fn execute_sql_query(&self, sql: &str, _user_context: &UserContext) -> Result<QueryExecutionResult> {
-        debug!("🔍 Executing SQL query: {}", sql.chars().take(100).collect::<String>());
+    async fn execute_sql_query(
+        &self,
+        sql: &str,
+        _user_context: &UserContext,
+    ) -> Result<QueryExecutionResult> {
+        debug!(
+            "🔍 Executing SQL query: {}",
+            sql.chars().take(100).collect::<String>()
+        );
 
         // Placeholder for actual SQL execution
         // In real implementation, would:
@@ -319,7 +385,12 @@ impl AIExecutiveDashboard {
     }
 
     /// Generate business explanation using AI
-    async fn generate_business_explanation(&self, question: &str, query_result: &QueryExecutionResult, translation_result: &TranslationResult) -> Result<String> {
+    async fn generate_business_explanation(
+        &self,
+        question: &str,
+        query_result: &QueryExecutionResult,
+        translation_result: &TranslationResult,
+    ) -> Result<String> {
         let explanation_prompt = format!(
             "You are a business intelligence expert. Explain these query results in clear, executive-friendly language.
 
@@ -356,9 +427,16 @@ Response:",
 
         let context = LLMRequestContext::new(uuid::Uuid::new_v4().to_string());
 
-        match self.llm_engine.query_with_fallback_and_context(&llm_request, &context).await {
+        match self
+            .llm_engine
+            .query_with_fallback_and_context(&llm_request, &context)
+            .await
+        {
             Ok(response) => {
-                debug!("✅ Generated business explanation: {} characters", response.content.len());
+                debug!(
+                    "✅ Generated business explanation: {} characters",
+                    response.content.len()
+                );
                 Ok(response.content)
             }
             Err(e) => {
@@ -376,7 +454,11 @@ Response:",
     }
 
     /// Process custom natural language queries
-    async fn process_custom_queries(&self, queries: &[String], user_context: &UserContext) -> Result<Vec<CustomQueryResult>> {
+    async fn process_custom_queries(
+        &self,
+        queries: &[String],
+        user_context: &UserContext,
+    ) -> Result<Vec<CustomQueryResult>> {
         let mut results = Vec::new();
 
         for query in queries {
@@ -401,19 +483,30 @@ Response:",
     }
 
     /// Process single custom query
-    async fn process_single_custom_query(&self, query: &str, user_context: &UserContext) -> Result<CustomQueryResult> {
+    async fn process_single_custom_query(
+        &self,
+        query: &str,
+        user_context: &UserContext,
+    ) -> Result<CustomQueryResult> {
         let start_time = std::time::Instant::now();
 
         debug!("🤔 Processing custom query: {}", query);
 
         // Translate to SQL
-        let translation = self.nl_translator.translate_to_sql(query, user_context).await?;
+        let translation = self
+            .nl_translator
+            .translate_to_sql(query, user_context)
+            .await?;
 
         // Execute query
-        let execution_result = self.execute_sql_query(&translation.sql, user_context).await?;
+        let execution_result = self
+            .execute_sql_query(&translation.sql, user_context)
+            .await?;
 
         // Generate business explanation
-        let business_explanation = self.generate_business_explanation(query, &execution_result, &translation).await?;
+        let business_explanation = self
+            .generate_business_explanation(query, &execution_result, &translation)
+            .await?;
 
         // Create summary of results
         let result_summary = format!(
@@ -435,7 +528,11 @@ Response:",
     }
 
     /// Generate AI-powered recommendations
-    async fn generate_ai_recommendations(&self, dashboard: &ExecutiveDashboard, insights: &[NaturalLanguageInsight]) -> Result<Vec<AIRecommendation>> {
+    async fn generate_ai_recommendations(
+        &self,
+        dashboard: &ExecutiveDashboard,
+        insights: &[NaturalLanguageInsight],
+    ) -> Result<Vec<AIRecommendation>> {
         let mut recommendations = Vec::new();
 
         // Analyze dashboard for AI recommendations
@@ -479,7 +576,11 @@ RECOMMENDATIONS:",
 
         let context = LLMRequestContext::new(uuid::Uuid::new_v4().to_string());
 
-        match self.llm_engine.query_with_fallback_and_context(&llm_request, &context).await {
+        match self
+            .llm_engine
+            .query_with_fallback_and_context(&llm_request, &context)
+            .await
+        {
             Ok(response) => {
                 // Parse AI recommendations from response
                 let parsed_recommendations = self.parse_ai_recommendations(&response.content)?;
@@ -522,7 +623,12 @@ RECOMMENDATIONS:",
                 }
 
                 // Start new recommendation
-                let title = line.split(':').nth(1).unwrap_or("Untitled").trim().to_string();
+                let title = line
+                    .split(':')
+                    .nth(1)
+                    .unwrap_or("Untitled")
+                    .trim()
+                    .to_string();
                 current_recommendation = Some(AIRecommendation {
                     title,
                     description: String::new(),
@@ -562,7 +668,10 @@ RECOMMENDATIONS:",
     }
 
     /// Generate general business insights
-    async fn generate_general_business_insights(&self, user_context: &UserContext) -> Result<Vec<NaturalLanguageInsight>> {
+    async fn generate_general_business_insights(
+        &self,
+        user_context: &UserContext,
+    ) -> Result<Vec<NaturalLanguageInsight>> {
         let general_questions = vec![
             "What are the most important trends in our business data?",
             "What patterns should we be paying attention to?",
@@ -573,7 +682,10 @@ RECOMMENDATIONS:",
         let mut insights = Vec::new();
 
         for question in general_questions {
-            if let Ok(insight) = self.process_natural_language_question(question, user_context).await {
+            if let Ok(insight) = self
+                .process_natural_language_question(question, user_context)
+                .await
+            {
                 insights.push(insight);
             }
         }
@@ -585,15 +697,31 @@ RECOMMENDATIONS:",
     fn classify_insight_type(&self, question: &str) -> String {
         let question_lower = question.to_lowercase();
 
-        if question_lower.contains("revenue") || question_lower.contains("sales") || question_lower.contains("profit") {
+        if question_lower.contains("revenue")
+            || question_lower.contains("sales")
+            || question_lower.contains("profit")
+        {
             "Revenue Analysis".to_string()
-        } else if question_lower.contains("customer") || question_lower.contains("user") || question_lower.contains("retention") {
+        } else if question_lower.contains("customer")
+            || question_lower.contains("user")
+            || question_lower.contains("retention")
+        {
             "Customer Intelligence".to_string()
-        } else if question_lower.contains("performance") || question_lower.contains("speed") || question_lower.contains("response") {
+        } else if question_lower.contains("performance")
+            || question_lower.contains("speed")
+            || question_lower.contains("response")
+        {
             "Performance Analysis".to_string()
-        } else if question_lower.contains("growth") || question_lower.contains("growing") || question_lower.contains("trend") || question_lower.contains("increasing") {
+        } else if question_lower.contains("growth")
+            || question_lower.contains("growing")
+            || question_lower.contains("trend")
+            || question_lower.contains("increasing")
+        {
             "Growth Analysis".to_string()
-        } else if question_lower.contains("risk") || question_lower.contains("security") || question_lower.contains("anomaly") {
+        } else if question_lower.contains("risk")
+            || question_lower.contains("security")
+            || question_lower.contains("anomaly")
+        {
             "Risk Assessment".to_string()
         } else {
             "Business Intelligence".to_string()
@@ -649,27 +777,46 @@ mod tests {
         ];
 
         for (question, expected) in test_cases {
-            assert_eq!(classify_insight_type_static(question), expected,
-                "Failed to classify: {}", question);
+            assert_eq!(
+                classify_insight_type_static(question),
+                expected,
+                "Failed to classify: {}",
+                question
+            );
         }
     }
 
     // Static version of classify_insight_type for testing
     fn classify_insight_type_static(question: &str) -> String {
         let question_lower = question.to_lowercase();
-        if question_lower.contains("revenue") || question_lower.contains("sales") || question_lower.contains("profit") {
+        if question_lower.contains("revenue")
+            || question_lower.contains("sales")
+            || question_lower.contains("profit")
+        {
             "Revenue Analysis".to_string()
-        } else if question_lower.contains("customer") || question_lower.contains("user") || question_lower.contains("retention") {
+        } else if question_lower.contains("customer")
+            || question_lower.contains("user")
+            || question_lower.contains("retention")
+        {
             "Customer Intelligence".to_string()
-        } else if question_lower.contains("performance") || question_lower.contains("speed") || question_lower.contains("response") {
+        } else if question_lower.contains("performance")
+            || question_lower.contains("speed")
+            || question_lower.contains("response")
+        {
             "Performance Analysis".to_string()
-        } else if question_lower.contains("growth") || question_lower.contains("growing") || question_lower.contains("trend") || question_lower.contains("increasing") {
+        } else if question_lower.contains("growth")
+            || question_lower.contains("growing")
+            || question_lower.contains("trend")
+            || question_lower.contains("increasing")
+        {
             "Growth Analysis".to_string()
-        } else if question_lower.contains("risk") || question_lower.contains("security") || question_lower.contains("anomaly") {
+        } else if question_lower.contains("risk")
+            || question_lower.contains("security")
+            || question_lower.contains("anomaly")
+        {
             "Risk Assessment".to_string()
         } else {
             "Business Intelligence".to_string()
         }
     }
-
 }

@@ -1,4 +1,4 @@
-use rand::{thread_rng, Rng};
+use rand::{Rng, thread_rng};
 use std::f32::consts::PI;
 
 /// Different types of realistic vector data patterns
@@ -36,11 +36,7 @@ pub fn generate_patterned_vectors(
         VectorPattern::RandomUniform => {
             // Current implementation - pure random noise (worst case for compression)
             (0..num_vectors)
-                .map(|_| {
-                    (0..dimension)
-                        .map(|_| rng.gen_range(-1.0..1.0))
-                        .collect()
-                })
+                .map(|_| (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect())
                 .collect()
         }
 
@@ -48,9 +44,8 @@ pub fn generate_patterned_vectors(
             // Unit vectors - common in cosine similarity use cases
             (0..num_vectors)
                 .map(|_| {
-                    let mut vec: Vec<f32> = (0..dimension)
-                        .map(|_| rng.gen_range(-1.0..1.0))
-                        .collect();
+                    let mut vec: Vec<f32> =
+                        (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect();
 
                     // Normalize to unit length
                     let magnitude = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -88,7 +83,8 @@ pub fn generate_patterned_vectors(
                         .map(|_| {
                             let u1: f32 = rng.gen_range(0.001..1.0);
                             let u2: f32 = rng.gen_range(0.0..1.0);
-                            let z0 = ((-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos());
+                            let z0 = (-2.0f32 * u1.ln()).sqrt()
+                                * (2.0f32 * std::f32::consts::PI * u2).cos();
                             mean + std_dev * z0
                         })
                         .collect()
@@ -119,8 +115,7 @@ pub fn generate_patterned_vectors(
                     let frequency = 2.0 * PI / 32.0; // Period of 32 dimensions
                     (0..dimension)
                         .map(|d| {
-                            ((d as f32 * frequency + phase).sin() * 0.5
-                             + rng.gen_range(-0.1..0.1)) // Add small noise
+                            (d as f32 * frequency + phase).sin() * 0.5 + rng.gen_range(-0.1..0.1) // Add small noise
                         })
                         .collect()
                 })
@@ -136,7 +131,11 @@ pub fn generate_patterned_vectors(
 
                     // First quarter: sparse
                     for _ in 0..chunk_size {
-                        vec.push(if rng.gen_bool(0.7) { 0.0 } else { rng.gen_range(-1.0..1.0) });
+                        vec.push(if rng.gen_bool(0.7) {
+                            0.0
+                        } else {
+                            rng.gen_range(-1.0..1.0)
+                        });
                     }
 
                     // Second quarter: gaussian
@@ -144,7 +143,9 @@ pub fn generate_patterned_vectors(
                     for _ in 0..chunk_size {
                         let u1: f32 = rng.gen_range(0.001..1.0);
                         let u2: f32 = rng.gen_range(0.0..1.0);
-                        let gaussian = ((-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos()) * 0.3f32;
+                        let gaussian = ((-2.0f32 * u1.ln()).sqrt()
+                            * (2.0f32 * std::f32::consts::PI * u2).cos())
+                            * 0.3f32;
                         vec.push(gaussian.clamp(-1.0, 1.0));
                     }
 
@@ -198,7 +199,7 @@ pub fn generate_patterned_vectors(
                     (0..dimension)
                         .map(|d| {
                             let value = base + (d as f32) * 0.001;
-                            (value % 2.0 - 1.0) // Wrap to [-1, 1]
+                            value % 2.0 - 1.0 // Wrap to [-1, 1]
                         })
                         .collect()
                 })
@@ -217,7 +218,8 @@ pub fn analyze_compressibility(vectors: &[Vec<f32>]) -> String {
     let total_values = vectors.len() * dimension;
 
     // Count zeros (sparsity)
-    let zeros: usize = vectors.iter()
+    let zeros: usize = vectors
+        .iter()
         .flat_map(|v| v.iter())
         .filter(|&&x| x.abs() < 1e-6)
         .count();
@@ -241,9 +243,8 @@ pub fn analyze_compressibility(vectors: &[Vec<f32>]) -> String {
     }
 
     let avg_delta = deltas.iter().sum::<f32>() / deltas.len() as f32;
-    let delta_variance = deltas.iter()
-        .map(|d| (d - avg_delta).powi(2))
-        .sum::<f32>() / deltas.len() as f32;
+    let delta_variance =
+        deltas.iter().map(|d| (d - avg_delta).powi(2)).sum::<f32>() / deltas.len() as f32;
 
     format!(
         "Sparsity: {:.1}%, Unique values: {} ({:.1}%), Most common: {:.1}%, Delta variance: {:.6}",
@@ -265,7 +266,10 @@ mod tests {
             VectorPattern::RandomUniform,
             VectorPattern::Normalized,
             VectorPattern::Sparse { sparsity: 0.8 },
-            VectorPattern::Gaussian { mean: 0.0, std_dev: 0.3 },
+            VectorPattern::Gaussian {
+                mean: 0.0,
+                std_dev: 0.3,
+            },
             VectorPattern::Quantized { levels: 16 },
             VectorPattern::Sinusoidal,
             VectorPattern::Mixed,
@@ -290,7 +294,10 @@ fn main() {
         VectorPattern::RandomUniform,
         VectorPattern::Normalized,
         VectorPattern::Sparse { sparsity: 0.8 },
-        VectorPattern::Gaussian { mean: 0.0, std_dev: 0.3 },
+        VectorPattern::Gaussian {
+            mean: 0.0,
+            std_dev: 0.3,
+        },
         VectorPattern::Quantized { levels: 16 },
         VectorPattern::Sinusoidal,
         VectorPattern::Mixed,

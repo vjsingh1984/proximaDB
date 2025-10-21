@@ -44,13 +44,13 @@
 //! This normalization ensures consistent behavior across all storage engines
 //! and search algorithms without special casing.
 
+use crate::core::memory::pool::{PooledItem, VectorMemoryPool};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, info, trace};
-use crate::core::memory::pool::{VectorMemoryPool, PooledItem};
 
 // Use proto enum as the single source of truth for DistanceMetric
 pub use crate::proto::proximadb_v1::DistanceMetric;
@@ -76,7 +76,6 @@ pub use crate::core::hardware_capabilities::HardwareBackend;
 // Platform-specific SIMD imports
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
-
 
 // ============================================================================
 // Hardware Backend Caching (from original engine.rs)
@@ -356,15 +355,14 @@ impl BatchDistanceResults {
     pub fn into_similarity_results(self) -> Vec<SimilarityResult> {
         self.distances
             .iter()
-            .map(|&raw_distance| {
-                SimilarityResult::new(raw_distance, self.metric)
-            })
+            .map(|&raw_distance| SimilarityResult::new(raw_distance, self.metric))
             .collect()
     }
 
     /// Get top-k results without converting all
     pub fn top_k(self, k: usize) -> Vec<SimilarityResult> {
-        let mut indexed: Vec<(usize, f32)> = self.distances
+        let mut indexed: Vec<(usize, f32)> = self
+            .distances
             .iter()
             .enumerate()
             .map(|(i, &d)| (i, d))
@@ -381,9 +379,7 @@ impl BatchDistanceResults {
         // Convert only top-k to results
         indexed[..k]
             .iter()
-            .map(|&(_, raw_distance)| {
-                SimilarityResult::new(raw_distance, self.metric)
-            })
+            .map(|&(_, raw_distance)| SimilarityResult::new(raw_distance, self.metric))
             .collect()
     }
 }
@@ -398,9 +394,9 @@ impl SimilarityResult {
             distance,
             raw_value,
             metric,
-            similarity_score: normalized_similarity,  // Now this IS the normalized similarity
-            normalized_score: normalized_similarity,   // Same value, for compatibility
-            rank_value: distance, // Raw distance for ranking (lower = better)
+            similarity_score: normalized_similarity, // Now this IS the normalized similarity
+            normalized_score: normalized_similarity, // Same value, for compatibility
+            rank_value: distance,                    // Raw distance for ranking (lower = better)
         }
     }
 
@@ -687,29 +683,25 @@ impl UnifiedDistanceCompute {
         match self.platform_capability {
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 =>
-                // SAFETY: cosine_distance_avx2 is marked with target_feature(enable = "avx2,fma")
-                // and we only call it after verifying AVX2/AVX512 support via platform_capability.
-                // Vectors a and b are guaranteed to have same length by debug_assert.
-                // Performance: AVX2 provides 4-8x speedup over scalar implementation.
-                unsafe {
-                    self.cosine_distance_avx2(a, b)
-                },
+            // SAFETY: cosine_distance_avx2 is marked with target_feature(enable = "avx2,fma")
+            // and we only call it after verifying AVX2/AVX512 support via platform_capability.
+            // Vectors a and b are guaranteed to have same length by debug_assert.
+            // Performance: AVX2 provides 4-8x speedup over scalar implementation.
+            unsafe { self.cosine_distance_avx2(a, b) },
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Sse2 | PlatformCapability::X86Avx =>
-                // SAFETY: cosine_distance_sse2 requires SSE2 which is baseline for x86_64.
-                // Platform capability check ensures CPU supports these instructions.
-                // Vectors are guaranteed equal length.
-                // Performance: SSE2 provides 2x speedup over scalar.
-                unsafe {
-                    self.cosine_distance_sse2(a, b)
-                },
+            // SAFETY: cosine_distance_sse2 requires SSE2 which is baseline for x86_64.
+            // Platform capability check ensures CPU supports these instructions.
+            // Vectors are guaranteed equal length.
+            // Performance: SSE2 provides 2x speedup over scalar.
+            unsafe { self.cosine_distance_sse2(a, b) },
             #[cfg(target_arch = "aarch64")]
             PlatformCapability::ArmNeon =>
-                // SAFETY: NEON is guaranteed available on all AArch64 processors.
-                // Platform capability check confirms NEON support.
-                // Vectors are guaranteed equal length.
-                // Performance: NEON provides 2-4x speedup over scalar.
-                unsafe { self.cosine_distance_neon(a, b) },
+            // SAFETY: NEON is guaranteed available on all AArch64 processors.
+            // Platform capability check confirms NEON support.
+            // Vectors are guaranteed equal length.
+            // Performance: NEON provides 2-4x speedup over scalar.
+            unsafe { self.cosine_distance_neon(a, b) },
             _ => self.cosine_distance_scalar(a, b),
         }
     }
@@ -795,46 +787,47 @@ impl UnifiedDistanceCompute {
         // - Pointer arithmetic stays within bounds (i*4 + 4 <= len)
         // Performance: NEON processes 4 floats per iteration (128-bit registers)
         unsafe {
-        use std::arch::aarch64::*;
+            use std::arch::aarch64::*;
 
-        let chunks = a.len() / 4;
-        let mut dot = vdupq_n_f32(0.0);
-        let mut norm_a = vdupq_n_f32(0.0);
-        let mut norm_b = vdupq_n_f32(0.0);
+            let chunks = a.len() / 4;
+            let mut dot = vdupq_n_f32(0.0);
+            let mut norm_a = vdupq_n_f32(0.0);
+            let mut norm_b = vdupq_n_f32(0.0);
 
-        for i in 0..chunks {
-            let offset = i * 4;
-            let va = vld1q_f32(a.as_ptr().add(offset));
-            let vb = vld1q_f32(b.as_ptr().add(offset));
+            for i in 0..chunks {
+                let offset = i * 4;
+                let va = vld1q_f32(a.as_ptr().add(offset));
+                let vb = vld1q_f32(b.as_ptr().add(offset));
 
-            dot = vfmaq_f32(dot, va, vb);
-            norm_a = vfmaq_f32(norm_a, va, va);
-            norm_b = vfmaq_f32(norm_b, vb, vb);
+                dot = vfmaq_f32(dot, va, vb);
+                norm_a = vfmaq_f32(norm_a, va, va);
+                norm_b = vfmaq_f32(norm_b, vb, vb);
+            }
+
+            // Horizontal sum
+            let dot_sum = vaddvq_f32(dot);
+            let norm_a_sum = vaddvq_f32(norm_a);
+            let norm_b_sum = vaddvq_f32(norm_b);
+
+            // Handle remainder
+            let mut dot_final = dot_sum;
+            let mut norm_a_final = norm_a_sum;
+            let mut norm_b_final = norm_b_sum;
+
+            let start = chunks * 4;
+            for i in start..a.len() {
+                dot_final += a[i] * b[i];
+                norm_a_final += a[i] * a[i];
+                norm_b_final += b[i] * b[i];
+            }
+
+            if norm_a_final == 0.0 || norm_b_final == 0.0 {
+                return f32::INFINITY;
+            }
+
+            1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
         }
-
-        // Horizontal sum
-        let dot_sum = vaddvq_f32(dot);
-        let norm_a_sum = vaddvq_f32(norm_a);
-        let norm_b_sum = vaddvq_f32(norm_b);
-
-        // Handle remainder
-        let mut dot_final = dot_sum;
-        let mut norm_a_final = norm_a_sum;
-        let mut norm_b_final = norm_b_sum;
-
-        let start = chunks * 4;
-        for i in start..a.len() {
-            dot_final += a[i] * b[i];
-            norm_a_final += a[i] * a[i];
-            norm_b_final += b[i] * b[i];
-        }
-
-        if norm_a_final == 0.0 || norm_b_final == 0.0 {
-            return f32::INFINITY;
-        }
-
-        1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
-    }}
+    }
 
     fn cosine_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         // Ensure vectors have the same length
@@ -873,19 +866,17 @@ impl UnifiedDistanceCompute {
         match self.platform_capability {
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 =>
-                // SAFETY: euclidean_distance_avx2 requires AVX2/FMA support which is verified.
-                // Platform capability check ensures CPU supports these instructions.
-                // Vectors are guaranteed equal length by caller.
-                // Performance: AVX2 provides 4-8x speedup for L2 distance computation.
-                unsafe {
-                    self.euclidean_distance_avx2(a, b)
-                },
+            // SAFETY: euclidean_distance_avx2 requires AVX2/FMA support which is verified.
+            // Platform capability check ensures CPU supports these instructions.
+            // Vectors are guaranteed equal length by caller.
+            // Performance: AVX2 provides 4-8x speedup for L2 distance computation.
+            unsafe { self.euclidean_distance_avx2(a, b) },
             #[cfg(target_arch = "aarch64")]
             PlatformCapability::ArmNeon =>
-                // SAFETY: NEON is baseline for AArch64 processors.
-                // Vectors are guaranteed equal length.
-                // Performance: NEON provides 2-4x speedup.
-                unsafe { self.euclidean_distance_neon(a, b) },
+            // SAFETY: NEON is baseline for AArch64 processors.
+            // Vectors are guaranteed equal length.
+            // Performance: NEON provides 2-4x speedup.
+            unsafe { self.euclidean_distance_neon(a, b) },
             _ => self.euclidean_distance_scalar(a, b),
         }
     }
@@ -936,30 +927,31 @@ impl UnifiedDistanceCompute {
         // - vfmaq_f32 performs fused multiply-add
         // Performance: Processes 4 floats per iteration
         unsafe {
-        use std::arch::aarch64::*;
+            use std::arch::aarch64::*;
 
-        let chunks = a.len() / 4;
-        let mut sum = vdupq_n_f32(0.0);
+            let chunks = a.len() / 4;
+            let mut sum = vdupq_n_f32(0.0);
 
-        for i in 0..chunks {
-            let offset = i * 4;
-            let va = vld1q_f32(a.as_ptr().add(offset));
-            let vb = vld1q_f32(b.as_ptr().add(offset));
-            let diff = vsubq_f32(va, vb);
-            sum = vfmaq_f32(sum, diff, diff);
+            for i in 0..chunks {
+                let offset = i * 4;
+                let va = vld1q_f32(a.as_ptr().add(offset));
+                let vb = vld1q_f32(b.as_ptr().add(offset));
+                let diff = vsubq_f32(va, vb);
+                sum = vfmaq_f32(sum, diff, diff);
+            }
+
+            let mut result = vaddvq_f32(sum);
+
+            // Handle remainder
+            let start = chunks * 4;
+            for i in start..a.len() {
+                let diff = a[i] - b[i];
+                result += diff * diff;
+            }
+
+            result.sqrt()
         }
-
-        let mut result = vaddvq_f32(sum);
-
-        // Handle remainder
-        let start = chunks * 4;
-        for i in start..a.len() {
-            let diff = a[i] - b[i];
-            result += diff * diff;
-        }
-
-        result.sqrt()
-    }}
+    }
 
     fn euclidean_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         // Ensure vectors have the same length
@@ -989,18 +981,16 @@ impl UnifiedDistanceCompute {
         match self.platform_capability {
             #[cfg(target_arch = "x86_64")]
             PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 =>
-                // SAFETY: dot_product_avx2 requires AVX2/FMA which is verified.
-                // Vectors guaranteed equal length.
-                // Performance: AVX2 achieves 20M+ ops/sec for 128D vectors.
-                unsafe {
-                    self.dot_product_avx2(a, b)
-                },
+            // SAFETY: dot_product_avx2 requires AVX2/FMA which is verified.
+            // Vectors guaranteed equal length.
+            // Performance: AVX2 achieves 20M+ ops/sec for 128D vectors.
+            unsafe { self.dot_product_avx2(a, b) },
             #[cfg(target_arch = "aarch64")]
             PlatformCapability::ArmNeon =>
-                // SAFETY: NEON is baseline for AArch64.
-                // Vectors guaranteed equal length.
-                // Performance: 2-4x speedup over scalar.
-                unsafe { self.dot_product_neon(a, b) },
+            // SAFETY: NEON is baseline for AArch64.
+            // Vectors guaranteed equal length.
+            // Performance: 2-4x speedup over scalar.
+            unsafe { self.dot_product_neon(a, b) },
             _ => self.dot_product_scalar(a, b),
         }
     }
@@ -1041,29 +1031,31 @@ impl UnifiedDistanceCompute {
     }
 
     #[cfg(target_arch = "aarch64")]
-    unsafe fn dot_product_neon(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
-        use std::arch::aarch64::*;
+    unsafe fn dot_product_neon(&self, a: &[f32], b: &[f32]) -> f32 {
+        unsafe {
+            use std::arch::aarch64::*;
 
-        let chunks = a.len() / 4;
-        let mut sum = vdupq_n_f32(0.0);
+            let chunks = a.len() / 4;
+            let mut sum = vdupq_n_f32(0.0);
 
-        for i in 0..chunks {
-            let offset = i * 4;
-            let va = vld1q_f32(a.as_ptr().add(offset));
-            let vb = vld1q_f32(b.as_ptr().add(offset));
-            sum = vfmaq_f32(sum, va, vb);
+            for i in 0..chunks {
+                let offset = i * 4;
+                let va = vld1q_f32(a.as_ptr().add(offset));
+                let vb = vld1q_f32(b.as_ptr().add(offset));
+                sum = vfmaq_f32(sum, va, vb);
+            }
+
+            let mut result = vaddvq_f32(sum);
+
+            // Handle remainder
+            let start = chunks * 4;
+            for i in start..a.len() {
+                result += a[i] * b[i];
+            }
+
+            result
         }
-
-        let mut result = vaddvq_f32(sum);
-
-        // Handle remainder
-        let start = chunks * 4;
-        for i in start..a.len() {
-            result += a[i] * b[i];
-        }
-
-        result
-    }}
+    }
 
     fn dot_product_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
@@ -1244,7 +1236,8 @@ impl UnifiedDistanceCompute {
         self.batch_process_with_simd(query, vectors, metric, &mut pooled_results);
 
         // Convert pooled buffer to owned vector with all fields
-        let results: Vec<SimilarityResult> = pooled_results.iter()
+        let results: Vec<SimilarityResult> = pooled_results
+            .iter()
             .map(|&raw_distance| {
                 // Use SimilarityResult::new to properly handle metric-specific normalization
                 SimilarityResult::new(raw_distance, *metric)
@@ -1345,20 +1338,20 @@ impl UnifiedDistanceCompute {
         #[cfg(target_arch = "x86_64")]
         {
             match self.platform_capability {
-                PlatformCapability::X86Avx512 => return 128,  // AVX-512: Process more vectors for better cache use
-                PlatformCapability::X86Avx2 => return 64,     // AVX2: Good balance of cache and register use
-                _ => return 32,                                // SSE2: Smaller batches
+                PlatformCapability::X86Avx512 => return 128, // AVX-512: Process more vectors for better cache use
+                PlatformCapability::X86Avx2 => return 64, // AVX2: Good balance of cache and register use
+                _ => return 32,                           // SSE2: Smaller batches
             }
         }
 
         #[cfg(target_arch = "aarch64")]
         {
-            return 32;  // NEON: Smaller batches for mobile/embedded
+            return 32; // NEON: Smaller batches for mobile/embedded
         }
 
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
-            return 16;  // Scalar: Small batches for cache locality
+            return 16; // Scalar: Small batches for cache locality
         }
     }
 
@@ -1399,7 +1392,7 @@ impl UnifiedDistanceCompute {
     ) {
         // For true multi-vector SIMD, we'd need to transpose data
         // For now, use optimized per-vector SIMD with better batching
-        const UNROLL_FACTOR: usize = 4;  // Process 4 vectors per loop iteration
+        const UNROLL_FACTOR: usize = 4; // Process 4 vectors per loop iteration
 
         let chunks = vectors.chunks_exact(UNROLL_FACTOR);
         let remainder = chunks.remainder();

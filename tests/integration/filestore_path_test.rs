@@ -16,6 +16,10 @@
 
 //! Integration tests for filestore path handling to prevent path duplication issues
 
+// Import test utilities
+#[path = "../common/collection_builder.rs"]
+mod collection_builder;
+
 use anyhow::Result;
 use proximadb::proto::proximadb_v1::Collection;
 use proximadb::storage::metadata::backends::universal_backend::{
@@ -26,6 +30,8 @@ use proximadb::storage::traits::MetadataProvider;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use tracing::debug;
+
+use collection_builder::TestCollectionBuilder;
 
 static HARDWARE_INIT: Once = Once::new();
 
@@ -57,39 +63,26 @@ fn ensure_test_directories() {
 }
 
 /// Helper to create a test collection
+/// REFACTORED: Now uses TestCollectionBuilder for type-safe, concise collection creation
 fn create_test_collection(id: &str, name: &str) -> Collection {
-    use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats};
+    use proximadb::proto::proximadb_v1::{DistanceMetric, StorageEngine};
 
-    Collection {
-        id: id.to_string(),
-        config: Some(CollectionConfig {
-            name: name.to_string(),
-            dimension: 128,
-            distance_metric: Some(0), // Cosine
-            storage_engine: Some(0),  // VIPER
-            primary_index: Some("default".to_string()),
-            auto_index_selection: Some(true),
-            tags: vec!["test".to_string()],
-            owner: Some("test_user".to_string()),
-            embedding_models: vec!["test_model".to_string()],
-            ..Default::default()
-        }),
-        stats: Some(CollectionStats {
-            vector_count: 0,
-            index_size_bytes: 0,
-            data_size_bytes: 0,
-        }),
-        created_at: chrono::Utc::now().timestamp(),
-        updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/tmp/test".to_string(),
-            backup_paths: vec![],
-            engine: 0, // VIPER
-            engine_config: std::collections::HashMap::new(),
-            base_location: "/tmp/test".to_string(),
-            assigned_at: chrono::Utc::now().timestamp_micros(),
-        }),
+    // Use TestCollectionBuilder - much cleaner and type-safe
+    let (mut collection, _temp) = TestCollectionBuilder::new()
+        .with_id(id)
+        .with_name(name)
+        .with_dimension(128)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .with_engine(StorageEngine::Viper)
+        .build();
+
+    // Override paths to maintain test compatibility
+    if let Some(ref mut assignment) = collection.storage_assignment {
+        assignment.primary_path = "/tmp/test".to_string();
+        assignment.base_location = "/tmp/test".to_string();
     }
+
+    collection
 }
 
 #[tokio::test]

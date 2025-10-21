@@ -3,33 +3,30 @@
 //! This module consolidates all security-related functionality including
 //! authentication, authorization, RBAC, audit, and security coordination.
 
-pub mod unified_rbac;
-pub mod unified_auth;
-pub mod security_coordinator;
 pub mod advanced_features;
+pub mod security_coordinator;
+pub mod unified_auth;
+pub mod unified_rbac;
 
 pub use unified_rbac::{
-    ConsolidatedRBACManager, UnifiedPermission, UnifiedRole, UnifiedUserContext,
-    AuthMethod, CollectionPermissionType, AuthorizationResult, TenantContext, RBACConfig
+    AuthMethod, AuthorizationResult, CollectionPermissionType, ConsolidatedRBACManager, RBACConfig,
+    TenantContext, UnifiedPermission, UnifiedRole, UnifiedUserContext,
 };
 
 pub use unified_auth::{
-    UnifiedAuthService, AuthenticationResult, AuthenticationMethod, AuthenticationData, AuthenticationConfig
+    AuthenticationConfig, AuthenticationData, AuthenticationMethod, AuthenticationResult,
+    UnifiedAuthService,
 };
 
-pub use security_coordinator::{
-    SecurityCoordinator, SecurityConfig, SecurityMode
-};
+pub use security_coordinator::{SecurityConfig, SecurityCoordinator, SecurityMode};
 
 pub use advanced_features::{
-    MFAService, RateLimitingService, IPAccessControlService,
-    MFAConfig, RateLimitConfig, IPAccessConfig,
-    MFAProvider, MFAChallenge, MFAVerificationResult,
-    RateLimitResult, IPAccessResult
+    IPAccessConfig, IPAccessControlService, IPAccessResult, MFAChallenge, MFAConfig, MFAProvider,
+    MFAService, MFAVerificationResult, RateLimitConfig, RateLimitResult, RateLimitingService,
 };
 
 /// Re-export common types for convenience
-pub use crate::audit::logger::{AuditLogger, AuditConfig, AuditStorageBackend};
+pub use crate::audit::logger::{AuditConfig, AuditLogger, AuditStorageBackend};
 pub use crate::network::auth::{AuthError, JwtConfig};
 
 use anyhow::Result;
@@ -55,12 +52,8 @@ pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoord
     let audit_logger = AuditLogger::new(config.audit.clone()).await?;
 
     // Create security coordinator
-    let security_coordinator = SecurityCoordinator::new(
-        auth_service,
-        rbac_manager,
-        audit_logger,
-        config,
-    );
+    let security_coordinator =
+        SecurityCoordinator::new(auth_service, rbac_manager, audit_logger, config);
 
     Ok(security_coordinator)
 }

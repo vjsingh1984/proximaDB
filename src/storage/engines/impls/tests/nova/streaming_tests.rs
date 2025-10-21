@@ -32,8 +32,8 @@ fn test_streaming_search_config() {
 
 #[test]
 fn test_performance_tracker() {
-    use crate::storage::engines::impls::nova::streaming_search::*;
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::engines::impls::nova::streaming_search::*;
 
     // PerformanceTracker is private, so we test through public APIs
     let config = StreamingSearchConfig::default();
@@ -130,7 +130,9 @@ fn test_memory_tracker() {
 
 #[tokio::test]
 async fn test_streaming_processor_creation() {
-    use crate::storage::engines::impls::nova::streaming_processor::{StreamingConfig, StreamingRowGroupProcessor, ProcessingStage};
+    use crate::storage::engines::impls::nova::streaming_processor::{
+        ProcessingStage, StreamingConfig, StreamingRowGroupProcessor,
+    };
 
     let config = StreamingConfig::default();
     let processor = StreamingRowGroupProcessor::new(config);
@@ -147,8 +149,8 @@ async fn test_streaming_processor_creation() {
 
 #[test]
 fn test_group_by_row_group() {
-    use crate::storage::engines::impls::nova::batch_operations::*;
     use crate::storage::engines::core::formats::columnar::ParquetLocation;
+    use crate::storage::engines::impls::nova::batch_operations::*;
 
     // Function is private, test indirectly through BatchConfig
     let config = BatchConfig::default();

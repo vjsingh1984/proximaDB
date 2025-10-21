@@ -2,8 +2,8 @@
 
 use super::super::*;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::cache::specialized::*;
 use crate::storage::cache::base::BaseCacheImpl;
+use crate::storage::cache::specialized::*;
 
 // Type alias for VectorStore since it doesn't exist in the specialized module
 type VectorStore = BaseCacheImpl<String, VectorRecord>;
@@ -81,7 +81,7 @@ async fn test_query_result_cache_specialization() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::proto::proximadb_v1::{SearchVectorRecord, SearchResult as ProtoSearchResult};
+    use crate::proto::proximadb_v1::{SearchResult as ProtoSearchResult, SearchVectorRecord};
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 
@@ -92,9 +92,9 @@ async fn test_query_result_cache_specialization() {
 
     // Create cached query result
     let query_result = CachedQueryResult {
-        results: vec![
-            ProtoSearchResult {
-                results: vec![SearchVectorRecord {
+        results: vec![ProtoSearchResult {
+            results: vec![
+                SearchVectorRecord {
                     id: "vec1".to_string(),
                     score: 0.95,
                     vector: vec![0.9, 0.1],
@@ -108,7 +108,8 @@ async fn test_query_result_cache_specialization() {
                     quantization_info: None,
                     engine_stats: std::collections::HashMap::new(),
                     index_path: None,
-                }, SearchVectorRecord {
+                },
+                SearchVectorRecord {
                     id: "vec2".to_string(),
                     score: 0.85,
                     vector: vec![0.8, 0.2],
@@ -122,11 +123,11 @@ async fn test_query_result_cache_specialization() {
                     quantization_info: None,
                     engine_stats: std::collections::HashMap::new(),
                     index_path: None,
-                }],
-                total_found: 2,
-                collection_id: Some("test_collection".to_string()),
-            },
-        ],
+                },
+            ],
+            total_found: 2,
+            collection_id: Some("test_collection".to_string()),
+        }],
         cached_at: SystemTime::now(),
         file_dependencies: vec![],
     };

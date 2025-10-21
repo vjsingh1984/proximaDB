@@ -7,11 +7,11 @@
 //! - Data integrity during compaction
 //! - Concurrent access during compaction
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
-use tracing::{debug, warn, error};
-use std::collections::HashMap;
+use tracing::{debug, error, warn};
 
 use crate::proto::proximadb_v1::{VectorRecord, sql_value::Value};
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
@@ -73,7 +73,7 @@ fn create_test_collection(
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: Some(crate::proto::proximadb_v1::QuantizationConfig {
-                enabled: Some(true),                         // Quantization enabled by default for VIPER
+                enabled: Some(true), // Quantization enabled by default for VIPER
                 enable_progressive_search: Some(true), // Progressive search enabled by default
                 ..Default::default()
             }),
@@ -184,12 +184,16 @@ async fn test_insert_flush_compact_flow() {
         .expect("Failed to flush");
     debug!(
         "  ✅ Flush complete: {} files created, {} entries flushed",
-        flush_result.files_created.unwrap_or(0), flush_result.entries_flushed.unwrap_or(0)
+        flush_result.files_created.unwrap_or(0),
+        flush_result.entries_flushed.unwrap_or(0)
     );
 
     // List files after flush
     let base_path = temp_dir.path().to_str().unwrap();
-    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
+    let data_url = format!(
+        "file://{}",
+        StoragePath::collection_data_path(base_path, &collection_id)
+    );
     let fs = engine
         .get_filesystem_factory()
         .get_filesystem(&data_url)
@@ -226,7 +230,9 @@ async fn test_insert_flush_compact_flow() {
         .expect("Compaction failed");
     debug!(
         "  ✅ Compaction complete: {} entries processed, {} input files -> {} output files",
-        compact_result.entries_processed.unwrap_or(0), compact_result.input_files.unwrap_or(0), compact_result.output_files.unwrap_or(0)
+        compact_result.entries_processed.unwrap_or(0),
+        compact_result.input_files.unwrap_or(0),
+        compact_result.output_files.unwrap_or(0)
     );
 
     // CRITICAL: Verify compaction doesn't duplicate data
@@ -297,8 +303,14 @@ async fn test_insert_flush_compact_flow() {
     debug!("\n📂 Path Debug Information:");
     debug!("  - Temp dir: {}", temp_dir.path().to_str().unwrap());
     debug!("  - Collection ID: {}", collection_id);
-    debug!("  - Flush result: success={}, entries_flushed={:?}", flush_result.success, flush_result.entries_flushed);
-    debug!("  - Compaction result: success={}, entries_processed={:?}", compact_result.success, compact_result.entries_processed);
+    debug!(
+        "  - Flush result: success={}, entries_flushed={:?}",
+        flush_result.success, flush_result.entries_flushed
+    );
+    debug!(
+        "  - Compaction result: success={}, entries_processed={:?}",
+        compact_result.success, compact_result.entries_processed
+    );
 
     let storage_url = format!(
         "file://{}/{}/data",
@@ -308,7 +320,11 @@ async fn test_insert_flush_compact_flow() {
     debug!("  - Storage URL for search: {}", storage_url);
 
     // Check if the directory exists
-    let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+    let data_path = format!(
+        "{}/{}/data",
+        temp_dir.path().to_str().unwrap(),
+        collection_id
+    );
     if std::path::Path::new(&data_path).exists() {
         debug!("  ✅ Data directory exists: {}", data_path);
         // List files in the directory
@@ -355,7 +371,9 @@ async fn test_insert_flush_compact_flow() {
                                         let temp_file = temp_entry.file_name();
                                         debug!("      - {:?}", temp_file);
                                         if temp_file.to_string_lossy().ends_with(".parquet") {
-                                            debug!("        ⚠️ Found parquet file in ___temp directory!");
+                                            debug!(
+                                                "        ⚠️ Found parquet file in ___temp directory!"
+                                            );
                                         }
                                     }
                                 }
@@ -388,8 +406,7 @@ async fn test_insert_flush_compact_flow() {
     }
 
     assert_eq!(
-        total_results,
-        40,
+        total_results, 40,
         "Expected 40 search results, got {}",
         total_results
     );
@@ -421,7 +438,10 @@ async fn test_basic_compaction() {
 
     // Debug: check data directory
     let base_path = temp_dir.path().to_str().unwrap();
-    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
+    let data_url = format!(
+        "file://{}",
+        StoragePath::collection_data_path(base_path, &collection_id)
+    );
     debug!("📍 Data directory: {}", data_url);
 
     // Extract the actual filesystem path for debugging
@@ -468,7 +488,9 @@ async fn test_basic_compaction() {
         );
         debug!(
             "📄 Batch {} flush result: success={}, {} entries flushed",
-            batch, flush_result.success, flush_result.entries_flushed.unwrap_or(0)
+            batch,
+            flush_result.success,
+            flush_result.entries_flushed.unwrap_or(0)
         );
 
         // Debug: Check if the flush succeeded
@@ -479,7 +501,10 @@ async fn test_basic_compaction() {
     }
 
     // Debug: check what files exist in the data directory
-    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
+    let data_url = format!(
+        "file://{}",
+        StoragePath::collection_data_path(base_path, &collection_id)
+    );
     let fs = engine
         .get_filesystem_factory()
         .get_filesystem(&data_url)
@@ -529,7 +554,10 @@ async fn test_basic_compaction() {
     };
 
     debug!("🔨 Starting compaction for collection: {}", collection_id);
-    debug!("  - Compact params collection_id: {:?}", compact_params.collection_id);
+    debug!(
+        "  - Compact params collection_id: {:?}",
+        compact_params.collection_id
+    );
 
     let result = engine
         .do_compact(&compact_params)
@@ -545,7 +573,9 @@ async fn test_basic_compaction() {
 
     debug!(
         "📊 Compaction result: success={}, entries_processed={}, entries_removed={}",
-        result.success, result.entries_processed.unwrap_or(0), result.entries_removed.unwrap_or(0)
+        result.success,
+        result.entries_processed.unwrap_or(0),
+        result.entries_removed.unwrap_or(0)
     );
 
     assert!(result.success);
@@ -609,7 +639,10 @@ async fn test_basic_compaction() {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // List all parquet files in data directory to debug
-    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
+    let data_url = format!(
+        "file://{}",
+        StoragePath::collection_data_path(base_path, &collection_id)
+    );
     let fs = engine
         .get_filesystem_factory()
         .get_filesystem(&data_url)
@@ -697,7 +730,11 @@ async fn test_basic_compaction() {
         debug!("✅ Temp directory exists");
 
         // List contents of the data directory
-        let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+        let data_path = format!(
+            "{}/{}/data",
+            temp_dir.path().to_str().unwrap(),
+            collection_id
+        );
         debug!("  - Checking data path: {}", data_path);
 
         if let Ok(entries) = std::fs::read_dir(&data_path) {
@@ -766,7 +803,11 @@ async fn test_basic_compaction() {
 
     // Debug each search result in detail
     for (idx, search_result) in search_results.iter().enumerate() {
-        debug!("  SearchResult[{}]: {} results", idx, search_result.results.len());
+        debug!(
+            "  SearchResult[{}]: {} results",
+            idx,
+            search_result.results.len()
+        );
         for result in &search_result.results {
             debug!("    - ID: {}, Score: {:?}", result.id, result.score);
         }
@@ -787,7 +828,9 @@ async fn test_basic_compaction() {
     for batch in 0..4 {
         for i in 0..10 {
             let id = format!("batch_{}_vec_{}", batch, i);
-            let found = search_results.iter().any(|sr| sr.results.iter().any(|r| r.id == id));
+            let found = search_results
+                .iter()
+                .any(|sr| sr.results.iter().any(|r| r.id == id));
             if !found {
                 error!("❌ Missing vector: {}", id);
             }
@@ -898,7 +941,10 @@ async fn test_concurrent_compaction_and_reads() {
     for task_id in 0..3 {
         let read_engine = engine.clone();
         let collection_id_owned = collection_id.to_string();
-        let storage_url = format!("file://{}", StoragePath::collection_data_path(&temp_dir_path, &collection_id));
+        let storage_url = format!(
+            "file://{}",
+            StoragePath::collection_data_path(&temp_dir_path, &collection_id)
+        );
         let handle = tokio::spawn(async move {
             let mut successful_reads = 0;
             let mut failed_reads = 0;
@@ -1163,7 +1209,8 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         Ok(result) => {
             debug!(
                 "✅ Flush succeeded: {} entries flushed, success: {}",
-                result.entries_flushed.unwrap_or(0), result.success
+                result.entries_flushed.unwrap_or(0),
+                result.success
             );
         }
         Err(e) => {
@@ -1211,7 +1258,8 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         match &result {
             Ok(res) => debug!(
                 "🥇 First compaction result: success={}, entries_processed={}",
-                res.success, res.entries_processed.unwrap_or(0)
+                res.success,
+                res.entries_processed.unwrap_or(0)
             ),
             Err(e) => debug!("🥇 First compaction failed: {}", e),
         }
@@ -1250,7 +1298,8 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         match &result {
             Ok(res) => debug!(
                 "🥈 Second compaction result: success={}, entries_processed={}",
-                res.success, res.entries_processed.unwrap_or(0)
+                res.success,
+                res.entries_processed.unwrap_or(0)
             ),
             Err(e) => debug!("🥈 Second compaction failed (expected): {}", e),
         }
@@ -1364,7 +1413,11 @@ async fn test_size_tiered_compaction_strategy() {
     assert!(result.success);
 
     // Debug: List files after compaction
-    let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+    let data_path = format!(
+        "{}/{}/data",
+        temp_dir.path().to_str().unwrap(),
+        collection_id
+    );
     debug!("🔍 DEBUG: Listing files in data directory: {}", data_path);
     if let Ok(entries) = std::fs::read_dir(&data_path) {
         for entry in entries {
@@ -1381,7 +1434,10 @@ async fn test_size_tiered_compaction_strategy() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
-    debug!("🔍 DEBUG: Searching for {} vectors in: {}", total_vectors, storage_url);
+    debug!(
+        "🔍 DEBUG: Searching for {} vectors in: {}",
+        total_vectors, storage_url
+    );
 
     let search_results = engine
         .search_vectors(
@@ -1395,8 +1451,12 @@ async fn test_size_tiered_compaction_strategy() {
 
     // Count the total number of individual results across all SearchResult objects
     let actual_results: usize = search_results.iter().map(|sr| sr.results.len()).sum();
-    debug!("🔍 DEBUG: Search returned {} SearchResult objects with {} total individual results (expected {})",
-        search_results.len(), actual_results, total_vectors);
+    debug!(
+        "🔍 DEBUG: Search returned {} SearchResult objects with {} total individual results (expected {})",
+        search_results.len(),
+        actual_results,
+        total_vectors
+    );
     assert_eq!(actual_results, total_vectors);
 }
 
@@ -1440,20 +1500,16 @@ async fn test_compaction_with_metadata_filtering() {
 
         // Flush each category separately
         // Create collection config with "category" as a filterable column
-        let mut collection = create_test_collection(
-            collection_id,
-            temp_dir.path().to_str().unwrap(),
-        );
+        let mut collection =
+            create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
         if let Some(ref mut config) = collection.config {
-            config.filterable_columns = vec![
-                crate::proto::proximadb_v1::FilterableColumnSpec {
-                    name: "category".to_string(),
-                    data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
-                    indexed: false,
-                    supports_range: false,
-                    estimated_cardinality: None,
-                }
-            ];
+            config.filterable_columns = vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "category".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                indexed: false,
+                supports_range: false,
+                estimated_cardinality: None,
+            }];
         }
 
         let flush_params = FlushParameters {
@@ -1473,20 +1529,16 @@ async fn test_compaction_with_metadata_filtering() {
 
     // Run compaction
     // Use same collection config with "category" as filterable
-    let mut compact_collection = create_test_collection(
-        collection_id,
-        temp_dir.path().to_str().unwrap(),
-    );
+    let mut compact_collection =
+        create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     if let Some(ref mut config) = compact_collection.config {
-        config.filterable_columns = vec![
-            crate::proto::proximadb_v1::FilterableColumnSpec {
-                name: "category".to_string(),
-                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
-                indexed: false,
-                supports_range: false,
-                estimated_cardinality: None,
-            }
-        ];
+        config.filterable_columns = vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+            name: "category".to_string(),
+            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+            indexed: false,
+            supports_range: false,
+            estimated_cardinality: None,
+        }];
     }
 
     let compact_params = CompactionParameters {
@@ -1517,15 +1569,13 @@ async fn test_compaction_with_metadata_filtering() {
     let search_collection = {
         let mut col = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
         if let Some(ref mut config) = col.config {
-            config.filterable_columns = vec![
-                crate::proto::proximadb_v1::FilterableColumnSpec {
-                    name: "category".to_string(),
-                    data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
-                    indexed: false,
-                    supports_range: false,
-                    estimated_cardinality: None,
-                }
-            ];
+            config.filterable_columns = vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "category".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                indexed: false,
+                supports_range: false,
+                estimated_cardinality: None,
+            }];
         }
         // Production behavior: base_location is just the base path, not full path
         let base_location = temp_dir.path().to_str().unwrap().to_string();
@@ -1561,18 +1611,19 @@ async fn test_compaction_with_metadata_filtering() {
     };
 
     // Debug: check if ANY vectors are returned using unified search
-    let all_search_results = engine
-        .search_vectors_unified(&ctx)
-        .await
-        .unwrap();
+    let all_search_results = engine.search_vectors_unified(&ctx).await.unwrap();
 
     let total_results = all_search_results.len();
     debug!("Total search results after compaction: {}", total_results);
 
     // Debug: print a sample of metadata from results
     for (idx, result) in all_search_results.iter().take(5).enumerate() {
-        debug!("Result {}: id={}, metadata keys={:?}",
-            idx, result.id, result.metadata.keys().collect::<Vec<_>>());
+        debug!(
+            "Result {}: id={}, metadata keys={:?}",
+            idx,
+            result.id,
+            result.metadata.keys().collect::<Vec<_>>()
+        );
         if let Some(cat) = result.metadata.get("category") {
             debug!("  Has category: {:?}", cat.value);
         }
@@ -1580,25 +1631,27 @@ async fn test_compaction_with_metadata_filtering() {
 
     for category in &["A", "B", "C"] {
         // Use unified search with proper context
-        let search_results = engine
-            .search_vectors_unified(&ctx)
-            .await
-            .unwrap();
+        let search_results = engine.search_vectors_unified(&ctx).await.unwrap();
 
         let category_count = search_results
             .iter()
             .filter(|r| {
                 // Debug: print first few records to see what metadata they have
                 if search_results.iter().position(|x| x.id == r.id).unwrap() < 3 {
-                    debug!("🔍 TEST DEBUG: Record {}: metadata keys={:?}",
-                        r.id, r.metadata.keys().collect::<Vec<_>>());
+                    debug!(
+                        "🔍 TEST DEBUG: Record {}: metadata keys={:?}",
+                        r.id,
+                        r.metadata.keys().collect::<Vec<_>>()
+                    );
                     if let Some(cat_val) = r.metadata.get("category") {
                         debug!("🔍 TEST DEBUG:   category value={:?}", cat_val.value);
                     }
                 }
 
                 if let Some(sql_value) = r.metadata.get("category") {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) = sql_value.value {
+                    if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) =
+                        sql_value.value
+                    {
                         s == category
                     } else {
                         false
@@ -1609,7 +1662,10 @@ async fn test_compaction_with_metadata_filtering() {
             })
             .count();
 
-        debug!("Category {} found {} vectors (expected 20)", category, category_count);
+        debug!(
+            "Category {} found {} vectors (expected 20)",
+            category, category_count
+        );
         assert_eq!(
             category_count, 20,
             "Category {} vectors missing after compaction (found {} of {} total results)",
@@ -1655,7 +1711,11 @@ async fn test_incremental_compaction() {
             vectors.push(create_test_vector(&format!("inc_{}_vec_{}", batch, i), 128));
         }
 
-        debug!("🔄 DEBUG: Batch {}: Created {} vectors", batch, vectors.len());
+        debug!(
+            "🔄 DEBUG: Batch {}: Created {} vectors",
+            batch,
+            vectors.len()
+        );
 
         // VIPER is columnar - vectors will be flushed below
 
@@ -1669,30 +1729,27 @@ async fn test_incremental_compaction() {
             timeout_ms: None,
             trigger_compaction: false,
             estimated_size: 1024 * 1024, // 1MB estimated
-            collection_config: Some(create_test_collection(
-                collection_id,
-                test_dir,
-            )),
+            collection_config: Some(create_test_collection(collection_id, test_dir)),
         };
 
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
-        debug!("🔄 DEBUG: Batch {}: Flush result - entries_flushed: {:?}, success: {}",
-                batch, flush_result.entries_flushed, flush_result.success);
+        debug!(
+            "🔄 DEBUG: Batch {}: Flush result - entries_flushed: {:?}, success: {}",
+            batch, flush_result.entries_flushed, flush_result.success
+        );
     }
 
     // Check total vectors before compaction
-    let storage_url_check = format!(
-        "file://{}/{}/data",
-        test_dir,
-        collection_id
-    );
+    let storage_url_check = format!("file://{}/{}/data", test_dir, collection_id);
 
     // Debug: Check what files exist in the storage directory and subdirectories
     let storage_dir = format!("{}/{}/data", test_dir, collection_id);
     debug!("🔍 DEBUG: Checking storage directory: {}", storage_dir);
 
     fn list_directory_recursive(dir: &str, depth: usize) {
-        if depth > 3 { return; } // Limit recursion depth
+        if depth > 3 {
+            return;
+        } // Limit recursion depth
         let indent = "  ".repeat(depth);
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries {
@@ -1704,7 +1761,12 @@ async fn test_incremental_compaction() {
                     } else {
                         let metadata = std::fs::metadata(&path).ok();
                         let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                        debug!("🔍 DEBUG: {}📄 {:?} ({}bytes)", indent, path.file_name().unwrap(), size);
+                        debug!(
+                            "🔍 DEBUG: {}📄 {:?} ({}bytes)",
+                            indent,
+                            path.file_name().unwrap(),
+                            size
+                        );
                     }
                 }
             }
@@ -1723,8 +1785,14 @@ async fn test_incremental_compaction() {
         .search_vectors(collection_id, &storage_url_check, &vec![0.5; 128], 100)
         .await
         .unwrap();
-    let total_pre_compact = pre_compact_results.iter().map(|sr| sr.results.len()).sum::<usize>();
-    debug!("🔍 DEBUG: Before compaction: Found {} vectors", total_pre_compact);
+    let total_pre_compact = pre_compact_results
+        .iter()
+        .map(|sr| sr.results.len())
+        .sum::<usize>();
+    debug!(
+        "🔍 DEBUG: Before compaction: Found {} vectors",
+        total_pre_compact
+    );
 
     debug!("🔄 DEBUG: Starting incremental compaction phases");
 
@@ -1738,52 +1806,71 @@ async fn test_incremental_compaction() {
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
             estimated_input_size: 1024 * 1024, // 1MB estimated
-            collection_config: Some(create_test_collection(
-                collection_id,
-                test_dir,
-            )),
+            collection_config: Some(create_test_collection(collection_id, test_dir)),
         };
 
-        let compact_result = engine
-            .do_compact(&compact_params)
-            .await;
+        let compact_result = engine.do_compact(&compact_params).await;
 
         if let Err(ref e) = compact_result {
-            debug!("🔍 TEST: Incremental compaction phase {} failed: {:?}", phase, e);
+            debug!(
+                "🔍 TEST: Incremental compaction phase {} failed: {:?}",
+                phase, e
+            );
         }
         let compact_result = compact_result.expect("Incremental compaction failed");
 
-        debug!("🔄 DEBUG: Compaction phase {}: entries_processed: {:?}, entries_removed: {:?}, success: {}",
-                phase, compact_result.entries_processed, compact_result.entries_removed, compact_result.success);
+        debug!(
+            "🔄 DEBUG: Compaction phase {}: entries_processed: {:?}, entries_removed: {:?}, success: {}",
+            phase,
+            compact_result.entries_processed,
+            compact_result.entries_removed,
+            compact_result.success
+        );
     }
 
     // Verify all vectors preserved
-    let storage_url = format!(
-        "file://{}/{}/data",
-        test_dir,
-        collection_id
-    );
+    let storage_url = format!("file://{}/{}/data", test_dir, collection_id);
 
     debug!("🔍 DEBUG: Searching with storage_url: {}", storage_url);
-    debug!("🔍 DEBUG: Query vector dimensions: {}", vec![0.5; 128].len());
+    debug!(
+        "🔍 DEBUG: Query vector dimensions: {}",
+        vec![0.5; 128].len()
+    );
 
     let search_results = engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
         .await
         .unwrap();
 
-    let total_results = search_results.iter().map(|sr| sr.results.len()).sum::<usize>();
-    debug!("🔍 DEBUG: Search returned {} results (expected 30)", total_results);
+    let total_results = search_results
+        .iter()
+        .map(|sr| sr.results.len())
+        .sum::<usize>();
+    debug!(
+        "🔍 DEBUG: Search returned {} results (expected 30)",
+        total_results
+    );
 
     // Print first few results for debugging
     let mut result_count = 0;
     for (search_idx, search_result) in search_results.iter().enumerate() {
-        debug!("🔍 DEBUG: SearchResult {}: contains {} results", search_idx, search_result.results.len());
+        debug!(
+            "🔍 DEBUG: SearchResult {}: contains {} results",
+            search_idx,
+            search_result.results.len()
+        );
         for (idx, result) in search_result.results.iter().take(5).enumerate() {
-            debug!("🔍 DEBUG: Result {}: id={}, score={:?}", result_count + idx, result.id, result.score);
+            debug!(
+                "🔍 DEBUG: Result {}: id={}, score={:?}",
+                result_count + idx,
+                result.id,
+                result.score
+            );
         }
         result_count += search_result.results.len();
-        if result_count >= 5 { break; }
+        if result_count >= 5 {
+            break;
+        }
     }
 
     assert_eq!(total_results, 30); // 6 batches * 5 vectors

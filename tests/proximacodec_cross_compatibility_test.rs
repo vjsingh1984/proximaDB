@@ -20,12 +20,10 @@
 //!    - Round-trip accuracy (encode → decode → original)
 
 use proximadb::storage::engines::core::ops::proximacodec::impls::baseline::{
-    BaselineEncoder, BaselineDecoder,
+    BaselineDecoder, BaselineEncoder,
 };
-use proximadb::storage::engines::core::ops::proximacodec::impls::simd::{
-    SimdEncoder, SimdDecoder,
-};
-use proximadb::storage::engines::core::ops::proximacodec::traits::{RawEncoder, RawDecoder};
+use proximadb::storage::engines::core::ops::proximacodec::impls::simd::{SimdDecoder, SimdEncoder};
+use proximadb::storage::engines::core::ops::proximacodec::traits::{RawDecoder, RawEncoder};
 use proximadb::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 /// Test data: 32 dimensional vector with values in range [0, 255]
@@ -73,7 +71,7 @@ fn test_3x3_cross_compatibility_matrix() {
 
     #[cfg(feature = "gpu")]
     use proximadb::storage::engines::core::ops::proximacodec::impls::gpu::{
-        GpuEncoder, GpuDecoder,
+        GpuDecoder, GpuEncoder,
     };
     #[cfg(feature = "gpu")]
     use proximadb::storage::engines::core::ops::proximacodec::simd::get_simd_backend;
@@ -147,8 +145,13 @@ fn test_3x3_cross_compatibility_matrix() {
             let (name_i, bytes_i) = &encoded_bytes_map[i];
             let (name_j, bytes_j) = &encoded_bytes_map[j];
 
-            println!("Comparing {} ({} bytes) vs {} ({} bytes)",
-                     name_i, bytes_i.len(), name_j, bytes_j.len());
+            println!(
+                "Comparing {} ({} bytes) vs {} ({} bytes)",
+                name_i,
+                bytes_i.len(),
+                name_j,
+                bytes_j.len()
+            );
 
             // ASSERTION 1: Byte equality
             assert_eq!(
@@ -174,7 +177,9 @@ fn test_3x3_cross_compatibility_matrix() {
     let reference_bytes = &baseline_encoded;
 
     // Decode with Baseline
-    let baseline_decoded = baseline_decoder.decode_f32(reference_bytes, &scheme, values.len()).unwrap();
+    let baseline_decoded = baseline_decoder
+        .decode_f32(reference_bytes, &scheme, values.len())
+        .unwrap();
     println!("✅ Baseline decoded: {} values", baseline_decoded.len());
 
     // ASSERTION 2: Value equality (baseline)
@@ -186,7 +191,9 @@ fn test_3x3_cross_compatibility_matrix() {
 
     // Decode with SIMD (if available)
     if simd_available {
-        let simd_decoded = simd_decoder.decode_f32(reference_bytes, &scheme, values.len()).unwrap();
+        let simd_decoded = simd_decoder
+            .decode_f32(reference_bytes, &scheme, values.len())
+            .unwrap();
         println!("✅ SIMD decoded: {} values", simd_decoded.len());
 
         // ASSERTION 2: Value equality (SIMD)
@@ -208,7 +215,9 @@ fn test_3x3_cross_compatibility_matrix() {
     #[cfg(feature = "gpu")]
     if gpu_available {
         let gpu_decoder = GpuDecoder;
-        let gpu_decoded = gpu_decoder.decode_f32(reference_bytes, &scheme, values.len()).unwrap();
+        let gpu_decoded = gpu_decoder
+            .decode_f32(reference_bytes, &scheme, values.len())
+            .unwrap();
         println!("✅ GPU decoded: {} values", gpu_decoded.len());
 
         // ASSERTION 2: Value equality (GPU)
@@ -241,14 +250,26 @@ fn test_3x3_cross_compatibility_matrix() {
         println!("\nEncoded by: {}", encoder_name);
 
         // Decode with Baseline
-        let decoded = baseline_decoder.decode_f32(encoded_bytes, &scheme, values.len()).unwrap();
-        assert_eq!(values, decoded, "❌ Round-trip failed: {} → Baseline", encoder_name);
+        let decoded = baseline_decoder
+            .decode_f32(encoded_bytes, &scheme, values.len())
+            .unwrap();
+        assert_eq!(
+            values, decoded,
+            "❌ Round-trip failed: {} → Baseline",
+            encoder_name
+        );
         println!("  ✅ {} → Baseline decoder", encoder_name);
 
         // Decode with SIMD (if available)
         if simd_available {
-            let decoded = simd_decoder.decode_f32(encoded_bytes, &scheme, values.len()).unwrap();
-            assert_eq!(values, decoded, "❌ Round-trip failed: {} → SIMD", encoder_name);
+            let decoded = simd_decoder
+                .decode_f32(encoded_bytes, &scheme, values.len())
+                .unwrap();
+            assert_eq!(
+                values, decoded,
+                "❌ Round-trip failed: {} → SIMD",
+                encoder_name
+            );
             println!("  ✅ {} → SIMD decoder", encoder_name);
         }
 
@@ -256,8 +277,14 @@ fn test_3x3_cross_compatibility_matrix() {
         #[cfg(feature = "gpu")]
         if gpu_available {
             let gpu_decoder = GpuDecoder;
-            let decoded = gpu_decoder.decode_f32(encoded_bytes, &scheme, values.len()).unwrap();
-            assert_eq!(values, decoded, "❌ Round-trip failed: {} → GPU", encoder_name);
+            let decoded = gpu_decoder
+                .decode_f32(encoded_bytes, &scheme, values.len())
+                .unwrap();
+            assert_eq!(
+                values, decoded,
+                "❌ Round-trip failed: {} → GPU",
+                encoder_name
+            );
             println!("  ✅ {} → GPU decoder", encoder_name);
         }
     }
@@ -292,7 +319,11 @@ fn test_baseline_to_simd_compatibility() {
 
     // Encode with baseline
     let encoded = baseline_encoder.encode_f32(&values, &scheme).unwrap();
-    println!("Baseline BitPacked encoded: {} bytes (raw: {} bytes)", encoded.len(), values.len() * 4);
+    println!(
+        "Baseline BitPacked encoded: {} bytes (raw: {} bytes)",
+        encoded.len(),
+        values.len() * 4
+    );
 
     // Try to decode with SIMD
     let result = simd_decoder.decode_f32(&encoded, &scheme, values.len());
@@ -325,7 +356,11 @@ fn test_simd_to_baseline_compatibility() {
 
     // Encode with SIMD
     let encoded = simd_encoder.encode_f32(&values, &scheme).unwrap();
-    println!("SIMD BitPacked encoded: {} bytes (raw: {} bytes)", encoded.len(), values.len() * 4);
+    println!(
+        "SIMD BitPacked encoded: {} bytes (raw: {} bytes)",
+        encoded.len(),
+        values.len() * 4
+    );
 
     // Try to decode with baseline
     let result = baseline_decoder.decode_f32(&encoded, &scheme, values.len());
@@ -356,7 +391,11 @@ fn test_baseline_simd_roundtrip() {
 
     if let Err(e) = decoded {
         println!("❌ Baseline→SIMD failed: {}", e);
-        println!("   Encoded {} bytes: {:?}", encoded.len(), &encoded[..std::cmp::min(20, encoded.len())]);
+        println!(
+            "   Encoded {} bytes: {:?}",
+            encoded.len(),
+            &encoded[..std::cmp::min(20, encoded.len())]
+        );
         panic!("Baseline→SIMD cross-compatibility broken");
     }
 }
@@ -391,8 +430,14 @@ fn test_delta_encoding_i64_timestamps() {
 
     // Baseline encoding
     let baseline_encoded = baseline_encoder.encode_i64(&timestamps, &scheme).unwrap();
-    println!("✅ Baseline Delta encoded: {} bytes", baseline_encoded.len());
-    println!("   Compression: {:.1}%", baseline_encoded.len() as f32 / raw_size as f32 * 100.0);
+    println!(
+        "✅ Baseline Delta encoded: {} bytes",
+        baseline_encoded.len()
+    );
+    println!(
+        "   Compression: {:.1}%",
+        baseline_encoded.len() as f32 / raw_size as f32 * 100.0
+    );
 
     // SIMD encoding (if available)
     if simd_encoder.supports(&scheme) {
@@ -408,12 +453,19 @@ fn test_delta_encoding_i64_timestamps() {
     }
 
     // Decode and verify
-    let baseline_decoded = baseline_decoder.decode_i64(&baseline_encoded, &scheme, timestamps.len()).unwrap();
+    let baseline_decoded = baseline_decoder
+        .decode_i64(&baseline_encoded, &scheme, timestamps.len())
+        .unwrap();
     assert_eq!(timestamps, baseline_decoded);
-    println!("\n✅ Round-trip successful: {} timestamps recovered", baseline_decoded.len());
+    println!(
+        "\n✅ Round-trip successful: {} timestamps recovered",
+        baseline_decoded.len()
+    );
 
     if simd_encoder.supports(&scheme) {
-        let simd_decoded = simd_decoder.decode_i64(&baseline_encoded, &scheme, timestamps.len()).unwrap();
+        let simd_decoded = simd_decoder
+            .decode_i64(&baseline_encoded, &scheme, timestamps.len())
+            .unwrap();
         assert_eq!(timestamps, simd_decoded);
         println!("✅ Cross-decode successful: SIMD decoder works with Baseline encoding");
     }
@@ -430,7 +482,7 @@ fn test_delta_encoding_i64_timestamps() {
 #[test]
 fn test_gpu_to_baseline_compatibility() {
     use proximadb::storage::engines::core::ops::proximacodec::impls::gpu::{
-        GpuEncoder, GpuDecoder,
+        GpuDecoder, GpuEncoder,
     };
     use proximadb::storage::engines::core::ops::proximacodec::simd::get_simd_backend;
 
@@ -469,7 +521,7 @@ fn test_gpu_to_baseline_compatibility() {
 #[test]
 fn test_baseline_to_gpu_compatibility() {
     use proximadb::storage::engines::core::ops::proximacodec::impls::gpu::{
-        GpuEncoder, GpuDecoder,
+        GpuDecoder, GpuEncoder,
     };
     use proximadb::storage::engines::core::ops::proximacodec::simd::get_simd_backend;
 
@@ -529,18 +581,24 @@ fn test_all_schemes_wire_compatibility() {
 
     // Test data: 32 dimensional vector
     let values = create_test_vector_32d();
-    
+
     let schemes = vec![
         ("Delta (f32)", ProximaScheme::Delta { base: 0 }),
         ("BitPacked (32-bit)", ProximaScheme::BitPacked { bits: 32 }),
-        ("FrameOfReference", ProximaScheme::FrameOfReference { 
-            reference: 0, 
-            bits: 32 
-        }),
-        ("PForDelta", ProximaScheme::PForDelta { 
-            majority_bits: 16, 
-            base: 0 
-        }),
+        (
+            "FrameOfReference",
+            ProximaScheme::FrameOfReference {
+                reference: 0,
+                bits: 32,
+            },
+        ),
+        (
+            "PForDelta",
+            ProximaScheme::PForDelta {
+                majority_bits: 16,
+                base: 0,
+            },
+        ),
     ];
 
     for (name, scheme) in &schemes {
@@ -564,27 +622,39 @@ fn test_all_schemes_wire_compatibility() {
         println!("  ✅ Wire format compatible (identical bytes)");
 
         // Decode with both implementations
-        let baseline_to_baseline = baseline_decoder.decode_f32(&baseline_encoded, scheme, values.len()).unwrap();
-        let baseline_to_simd = simd_decoder.decode_f32(&baseline_encoded, scheme, values.len()).unwrap();
-        let simd_to_baseline = baseline_decoder.decode_f32(&simd_encoded, scheme, values.len()).unwrap();
-        let simd_to_simd = simd_decoder.decode_f32(&simd_encoded, scheme, values.len()).unwrap();
+        let baseline_to_baseline = baseline_decoder
+            .decode_f32(&baseline_encoded, scheme, values.len())
+            .unwrap();
+        let baseline_to_simd = simd_decoder
+            .decode_f32(&baseline_encoded, scheme, values.len())
+            .unwrap();
+        let simd_to_baseline = baseline_decoder
+            .decode_f32(&simd_encoded, scheme, values.len())
+            .unwrap();
+        let simd_to_simd = simd_decoder
+            .decode_f32(&simd_encoded, scheme, values.len())
+            .unwrap();
 
         // Verify all decoders produce correct results
         assert_eq!(
             values, baseline_to_baseline,
-            "❌ {} Baseline→Baseline round-trip failed", name
+            "❌ {} Baseline→Baseline round-trip failed",
+            name
         );
         assert_eq!(
             values, baseline_to_simd,
-            "❌ {} Baseline→SIMD decode failed", name
+            "❌ {} Baseline→SIMD decode failed",
+            name
         );
         assert_eq!(
             values, simd_to_baseline,
-            "❌ {} SIMD→Baseline decode failed", name
+            "❌ {} SIMD→Baseline decode failed",
+            name
         );
         assert_eq!(
             values, simd_to_simd,
-            "❌ {} SIMD→SIMD round-trip failed", name
+            "❌ {} SIMD→SIMD round-trip failed",
+            name
         );
 
         println!("  ✅ All decoder combinations produce correct values");
@@ -606,9 +676,9 @@ fn test_frameofreference_cross_compatibility() {
     // Clustered data (good for FOR encoding)
     let values: Vec<f32> = (100..132).map(|i| i as f32 + 0.5).collect();
     let reference = (100.0f32).to_bits() as i64;
-    let scheme = ProximaScheme::FrameOfReference { 
-        reference, 
-        bits: 32 
+    let scheme = ProximaScheme::FrameOfReference {
+        reference,
+        bits: 32,
     };
 
     println!("\n========================================");
@@ -632,8 +702,12 @@ fn test_frameofreference_cross_compatibility() {
     println!("✅ Wire format compatible");
 
     // Cross-decode
-    let baseline_decoded = baseline_decoder.decode_f32(&baseline_encoded, &scheme, values.len()).unwrap();
-    let simd_decoded = simd_decoder.decode_f32(&simd_encoded, &scheme, values.len()).unwrap();
+    let baseline_decoded = baseline_decoder
+        .decode_f32(&baseline_encoded, &scheme, values.len())
+        .unwrap();
+    let simd_decoded = simd_decoder
+        .decode_f32(&simd_encoded, &scheme, values.len())
+        .unwrap();
 
     assert_eq!(values, baseline_decoded);
     assert_eq!(values, simd_decoded);
@@ -654,9 +728,9 @@ fn test_pfordelta_cross_compatibility() {
     values.push(3.0);
     values.push(4.0);
 
-    let scheme = ProximaScheme::PForDelta { 
-        majority_bits: 8, 
-        base: 0 
+    let scheme = ProximaScheme::PForDelta {
+        majority_bits: 8,
+        base: 0,
     };
 
     println!("\n========================================");
@@ -681,8 +755,12 @@ fn test_pfordelta_cross_compatibility() {
     println!("✅ Wire format compatible");
 
     // Cross-decode
-    let baseline_decoded = baseline_decoder.decode_f32(&baseline_encoded, &scheme, values.len()).unwrap();
-    let simd_decoded = simd_decoder.decode_f32(&simd_encoded, &scheme, values.len()).unwrap();
+    let baseline_decoded = baseline_decoder
+        .decode_f32(&baseline_encoded, &scheme, values.len())
+        .unwrap();
+    let simd_decoded = simd_decoder
+        .decode_f32(&simd_encoded, &scheme, values.len())
+        .unwrap();
 
     assert_eq!(values, baseline_decoded);
     assert_eq!(values, simd_decoded);

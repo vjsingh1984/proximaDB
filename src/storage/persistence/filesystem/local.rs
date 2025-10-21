@@ -635,21 +635,17 @@ impl FileSystem for LocalFileSystem {
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
             trace!("Creating parent directory: {:?}", parent);
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| {
-                    warn!("Error creating parent dir: {}", e);
-                    FilesystemError::Io(e)
-                })?;
+            fs::create_dir_all(parent).await.map_err(|e| {
+                warn!("Error creating parent dir: {}", e);
+                FilesystemError::Io(e)
+            })?;
         }
 
         trace!("Attempting rename from {:?} to {:?}", from_path, to_path);
-        let result = fs::rename(&from_path, &to_path)
-            .await
-            .map_err(|e| {
-                debug!("Rename failed, will try copy: {}", e);
-                FilesystemError::Io(e)
-            });
+        let result = fs::rename(&from_path, &to_path).await.map_err(|e| {
+            debug!("Rename failed, will try copy: {}", e);
+            FilesystemError::Io(e)
+        });
 
         if result.is_ok() {
             trace!("File moved successfully");
@@ -657,7 +653,10 @@ impl FileSystem for LocalFileSystem {
             // Verify destination exists
             if to_path.exists() {
                 if let Ok(metadata) = std::fs::metadata(&to_path) {
-                    trace!("Verified destination file exists with size: {} bytes", metadata.len());
+                    trace!(
+                        "Verified destination file exists with size: {} bytes",
+                        metadata.len()
+                    );
                 }
             } else {
                 warn!("Destination file doesn't exist after move!");
@@ -981,7 +980,11 @@ mod tests {
         let fs = LocalFileSystem::new(config).await.unwrap();
 
         // Clean up any existing test directories first
-        if fs.exists("file://./test_metadata_info").await.unwrap_or(false) {
+        if fs
+            .exists("file://./test_metadata_info")
+            .await
+            .unwrap_or(false)
+        {
             // List and delete all files recursively
             if let Ok(entries) = fs.list("file://./test_metadata/current").await {
                 for entry in entries {

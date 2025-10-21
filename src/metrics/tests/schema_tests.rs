@@ -398,7 +398,9 @@ mod tests {
         let hint_types: Vec<_> = hints.iter().map(|h| &h.hint_type).collect();
 
         assert!(
-            hint_types.iter().any(|h| matches!(h, HintType::ParallelScan)),
+            hint_types
+                .iter()
+                .any(|h| matches!(h, HintType::ParallelScan)),
             "Should generate parallel scan hint for {} files",
             metrics.parquet_file_count
         );
@@ -410,13 +412,17 @@ mod tests {
         );
 
         assert!(
-            hint_types.iter().any(|h| matches!(h, HintType::Quantization)),
+            hint_types
+                .iter()
+                .any(|h| matches!(h, HintType::Quantization)),
             "Should generate quantization hint for {} bytes",
             metrics.data_size_bytes
         );
 
         assert!(
-            hint_types.iter().any(|h| matches!(h, HintType::FilterOptimization)),
+            hint_types
+                .iter()
+                .any(|h| matches!(h, HintType::FilterOptimization)),
             "Should generate filter optimization hint for high selectivity column"
         );
 

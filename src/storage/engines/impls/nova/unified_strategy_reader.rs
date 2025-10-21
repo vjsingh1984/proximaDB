@@ -4,13 +4,13 @@
 //! columnar storage with multi-level quantization and hierarchical zone maps.
 
 use anyhow::Result;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 use super::zone_maps::PruningStrategy;
 
@@ -88,7 +88,9 @@ impl UnifiedNOVAReader {
         Self::new(
             filesystem_factory,
             collection_id,
-            ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            ReadAccessStrategy::CachedSearch {
+                prefetch_metadata: true,
+            },
         )
     }
 
@@ -117,26 +119,20 @@ impl UnifiedNOVAReader {
     }
 
     /// Read using progressive columnar access
-    pub async fn read_progressive(
-        &self,
-        file_path: &str,
-    ) -> Result<Vec<VectorRecord>> {
+    pub async fn read_progressive(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         match &self.strategy {
-            ReadAccessStrategy::DirectStream => {
-                self.read_direct_columnar(file_path).await
-            }
-            _ => {
-                self.read_with_zone_maps(file_path).await
-            }
+            ReadAccessStrategy::DirectStream => self.read_direct_columnar(file_path).await,
+            _ => self.read_with_zone_maps(file_path).await,
         }
     }
 
     /// Direct columnar read (for full scans - used during compaction)
     async fn read_direct_columnar(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-
         // Create UnifiedParquetReader for direct reads
         let dimension = 128; // TODO: Get from collection config
-        let cached_fs = self.cached_filesystem.as_ref()
+        let cached_fs = self
+            .cached_filesystem
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("UnifiedCachingFilesystem not available"))?;
         let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -149,11 +145,13 @@ impl UnifiedNOVAReader {
 
         // For full scan without filters, use similarity search with empty query
         // This returns VectorRecords directly
-        let records = reader.read_for_similarity_search(
-            &[file_path.to_string()],
-            None, // No filter
-            usize::MAX // Get all records
-        ).await?;
+        let records = reader
+            .read_for_similarity_search(
+                &[file_path.to_string()],
+                None,       // No filter
+                usize::MAX, // Get all records
+            )
+            .await?;
 
         Ok(records)
     }
@@ -164,7 +162,9 @@ impl UnifiedNOVAReader {
 
         // Create reader with cached filesystem for metadata caching
         let dimension = 128; // TODO: Get from collection config
-        let cached_fs = self.cached_filesystem.as_ref()
+        let cached_fs = self
+            .cached_filesystem
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("UnifiedCachingFilesystem not available"))?;
         let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -184,20 +184,20 @@ impl UnifiedNOVAReader {
         };
 
         // Use read_all_records since read_for_similarity_search is not async
-        let records = reader.read_all_records(
-            0,
-            None
-        ).await?;
+        let records = reader.read_all_records(0, None).await?;
 
         Ok(records)
     }
 
     /// Convert FilterExpression to MetadataFilter for columnar module
-    fn convert_to_metadata_filter(&self, filter: &crate::core::search::FilterExpression) -> crate::storage::engines::core::formats::columnar::MetadataFilter {
+    fn convert_to_metadata_filter(
+        &self,
+        filter: &crate::core::search::FilterExpression,
+    ) -> crate::storage::engines::core::formats::columnar::MetadataFilter {
         // Simple conversion - expand as needed
         // NOVA uses Parquet's built-in statistics and bloom filters for pruning
         // TODO: Convert FilterExpression to FilterConditions based on actual filter content
-        use crate::storage::engines::core::formats::columnar::{MetadataFilter, FilterLogic};
+        use crate::storage::engines::core::formats::columnar::{FilterLogic, MetadataFilter};
 
         MetadataFilter {
             conditions: vec![],
@@ -241,7 +241,9 @@ impl UnifiedNOVAReader {
     ) -> Result<Vec<VectorRecord>> {
         // Create Parquet reader
         let dimension = 128; // TODO: Get from collection config
-        let cached_fs = self.cached_filesystem.as_ref()
+        let cached_fs = self
+            .cached_filesystem
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("UnifiedCachingFilesystem not available"))?;
         let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -265,14 +267,13 @@ impl UnifiedNOVAReader {
         Ok(records)
     }
 
-
     /// Convert Arrow RecordBatch to VectorRecords
     fn arrow_batch_to_vector_records(
         &self,
         batch: arrow_array::RecordBatch,
     ) -> Result<Vec<VectorRecord>> {
-        use arrow_array::cast::as_string_array;
         use arrow_array::cast::as_primitive_array;
+        use arrow_array::cast::as_string_array;
         use arrow_array::types::{Float32Type, Int64Type, UInt32Type};
 
         let mut records = Vec::new();
@@ -298,9 +299,7 @@ impl UnifiedNOVAReader {
             // Extract vector
             let start = row * dimension;
             let end = start + dimension;
-            let vector: Vec<f32> = (start..end)
-                .map(|i| vector_array.value(i))
-                .collect();
+            let vector: Vec<f32> = (start..end).map(|i| vector_array.value(i)).collect();
 
             // Extract timestamp
             let timestamp = timestamp_array.value(row);
@@ -361,12 +360,14 @@ pub struct DirectNOVAReader {
 
 impl DirectNOVAReader {
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String) -> Self {
-        Self { filesystem_factory, collection_id }
+        Self {
+            filesystem_factory,
+            collection_id,
+        }
     }
 
     /// Stream Parquet files directly for compaction
     pub async fn stream_parquet(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-
         // Create reader for direct streaming
         let dimension = 128; // TODO: Get from collection config
         // Create UnifiedCachingFilesystem for optimal performance
@@ -376,7 +377,7 @@ impl DirectNOVAReader {
                 base_fs,
                 self.collection_id.clone(),
                 "nova".to_string(),
-            )
+            ),
         );
         let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -388,11 +389,13 @@ impl DirectNOVAReader {
         )?;
 
         // Use similarity search for full read which returns VectorRecords
-        let records = reader.read_for_similarity_search(
-            &[file_path.to_string()],
-            None, // No filter for compaction
-            usize::MAX // Get all records
-        ).await?;
+        let records = reader
+            .read_for_similarity_search(
+                &[file_path.to_string()],
+                None,       // No filter for compaction
+                usize::MAX, // Get all records
+            )
+            .await?;
 
         Ok(records)
     }
@@ -430,7 +433,6 @@ impl CachedNOVAReader {
         &self,
         file_path: &str,
     ) -> Result<Vec<VectorRecord>> {
-
         // UnifiedCachingFilesystem provides transparent caching:
         // - Cloud files (S3/GCS/Azure) are downloaded to local disk cache
         // - Cache location: /tmp/proximadb/cache/{collection}/nova/{file}
@@ -452,12 +454,12 @@ impl CachedNOVAReader {
         // NOVA uses Parquet's built-in statistics (min/max per column) and bloom filters
         let filter = match self.pruning_strategy {
             PruningStrategy::NoPruning => None,
-            PruningStrategy::BasicZoneMap |
-            PruningStrategy::Hierarchical(_) |
-            PruningStrategy::Probabilistic |
-            PruningStrategy::Adaptive |
-            PruningStrategy::MultiScale(_) |
-            PruningStrategy::Hybrid => {
+            PruningStrategy::BasicZoneMap
+            | PruningStrategy::Hierarchical(_)
+            | PruningStrategy::Probabilistic
+            | PruningStrategy::Adaptive
+            | PruningStrategy::MultiScale(_)
+            | PruningStrategy::Hybrid => {
                 // TODO: Create appropriate MetadataFilter based on Parquet statistics
                 // Parquet provides per-row-group statistics that can be used for pruning
                 None // For now, no filter
@@ -465,11 +467,13 @@ impl CachedNOVAReader {
         };
 
         // Use similarity search which handles zone map pruning internally
-        let records = reader.read_for_similarity_search(
-            &[file_path.to_string()],
-            filter.as_ref(),
-            usize::MAX // Get all records
-        ).await?;
+        let records = reader
+            .read_for_similarity_search(
+                &[file_path.to_string()],
+                filter.as_ref(),
+                usize::MAX, // Get all records
+            )
+            .await?;
 
         Ok(records)
     }
@@ -485,7 +489,9 @@ mod tests {
         let pruning = UnifiedNOVAReader::to_nova_pruning_strategy(&direct);
         assert!(matches!(pruning, PruningStrategy::NoPruning));
 
-        let search = ReadAccessStrategy::CachedSearch { prefetch_metadata: true };
+        let search = ReadAccessStrategy::CachedSearch {
+            prefetch_metadata: true,
+        };
         let pruning = UnifiedNOVAReader::to_nova_pruning_strategy(&search);
         assert!(matches!(pruning, PruningStrategy::Hierarchical(_)));
     }

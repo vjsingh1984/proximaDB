@@ -235,7 +235,10 @@ impl CsrStorage {
 
         if edge_idx >= self.edge_ids.len() {
             return Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::KeyNotFound(format!("{}:{}", node_index, neighbor_index)),
+                crate::core::error::StorageError::KeyNotFound(format!(
+                    "{}:{}",
+                    node_index, neighbor_index
+                )),
             ));
         }
 

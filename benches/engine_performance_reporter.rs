@@ -12,12 +12,12 @@
 use anyhow::Result;
 use proximadb::{
     compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute},
-    core::{hardware_capabilities, VectorRecord},
+    core::{VectorRecord, hardware_capabilities},
     proto::proximadb_v1::{SqlValue, sql_value},
     storage::{
         engines::impls::{sst::SstEngine, viper::ViperEngine},
         persistence::filesystem::FilesystemFactory,
-        traits::{FlushParameters, CompactionParameters, UnifiedStorageEngine},
+        traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine},
     },
 };
 use std::collections::HashMap;
@@ -117,7 +117,7 @@ async fn benchmark_engine_configuration(
     config: &BenchmarkConfig,
 ) -> Result<BenchmarkResult> {
     let temp_dir = TempDir::new()?;
-    let filesystem_factory = Arc::new(FilesystemFactory::default());
+    let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
 
     // Storage for metrics
     let mut flush_times = Vec::new();
@@ -134,8 +134,7 @@ async fn benchmark_engine_configuration(
             sst_config.compression_level = config.level;
             sst_config.data_directory = temp_dir.path().to_str().unwrap().to_string();
 
-            let engine = SstEngine::new()
-            .await?;
+            let engine = SstEngine::new().await?;
 
             // Flush batches
             for batch_id in 0..config.batch_count {
@@ -177,10 +176,15 @@ async fn benchmark_engine_configuration(
             let compaction_time = start_compact.elapsed().as_millis() as u64;
 
             // Calculate sizes (simplified - in real implementation would measure actual files)
-            let compressed_size = config.vectors_per_batch * config.batch_count * config.dimension * 4;
+            let compressed_size =
+                config.vectors_per_batch * config.batch_count * config.dimension * 4;
             let uncompressed_size = compressed_size; // Would measure actual file sizes
 
-            (uncompressed_size as u64, compressed_size as u64, compaction_time)
+            (
+                uncompressed_size as u64,
+                compressed_size as u64,
+                compaction_time,
+            )
         }
         "VIPER" => {
             // Create VIPER engine with singleton pattern
@@ -225,10 +229,15 @@ async fn benchmark_engine_configuration(
             let compaction_result = engine.compact(compact_params).await?;
             let compaction_time = start_compact.elapsed().as_millis() as u64;
 
-            let compressed_size = config.vectors_per_batch * config.batch_count * config.dimension * 4;
+            let compressed_size =
+                config.vectors_per_batch * config.batch_count * config.dimension * 4;
             let uncompressed_size = compressed_size;
 
-            (uncompressed_size as u64, compressed_size as u64, compaction_time)
+            (
+                uncompressed_size as u64,
+                compressed_size as u64,
+                compaction_time,
+            )
         }
         _ => panic!("Unknown engine type: {}", engine_type),
     };
@@ -332,12 +341,7 @@ async fn main() -> Result<()> {
 
     // Test configurations
     let sparsity_levels = vec![10, 50, 90]; // Dense, medium, sparse
-    let algorithms = vec![
-        ("none", 0),
-        ("zstd", 3),
-        ("lz4", 0),
-        ("snappy", 0),
-    ];
+    let algorithms = vec![("none", 0), ("zstd", 3), ("lz4", 0), ("snappy", 0)];
     let engines = vec!["SST", "VIPER"];
 
     let mut all_results = Vec::new();
@@ -346,8 +350,10 @@ async fn main() -> Result<()> {
     for engine in &engines {
         for sparsity in &sparsity_levels {
             for (algo, level) in &algorithms {
-                println!("\n📊 Testing {} with {}% sparsity, {} compression level {}",
-                    engine, sparsity, algo, level);
+                println!(
+                    "\n📊 Testing {} with {}% sparsity, {} compression level {}",
+                    engine, sparsity, algo, level
+                );
 
                 let config = BenchmarkConfig {
                     sparsity_percent: *sparsity,
@@ -360,10 +366,12 @@ async fn main() -> Result<()> {
 
                 match benchmark_engine_configuration(engine, &config).await {
                     Ok(result) => {
-                        println!("   ✓ Compression ratio: {:.3}, Flush time: {}ms, Compaction: {}ms",
+                        println!(
+                            "   ✓ Compression ratio: {:.3}, Flush time: {}ms, Compaction: {}ms",
                             result.compression_ratio,
                             result.avg_flush_time_ms,
-                            result.compaction_time_ms);
+                            result.compaction_time_ms
+                        );
                         all_results.push(result);
                     }
                     Err(e) => {

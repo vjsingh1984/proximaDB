@@ -7,11 +7,11 @@ use anyhow::Result;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::persistence::write_ahead_log::config::{
-    WALConfig, WriteBufferStrategyType, MemTableConfig, MultiDiskConfig,
-    CompressionConfig as WALCompressionConfig, PerformanceConfig, DiskDistributionStrategy
+    CompressionConfig as WALCompressionConfig, DiskDistributionStrategy, MemTableConfig,
+    MultiDiskConfig, PerformanceConfig, WALConfig, WriteBufferStrategyType,
 };
 use proximadb::storage::persistence::write_ahead_log::optimized_write_buffer_writer::OptimizedWriteBufferWriter;
 
@@ -20,9 +20,12 @@ fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("index".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue(i.to_string())),
-            });
+            metadata.insert(
+                "index".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue(i.to_string())),
+                },
+            );
 
             VectorRecord {
                 id: format!("vec_{}", i),
@@ -70,12 +73,14 @@ mod wal_writer_tests {
 
         // Test basic write operation
         let vectors = create_test_vectors(10, 128);
-        let result = writer.write_vectors(
-            "test_collection",
-            vectors,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-            format!("file://{}", temp_dir.path().display()),
-        ).await;
+        let result = writer
+            .write_vectors(
+                "test_collection",
+                vectors,
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                format!("file://{}", temp_dir.path().display()),
+            )
+            .await;
 
         assert!(result.is_ok(), "Write operation should succeed");
         Ok(())
@@ -97,12 +102,9 @@ mod wal_writer_tests {
             let writer_ref = writer.clone();
 
             let handle = tokio::spawn(async move {
-                writer_ref.write_vectors(
-                    "test_collection",
-                    vectors,
-                    sequences,
-                    base_location,
-                ).await
+                writer_ref
+                    .write_vectors("test_collection", vectors, sequences, base_location)
+                    .await
             });
             handles.push(handle);
         }
@@ -133,12 +135,14 @@ mod wal_writer_tests {
                 let vectors = create_test_vectors(50, 128);
                 let sequences: Vec<u64> = (0..50).collect();
 
-                writer_clone.write_vectors(
-                    &format!("collection_{}", collection_id),
-                    vectors,
-                    sequences,
-                    base_location,
-                ).await
+                writer_clone
+                    .write_vectors(
+                        &format!("collection_{}", collection_id),
+                        vectors,
+                        sequences,
+                        base_location,
+                    )
+                    .await
             });
             handles.push(handle);
         }
@@ -146,7 +150,10 @@ mod wal_writer_tests {
         // All writes should succeed
         for handle in handles {
             let result = handle.await??;
-            assert!(!result.is_empty(), "Each write should return a WAL file path");
+            assert!(
+                !result.is_empty(),
+                "Each write should return a WAL file path"
+            );
         }
 
         Ok(())
@@ -169,14 +176,19 @@ mod wal_writer_tests {
         let vectors = create_test_vectors(5000, 256);
         let sequences: Vec<u64> = (0..5000).collect();
 
-        let result = writer.write_vectors(
-            "large_collection",
-            vectors,
-            sequences,
-            format!("file://{}", temp_dir.path().display()),
-        ).await?;
+        let result = writer
+            .write_vectors(
+                "large_collection",
+                vectors,
+                sequences,
+                format!("file://{}", temp_dir.path().display()),
+            )
+            .await?;
 
-        assert!(!result.is_empty(), "Large batch should be written successfully");
+        assert!(
+            !result.is_empty(),
+            "Large batch should be written successfully"
+        );
         Ok(())
     }
 }

@@ -26,23 +26,23 @@
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::collections::HashMap;
     use anyhow::Result;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
-    use crate::storage::engines::impls::sst::{
-        core::SstEngine,
-        SstConfig,
-        flush::{FlushCoordinator, FlushOptimizer, FlushOperations},
-        search::{SearchCoordinator, SearchOperations, SearchOptimizer},
-        collections::CollectionSizeInfo,
-        utils::{SortingStats, MemoryEstimate},
-        blocks::SstRecord,
-    };
-    use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::proto::proximadb_v1::VectorRecord;
-    use crate::storage::traits::{UnifiedStorageEngine, StorageQueryContext};
+    use crate::storage::engines::impls::sst::{
+        SstConfig,
+        blocks::SstRecord,
+        collections::CollectionSizeInfo,
+        core::SstEngine,
+        flush::{FlushCoordinator, FlushOperations, FlushOptimizer},
+        search::{SearchCoordinator, SearchOperations, SearchOptimizer},
+        utils::{MemoryEstimate, SortingStats},
+    };
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+    use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
 
     /// Test that the core module properly initializes the engine
     #[tokio::test]
@@ -54,8 +54,9 @@ mod tests {
         let engine = SstEngine::new_with_config(
             config.clone(),
             filesystem.clone(),
-            distance_compute.clone()
-        ).await;
+            distance_compute.clone(),
+        )
+        .await;
 
         assert!(engine.is_ok(), "Engine should initialize successfully");
         let engine = engine.unwrap();
@@ -176,8 +177,10 @@ mod tests {
         assert_eq!(engine.engine_version(), crate::version::PROXIMADB_VERSION);
 
         let strategy = engine.strategy();
-        assert!(matches!(strategy,
-            crate::storage::traits::StorageEngineStrategy::Sst));
+        assert!(matches!(
+            strategy,
+            crate::storage::traits::StorageEngineStrategy::Sst
+        ));
 
         // Test that basic trait methods work
         assert!(engine.engine_name().len() > 0);
@@ -208,14 +211,16 @@ mod tests {
         let engine = create_test_engine().await;
 
         // Test error propagation from collections module
-        let result = engine.cleanup_collection_files("nonexistent_collection").await;
+        let result = engine
+            .cleanup_collection_files("nonexistent_collection")
+            .await;
         // Should handle gracefully even if collection doesn't exist
         assert!(result.is_ok() || result.is_err());
 
         // Test error handling in search with empty context
-        use crate::storage::traits::StorageQueryMetadata;
         use crate::core::search::SearchParams;
         use crate::proto::proximadb_v1::Collection;
+        use crate::storage::traits::StorageQueryMetadata;
 
         let search_params = Arc::new(SearchParams {
             query_vectors: None,

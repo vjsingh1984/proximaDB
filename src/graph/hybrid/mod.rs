@@ -52,12 +52,12 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use crate::core::error::{ProximaDBError, VectorDBError, QueryError};
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::core::error::{ProximaDBError, QueryError, VectorDBError};
 use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,
     query::{QueryContext, QueryResult, QueryStats},
 };
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::vector_operations_service::VectorOperationsService;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -980,7 +980,9 @@ impl HybridQueryEngine {
                 serde_json::Value::Number(serde_json::Number::from(*i))
             }
             Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or_else(|| serde_json::Number::from(0)))
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(*d).unwrap_or_else(|| serde_json::Number::from(0)),
+                )
             }
             Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
                 serde_json::Value::Bool(*b)
@@ -1053,7 +1055,10 @@ impl HybridQueryEngine {
                     (actual, expected)
                 {
                     let regex = regex::Regex::new(pattern).map_err(|e| {
-                        VectorDBError::Query(QueryError::InvalidFilter(format!("Invalid regex: {}", e)))
+                        VectorDBError::Query(QueryError::InvalidFilter(format!(
+                            "Invalid regex: {}",
+                            e
+                        )))
                     })?;
                     Ok(regex.is_match(text))
                 } else {
@@ -1101,7 +1106,8 @@ impl HybridQueryEngine {
         // Try to get node embedding from properties
         // Note: VectorValue variant doesn't exist in current proto definition
         // This would need to be implemented differently, perhaps storing embeddings elsewhere
-        if false { // Disabled until VectorValue is available
+        if false {
+            // Disabled until VectorValue is available
             if let Some(_embedding_prop) = node.properties.get("embedding") {
                 // This variant doesn't exist in the current proto definition
                 // Would need VectorValue variant in property_value::Value
@@ -1166,7 +1172,7 @@ impl HybridQueryEngine {
                 outgoing_edges.push(edge.clone());
             }
         }
-        
+
         for edge in outgoing_edges {
             // Skip if already visited
             if visited.contains(&edge.to_node_id) {
@@ -1174,8 +1180,7 @@ impl HybridQueryEngine {
             }
 
             // Check edge type filter
-            if !graph_comp.edge_types.is_empty()
-                && !graph_comp.edge_types.contains(&edge.edge_type)
+            if !graph_comp.edge_types.is_empty() && !graph_comp.edge_types.contains(&edge.edge_type)
             {
                 continue;
             }

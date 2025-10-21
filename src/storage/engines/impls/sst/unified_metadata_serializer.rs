@@ -6,8 +6,8 @@
 use anyhow::Result;
 use bytes::Bytes;
 use std::any::Any;
-use std::fmt::Debug;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 use serde::{Deserialize, Serialize};
@@ -104,7 +104,8 @@ impl EngineMetadataSerializer for SstUnifiedMetadataSerializer {
         // Format: [data blocks][index block][footer]
         // Footer contains pointer to index block
 
-        if data.len() < 48 { // Minimum footer size
+        if data.len() < 48 {
+            // Minimum footer size
             return None;
         }
 
@@ -114,9 +115,10 @@ impl EngineMetadataSerializer for SstUnifiedMetadataSerializer {
 
         // Parse magic number to verify it's an SST file
         let magic = &footer[40..48];
-        if magic != b"sstv0001" && magic != b"sstv0002" { // SST magic numbers
+        if magic != b"sstv0001" && magic != b"sstv0002" {
+            // SST magic numbers
             // Try alternative magic format
-            if &data[data.len()-8..] != b"SSTFILE\0" {
+            if &data[data.len() - 8..] != b"SSTFILE\0" {
                 return None;
             }
         }
@@ -148,12 +150,12 @@ impl EngineMetadataSerializer for SstUnifiedMetadataSerializer {
 
     fn should_cache_metadata(&self, file_path: &str) -> bool {
         // Cache metadata for SST files
-        file_path.ends_with(".sst") ||
-        file_path.contains("/sst/") ||
-        file_path.contains("_sst_") ||
-        file_path.contains("/L0/") ||
-        file_path.contains("/L1/") ||
-        file_path.contains("/L2/")
+        file_path.ends_with(".sst")
+            || file_path.contains("/sst/")
+            || file_path.contains("_sst_")
+            || file_path.contains("/L0/")
+            || file_path.contains("/L1/")
+            || file_path.contains("/L2/")
     }
 }
 
@@ -168,15 +170,13 @@ mod tests {
             entry_count: 50000,
             block_count: 100,
             column_info: HashMap::new(),
-            block_index: vec![
-                BlockIndexEntry {
-                    offset: 0,
-                    size: 4096,
-                    first_key: "key_000000".to_string(),
-                    last_key: "key_000499".to_string(),
-                    entry_count: 500,
-                },
-            ],
+            block_index: vec![BlockIndexEntry {
+                offset: 0,
+                size: 4096,
+                first_key: "key_000000".to_string(),
+                last_key: "key_000499".to_string(),
+                entry_count: 500,
+            }],
             bloom_filter_data: vec![0xFF; 1024],
             compression_type: "snappy".to_string(),
             creation_timestamp: 1234567890,

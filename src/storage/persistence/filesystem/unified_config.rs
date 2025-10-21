@@ -3,8 +3,8 @@
 //! Consolidated configuration for the unified caching filesystem that combines
 //! settings from IntelligentFilesystem, ZeroCopyFilesystem, and ZeroCopyIOSystem.
 
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Unified cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -140,21 +140,21 @@ impl VectorCache {
     /// Get cache statistics
     pub async fn statistics(&self) -> CacheStatistics {
         CacheStatistics {
-            total_items: 0,  // Size not directly available through BaseCache
-            memory_usage_bytes: 0,  // Memory usage not directly available
-            hit_count: 0, // TODO: Track hits
-            miss_count: 0, // TODO: Track misses
+            total_items: 0,        // Size not directly available through BaseCache
+            memory_usage_bytes: 0, // Memory usage not directly available
+            hit_count: 0,          // TODO: Track hits
+            miss_count: 0,         // TODO: Track misses
         }
     }
 
     /// Get cache size in items
     pub async fn size(&self) -> usize {
-        0  // Size not directly available through BaseCache
+        0 // Size not directly available through BaseCache
     }
 
     /// Get memory usage in bytes
     pub async fn memory_usage(&self) -> usize {
-        0  // Memory usage not directly available through BaseCache
+        0 // Memory usage not directly available through BaseCache
     }
 }
 

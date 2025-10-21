@@ -2,8 +2,8 @@ use crate::storage::cache::backend::{
     CacheTier, MemoryBackend, NetworkBackend, NvmeBackend, StorageBackend,
 };
 // Note: Using new eviction system through CrossCacheOrchestrator
-use crate::storage::traits::{UnifiedMetricsCollector, MetricsOperationType};
 use crate::storage::cache::traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
+use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 use async_trait::async_trait;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -38,8 +38,14 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BaseCacheImpl")
             .field("l1_backend", &"<MemoryBackend>")
-            .field("l2_backend", &self.l2_backend.as_ref().map(|_| "<NvmeBackend>"))
-            .field("l3_backend", &self.l3_backend.as_ref().map(|_| "<NetworkBackend>"))
+            .field(
+                "l2_backend",
+                &self.l2_backend.as_ref().map(|_| "<NvmeBackend>"),
+            )
+            .field(
+                "l3_backend",
+                &self.l3_backend.as_ref().map(|_| "<NetworkBackend>"),
+            )
             .field("metrics", &"<UnifiedMetricsCollector>")
             .field("promotion_threshold", &self.promotion_threshold)
             .field("max_entry_size_for_l1", &self.max_entry_size_for_l1)
@@ -87,12 +93,14 @@ where
             // Record eviction in unified metrics
             let metrics = self.metrics.clone();
             tokio::spawn(async move {
-                metrics.record_operation(
-                    MetricsOperationType::Delete,
-                    true,
-                    0,
-                    std::time::Duration::from_secs(0),
-                ).await;
+                metrics
+                    .record_operation(
+                        MetricsOperationType::Delete,
+                        true,
+                        0,
+                        std::time::Duration::from_secs(0),
+                    )
+                    .await;
             });
             Some(entry.value)
         } else {
@@ -166,16 +174,20 @@ where
         match self.l1_backend.put(key.clone(), entry.clone()).await {
             Ok(_) => {
                 // Success - update metrics (eviction handled by global orchestrator)
-                self.metrics.record_operation(
-                    MetricsOperationType::Write,
-                    true,
-                    0,
-                    std::time::Duration::from_secs(0),
-                ).await;
+                self.metrics
+                    .record_operation(
+                        MetricsOperationType::Write,
+                        true,
+                        0,
+                        std::time::Duration::from_secs(0),
+                    )
+                    .await;
             }
             Err(crate::storage::cache::backend::StorageError::CapacityExceeded) => {
                 // Cache is full - trigger eviction through global orchestrator
-                if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                if let Some(orchestrator) =
+                    crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+                {
                     // Try to trigger eviction
                     if let Err(e) = orchestrator.trigger_eviction_if_needed().await {
                         tracing::warn!("Failed to trigger cache eviction: {:?}", e);
@@ -186,12 +198,14 @@ where
                         Ok(_) => {
                             let metrics = self.metrics.clone();
                             tokio::spawn(async move {
-                                metrics.record_operation(
-                                    MetricsOperationType::Write,
-                                    true,
-                                    0,
-                                    std::time::Duration::from_secs(0),
-                                ).await;
+                                metrics
+                                    .record_operation(
+                                        MetricsOperationType::Write,
+                                        true,
+                                        0,
+                                        std::time::Duration::from_secs(0),
+                                    )
+                                    .await;
                             });
                         }
                         Err(_) => {
@@ -202,7 +216,9 @@ where
                     }
                 } else {
                     // No global orchestrator available
-                    tracing::error!("Cache capacity exceeded and no orchestrator available for eviction");
+                    tracing::error!(
+                        "Cache capacity exceeded and no orchestrator available for eviction"
+                    );
                     return;
                 }
             }
@@ -210,12 +226,14 @@ where
                 // Other error - just record the put attempt
                 let metrics = self.metrics.clone();
                 tokio::spawn(async move {
-                    metrics.record_operation(
-                        MetricsOperationType::Write,
-                        false,
-                        0,
-                        std::time::Duration::from_secs(0),
-                    ).await;
+                    metrics
+                        .record_operation(
+                            MetricsOperationType::Write,
+                            false,
+                            0,
+                            std::time::Duration::from_secs(0),
+                        )
+                        .await;
                 });
             }
         }
@@ -227,12 +245,14 @@ where
             let _ = l2.put(key, entry).await;
             let metrics = self.metrics.clone();
             tokio::spawn(async move {
-                metrics.record_operation(
-                    MetricsOperationType::Write,
-                    true,
-                    0,
-                    std::time::Duration::from_secs(0),
-                ).await;
+                metrics
+                    .record_operation(
+                        MetricsOperationType::Write,
+                        true,
+                        0,
+                        std::time::Duration::from_secs(0),
+                    )
+                    .await;
             });
         }
     }
@@ -243,12 +263,14 @@ where
             let _ = l3.put(key, entry).await;
             let metrics = self.metrics.clone();
             tokio::spawn(async move {
-                metrics.record_operation(
-                    MetricsOperationType::Write,
-                    true,
-                    0,
-                    std::time::Duration::from_secs(0),
-                ).await;
+                metrics
+                    .record_operation(
+                        MetricsOperationType::Write,
+                        true,
+                        0,
+                        std::time::Duration::from_secs(0),
+                    )
+                    .await;
             });
         }
     }

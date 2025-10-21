@@ -16,14 +16,14 @@
 //! - SwiftFile manipulation
 //! - Search helpers
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 
-use crate::storage::engines::impls::swift::{SwiftEngine, SwiftFile};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::{VectorRecord, MetadataItem};
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
+use crate::storage::engines::impls::swift::{SwiftEngine, SwiftFile};
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 // ============================================================================
 // Engine Creation Utilities
@@ -98,25 +98,29 @@ pub fn create_test_vector_record(
     expires_at: Option<u32>,
     metadata_items: Vec<MetadataItem>,
 ) -> VectorRecord {
-    let metadata_map: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = metadata_items
-        .into_iter()
-        .map(|item| {
-            // Convert metadata_item::Value to sql_value::Value
-            let sql_value = match item.value {
-                Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s))
-                }
-                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n))
-                }
-                Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b))
-                }
-                None => None,
-            };
-            (item.key, crate::proto::proximadb_v1::SqlValue { value: sql_value })
-        })
-        .collect();
+    let metadata_map: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
+        metadata_items
+            .into_iter()
+            .map(|item| {
+                // Convert metadata_item::Value to sql_value::Value
+                let sql_value = match item.value {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s))
+                    }
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n))
+                    }
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b))
+                    }
+                    None => None,
+                };
+                (
+                    item.key,
+                    crate::proto::proximadb_v1::SqlValue { value: sql_value },
+                )
+            })
+            .collect();
 
     VectorRecord {
         id,
@@ -166,11 +170,13 @@ pub fn create_simple_vector_record(id: &str, dim: usize) -> VectorRecord {
 /// Vector of generated test vectors
 pub fn generate_test_vectors(count: usize, dimension: usize, pattern: &str) -> Vec<Vec<f32>> {
     match pattern {
-        "sequential" => {
-            (0..count)
-                .map(|i| (0..dimension).map(|j| (i * dimension + j) as f32 / 1000.0).collect())
-                .collect()
-        }
+        "sequential" => (0..count)
+            .map(|i| {
+                (0..dimension)
+                    .map(|j| (i * dimension + j) as f32 / 1000.0)
+                    .collect()
+            })
+            .collect(),
         "uniform" => {
             vec![vec![0.1; dimension]; count]
         }
@@ -195,9 +201,12 @@ pub fn generate_test_metadata(count: usize, prefix: &str) -> Vec<MetadataItem> {
     (0..count)
         .map(|i| MetadataItem {
             key: format!("{}_{}", prefix, i),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                format!("value_{}", i),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                    "value_{}",
+                    i
+                )),
+            ),
         })
         .collect()
 }

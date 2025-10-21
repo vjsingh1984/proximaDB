@@ -14,8 +14,8 @@ use tracing::{debug, info, warn};
 use super::MetricsConfig;
 use super::schema::{CollectionMetrics, GlobalMetrics};
 use super::updater::MetricsUpdate;
-use crate::storage::persistence::filesystem::{FileOptions, FilesystemFactory};
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+use crate::storage::persistence::filesystem::{FileOptions, FilesystemFactory};
 
 /// Metrics persistence layer with cross-cloud support
 pub struct MetricsPersistenceLayer {

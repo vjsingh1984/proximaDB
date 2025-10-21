@@ -13,10 +13,15 @@ use tempfile::TempDir;
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-use proximadb::proto::proximadb_v1::{sql_value, Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue, StorageAssignment, VectorRecord};
+use proximadb::proto::proximadb_v1::{
+    Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
+    StorageAssignment, VectorRecord, sql_value,
+};
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::storage::traits::{FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine};
+use proximadb::storage::traits::{
+    FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
+};
 use proximadb::utils::StoragePath;
 
 /// Create test vectors with diverse metadata for comprehensive filtering
@@ -122,12 +127,48 @@ async fn search_with_filter(
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Viper as i32),
             filterable_columns: vec![
-                FilterableColumnSpec { name: "category".to_string(), data_type: FilterableDataType::FilterableString as i32, indexed: false, supports_range: false, estimated_cardinality: None },
-                FilterableColumnSpec { name: "price".to_string(), data_type: FilterableDataType::FilterableFloat as i32, indexed: false, supports_range: true, estimated_cardinality: None },
-                FilterableColumnSpec { name: "enabled".to_string(), data_type: FilterableDataType::FilterableBoolean as i32, indexed: false, supports_range: false, estimated_cardinality: None },
-                FilterableColumnSpec { name: "score".to_string(), data_type: FilterableDataType::FilterableFloat as i32, indexed: false, supports_range: true, estimated_cardinality: None },
-                FilterableColumnSpec { name: "status".to_string(), data_type: FilterableDataType::FilterableString as i32, indexed: false, supports_range: false, estimated_cardinality: None },
-                FilterableColumnSpec { name: "count".to_string(), data_type: FilterableDataType::FilterableInteger as i32, indexed: false, supports_range: true, estimated_cardinality: None },
+                FilterableColumnSpec {
+                    name: "category".to_string(),
+                    data_type: FilterableDataType::FilterableString as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "price".to_string(),
+                    data_type: FilterableDataType::FilterableFloat as i32,
+                    indexed: false,
+                    supports_range: true,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "enabled".to_string(),
+                    data_type: FilterableDataType::FilterableBoolean as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "score".to_string(),
+                    data_type: FilterableDataType::FilterableFloat as i32,
+                    indexed: false,
+                    supports_range: true,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "status".to_string(),
+                    data_type: FilterableDataType::FilterableString as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "count".to_string(),
+                    data_type: FilterableDataType::FilterableInteger as i32,
+                    indexed: false,
+                    supports_range: true,
+                    estimated_cardinality: None,
+                },
             ],
             ..Default::default()
         }),
@@ -193,12 +234,48 @@ async fn setup_test_collection(
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Viper as i32),
             filterable_columns: vec![
-                FilterableColumnSpec { name: "category".to_string(), data_type: FilterableDataType::FilterableString as i32, indexed: false, supports_range: false, estimated_cardinality: None },
-                FilterableColumnSpec { name: "price".to_string(), data_type: FilterableDataType::FilterableFloat as i32, indexed: false, supports_range: true, estimated_cardinality: None },
-                FilterableColumnSpec { name: "enabled".to_string(), data_type: FilterableDataType::FilterableBoolean as i32, indexed: false, supports_range: false, estimated_cardinality: None },
-                FilterableColumnSpec { name: "score".to_string(), data_type: FilterableDataType::FilterableFloat as i32, indexed: false, supports_range: true, estimated_cardinality: None },
-                FilterableColumnSpec { name: "status".to_string(), data_type: FilterableDataType::FilterableString as i32, indexed: false, supports_range: false, estimated_cardinality: None },
-                FilterableColumnSpec { name: "count".to_string(), data_type: FilterableDataType::FilterableInteger as i32, indexed: false, supports_range: true, estimated_cardinality: None },
+                FilterableColumnSpec {
+                    name: "category".to_string(),
+                    data_type: FilterableDataType::FilterableString as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "price".to_string(),
+                    data_type: FilterableDataType::FilterableFloat as i32,
+                    indexed: false,
+                    supports_range: true,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "enabled".to_string(),
+                    data_type: FilterableDataType::FilterableBoolean as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "score".to_string(),
+                    data_type: FilterableDataType::FilterableFloat as i32,
+                    indexed: false,
+                    supports_range: true,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "status".to_string(),
+                    data_type: FilterableDataType::FilterableString as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                },
+                FilterableColumnSpec {
+                    name: "count".to_string(),
+                    data_type: FilterableDataType::FilterableInteger as i32,
+                    indexed: false,
+                    supports_range: true,
+                    estimated_cardinality: None,
+                },
             ],
             ..Default::default()
         }),
@@ -261,7 +338,10 @@ async fn test_string_equals_filter() -> Result<()> {
     .await?;
 
     // Verify: Should have ~10 results (indices 5, 15, 25, ..., 95)
-    println!("✓ String Equals filter: {} results (expected ~10)", results.len());
+    println!(
+        "✓ String Equals filter: {} results (expected ~10)",
+        results.len()
+    );
     assert!(
         results.len() >= 8 && results.len() <= 12,
         "Expected ~10 results for cat_5, got {}",
@@ -271,12 +351,7 @@ async fn test_string_equals_filter() -> Result<()> {
     // Verify all results match filter
     for result in &results {
         let id_num: usize = result.id.strip_prefix("vec_").unwrap().parse()?;
-        assert_eq!(
-            id_num % 10,
-            5,
-            "Result {} doesn't match filter",
-            result.id
-        );
+        assert_eq!(id_num % 10, 5, "Result {} doesn't match filter", result.id);
     }
 
     Ok(())
@@ -406,7 +481,12 @@ async fn test_and_filter() -> Result<()> {
         );
 
         let price = (id_num * 10) % 1000;
-        assert!(price < 500, "Result {} has price {} >= 500", result.id, price);
+        assert!(
+            price < 500,
+            "Result {} has price {} >= 500",
+            result.id,
+            price
+        );
     }
 
     Ok(())
@@ -531,7 +611,10 @@ async fn test_greater_than_or_equal_filter() -> Result<()> {
     .await?;
 
     // Verify: Should have results with score >= 5.0 (indices 50-99)
-    println!("✓ GreaterThanOrEqual filter: {} results (expected ~50)", results.len());
+    println!(
+        "✓ GreaterThanOrEqual filter: {} results (expected ~50)",
+        results.len()
+    );
     assert!(
         results.len() >= 45,
         "Expected results for score >= 5.0, got {}",
@@ -587,7 +670,10 @@ async fn test_complex_nested_filter_zero_results() -> Result<()> {
     .await?;
 
     // Verify: Should have 0 results (mutually exclusive conditions)
-    println!("✓ Complex nested filter (zero results): {} results (expected 0)", results.len());
+    println!(
+        "✓ Complex nested filter (zero results): {} results (expected 0)",
+        results.len()
+    );
     assert_eq!(
         results.len(),
         0,
@@ -642,7 +728,10 @@ async fn test_complex_nested_filter_with_results() -> Result<()> {
     .await?;
 
     // Verify: Should have ~20 results (cat_0 and cat_2, both with enabled=true)
-    println!("✓ Complex nested filter (with results): {} results (expected ~20)", results.len());
+    println!(
+        "✓ Complex nested filter (with results): {} results (expected ~20)",
+        results.len()
+    );
     assert!(
         results.len() >= 15 && results.len() <= 25,
         "Expected ~20 results for complex filter, got {}",

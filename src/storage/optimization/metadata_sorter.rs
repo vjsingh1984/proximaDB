@@ -14,7 +14,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{VectorRecord, FilterableColumnSpec, SqlValue};
+use crate::proto::proximadb_v1::{FilterableColumnSpec, SqlValue, VectorRecord};
 
 /// Configuration for metadata-based sorting
 #[derive(Debug, Clone)]
@@ -338,12 +338,22 @@ mod tests {
 
     fn create_test_record(id: &str, category: &str, priority: &str) -> VectorRecord {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(category.to_string())),
-        });
-        metadata.insert("priority".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(priority.to_string())),
-        });
+        metadata.insert(
+            "category".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    category.to_string(),
+                )),
+            },
+        );
+        metadata.insert(
+            "priority".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    priority.to_string(),
+                )),
+            },
+        );
 
         VectorRecord {
             id: id.to_string(),

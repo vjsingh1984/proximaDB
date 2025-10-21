@@ -4,7 +4,6 @@ pub mod bounded_queue;
 pub mod engine_benchmarks;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
-pub mod sql_value_filter;
 pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
@@ -13,6 +12,7 @@ pub mod queries;
 pub mod query_preprocessing;
 pub mod results;
 pub mod smart_execution_strategy;
+pub mod sql_value_filter;
 pub mod typesafe_filter;
 pub mod unified_interface;
 pub mod unified_progressive_pipeline;
@@ -230,8 +230,7 @@ pub use multi_tier_deduplication::{
 
 // Filter types are already defined above, no need to re-export
 pub use results::{
-    EngineStats, OptimizedSearchRecord, QuantizationInfo, SearchDebugInfo,
-    SearchResultSet,
+    EngineStats, OptimizedSearchRecord, QuantizationInfo, SearchDebugInfo, SearchResultSet,
 };
 // NOTE: Proto types (SearchResult, SearchVectorRecord) should NOT be re-exported here.
 // They belong in the API layer only. Services should use OptimizedSearchRecord
@@ -588,41 +587,40 @@ pub mod protocol_conversions {
                     None => return Err("Missing value in filter condition".to_string()),
                 };
 
-                let operator = match crate::proto::proximadb_v1::ComparisonOp::try_from(
-                    condition.op,
-                ) {
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::Eq) => {
-                        ComparisonOperator::Equals
-                    }
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::Ne) => {
-                        ComparisonOperator::NotEquals
-                    }
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::Gt) => {
-                        ComparisonOperator::GreaterThan
-                    }
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::Gte) => {
-                        ComparisonOperator::GreaterThanOrEqual
-                    }
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::Lt) => {
-                        ComparisonOperator::LessThan
-                    }
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::Lte) => {
-                        ComparisonOperator::LessThanOrEqual
-                    }
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::In) => ComparisonOperator::In,
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::NotIn) => {
-                        ComparisonOperator::NotIn
-                    }
-                    Ok(crate::proto::proximadb_v1::ComparisonOp::Contains) => {
-                        ComparisonOperator::Contains
-                    }
-                    _ => {
-                        return Err(format!(
-                            "Unknown proto filter operation: {}",
-                            condition.op
-                        ));
-                    }
-                };
+                let operator =
+                    match crate::proto::proximadb_v1::ComparisonOp::try_from(condition.op) {
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::Eq) => {
+                            ComparisonOperator::Equals
+                        }
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::Ne) => {
+                            ComparisonOperator::NotEquals
+                        }
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::Gt) => {
+                            ComparisonOperator::GreaterThan
+                        }
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::Gte) => {
+                            ComparisonOperator::GreaterThanOrEqual
+                        }
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::Lt) => {
+                            ComparisonOperator::LessThan
+                        }
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::Lte) => {
+                            ComparisonOperator::LessThanOrEqual
+                        }
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::In) => ComparisonOperator::In,
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::NotIn) => {
+                            ComparisonOperator::NotIn
+                        }
+                        Ok(crate::proto::proximadb_v1::ComparisonOp::Contains) => {
+                            ComparisonOperator::Contains
+                        }
+                        _ => {
+                            return Err(format!(
+                                "Unknown proto filter operation: {}",
+                                condition.op
+                            ));
+                        }
+                    };
 
                 Ok(FilterExpression::Comparison {
                     field,
@@ -727,8 +725,6 @@ pub mod protocol_conversions {
         }
     }
 
-    
-
     /// Convert legacy HashMap filters to unified FilterExpression
     /// Used for backward compatibility with existing filter formats
     pub fn from_legacy_hashmap_filter(
@@ -785,10 +781,10 @@ pub mod protocol_conversions {
                         serde_json::Value::Null
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
-                        serde_json::Value::Array(vec![])  // Simplified for now
+                        serde_json::Value::Array(vec![]) // Simplified for now
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
-                        serde_json::Value::Object(serde_json::Map::new())  // Simplified for now
+                        serde_json::Value::Object(serde_json::Map::new()) // Simplified for now
                     }
                     None => serde_json::Value::Null,
                 };

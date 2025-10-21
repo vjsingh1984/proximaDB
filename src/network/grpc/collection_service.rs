@@ -57,16 +57,20 @@ impl CollectionService for CollectionServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("CreateCollection failed: {}", e)))?;
 
-        tracing::debug!("CreateCollection response: success={}, has_collection={}, error_code={:?}",
-            resp.success, resp.collection.is_some(), resp.error_code);
+        tracing::debug!(
+            "CreateCollection response: success={}, has_collection={}, error_code={:?}",
+            resp.success,
+            resp.collection.is_some(),
+            resp.error_code
+        );
 
         if let Some(collection) = resp.collection {
             Ok(Response::new(collection))
         } else {
-            Err(Status::internal(
-                format!("CreateCollection did not return a collection (success={}, error_code={:?})",
-                    resp.success, resp.error_code)
-            ))
+            Err(Status::internal(format!(
+                "CreateCollection did not return a collection (success={}, error_code={:?})",
+                resp.success, resp.error_code
+            )))
         }
     }
 

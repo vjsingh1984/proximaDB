@@ -72,7 +72,7 @@ impl FieldProjection {
 
     /// Convert to columnar projection (for Parquet)
     #[cfg(feature = "parquet")]
-    pub fn to_columnar_projection(&self) -> crate::storage::engines::core::formats::columnar::columnar_query_engine::column_projector::ColumnProjection {
+    pub fn to_columnar_projection(&self) -> crate::storage::engines::core::formats::columnar::columnar_query_engine::column_projector::ColumnProjection{
         use crate::storage::engines::core::formats::columnar::columnar_query_engine::column_projector::ColumnProjection;
 
         let fields: Vec<String> = self.included_fields.iter().cloned().collect();
@@ -127,8 +127,7 @@ mod tests {
 
     #[test]
     fn test_with_field() {
-        let proj = FieldProjection::new(vec!["f1".to_string()])
-            .with_field("f2".to_string());
+        let proj = FieldProjection::new(vec!["f1".to_string()]).with_field("f2".to_string());
 
         assert_eq!(proj.field_count(), 2);
         assert!(proj.includes_field("f1"));
@@ -137,8 +136,7 @@ mod tests {
 
     #[test]
     fn test_with_vector() {
-        let proj = FieldProjection::new(vec!["f1".to_string()])
-            .with_vector();
+        let proj = FieldProjection::new(vec!["f1".to_string()]).with_vector();
 
         assert!(proj.include_vector);
     }

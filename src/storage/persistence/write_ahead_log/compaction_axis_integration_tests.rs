@@ -10,8 +10,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::index::axis::{AxisVectorIndex, IndexAlgorithm, IndexStats};
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::traits::CompactionResult;
     use chrono::Utc;
     use std::collections::HashMap;

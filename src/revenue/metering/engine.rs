@@ -2,12 +2,12 @@
 //!
 //! Real-time usage tracking and cost calculation for enterprise billing
 
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc, Duration};
-use anyhow::{Result, anyhow};
 use tracing::{debug, info, warn};
 
 /// Enterprise usage metering engine for real-time billing
@@ -112,17 +112,17 @@ pub struct PeakUsageMetrics {
 /// Pricing configuration for enterprise billing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingConfig {
-    pub search_cost_per_1k: f64,          // Cost per 1000 vector searches
-    pub insertion_cost_per_1k: f64,       // Cost per 1000 vector insertions
-    pub ai_cost_per_1k_tokens: f64,       // Cost per 1000 AI tokens
-    pub storage_cost_per_gb: f64,         // Monthly cost per GB storage
-    pub compute_cost_per_hour: f64,       // Cost per compute hour
-    pub transfer_cost_per_gb: f64,        // Cost per GB data transfer
+    pub search_cost_per_1k: f64,            // Cost per 1000 vector searches
+    pub insertion_cost_per_1k: f64,         // Cost per 1000 vector insertions
+    pub ai_cost_per_1k_tokens: f64,         // Cost per 1000 AI tokens
+    pub storage_cost_per_gb: f64,           // Monthly cost per GB storage
+    pub compute_cost_per_hour: f64,         // Cost per compute hour
+    pub transfer_cost_per_gb: f64,          // Cost per GB data transfer
     pub collection_creation_base_cost: f64, // Base cost for collection creation
-    pub executive_dashboard_cost: f64,     // Cost per executive dashboard generation
-    pub natural_language_query_cost: f64, // Cost per natural language query
-    pub billing_threshold: f64,           // Trigger billing at this cost amount
-    pub billing_frequency_days: u32,      // Bill every N days
+    pub executive_dashboard_cost: f64,      // Cost per executive dashboard generation
+    pub natural_language_query_cost: f64,   // Cost per natural language query
+    pub billing_threshold: f64,             // Trigger billing at this cost amount
+    pub billing_frequency_days: u32,        // Bill every N days
     pub enterprise_discount_tiers: Vec<DiscountTier>,
 }
 
@@ -151,7 +151,10 @@ impl UsageMeteringEngine {
 
     /// Record billable usage event with real-time cost calculation
     pub async fn record_usage_event(&self, event: UsageEvent) -> Result<()> {
-        debug!("💰 Recording usage event: {:?} for tenant {}", event.event_type, event.tenant_id);
+        debug!(
+            "💰 Recording usage event: {:?} for tenant {}",
+            event.event_type, event.tenant_id
+        );
 
         // Calculate cost impact in real-time
         let cost = self.calculate_event_cost(&event).await?;
@@ -160,7 +163,8 @@ impl UsageMeteringEngine {
 
         // Store event for detailed analytics
         let mut events = self.usage_events.write().await;
-        events.entry(enriched_event.tenant_id.clone())
+        events
+            .entry(enriched_event.tenant_id.clone())
             .or_insert_with(Vec::new)
             .push(enriched_event.clone());
 
@@ -168,13 +172,17 @@ impl UsageMeteringEngine {
         self.update_usage_aggregates(&enriched_event).await?;
 
         // Check billing threshold
-        self.check_billing_threshold(&enriched_event.tenant_id).await?;
+        self.check_billing_threshold(&enriched_event.tenant_id)
+            .await?;
 
         // Update customer success metrics
-        self.update_customer_success_metrics(&enriched_event).await?;
+        self.update_customer_success_metrics(&enriched_event)
+            .await?;
 
-        info!("✅ Usage event recorded: ${:.4} cost for tenant {} ({})",
-              cost, enriched_event.tenant_id, enriched_event.event_type);
+        info!(
+            "✅ Usage event recorded: ${:.4} cost for tenant {} ({})",
+            cost, enriched_event.tenant_id, enriched_event.event_type
+        );
 
         Ok(())
     }
@@ -185,17 +193,23 @@ impl UsageMeteringEngine {
 
         let cost = match &event.event_type {
             UsageEventType::VectorSearch { k, dimensions } => {
-                pricing.search_cost_per_1k * (*k as f64 / 1000.0) * pricing.dimension_multiplier(*dimensions)
+                pricing.search_cost_per_1k
+                    * (*k as f64 / 1000.0)
+                    * pricing.dimension_multiplier(*dimensions)
             }
             UsageEventType::VectorInsertion { count, dimensions } => {
-                pricing.insertion_cost_per_1k * (*count as f64 / 1000.0) * pricing.dimension_multiplier(*dimensions)
+                pricing.insertion_cost_per_1k
+                    * (*count as f64 / 1000.0)
+                    * pricing.dimension_multiplier(*dimensions)
             }
             UsageEventType::CollectionCreation { estimated_size } => {
-                pricing.collection_creation_base_cost + (pricing.storage_cost_per_gb * (*estimated_size as f64 / 1_073_741_824.0))
+                pricing.collection_creation_base_cost
+                    + (pricing.storage_cost_per_gb * (*estimated_size as f64 / 1_073_741_824.0))
             }
-            UsageEventType::AIQuery { provider: _, tokens } => {
-                pricing.ai_cost_per_1k_tokens * (*tokens as f64 / 1000.0)
-            }
+            UsageEventType::AIQuery {
+                provider: _,
+                tokens,
+            } => pricing.ai_cost_per_1k_tokens * (*tokens as f64 / 1000.0),
             UsageEventType::DataStorage { bytes } => {
                 pricing.storage_cost_per_gb * (*bytes as f64 / 1_073_741_824.0)
             }
@@ -219,7 +233,8 @@ impl UsageMeteringEngine {
     /// Update usage aggregates for billing
     async fn update_usage_aggregates(&self, event: &UsageEvent) -> Result<()> {
         let mut aggregates = self.usage_aggregates.write().await;
-        let tenant_aggregate = aggregates.entry(event.tenant_id.clone())
+        let tenant_aggregate = aggregates
+            .entry(event.tenant_id.clone())
             .or_insert_with(|| UsageAggregate::new_for_tenant(&event.tenant_id));
 
         // Update aggregate counters based on event type
@@ -236,13 +251,15 @@ impl UsageMeteringEngine {
                 self.update_ai_usage_metrics(tenant_aggregate, event).await;
             }
             UsageEventType::DataStorage { bytes } => {
-                tenant_aggregate.total_storage_bytes = tenant_aggregate.total_storage_bytes.max(*bytes);
+                tenant_aggregate.total_storage_bytes =
+                    tenant_aggregate.total_storage_bytes.max(*bytes);
             }
             UsageEventType::ComputeTime { milliseconds } => {
                 tenant_aggregate.total_compute_ms += *milliseconds;
             }
             UsageEventType::ExecutiveDashboard { insights_generated } => {
-                self.update_executive_dashboard_usage(tenant_aggregate, *insights_generated).await;
+                self.update_executive_dashboard_usage(tenant_aggregate, *insights_generated)
+                    .await;
             }
             _ => {}
         }
@@ -252,7 +269,9 @@ impl UsageMeteringEngine {
 
         // Update daily usage tracking
         let date_key = event.timestamp.format("%Y-%m-%d").to_string();
-        let daily_usage = tenant_aggregate.usage_by_day.entry(date_key.clone())
+        let daily_usage = tenant_aggregate
+            .usage_by_day
+            .entry(date_key.clone())
             .or_insert_with(|| DailyUsage::new(&date_key));
 
         self.update_daily_usage(daily_usage, event).await;
@@ -289,17 +308,26 @@ impl UsageMeteringEngine {
         let aggregates = self.usage_aggregates.read().await;
 
         if let Some(aggregate) = aggregates.get(tenant_id) {
-            let should_bill = aggregate.total_cost > self.pricing_config.billing_threshold ||
-                             (Utc::now() - aggregate.billing_period_start).num_days() >= self.pricing_config.billing_frequency_days as i64;
+            let should_bill = aggregate.total_cost > self.pricing_config.billing_threshold
+                || (Utc::now() - aggregate.billing_period_start).num_days()
+                    >= self.pricing_config.billing_frequency_days as i64;
 
             if should_bill {
-                info!("💳 Billing threshold reached for tenant {}: ${:.2}", tenant_id, aggregate.total_cost);
+                info!(
+                    "💳 Billing threshold reached for tenant {}: ${:.2}",
+                    tenant_id, aggregate.total_cost
+                );
 
                 // Trigger billing process
                 if let Some(ref billing_provider) = self.billing_integration {
-                    billing_provider.process_billing(tenant_id, aggregate).await?;
+                    billing_provider
+                        .process_billing(tenant_id, aggregate)
+                        .await?;
                 } else {
-                    warn!("⚠️ Billing threshold reached but no billing provider configured for tenant: {}", tenant_id);
+                    warn!(
+                        "⚠️ Billing threshold reached but no billing provider configured for tenant: {}",
+                        tenant_id
+                    );
                 }
             }
         }
@@ -308,13 +336,19 @@ impl UsageMeteringEngine {
     }
 
     /// Get usage summary for customer dashboard
-    pub async fn get_usage_summary(&self, tenant_id: &str, period: BillingPeriod) -> Result<UsageSummary> {
+    pub async fn get_usage_summary(
+        &self,
+        tenant_id: &str,
+        period: BillingPeriod,
+    ) -> Result<UsageSummary> {
         let aggregates = self.usage_aggregates.read().await;
 
         if let Some(aggregate) = aggregates.get(tenant_id) {
             let usage_breakdown = self.calculate_usage_breakdown(aggregate).await?;
             let trending = self.calculate_usage_trends(aggregate).await?;
-            let recommendations = self.generate_cost_optimization_recommendations(aggregate).await?;
+            let recommendations = self
+                .generate_cost_optimization_recommendations(aggregate)
+                .await?;
 
             Ok(UsageSummary {
                 tenant_id: tenant_id.to_string(),
@@ -331,15 +365,20 @@ impl UsageMeteringEngine {
     }
 
     /// Generate cost optimization recommendations
-    async fn generate_cost_optimization_recommendations(&self, aggregate: &UsageAggregate) -> Result<Vec<CostOptimizationRecommendation>> {
+    async fn generate_cost_optimization_recommendations(
+        &self,
+        aggregate: &UsageAggregate,
+    ) -> Result<Vec<CostOptimizationRecommendation>> {
         let mut recommendations = Vec::new();
 
         // High storage cost optimization
-        if aggregate.total_storage_bytes > 100 * 1024 * 1024 * 1024 { // >100GB
+        if aggregate.total_storage_bytes > 100 * 1024 * 1024 * 1024 {
+            // >100GB
             recommendations.push(CostOptimizationRecommendation {
                 recommendation_type: RecommendationType::StorageOptimization,
                 title: "Storage Cost Optimization".to_string(),
-                description: "High storage usage detected - consider data archiving or compression".to_string(),
+                description: "High storage usage detected - consider data archiving or compression"
+                    .to_string(),
                 estimated_savings_usd: aggregate.total_cost * 0.20, // 20% potential savings
                 implementation_effort: ImplementationEffort::Medium,
                 priority: RecommendationPriority::High,
@@ -351,7 +390,8 @@ impl UsageMeteringEngine {
             recommendations.push(CostOptimizationRecommendation {
                 recommendation_type: RecommendationType::AIOptimization,
                 title: "AI Usage Optimization".to_string(),
-                description: "High AI query volume - consider caching and query optimization".to_string(),
+                description: "High AI query volume - consider caching and query optimization"
+                    .to_string(),
                 estimated_savings_usd: aggregate.total_cost * 0.15, // 15% potential savings
                 implementation_effort: ImplementationEffort::Low,
                 priority: RecommendationPriority::Medium,
@@ -378,11 +418,17 @@ impl UsageMeteringEngine {
         // Track usage patterns for customer success
         match &event.event_type {
             UsageEventType::ExecutiveDashboard { insights_generated } => {
-                info!("📊 Executive engagement: {} insights generated for tenant {}", insights_generated, event.tenant_id);
+                info!(
+                    "📊 Executive engagement: {} insights generated for tenant {}",
+                    insights_generated, event.tenant_id
+                );
                 // High executive dashboard usage indicates strong engagement
             }
             UsageEventType::AIQuery { tokens, .. } => {
-                debug!("🤖 AI engagement: {} tokens used by tenant {}", tokens, event.tenant_id);
+                debug!(
+                    "🤖 AI engagement: {} tokens used by tenant {}",
+                    tokens, event.tenant_id
+                );
                 // AI usage indicates advanced feature adoption
             }
             _ => {}
@@ -394,35 +440,62 @@ impl UsageMeteringEngine {
     // Helper methods for usage calculations
     async fn update_peak_qps(&self, aggregate: &mut UsageAggregate, event: &UsageEvent) {
         // Simplified peak QPS calculation
-        let current_qps = aggregate.total_searches as f64 /
-                         (Utc::now() - aggregate.billing_period_start).num_minutes().max(1) as f64 * 60.0;
-        aggregate.peak_usage_metrics.peak_qps = aggregate.peak_usage_metrics.peak_qps.max(current_qps);
+        let current_qps = aggregate.total_searches as f64
+            / (Utc::now() - aggregate.billing_period_start)
+                .num_minutes()
+                .max(1) as f64
+            * 60.0;
+        aggregate.peak_usage_metrics.peak_qps =
+            aggregate.peak_usage_metrics.peak_qps.max(current_qps);
     }
 
     async fn update_ai_usage_metrics(&self, aggregate: &mut UsageAggregate, _event: &UsageEvent) {
         // Track AI usage patterns for customer success
-        let ai_requests_per_hour = aggregate.total_ai_queries as f32 /
-                                  (Utc::now() - aggregate.billing_period_start).num_hours().max(1) as f32;
-        aggregate.peak_usage_metrics.peak_ai_requests_per_hour =
-            aggregate.peak_usage_metrics.peak_ai_requests_per_hour.max(ai_requests_per_hour as u32);
+        let ai_requests_per_hour = aggregate.total_ai_queries as f32
+            / (Utc::now() - aggregate.billing_period_start)
+                .num_hours()
+                .max(1) as f32;
+        aggregate.peak_usage_metrics.peak_ai_requests_per_hour = aggregate
+            .peak_usage_metrics
+            .peak_ai_requests_per_hour
+            .max(ai_requests_per_hour as u32);
     }
 
-    async fn update_executive_dashboard_usage(&self, _aggregate: &mut UsageAggregate, insights_generated: u32) {
+    async fn update_executive_dashboard_usage(
+        &self,
+        _aggregate: &mut UsageAggregate,
+        insights_generated: u32,
+    ) {
         // Track executive dashboard usage for customer success
-        info!("📈 Executive dashboard usage: {} insights generated", insights_generated);
+        info!(
+            "📈 Executive dashboard usage: {} insights generated",
+            insights_generated
+        );
     }
 
-    async fn calculate_usage_breakdown(&self, aggregate: &UsageAggregate) -> Result<UsageBreakdown> {
+    async fn calculate_usage_breakdown(
+        &self,
+        aggregate: &UsageAggregate,
+    ) -> Result<UsageBreakdown> {
         let total_cost = aggregate.total_cost;
 
         // Calculate cost breakdown by category
         let storage_cost_percentage = if total_cost > 0.0 {
-            (aggregate.total_storage_bytes as f64 * self.pricing_config.storage_cost_per_gb / 1_073_741_824.0) / total_cost * 100.0
-        } else { 0.0 };
+            (aggregate.total_storage_bytes as f64 * self.pricing_config.storage_cost_per_gb
+                / 1_073_741_824.0)
+                / total_cost
+                * 100.0
+        } else {
+            0.0
+        };
 
         let search_cost_percentage = if total_cost > 0.0 {
-            (aggregate.total_searches as f64 * self.pricing_config.search_cost_per_1k / 1000.0) / total_cost * 100.0
-        } else { 0.0 };
+            (aggregate.total_searches as f64 * self.pricing_config.search_cost_per_1k / 1000.0)
+                / total_cost
+                * 100.0
+        } else {
+            0.0
+        };
 
         let ai_cost_percentage = 100.0 - storage_cost_percentage - search_cost_percentage;
 
@@ -445,7 +518,11 @@ impl UsageMeteringEngine {
 
         Ok(UsageTrends {
             week_over_week_growth: growth_rate,
-            cost_trend: if growth_rate > 0.0 { TrendDirection::Increasing } else { TrendDirection::Decreasing },
+            cost_trend: if growth_rate > 0.0 {
+                TrendDirection::Increasing
+            } else {
+                TrendDirection::Decreasing
+            },
             usage_pattern: UsagePattern::BusinessHours, // Simplified
             forecast_next_month: current_week_cost * 4.0 * (1.0 + growth_rate / 100.0),
         })
@@ -467,17 +544,17 @@ impl PricingConfig {
     /// Get enterprise pricing configuration
     pub fn enterprise_default() -> Self {
         Self {
-            search_cost_per_1k: 0.001,        // $0.001 per 1000 searches
-            insertion_cost_per_1k: 0.002,     // $0.002 per 1000 insertions
-            ai_cost_per_1k_tokens: 0.02,      // $0.02 per 1000 AI tokens
-            storage_cost_per_gb: 0.10,        // $0.10 per GB per month
-            compute_cost_per_hour: 0.05,      // $0.05 per compute hour
-            transfer_cost_per_gb: 0.01,       // $0.01 per GB transfer
+            search_cost_per_1k: 0.001,           // $0.001 per 1000 searches
+            insertion_cost_per_1k: 0.002,        // $0.002 per 1000 insertions
+            ai_cost_per_1k_tokens: 0.02,         // $0.02 per 1000 AI tokens
+            storage_cost_per_gb: 0.10,           // $0.10 per GB per month
+            compute_cost_per_hour: 0.05,         // $0.05 per compute hour
+            transfer_cost_per_gb: 0.01,          // $0.01 per GB transfer
             collection_creation_base_cost: 0.50, // $0.50 per collection
-            executive_dashboard_cost: 0.25,   // $0.25 per executive dashboard
-            natural_language_query_cost: 0.05, // $0.05 per NL query
-            billing_threshold: 100.0,         // Bill at $100
-            billing_frequency_days: 30,       // Monthly billing
+            executive_dashboard_cost: 0.25,      // $0.25 per executive dashboard
+            natural_language_query_cost: 0.05,   // $0.05 per NL query
+            billing_threshold: 100.0,            // Bill at $100
+            billing_frequency_days: 30,          // Monthly billing
             enterprise_discount_tiers: vec![
                 DiscountTier {
                     name: "Growth".to_string(),
@@ -489,13 +566,19 @@ impl PricingConfig {
                     name: "Scale".to_string(),
                     min_monthly_spend: 10000.0,
                     discount_percentage: 20.0,
-                    additional_benefits: vec!["Dedicated CSM".to_string(), "Custom SLA".to_string()],
+                    additional_benefits: vec![
+                        "Dedicated CSM".to_string(),
+                        "Custom SLA".to_string(),
+                    ],
                 },
                 DiscountTier {
                     name: "Enterprise".to_string(),
                     min_monthly_spend: 50000.0,
                     discount_percentage: 30.0,
-                    additional_benefits: vec!["24/7 support".to_string(), "Custom deployment".to_string()],
+                    additional_benefits: vec![
+                        "24/7 support".to_string(),
+                        "Custom deployment".to_string(),
+                    ],
                 },
             ],
         }
@@ -543,12 +626,24 @@ impl DailyUsage {
 impl std::fmt::Display for UsageEventType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UsageEventType::VectorSearch { k, dimensions } => write!(f, "VectorSearch(k={}, dim={})", k, dimensions),
-            UsageEventType::VectorInsertion { count, dimensions } => write!(f, "VectorInsertion(count={}, dim={})", count, dimensions),
-            UsageEventType::CollectionCreation { estimated_size } => write!(f, "CollectionCreation(size={})", estimated_size),
-            UsageEventType::AIQuery { provider, tokens } => write!(f, "AIQuery(provider={}, tokens={})", provider, tokens),
-            UsageEventType::ExecutiveDashboard { insights_generated } => write!(f, "ExecutiveDashboard(insights={})", insights_generated),
-            UsageEventType::NaturalLanguageQuery { complexity_score } => write!(f, "NaturalLanguageQuery(complexity={})", complexity_score),
+            UsageEventType::VectorSearch { k, dimensions } => {
+                write!(f, "VectorSearch(k={}, dim={})", k, dimensions)
+            }
+            UsageEventType::VectorInsertion { count, dimensions } => {
+                write!(f, "VectorInsertion(count={}, dim={})", count, dimensions)
+            }
+            UsageEventType::CollectionCreation { estimated_size } => {
+                write!(f, "CollectionCreation(size={})", estimated_size)
+            }
+            UsageEventType::AIQuery { provider, tokens } => {
+                write!(f, "AIQuery(provider={}, tokens={})", provider, tokens)
+            }
+            UsageEventType::ExecutiveDashboard { insights_generated } => {
+                write!(f, "ExecutiveDashboard(insights={})", insights_generated)
+            }
+            UsageEventType::NaturalLanguageQuery { complexity_score } => {
+                write!(f, "NaturalLanguageQuery(complexity={})", complexity_score)
+            }
             _ => write!(f, "{:?}", self),
         }
     }
@@ -568,7 +663,10 @@ pub enum BillingPeriod {
     Monthly,
     Quarterly,
     Annual,
-    Custom { start: DateTime<Utc>, end: DateTime<Utc> },
+    Custom {
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    },
 }
 
 /// Usage summary for customer dashboards
@@ -677,7 +775,9 @@ mod tests {
         let pricing_config = PricingConfig::enterprise_default();
         let metering_config = MeteringConfig::default();
 
-        let engine = UsageMeteringEngine::new(pricing_config, metering_config).await.unwrap();
+        let engine = UsageMeteringEngine::new(pricing_config, metering_config)
+            .await
+            .unwrap();
         assert!(engine.config.enable_real_time_metering);
     }
 
@@ -685,13 +785,18 @@ mod tests {
     async fn test_usage_event_cost_calculation() {
         let pricing_config = PricingConfig::enterprise_default();
         let metering_config = MeteringConfig::default();
-        let engine = UsageMeteringEngine::new(pricing_config, metering_config).await.unwrap();
+        let engine = UsageMeteringEngine::new(pricing_config, metering_config)
+            .await
+            .unwrap();
 
         let search_event = UsageEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
             tenant_id: "test_tenant".to_string(),
             user_id: "test_user".to_string(),
-            event_type: UsageEventType::VectorSearch { k: 10, dimensions: 512 },
+            event_type: UsageEventType::VectorSearch {
+                k: 10,
+                dimensions: 512,
+            },
             timestamp: Utc::now(),
             resource_consumed: ResourceConsumption {
                 cpu_milliseconds: 100,
@@ -714,7 +819,9 @@ mod tests {
     async fn test_cost_optimization_recommendations() {
         let pricing_config = PricingConfig::enterprise_default();
         let metering_config = MeteringConfig::default();
-        let engine = UsageMeteringEngine::new(pricing_config, metering_config).await.unwrap();
+        let engine = UsageMeteringEngine::new(pricing_config, metering_config)
+            .await
+            .unwrap();
 
         let high_usage_aggregate = UsageAggregate {
             tenant_id: "high_usage_tenant".to_string(),
@@ -722,7 +829,7 @@ mod tests {
             billing_period_end: Utc::now(),
             total_searches: 100000,
             total_insertions: 50000,
-            total_ai_queries: 15000, // High AI usage
+            total_ai_queries: 15000,                       // High AI usage
             total_storage_bytes: 200 * 1024 * 1024 * 1024, // 200GB - high storage
             total_compute_ms: 10000000,
             total_cost: 6000.0, // High cost - qualifies for enterprise tier
@@ -735,10 +842,20 @@ mod tests {
             },
         };
 
-        let recommendations = engine.generate_cost_optimization_recommendations(&high_usage_aggregate).await.unwrap();
+        let recommendations = engine
+            .generate_cost_optimization_recommendations(&high_usage_aggregate)
+            .await
+            .unwrap();
 
         assert!(!recommendations.is_empty());
-        assert!(recommendations.iter().any(|r| matches!(r.recommendation_type, RecommendationType::StorageOptimization)));
-        assert!(recommendations.iter().any(|r| matches!(r.recommendation_type, RecommendationType::PlanUpgrade)));
+        assert!(recommendations.iter().any(|r| matches!(
+            r.recommendation_type,
+            RecommendationType::StorageOptimization
+        )));
+        assert!(
+            recommendations
+                .iter()
+                .any(|r| matches!(r.recommendation_type, RecommendationType::PlanUpgrade))
+        );
     }
 }

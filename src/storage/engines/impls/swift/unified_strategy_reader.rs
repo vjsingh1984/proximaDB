@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 use super::MetadataFilter;
 use super::unified_reader::SwiftReaderConfig;
@@ -71,10 +71,10 @@ impl UnifiedSWIFTReader {
         collection_id: String,
     ) -> Result<Self> {
         let config = SwiftReaderConfig {
-            enable_prefetch: true,  // Sequential reads benefit from prefetch
+            enable_prefetch: true, // Sequential reads benefit from prefetch
             max_concurrent_reads: 4,
             coalesce_threshold_bytes: 1024 * 1024, // 1MB
-            cache_metadata: false,  // No caching for compaction
+            cache_metadata: false,                 // No caching for compaction
             streaming_threshold_mb: 10,
         };
 
@@ -92,17 +92,19 @@ impl UnifiedSWIFTReader {
         collection_id: String,
     ) -> Result<Self> {
         let config = SwiftReaderConfig {
-            enable_prefetch: false,  // Random access doesn't benefit from prefetch
+            enable_prefetch: false, // Random access doesn't benefit from prefetch
             max_concurrent_reads: 8,
             coalesce_threshold_bytes: 64 * 1024, // 64KB
-            cache_metadata: true,   // Cache metadata for searches
+            cache_metadata: true,                // Cache metadata for searches
             streaming_threshold_mb: 5,
         };
 
         Self::new(
             filesystem_factory,
             collection_id,
-            ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            ReadAccessStrategy::CachedSearch {
+                prefetch_metadata: true,
+            },
             config,
         )
     }
@@ -132,9 +134,7 @@ impl UnifiedSWIFTReader {
     /// Convert to legacy SwiftReadStrategy for compatibility
     fn to_swift_strategy(&self) -> super::unified_reader::SwiftReadStrategy {
         match &self.strategy {
-            ReadAccessStrategy::DirectStream => {
-                super::unified_reader::SwiftReadStrategy::StreamAll
-            }
+            ReadAccessStrategy::DirectStream => super::unified_reader::SwiftReadStrategy::StreamAll,
             ReadAccessStrategy::CachedSelective { filter } => {
                 super::unified_reader::SwiftReadStrategy::HierarchicalPrune {
                     metadata_filter: None, // TODO: Convert FilterExpression to MetadataFilter
@@ -161,15 +161,17 @@ impl UnifiedSWIFTReader {
             ReadAccessStrategy::DirectStream => {
                 self.read_direct_stream(file_path, collection).await
             }
-            _ => {
-                self.read_with_cache(file_path, collection).await
-            }
+            _ => self.read_with_cache(file_path, collection).await,
         }
     }
 
     /// Direct streaming read (bypasses cache) - for compaction and full scans
     /// Similar to SST's CompactionFullRead strategy
-    async fn read_direct_stream(&self, file_path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<VectorRecord>> {
+    async fn read_direct_stream(
+        &self,
+        file_path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<Vec<VectorRecord>> {
         // Use filesystem factory directly for streaming reads to avoid cache pollution
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let data = fs.read(file_path).await?;
@@ -190,13 +192,21 @@ impl UnifiedSWIFTReader {
 
     /// Cached read with predicate pushdown - for queries
     /// Similar to SST's SelectiveWithCache strategy
-    async fn read_with_cache(&self, file_path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<VectorRecord>> {
-        let cached_fs = self.cached_filesystem.as_ref()
+    async fn read_with_cache(
+        &self,
+        file_path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<Vec<VectorRecord>> {
+        let cached_fs = self
+            .cached_filesystem
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Cached filesystem not initialized"))?;
 
         // Use UnifiedCachingFilesystem for optimal I/O with caching (implements FileSystem trait)
         use crate::storage::persistence::filesystem::FileSystem;
-        let data = cached_fs.read(file_path).await
+        let data = cached_fs
+            .read(file_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
 
         // Deserialize the SWIFT file with collection config
@@ -331,10 +341,7 @@ pub struct DirectSWIFTReader {
 }
 
 impl DirectSWIFTReader {
-    pub fn new(
-        filesystem_factory: Arc<FilesystemFactory>,
-        collection_id: String,
-    ) -> Self {
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String) -> Self {
         let config = SwiftReaderConfig {
             enable_prefetch: true,
             max_concurrent_reads: 4,
@@ -374,10 +381,7 @@ pub struct CachedSWIFTReader {
 }
 
 impl CachedSWIFTReader {
-    pub fn new(
-        filesystem_factory: Arc<FilesystemFactory>,
-        collection_id: String,
-    ) -> Result<Self> {
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String) -> Result<Self> {
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
@@ -420,32 +424,40 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_strategy_selection() {
-        let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
+        let factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .unwrap(),
+        );
 
         // Compaction should use DirectStream
-        let compaction_reader = UnifiedSWIFTReader::for_compaction(
-            factory.clone(),
-            "test_collection".to_string(),
-        ).unwrap();
-        assert_eq!(compaction_reader.strategy(), &ReadAccessStrategy::DirectStream);
+        let compaction_reader =
+            UnifiedSWIFTReader::for_compaction(factory.clone(), "test_collection".to_string())
+                .unwrap();
+        assert_eq!(
+            compaction_reader.strategy(),
+            &ReadAccessStrategy::DirectStream
+        );
         assert!(!compaction_reader.is_using_cache());
 
         // Search should use CachedSearch
-        let search_reader = UnifiedSWIFTReader::for_search(
-            factory.clone(),
-            "test_collection".to_string(),
-        ).unwrap();
-        matches!(search_reader.strategy(), ReadAccessStrategy::CachedSearch { .. });
+        let search_reader =
+            UnifiedSWIFTReader::for_search(factory.clone(), "test_collection".to_string()).unwrap();
+        matches!(
+            search_reader.strategy(),
+            ReadAccessStrategy::CachedSearch { .. }
+        );
         assert!(search_reader.is_using_cache());
     }
 
     #[tokio::test]
     async fn test_config_updates_with_strategy() {
-        let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
-        let mut reader = UnifiedSWIFTReader::for_search(
-            factory,
-            "test".to_string(),
-        ).unwrap();
+        let factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .unwrap(),
+        );
+        let mut reader = UnifiedSWIFTReader::for_search(factory, "test".to_string()).unwrap();
 
         // Initially configured for search (cached)
         assert!(reader.config.cache_metadata);

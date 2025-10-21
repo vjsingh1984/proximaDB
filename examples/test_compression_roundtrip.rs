@@ -1,10 +1,10 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
-};
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
-use std::collections::HashMap;
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
+};
 use rand::prelude::*;
+use std::collections::HashMap;
 
 fn create_realistic_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     let mut rng = rand::thread_rng();
@@ -12,9 +12,7 @@ fn create_realistic_test_vectors(count: usize, dimension: usize) -> Vec<VectorRe
         .map(|i| VectorRecord {
             id: format!("vec_{:06}", i),
             // Create realistic vectors with random values
-            vector: (0..dimension)
-                .map(|_| rng.gen_range(-1.0..1.0))
-                .collect(),
+            vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
             metadata: HashMap::new(),
             expires_at: None,
             source: None,
@@ -37,7 +35,7 @@ fn main() {
         vector_layout: VectorEncodingLayout::FullVector,
         algorithm: CompressionAlgorithm::Lz4,
         compression_level: 1,
-        enable_vector_compression: false,  // DISABLED
+        enable_vector_compression: false, // DISABLED
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
@@ -49,7 +47,7 @@ fn main() {
         vector_layout: VectorEncodingLayout::FullVector,
         algorithm: CompressionAlgorithm::Lz4,
         compression_level: 1,
-        enable_vector_compression: true,  // ENABLED
+        enable_vector_compression: true, // ENABLED
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
@@ -64,10 +62,17 @@ fn main() {
     // Test WITHOUT compression
     match original_block.serialize_with_config(&config_no_compression) {
         Ok(encoded_no_compression) => {
-            let ratio_no_compression = uncompressed_size as f64 / encoded_no_compression.len() as f64;
+            let ratio_no_compression =
+                uncompressed_size as f64 / encoded_no_compression.len() as f64;
             println!("❌ Row-wise WITHOUT block compression:");
-            println!("   Original size: {:.2} MB", uncompressed_size as f64 / 1_000_000.0);
-            println!("   Encoded size:  {:.2} MB", encoded_no_compression.len() as f64 / 1_000_000.0);
+            println!(
+                "   Original size: {:.2} MB",
+                uncompressed_size as f64 / 1_000_000.0
+            );
+            println!(
+                "   Encoded size:  {:.2} MB",
+                encoded_no_compression.len() as f64 / 1_000_000.0
+            );
             println!("   Compression ratio: {:.2}x", ratio_no_compression);
 
             // Test round-trip deserialization
@@ -75,7 +80,7 @@ fn main() {
                 Ok(decoded_block) => {
                     println!("   ✅ Round-trip deserialization successful");
                     println!("   📊 Decoded {} vectors", decoded_block.records.len());
-                },
+                }
                 Err(e) => println!("   ❌ Round-trip failed: {}", e),
             }
         }
@@ -87,10 +92,17 @@ fn main() {
     // Test WITH compression
     match original_block.serialize_with_config(&config_with_compression) {
         Ok(encoded_with_compression) => {
-            let ratio_with_compression = uncompressed_size as f64 / encoded_with_compression.len() as f64;
+            let ratio_with_compression =
+                uncompressed_size as f64 / encoded_with_compression.len() as f64;
             println!("✅ Row-wise WITH block compression:");
-            println!("   Original size: {:.2} MB", uncompressed_size as f64 / 1_000_000.0);
-            println!("   Encoded size:  {:.2} MB", encoded_with_compression.len() as f64 / 1_000_000.0);
+            println!(
+                "   Original size: {:.2} MB",
+                uncompressed_size as f64 / 1_000_000.0
+            );
+            println!(
+                "   Encoded size:  {:.2} MB",
+                encoded_with_compression.len() as f64 / 1_000_000.0
+            );
             println!("   Compression ratio: {:.2}x", ratio_with_compression);
 
             // Test round-trip deserialization
@@ -102,21 +114,40 @@ fn main() {
                     // Verify data integrity
                     if decoded_block.records.len() == vectors.len() {
                         let mut all_match = true;
-                        for (i, (original, decoded)) in vectors.iter().zip(decoded_block.records.iter()).enumerate() {
+                        for (i, (original, decoded)) in
+                            vectors.iter().zip(decoded_block.records.iter()).enumerate()
+                        {
                             if original.id != decoded.id {
-                                println!("   ❌ ID mismatch at {}: {} vs {}", i, original.id, decoded.id);
+                                println!(
+                                    "   ❌ ID mismatch at {}: {} vs {}",
+                                    i, original.id, decoded.id
+                                );
                                 all_match = false;
                                 break;
                             }
                             if original.vector.len() != decoded.vector.len() {
-                                println!("   ❌ Vector length mismatch at {}: {} vs {}", i, original.vector.len(), decoded.vector.len());
+                                println!(
+                                    "   ❌ Vector length mismatch at {}: {} vs {}",
+                                    i,
+                                    original.vector.len(),
+                                    decoded.vector.len()
+                                );
                                 all_match = false;
                                 break;
                             }
                             // Check first few dimensions for approximate equality
-                            for (j, (orig_val, dec_val)) in original.vector.iter().zip(decoded.vector.iter()).take(5).enumerate() {
+                            for (j, (orig_val, dec_val)) in original
+                                .vector
+                                .iter()
+                                .zip(decoded.vector.iter())
+                                .take(5)
+                                .enumerate()
+                            {
                                 if (orig_val - dec_val).abs() > 1e-6 {
-                                    println!("   ❌ Vector value mismatch at {}[{}]: {} vs {}", i, j, orig_val, dec_val);
+                                    println!(
+                                        "   ❌ Vector value mismatch at {}[{}]: {} vs {}",
+                                        i, j, orig_val, dec_val
+                                    );
                                     all_match = false;
                                     break;
                                 }
@@ -129,15 +160,22 @@ fn main() {
                             println!("   ✅ Data integrity verified - all vectors match exactly");
                         }
                     } else {
-                        println!("   ❌ Vector count mismatch: {} vs {}", vectors.len(), decoded_block.records.len());
+                        println!(
+                            "   ❌ Vector count mismatch: {} vs {}",
+                            vectors.len(),
+                            decoded_block.records.len()
+                        );
                     }
-                },
+                }
                 Err(e) => println!("   ❌ Round-trip failed: {}", e),
             }
 
             // Note: We can't calculate improvement ratio here since encoded_no_compression is out of scope
             // This would need to be restructured to capture both results for comparison
-            println!("   📈 This encoding achieved {:.2}x compression ratio", ratio_with_compression);
+            println!(
+                "   📈 This encoding achieved {:.2}x compression ratio",
+                ratio_with_compression
+            );
 
             if ratio_with_compression > 1.5 {
                 println!("\n🎉 SUCCESS: Block-level compression is providing benefit!");

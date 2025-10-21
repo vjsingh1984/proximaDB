@@ -13,11 +13,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::core::String;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::index::axis::{
     AccessFrequencyMetrics, CollectionCharacteristics, MetadataComplexity, PerformanceMetrics,
     QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Analyzer for collection characteristics and behavior patterns
 pub struct CollectionAnalyzer {

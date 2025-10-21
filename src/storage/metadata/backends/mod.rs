@@ -95,7 +95,8 @@ impl MetadataBackendFactory {
             };
 
             let filesystem_factory = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await?,
+                crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
+                    .await?,
             );
 
             let backend =
@@ -169,7 +170,8 @@ impl MetadataBackendFactory {
             };
 
             let filesystem_factory = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await?,
+                crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
+                    .await?,
             );
 
             let backend =

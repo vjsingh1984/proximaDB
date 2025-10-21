@@ -19,7 +19,7 @@ use crate::storage::engines::core::formats::columnar::common::{
     NovaOptimizations, StreamingProcessingConfig, ZoneMapOptimization,
 };
 use crate::storage::engines::core::formats::columnar::{
-    CommonColumnarConfig, CommonColumnarOperations, ColumnarFilterableSpec, QuantizationConfig,
+    ColumnarFilterableSpec, CommonColumnarConfig, CommonColumnarOperations, QuantizationConfig,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 

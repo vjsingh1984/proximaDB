@@ -5,16 +5,16 @@
 #[cfg(test)]
 mod edge_tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
     use crate::core::bloom::BloomFilterConfig;
     use crate::core::config::SstConfig;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::impls::sst::SstableWriter;
     use crate::storage::engines::impls::sst::readers::sst_query_engine::{
         CollectionContext, ReaderConfig, UnifiedSstableReader,
     };
-    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use chrono::Utc;
     use serde_json::json;
     use std::collections::HashMap;
@@ -56,7 +56,7 @@ mod edge_tests {
             level: 0,
             creation_time: Utc::now(),
             io_optimization_hints: None,
-        collection: None,
+            collection: None,
         }
     }
 
@@ -72,7 +72,7 @@ mod edge_tests {
             level: 0,
             creation_time: Utc::now(),
             io_optimization_hints: None,
-        collection: None,
+            collection: None,
         };
 
         let params = SearchParams {
@@ -689,7 +689,7 @@ mod edge_tests {
             level: 0,
             creation_time: chrono::Utc::now(),
             io_optimization_hints: None,
-        collection: None,
+            collection: None,
         });
 
         // Spawn multiple concurrent searches - reduced from 50 to 20 for stability
@@ -869,9 +869,14 @@ mod edge_tests {
                 vector: vec![],
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("deletion_reason".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue("user_requested".to_string())),
-                    });
+                    metadata.insert(
+                        "deletion_reason".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(
+                                "user_requested".to_string(),
+                            )),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some(101),
@@ -944,7 +949,7 @@ mod edge_tests {
             "//",                             // Double slash
             "/tmp/../etc/passwd",             // Path traversal attempt
             "C:\\Windows\\System32",          // Windows path on Unix
-            "file:///test.sstable",  // URI format
+            "file:///test.sstable",           // URI format
             "s3://bucket/key",                // Cloud storage path
             "/path/with spaces/file.sstable", // Spaces
             "/path/with/🚀/emoji.sstable",    // Emoji in path
@@ -967,7 +972,7 @@ mod edge_tests {
                 level: 0,
                 creation_time: Utc::now(),
                 io_optimization_hints: None,
-        collection: None,
+                collection: None,
             };
 
             // Should handle gracefully without panicking
@@ -1032,7 +1037,8 @@ mod edge_tests {
 
         for (field, (min, max, null_count, distinct_count)) in &stats {
             assert!(!field.is_empty()); // Field should not be empty
-            match field.as_str() { // Use as_str() instead of as_deref()
+            match field.as_str() {
+                // Use as_str() instead of as_deref()
                 "numeric_field" => {
                     let (min_val, max_val, null_cnt, distinct_cnt) =
                         (min, max, null_count, distinct_count);

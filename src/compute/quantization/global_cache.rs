@@ -6,8 +6,8 @@
 
 use anyhow::Result;
 use dashmap::DashMap;
-use std::sync::Arc;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::unified::{Codebook, CodebookStore, UnifiedQuantizationLevel};
@@ -53,7 +53,10 @@ impl QuantizationCacheKey {
 
     /// Convert to string for storage and access tracking
     pub fn to_string(&self) -> String {
-        format!("{}#{}#{}", self.collection_id, self.quantization_type, self.level_params)
+        format!(
+            "{}#{}#{}",
+            self.collection_id, self.quantization_type, self.level_params
+        )
     }
 
     /// Parse from string
@@ -173,10 +176,8 @@ impl GlobalQuantizationCache {
         self.codebooks.insert(key_str.clone(), Arc::new(codebook));
 
         // Update memory tracking
-        self.allocated_memory_bytes.fetch_add(
-            estimated_bytes,
-            std::sync::atomic::Ordering::Relaxed
-        );
+        self.allocated_memory_bytes
+            .fetch_add(estimated_bytes, std::sync::atomic::Ordering::Relaxed);
 
         info!(
             "📚 Stored quantization codebook: {} (estimated {} bytes)",
@@ -216,7 +217,8 @@ impl GlobalQuantizationCache {
         let mut removed_bytes = 0;
 
         // Find all keys for this collection
-        let keys_to_remove: Vec<String> = self.codebooks
+        let keys_to_remove: Vec<String> = self
+            .codebooks
             .iter()
             .filter_map(|entry| {
                 if let Some(parsed_key) = QuantizationCacheKey::from_string(entry.key()) {
@@ -241,10 +243,8 @@ impl GlobalQuantizationCache {
         }
 
         // Update memory tracking
-        self.allocated_memory_bytes.fetch_sub(
-            removed_bytes,
-            std::sync::atomic::Ordering::Relaxed
-        );
+        self.allocated_memory_bytes
+            .fetch_sub(removed_bytes, std::sync::atomic::Ordering::Relaxed);
 
         info!(
             "🧹 Removed {} quantization codebooks for collection '{}' ({} bytes freed)",
@@ -257,7 +257,9 @@ impl GlobalQuantizationCache {
     /// Get memory usage statistics
     pub fn get_memory_stats(&self) -> QuantizationCacheStats {
         let codebook_count = self.codebooks.len();
-        let allocated_bytes = self.allocated_memory_bytes.load(std::sync::atomic::Ordering::Relaxed);
+        let allocated_bytes = self
+            .allocated_memory_bytes
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         QuantizationCacheStats {
             codebook_count,
@@ -287,22 +289,27 @@ impl GlobalQuantizationCache {
         match &codebook.data {
             CodebookData::ProductQuantization { centroids, .. } => {
                 // Estimate: num_subspaces * num_centroids * centroid_dimension * sizeof(f32)
-                centroids.len() * 256 * centroids.get(0)
-                    .and_then(|c| c.get(0))
-                    .map(|c| c.len()).unwrap_or(0) * 4
-            },
+                centroids.len()
+                    * 256
+                    * centroids
+                        .get(0)
+                        .and_then(|c| c.get(0))
+                        .map(|c| c.len())
+                        .unwrap_or(0)
+                    * 4
+            }
             CodebookData::Binary { thresholds } => {
                 // Binary codebooks: dimension * sizeof(f32) for thresholds
                 thresholds.len() * 4
-            },
+            }
             CodebookData::Scalar { scales, offsets } => {
                 // Scalar quantization parameters: 2 f32 values * dimensions
                 (scales.len() + offsets.len()) * 4
-            },
+            }
             CodebookData::Custom(_) => {
                 // Custom codebooks: estimate 1KB
                 1024
-            },
+            }
         }
     }
 
@@ -324,7 +331,9 @@ impl GlobalQuantizationCache {
         // Check cache first
         if let Some(cached) = self.quantized_vectors.get(&key) {
             // Update access stats
-            cached.access_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            cached
+                .access_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             cached.last_access.store(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -333,7 +342,8 @@ impl GlobalQuantizationCache {
                 std::sync::atomic::Ordering::Relaxed,
             );
 
-            self.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.cache_hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             debug!(
                 "Quantization cache hit for collection: {}, level: {}, hash: {}",
                 collection_id, level, key.vector_hash
@@ -343,7 +353,8 @@ impl GlobalQuantizationCache {
         }
 
         // Cache miss - compute quantization
-        self.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.cache_misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         debug!(
             "Quantization cache miss for collection: {}, level: {}, hash: {}",
             collection_id, level, key.vector_hash
@@ -371,7 +382,8 @@ impl GlobalQuantizationCache {
 
         // Update memory tracking
         let size_estimate = quantized_arc.len();
-        self.allocated_memory_bytes.fetch_add(size_estimate, std::sync::atomic::Ordering::Relaxed);
+        self.allocated_memory_bytes
+            .fetch_add(size_estimate, std::sync::atomic::Ordering::Relaxed);
 
         Ok(quantized_arc)
     }
@@ -379,7 +391,8 @@ impl GlobalQuantizationCache {
     /// Evict least recently used entries if cache is full for a collection
     fn evict_if_needed(&self, collection_id: &str) {
         // Count vectors for this collection
-        let collection_count = self.quantized_vectors
+        let collection_count = self
+            .quantized_vectors
             .iter()
             .filter(|entry| entry.key().collection_id == collection_id)
             .count();
@@ -396,7 +409,10 @@ impl GlobalQuantizationCache {
 
             for entry in self.quantized_vectors.iter() {
                 if entry.key().collection_id == collection_id {
-                    let last_access = entry.value().last_access.load(std::sync::atomic::Ordering::Relaxed);
+                    let last_access = entry
+                        .value()
+                        .last_access
+                        .load(std::sync::atomic::Ordering::Relaxed);
                     if last_access < oldest_time {
                         oldest_time = last_access;
                         oldest_key = Some(entry.key().clone());
@@ -407,7 +423,8 @@ impl GlobalQuantizationCache {
             if let Some(key) = oldest_key {
                 if let Some((_, removed)) = self.quantized_vectors.remove(&key) {
                     let size_estimate = removed.data.len();
-                    self.allocated_memory_bytes.fetch_sub(size_estimate, std::sync::atomic::Ordering::Relaxed);
+                    self.allocated_memory_bytes
+                        .fetch_sub(size_estimate, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -439,7 +456,8 @@ impl GlobalQuantizationCache {
             }
         });
 
-        self.allocated_memory_bytes.fetch_sub(removed_size, std::sync::atomic::Ordering::Relaxed);
+        self.allocated_memory_bytes
+            .fetch_sub(removed_size, std::sync::atomic::Ordering::Relaxed);
 
         info!(
             "Cleared quantized vector cache for collection: {}, freed {} bytes",
@@ -452,7 +470,9 @@ impl GlobalQuantizationCache {
         ExtendedCacheStats {
             codebook_count: self.codebooks.len(),
             quantized_vector_count: self.quantized_vectors.len(),
-            allocated_bytes: self.allocated_memory_bytes.load(std::sync::atomic::Ordering::Relaxed),
+            allocated_bytes: self
+                .allocated_memory_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
             cache_hits: self.cache_hits.load(std::sync::atomic::Ordering::Relaxed),
             cache_misses: self.cache_misses.load(std::sync::atomic::Ordering::Relaxed),
             hit_rate: self.cache_hit_rate(),
@@ -496,7 +516,11 @@ impl CodebookStore for GlobalQuantizationCache {
         // Parse quantization details to create proper cache key
         let cache_key = if quant_details.starts_with("pq") {
             // Format: "pq8_16" -> PQ8 with 16 subvectors
-            let params: Vec<&str> = quant_details.strip_prefix("pq").unwrap_or("8_16").split('_').collect();
+            let params: Vec<&str> = quant_details
+                .strip_prefix("pq")
+                .unwrap_or("8_16")
+                .split('_')
+                .collect();
             let bits = params.get(0).unwrap_or(&"8").parse().unwrap_or(8);
             let subvectors = params.get(1).unwrap_or(&"16").parse().unwrap_or(16);
             QuantizationCacheKey::pq(collection_id, bits, subvectors)
@@ -505,11 +529,15 @@ impl CodebookStore for GlobalQuantizationCache {
         } else if quant_details == "int8" {
             QuantizationCacheKey::int8(collection_id)
         } else {
-            return Err(anyhow::anyhow!("Unknown quantization type: {}", quant_details));
+            return Err(anyhow::anyhow!(
+                "Unknown quantization type: {}",
+                quant_details
+            ));
         };
 
         // Use our internal store_codebook method
-        self.store_codebook_internal(cache_key, codebook.clone()).await
+        self.store_codebook_internal(cache_key, codebook.clone())
+            .await
     }
 
     async fn get_codebook(&self, id: &str) -> Result<Option<Codebook>> {
@@ -523,7 +551,11 @@ impl CodebookStore for GlobalQuantizationCache {
         let quant_details = parts[1];
 
         let cache_key = if quant_details.starts_with("pq") {
-            let params: Vec<&str> = quant_details.strip_prefix("pq").unwrap_or("8_16").split('_').collect();
+            let params: Vec<&str> = quant_details
+                .strip_prefix("pq")
+                .unwrap_or("8_16")
+                .split('_')
+                .collect();
             let bits = params.get(0).unwrap_or(&"8").parse().unwrap_or(8);
             let subvectors = params.get(1).unwrap_or(&"16").parse().unwrap_or(16);
             QuantizationCacheKey::pq(collection_id, bits, subvectors)
@@ -535,23 +567,31 @@ impl CodebookStore for GlobalQuantizationCache {
             return Ok(None);
         };
 
-        Ok(self.get_codebook(&cache_key).await.map(|arc| (*arc).clone()))
+        Ok(self
+            .get_codebook(&cache_key)
+            .await
+            .map(|arc| (*arc).clone()))
     }
 
     async fn list_codebooks(&self) -> Result<Vec<String>> {
-        Ok(self.codebooks.iter().map(|entry| entry.key().clone()).collect())
+        Ok(self
+            .codebooks
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect())
     }
 }
 
 /// Global singleton instance
-static GLOBAL_QUANTIZATION_CACHE: std::sync::OnceLock<Arc<GlobalQuantizationCache>> = std::sync::OnceLock::new();
+static GLOBAL_QUANTIZATION_CACHE: std::sync::OnceLock<Arc<GlobalQuantizationCache>> =
+    std::sync::OnceLock::new();
 
 impl GlobalQuantizationCache {
     /// Get global singleton instance
     pub fn global() -> Arc<GlobalQuantizationCache> {
-        GLOBAL_QUANTIZATION_CACHE.get_or_init(|| {
-            Arc::new(GlobalQuantizationCache::new())
-        }).clone()
+        GLOBAL_QUANTIZATION_CACHE
+            .get_or_init(|| Arc::new(GlobalQuantizationCache::new()))
+            .clone()
     }
 
     /// Get singleton instance (alias for consistency with other components)
@@ -561,11 +601,16 @@ impl GlobalQuantizationCache {
 
     /// Get or create a quantization engine for a specific collection
     /// Uses intelligent caching strategy based on collection size and access patterns
-    pub async fn get_or_create_engine(&self, collection_id: String) -> Arc<super::unified::UnifiedQuantizationEngine> {
+    pub async fn get_or_create_engine(
+        &self,
+        collection_id: String,
+    ) -> Arc<super::unified::UnifiedQuantizationEngine> {
         // For now, create a simple UnifiedQuantizationEngine with the global cache as codebook store
         // This provides the unified interface expected by the engines
         Arc::new(super::unified::UnifiedQuantizationEngine::new(
-            Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
+            Arc::new(
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+            ),
             Self::global() as Arc<dyn super::unified::CodebookStore>,
         ))
     }
@@ -574,7 +619,10 @@ impl GlobalQuantizationCache {
     pub fn update_collection_size(&self, collection_id: &str, size: usize) {
         // This would be used by the adaptive strategy to decide between hot/cold storage
         // For now, we'll keep the simple DashMap approach
-        debug!("Updated collection '{}' size to {} vectors", collection_id, size);
+        debug!(
+            "Updated collection '{}' size to {} vectors",
+            collection_id, size
+        );
     }
 
     /// Check if collection should use hot (in-memory) or cold (persistent) storage

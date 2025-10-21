@@ -13,8 +13,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::sync::RwLock;
     use tempfile::TempDir;
+    use tokio::sync::RwLock;
     use tracing::{debug, info};
 
     use crate::compute::distance_computation::DistanceMetric;
@@ -26,9 +26,9 @@ mod tests {
     };
     use crate::services::collection::manager::CollectionService;
     use crate::services::operations::vectors::VectorOperationsService;
-    use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
     use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;
+    use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
     /// Create test environment for VectorOperationsService (similar to vectors_test.rs)
     async fn create_test_service() -> Result<(Arc<VectorOperationsService>, TempDir)> {
@@ -59,24 +59,24 @@ mod tests {
             &wal_config,
             filesystem.clone()
         ).await?;
-        let wal_manager = Arc::new(
-            WriteAheadLogManager::new(strategy, wal_config).await?,
-        );
+        let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
 
         // Create required services
         let axis_manager = Arc::new(
             crate::index::axis::management::manager::AxisManager::new(
-                crate::index::axis::types::AxisConfig::default()
-            ).await?
+                crate::index::axis::types::AxisConfig::default(),
+            )
+            .await?,
         );
         let metadata_backend = Arc::new(
             crate::storage::metadata::MetadataStore::new(
-                crate::storage::metadata::MetadataStoreConfig::default()
-            ).await?
-        ) as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
-        let collection_service = Arc::new(
-            CollectionService::new(metadata_backend, config.storage.clone()).await?
-        );
+                crate::storage::metadata::MetadataStoreConfig::default(),
+            )
+            .await?,
+        )
+            as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
+        let collection_service =
+            Arc::new(CollectionService::new(metadata_backend, config.storage.clone()).await?);
 
         let service = Arc::new(VectorOperationsService::new(
             sst_engine,
@@ -100,7 +100,7 @@ mod tests {
             }
         }
 
-        async fn add_collection(&self, id: &str, has_index: bool) {
+        async fn add_collection(&self, id: &str, _has_index: bool) {
             let mut collections = self.collections.write().await;
 
             let config = CollectionConfig {
@@ -346,7 +346,8 @@ mod tests {
 
         // Verify quantization for faster search
         assert!(
-            source.contains("quantization") && (source.contains("Binary") || source.contains("INT8")),
+            source.contains("quantization")
+                && (source.contains("Binary") || source.contains("INT8")),
             "Quantization must be available for faster approximate search"
         );
 

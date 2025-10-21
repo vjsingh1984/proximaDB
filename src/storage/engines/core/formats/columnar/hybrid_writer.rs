@@ -10,7 +10,7 @@
 //! - Concurrent write support with lock-free coordination
 //! - Metrics and monitoring for mode transitions
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,10 +21,8 @@ use tracing::{debug, info, trace, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::parquet_write_engine::{
-    batch_writer::BatchParquetWriter,
-    writer_config::ParquetWriterConfig,
-    streaming_writer::StreamingParquetWriter,
-    writer_statistics::StreamingParquetWriterStats,
+    batch_writer::BatchParquetWriter, streaming_writer::StreamingParquetWriter,
+    writer_config::ParquetWriterConfig, writer_statistics::StreamingParquetWriterStats,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use uuid::Uuid;
@@ -208,20 +206,25 @@ pub struct HybridWriterStats {
 
 impl HybridParquetWriter {
     /// Create new hybrid writer
-    pub fn new<P: AsRef<Path>>(
+    pub async fn new<P: AsRef<Path>>(
         file_path: P,
         dimension: usize,
         config: HybridWriterConfig,
     ) -> Result<Self> {
         let file_path = file_path.as_ref().to_path_buf();
-        trace!("HybridParquetWriter::new - starting, file_path: {:?}, mode: {:?}", file_path, config.initial_mode);
+        trace!(
+            "HybridParquetWriter::new - starting, file_path: {:?}, mode: {:?}",
+            file_path, config.initial_mode
+        );
         info!(
             "Creating hybrid Parquet writer: {:?}, mode: {:?}",
             file_path, config.initial_mode
         );
 
         // Create a default filesystem factory (for local files only)
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
+        );
 
         let streaming_writer = if config.initial_mode == WriterMode::Streaming {
             trace!("HybridParquetWriter::new - creating StreamingParquetWriter");
@@ -231,7 +234,8 @@ impl HybridParquetWriter {
                 dimension,
                 config.base_config.clone(),
                 None, // Filterable columns will be set via setter method
-            )?;
+            )
+            .await?;
             trace!("HybridParquetWriter::new - StreamingParquetWriter created");
             Some(writer)
         } else {
@@ -328,13 +332,19 @@ impl HybridParquetWriter {
     }
 
     /// Set metadata collector for hierarchical metadata (NOVA)
-    pub async fn set_metadata_collector(&self, collector: Box<dyn super::metadata_collector::MetadataCollector>) {
+    pub async fn set_metadata_collector(
+        &self,
+        collector: Box<dyn super::metadata_collector::MetadataCollector>,
+    ) {
         let mut metadata_lock = self.metadata_collector.lock().await;
         *metadata_lock = Some(collector);
     }
 
     /// Set filterable columns for metadata extraction (VIPER)
-    pub fn set_filterable_columns(&mut self, columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>) {
+    pub fn set_filterable_columns(
+        &mut self,
+        columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>,
+    ) {
         self.filterable_columns = Some(columns);
     }
 
@@ -656,7 +666,7 @@ impl HybridParquetWriter {
                 &self.file_path,
                 self.dimension,
                 self.config.base_config.clone(),
-                self.filterable_columns.as_ref().map(|v| v.as_slice()),  // Pass filterable columns!
+                self.filterable_columns.as_ref().map(|v| v.as_slice()), // Pass filterable columns!
                 self.filesystem_factory.clone(),
             )?);
         }
@@ -728,7 +738,12 @@ impl HybridParquetWriter {
     }
 
     /// Finalize writer and flush all pending data
-    pub async fn finalize(self) -> Result<(StreamingParquetWriterStats, Option<Box<dyn super::metadata_collector::MetadataCollector>>)> {
+    pub async fn finalize(
+        self,
+    ) -> Result<(
+        StreamingParquetWriterStats,
+        Option<Box<dyn super::metadata_collector::MetadataCollector>>,
+    )> {
         info!("Finalizing hybrid Parquet writer");
 
         // Stop background task
@@ -792,7 +807,10 @@ impl HybridParquetWriter {
             (stats, metadata_lock.take())
         };
 
-        info!("Hybrid writer finalized with {} total records", result.0.total_records);
+        info!(
+            "Hybrid writer finalized with {} total records",
+            result.0.total_records
+        );
         Ok(result)
     }
 
@@ -831,8 +849,9 @@ impl HybridParquetWriter {
         self.write(records).await?;
 
         // Force flush any buffered data
-        if self.config.initial_mode == WriterMode::Batch ||
-           *self.current_mode.read().await == WriterMode::Batch {
+        if self.config.initial_mode == WriterMode::Batch
+            || *self.current_mode.read().await == WriterMode::Batch
+        {
             self.flush_buffer(true).await?;
         }
 
@@ -846,11 +865,14 @@ impl HybridParquetWriter {
         records: &[VectorRecord],
         dimension: usize,
         config: HybridWriterConfig,
-        final_url: &str,  // Final destination (s3://bucket/file or /path/file)
+        final_url: &str, // Final destination (s3://bucket/file or /path/file)
         filesystem_factory: &crate::storage::persistence::filesystem::FilesystemFactory,
         filterable_columns: Option<Vec<crate::proto::proximadb_v1::FilterableColumnSpec>>,
         metadata_collector: Option<Box<dyn super::metadata_collector::MetadataCollector>>,
-    ) -> Result<(StreamingParquetWriterStats, Option<Box<dyn super::metadata_collector::MetadataCollector>>)> {
+    ) -> Result<(
+        StreamingParquetWriterStats,
+        Option<Box<dyn super::metadata_collector::MetadataCollector>>,
+    )> {
         if records.is_empty() {
             return Ok((
                 StreamingParquetWriterStats {
@@ -860,7 +882,7 @@ impl HybridParquetWriter {
                     file_size: 0,
                     compression_ratio: 1.0,
                     bloom_filter_count: 0,
-                    ..Default::default()  // Fill in the rest with defaults
+                    ..Default::default() // Fill in the rest with defaults
                 },
                 metadata_collector,
             ));
@@ -878,13 +900,9 @@ impl HybridParquetWriter {
         // Temp files are always local, so we don't need the passed filesystem_factory
         // Force BATCH mode to defer StreamingParquetWriter creation until after filterable_columns are set
         let mut config = config;
-        config.initial_mode = WriterMode::Batch;  // Don't create StreamingParquetWriter in constructor
+        config.initial_mode = WriterMode::Batch; // Don't create StreamingParquetWriter in constructor
         trace!("write_with_cache - creating writer with batch mode (will switch to streaming)");
-        let mut writer = HybridParquetWriter::new(
-            &temp_path,
-            dimension,
-            config,
-        )?;
+        let mut writer = HybridParquetWriter::new(&temp_path, dimension, config).await?;
         trace!("write_with_cache - writer created");
 
         // Set filterable columns BEFORE switching to streaming mode
@@ -910,7 +928,10 @@ impl HybridParquetWriter {
         trace!("write_with_cache - finalizing writer");
         let (stats, collector) = writer.finalize().await?;
         trace!("write_with_cache - writer finalized, checking if temp file exists");
-        trace!("write_with_cache - temp_path exists: {}", temp_path.exists());
+        trace!(
+            "write_with_cache - temp_path exists: {}",
+            temp_path.exists()
+        );
 
         // Read temp file data (keep _temp_dir alive until after this)
         trace!("write_with_cache - reading temp file: {:?}", temp_path);
@@ -942,8 +963,6 @@ impl HybridParquetWriter {
 
         Ok((stats, collector))
     }
-
-
 }
 
 /// Statistics from hybrid writer
@@ -976,6 +995,7 @@ mod tests {
         };
 
         let writer = HybridParquetWriter::new(&file_path, 128, config)
+            .await
             .unwrap();
 
         // Write small batches (streaming pattern)
@@ -1012,6 +1032,7 @@ mod tests {
         };
 
         let writer = HybridParquetWriter::new(&file_path, 128, config)
+            .await
             .unwrap();
 
         // Write large batch (batch pattern)
@@ -1042,6 +1063,7 @@ mod tests {
 
         let config = HybridWriterConfig::default();
         let writer = HybridParquetWriter::new(&file_path, 128, config)
+            .await
             .unwrap();
 
         // Simulate streaming pattern

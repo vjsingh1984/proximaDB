@@ -20,9 +20,9 @@
 //! Total: 15 tests consolidated
 
 use super::helpers::*;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::Result;
 use tempfile::TempDir;
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
@@ -156,8 +156,8 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     // Use ProximaCodec for encoding (migrated from old ProximaEncoder)
-    use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
     use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme as CodecScheme;
+    use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
 
     // Create larger set of vectors to test compression
     let mut vectors = Vec::new();
@@ -193,11 +193,11 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
 
     // Override lossy schemes
     let scheme = match &detected_scheme {
-        CodecScheme::Simple8b | CodecScheme::RunLength |
-        CodecScheme::VByte | CodecScheme::Zigzag { .. } |
-        CodecScheme::PForDelta { .. } => {
-            CodecScheme::Delta { base: 0 }
-        },
+        CodecScheme::Simple8b
+        | CodecScheme::RunLength
+        | CodecScheme::VByte
+        | CodecScheme::Zigzag { .. }
+        | CodecScheme::PForDelta { .. } => CodecScheme::Delta { base: 0 },
         _ => detected_scheme.clone(),
     };
 
@@ -252,7 +252,9 @@ fn test_p2_matrix_memory_scaling() {
 async fn test_p2_matrix_search_integration() -> Result<()> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::storage::engines::impls::raptor::consolidated_reader::{IntraRowgroupMatrix, RaptorReader};
+    use crate::storage::engines::impls::raptor::consolidated_reader::{
+        IntraRowgroupMatrix, RaptorReader,
+    };
 
     // Create test P² matrix
     let p2_matrix = P2Matrix {
@@ -272,14 +274,17 @@ async fn test_p2_matrix_search_integration() -> Result<()> {
         vec![0.5, 0.5, 0.0],
     ];
 
-    let matrix = IntraRowgroupMatrix::new(crate::storage::engines::impls::raptor::common::P2Matrix {
-        num_vectors: p2_matrix.num_vectors as u32,
-        distances: p2_matrix.distances.into_iter().map(|d| d as u8).collect(),
-        min_distance: p2_matrix.min_distance,
-        max_distance: p2_matrix.max_distance,
-        compression: p2_matrix.compression,
-        compressed_size: p2_matrix.compressed_size as u32,
-    }, vectors.clone());
+    let matrix = IntraRowgroupMatrix::new(
+        crate::storage::engines::impls::raptor::common::P2Matrix {
+            num_vectors: p2_matrix.num_vectors as u32,
+            distances: p2_matrix.distances.into_iter().map(|d| d as u8).collect(),
+            min_distance: p2_matrix.min_distance,
+            max_distance: p2_matrix.max_distance,
+            compression: p2_matrix.compression,
+            compressed_size: p2_matrix.compressed_size as u32,
+        },
+        vectors.clone(),
+    );
 
     // Verify we can access distances
     assert_eq!(matrix.p2_matrix.num_vectors, 4);
@@ -328,8 +333,7 @@ fn test_phase1_boundary_detection_basic() {
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let dist = distance_compute
-                .distance(&query, c);
+            let dist = distance_compute.distance(&query, c);
             (i, dist)
         })
         .collect();
@@ -376,8 +380,7 @@ fn test_phase2_spillover_detection() {
 
     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-    let builder =
-        MatrixBuilder::new(distance_compute.clone(), hardware, DistanceMetric::Cosine);
+    let builder = MatrixBuilder::new(distance_compute.clone(), hardware, DistanceMetric::Cosine);
 
     // Create clustered vectors with some spillover
     let (vectors, centroids) = create_clustered_vectors(
@@ -408,8 +411,7 @@ fn test_phase2_spillover_detection() {
             for v in 0..rowgroup_vectors.len() {
                 let mut distances = Vec::new();
                 for c in 0..centroids.len() {
-                    let dist = distance_compute
-                        .distance(&rowgroup_vectors[v], &centroids[c]);
+                    let dist = distance_compute.distance(&rowgroup_vectors[v], &centroids[c]);
                     distances.push((c, dist));
                 }
                 distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());

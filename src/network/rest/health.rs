@@ -121,7 +121,7 @@ impl HealthState {
 }
 
 /// Comprehensive health check endpoint
-/// 
+///
 /// Returns detailed health information about all system components.
 /// Supports query parameters for customization.
 pub async fn health_check(
@@ -129,10 +129,10 @@ pub async fn health_check(
     Query(params): Query<HealthParams>,
 ) -> ApiResult<Json<HealthResponse>> {
     debug!("Health check requested with params: {:?}", params);
-    
+
     let start_time = std::time::Instant::now();
     let timeout = Duration::from_millis(params.timeout_ms.unwrap_or(5000));
-    
+
     let detailed = params.detailed.unwrap_or(false);
     let mut components = if detailed { Some(HashMap::new()) } else { None };
     let mut overall_status = HealthStatus::Healthy;
@@ -146,7 +146,9 @@ pub async fn health_check(
             let storage_health = check_storage_health(&state, timeout).await;
             if storage_health.status == HealthStatus::Unhealthy {
                 overall_status = HealthStatus::Unhealthy;
-            } else if storage_health.status == HealthStatus::Degraded && overall_status == HealthStatus::Healthy {
+            } else if storage_health.status == HealthStatus::Degraded
+                && overall_status == HealthStatus::Healthy
+            {
                 overall_status = HealthStatus::Degraded;
             }
             components_map.insert("storage".to_string(), storage_health);
@@ -157,7 +159,9 @@ pub async fn health_check(
             let graph_health = check_graph_health(&state, timeout).await;
             if graph_health.status == HealthStatus::Unhealthy {
                 overall_status = HealthStatus::Unhealthy;
-            } else if graph_health.status == HealthStatus::Degraded && overall_status == HealthStatus::Healthy {
+            } else if graph_health.status == HealthStatus::Degraded
+                && overall_status == HealthStatus::Healthy
+            {
                 overall_status = HealthStatus::Degraded;
             }
             components_map.insert("graph".to_string(), graph_health);
@@ -168,7 +172,9 @@ pub async fn health_check(
             let indexing_health = check_indexing_health(&state, timeout).await;
             if indexing_health.status == HealthStatus::Unhealthy {
                 overall_status = HealthStatus::Unhealthy;
-            } else if indexing_health.status == HealthStatus::Degraded && overall_status == HealthStatus::Healthy {
+            } else if indexing_health.status == HealthStatus::Degraded
+                && overall_status == HealthStatus::Healthy
+            {
                 overall_status = HealthStatus::Degraded;
             }
             components_map.insert("indexing".to_string(), indexing_health);
@@ -179,7 +185,9 @@ pub async fn health_check(
             let network_health = check_network_health(&state, timeout).await;
             if network_health.status == HealthStatus::Unhealthy {
                 overall_status = HealthStatus::Unhealthy;
-            } else if network_health.status == HealthStatus::Degraded && overall_status == HealthStatus::Healthy {
+            } else if network_health.status == HealthStatus::Degraded
+                && overall_status == HealthStatus::Healthy
+            {
                 overall_status = HealthStatus::Degraded;
             }
             components_map.insert("network".to_string(), network_health);
@@ -188,10 +196,15 @@ pub async fn health_check(
 
     // Collect system-wide metrics
     let mut metrics = HashMap::new();
-    metrics.insert("uptime_seconds".to_string(), serde_json::json!(state.uptime_seconds()));
-    metrics.insert("health_check_duration_ms".to_string(), 
-                   serde_json::json!(start_time.elapsed().as_millis()));
-    
+    metrics.insert(
+        "uptime_seconds".to_string(),
+        serde_json::json!(state.uptime_seconds()),
+    );
+    metrics.insert(
+        "health_check_duration_ms".to_string(),
+        serde_json::json!(start_time.elapsed().as_millis()),
+    );
+
     // Add memory and performance metrics if available
     if let Ok(memory_info) = get_memory_info().await {
         metrics.extend(memory_info);
@@ -209,14 +222,17 @@ pub async fn health_check(
         metrics,
     };
 
-    debug!("Health check completed: status={:?}, duration={}ms", 
-           response.status, start_time.elapsed().as_millis());
+    debug!(
+        "Health check completed: status={:?}, duration={}ms",
+        response.status,
+        start_time.elapsed().as_millis()
+    );
 
     Ok(Json(response))
 }
 
 /// Simple liveness check endpoint
-/// 
+///
 /// Returns 200 if server is alive and can handle requests.
 /// Used by load balancers and orchestration systems.
 pub async fn liveness_check(
@@ -232,7 +248,7 @@ pub async fn liveness_check(
 }
 
 /// Readiness check endpoint
-/// 
+///
 /// Returns 200 when server is ready to serve traffic.
 /// Returns 503 when server is starting up or degraded.
 pub async fn readiness_check(
@@ -261,7 +277,11 @@ pub async fn readiness_check(
     }
 
     let response = ReadinessResponse {
-        status: if ready { "ready".to_string() } else { "not_ready".to_string() },
+        status: if ready {
+            "ready".to_string()
+        } else {
+            "not_ready".to_string()
+        },
         timestamp: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
@@ -280,45 +300,83 @@ pub async fn readiness_check(
 
 async fn check_storage_health(state: &HealthState, timeout: Duration) -> ComponentHealth {
     let start_time = std::time::Instant::now();
-    
+
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get storage engine status
-        if let Err(e) = state.unified_handlers.vector_operations_service.unified_engine().collect_engine_metrics().await {
-            return (HealthStatus::Unhealthy, format!("Storage engine error: {}", e));
+        if let Err(e) = state
+            .unified_handlers
+            .vector_operations_service
+            .unified_engine()
+            .collect_engine_metrics()
+            .await
+        {
+            return (
+                HealthStatus::Unhealthy,
+                format!("Storage engine error: {}", e),
+            );
         }
-        
+
         // Enhanced storage health checks
         let mut storage_metrics = HashMap::new();
-        
+
         // Check WAL status
-        if let Ok(wal_status) = state.unified_handlers.vector_operations_service.get_wal_status().await {
+        if let Ok(wal_status) = state
+            .unified_handlers
+            .vector_operations_service
+            .get_wal_status()
+            .await
+        {
             storage_metrics.insert("wal_status".to_string(), serde_json::json!(wal_status));
         }
-        
+
         // Check available disk space (basic estimation)
-        if let Ok(collections) = state.unified_handlers.collection_service.list_collections().await {
-            storage_metrics.insert("active_collections".to_string(), serde_json::json!(collections.len()));
+        if let Ok(collections) = state
+            .unified_handlers
+            .collection_service
+            .list_collections()
+            .await
+        {
+            storage_metrics.insert(
+                "active_collections".to_string(),
+                serde_json::json!(collections.len()),
+            );
         }
-        
+
         // Check engine health across all storage engines
-        storage_metrics.insert("engine_health".to_string(), serde_json::json!("operational"));
-        
-        (HealthStatus::Healthy, "Storage engine operational".to_string())
-    }).await {
+        storage_metrics.insert(
+            "engine_health".to_string(),
+            serde_json::json!("operational"),
+        );
+
+        (
+            HealthStatus::Healthy,
+            "Storage engine operational".to_string(),
+        )
+    })
+    .await
+    {
         Ok(result) => result,
-        Err(_) => (HealthStatus::Unhealthy, "Storage health check timed out".to_string()),
+        Err(_) => (
+            HealthStatus::Unhealthy,
+            "Storage health check timed out".to_string(),
+        ),
     };
 
     let mut metrics = HashMap::new();
 
-    metrics.insert("response_time_ms".to_string(), 
-                   serde_json::json!(start_time.elapsed().as_millis()));
+    metrics.insert(
+        "response_time_ms".to_string(),
+        serde_json::json!(start_time.elapsed().as_millis()),
+    );
 
     ComponentHealth {
         name: "storage".to_string(),
         status,
         message,
-        last_check: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs(),
+        last_check: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs(),
         response_time_ms: start_time.elapsed().as_millis() as u64,
         metrics,
     }
@@ -327,26 +385,47 @@ async fn check_storage_health(state: &HealthState, timeout: Duration) -> Compone
 async fn check_graph_health(state: &HealthState, timeout: Duration) -> ComponentHealth {
     let start_time = std::time::Instant::now();
     let mut metrics = HashMap::new();
-    
+
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get basic graph statistics
-        match state.unified_handlers.graph_operations_service.get_stats("default").await {
-            Ok(_stats) => (HealthStatus::Healthy, "Graph engine operational".to_string()),
-            Err(e) => (HealthStatus::Degraded, format!("Graph engine warning: {}", e)),
+        match state
+            .unified_handlers
+            .graph_operations_service
+            .get_stats("default")
+            .await
+        {
+            Ok(_stats) => (
+                HealthStatus::Healthy,
+                "Graph engine operational".to_string(),
+            ),
+            Err(e) => (
+                HealthStatus::Degraded,
+                format!("Graph engine warning: {}", e),
+            ),
         }
-    }).await {
+    })
+    .await
+    {
         Ok(result) => result,
-        Err(_) => (HealthStatus::Unhealthy, "Graph health check timed out".to_string()),
+        Err(_) => (
+            HealthStatus::Unhealthy,
+            "Graph health check timed out".to_string(),
+        ),
     };
 
-    metrics.insert("response_time_ms".to_string(), 
-                   serde_json::json!(start_time.elapsed().as_millis()));
+    metrics.insert(
+        "response_time_ms".to_string(),
+        serde_json::json!(start_time.elapsed().as_millis()),
+    );
 
     ComponentHealth {
         name: "graph".to_string(),
         status,
         message,
-        last_check: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs(),
+        last_check: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs(),
         response_time_ms: start_time.elapsed().as_millis() as u64,
         metrics,
     }
@@ -355,34 +434,59 @@ async fn check_graph_health(state: &HealthState, timeout: Duration) -> Component
 async fn check_indexing_health(state: &HealthState, timeout: Duration) -> ComponentHealth {
     let start_time = std::time::Instant::now();
     let mut metrics = HashMap::new();
-    
+
     // Enhanced indexing health checks
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Check AXIS manager status if available
-        match state.unified_handlers.vector_operations_service.get_index_status().await {
+        match state
+            .unified_handlers
+            .vector_operations_service
+            .get_index_status()
+            .await
+        {
             Ok(index_stats) => {
                 // Extract active_indexes field from the JSON response, or default to 1
-                let active_count = index_stats.get("active_indexes")
+                let active_count = index_stats
+                    .get("active_indexes")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(1);
-                metrics.insert("active_indexes".to_string(), serde_json::json!(active_count));
-                (HealthStatus::Healthy, "Indexing system operational".to_string())
-            },
-            Err(e) => (HealthStatus::Degraded, format!("Index system warning: {}", e)),
+                metrics.insert(
+                    "active_indexes".to_string(),
+                    serde_json::json!(active_count),
+                );
+                (
+                    HealthStatus::Healthy,
+                    "Indexing system operational".to_string(),
+                )
+            }
+            Err(e) => (
+                HealthStatus::Degraded,
+                format!("Index system warning: {}", e),
+            ),
         }
-    }).await {
+    })
+    .await
+    {
         Ok(result) => result,
-        Err(_) => (HealthStatus::Unhealthy, "Indexing health check timed out".to_string()),
+        Err(_) => (
+            HealthStatus::Unhealthy,
+            "Indexing health check timed out".to_string(),
+        ),
     };
 
-    metrics.insert("response_time_ms".to_string(), 
-                   serde_json::json!(start_time.elapsed().as_millis()));
+    metrics.insert(
+        "response_time_ms".to_string(),
+        serde_json::json!(start_time.elapsed().as_millis()),
+    );
 
     ComponentHealth {
         name: "indexing".to_string(),
         status,
         message,
-        last_check: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs(),
+        last_check: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs(),
         response_time_ms: start_time.elapsed().as_millis() as u64,
         metrics,
     }
@@ -391,35 +495,56 @@ async fn check_indexing_health(state: &HealthState, timeout: Duration) -> Compon
 async fn check_network_health(state: &HealthState, timeout: Duration) -> ComponentHealth {
     let start_time = std::time::Instant::now();
     let mut metrics = HashMap::new();
-    
+
     // Enhanced network health checks
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Check if both REST and gRPC servers are responding
         let mut server_health = Vec::new();
-        
+
         // Basic connectivity test - if we're processing this request, REST is working
         server_health.push("rest_server_active");
-        
+
         // Check gRPC server connectivity through internal health
-        if let Ok(_) = state.unified_handlers.collection_service.list_collections().await {
+        if let Ok(_) = state
+            .unified_handlers
+            .collection_service
+            .list_collections()
+            .await
+        {
             server_health.push("grpc_server_active");
         }
-        
-        metrics.insert("active_servers".to_string(), serde_json::json!(server_health));
-        (HealthStatus::Healthy, "Network layer operational".to_string())
-    }).await {
+
+        metrics.insert(
+            "active_servers".to_string(),
+            serde_json::json!(server_health),
+        );
+        (
+            HealthStatus::Healthy,
+            "Network layer operational".to_string(),
+        )
+    })
+    .await
+    {
         Ok(result) => result,
-        Err(_) => (HealthStatus::Unhealthy, "Network health check timed out".to_string()),
+        Err(_) => (
+            HealthStatus::Unhealthy,
+            "Network health check timed out".to_string(),
+        ),
     };
 
-    metrics.insert("response_time_ms".to_string(), 
-                   serde_json::json!(start_time.elapsed().as_millis()));
+    metrics.insert(
+        "response_time_ms".to_string(),
+        serde_json::json!(start_time.elapsed().as_millis()),
+    );
 
     ComponentHealth {
         name: "network".to_string(),
         status,
         message,
-        last_check: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs(),
+        last_check: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs(),
         response_time_ms: start_time.elapsed().as_millis() as u64,
         metrics,
     }
@@ -430,12 +555,15 @@ async fn check_network_health(state: &HealthState, timeout: Duration) -> Compone
 async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
     // Basic storage engine availability check
     tokio::time::timeout(Duration::from_millis(1000), async {
-        state.unified_handlers.vector_operations_service
+        state
+            .unified_handlers
+            .vector_operations_service
             .unified_engine()
             .engine_name();
-    }).await
+    })
+    .await
     .map_err(|_| "Storage engine timeout".to_string())?;
-    
+
     Ok(())
 }
 
@@ -449,11 +577,11 @@ async fn quick_graph_check(_state: &HealthState) -> Result<(), String> {
 
 async fn get_memory_info() -> Result<HashMap<String, serde_json::Value>, String> {
     let mut metrics = HashMap::new();
-    
+
     // TODO: Implement actual memory monitoring
     // For now, provide placeholder values
     metrics.insert("memory_used_bytes".to_string(), serde_json::json!(0));
     metrics.insert("memory_available_bytes".to_string(), serde_json::json!(0));
-    
+
     Ok(metrics)
 }

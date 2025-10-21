@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 
 //! # Certificate Management Module
-//! 
+//!
 //! Provides automated certificate management for TLS configuration,
 //! including certificate generation, renewal, and validation.
 
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tokio::fs;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Certificate management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,12 +102,14 @@ impl CertificateManager {
         // Check if certificates exist and are valid
         if let Err(e) = self.validate_certificates().await {
             warn!("Certificate validation failed: {}", e);
-            
+
             if self.config.auto_generate {
                 info!("Auto-generating certificates...");
                 self.generate_self_signed_certificate().await?;
             } else {
-                return Err(anyhow!("No valid certificates found and auto-generation disabled"));
+                return Err(anyhow!(
+                    "No valid certificates found and auto-generation disabled"
+                ));
             }
         }
 
@@ -128,8 +130,10 @@ impl CertificateManager {
         let cert_data = fs::read(&cert_path).await?;
         let cert_info = self.parse_certificate(&cert_data)?;
 
-        info!("Certificate status: valid={}, expires in {} days", 
-              cert_info.valid, cert_info.days_until_expiry);
+        info!(
+            "Certificate status: valid={}, expires in {} days",
+            cert_info.valid, cert_info.days_until_expiry
+        );
 
         Ok(cert_info)
     }
@@ -186,13 +190,17 @@ impl CertificateManager {
 
     /// Get certificate file path
     pub fn get_cert_path(&self) -> PathBuf {
-        self.config.cert_file.clone()
+        self.config
+            .cert_file
+            .clone()
             .unwrap_or_else(|| self.cert_dir.join("server.crt"))
     }
 
     /// Get private key file path
     pub fn get_key_path(&self) -> PathBuf {
-        self.config.key_file.clone()
+        self.config
+            .key_file
+            .clone()
             .unwrap_or_else(|| self.cert_dir.join("server.key"))
     }
 
@@ -200,8 +208,10 @@ impl CertificateManager {
     fn parse_certificate(&self, _cert_data: &[u8]) -> Result<CertificateStatus> {
         // Simplified implementation - in production, use a proper X.509 parser
         // For now, return a mock valid certificate status
-        let expires_at = SystemTime::now() + Duration::from_secs(self.config.validity_days * 24 * 60 * 60);
-        let days_until_expiry = (expires_at.duration_since(SystemTime::now())?.as_secs() / (24 * 60 * 60)) as u64;
+        let expires_at =
+            SystemTime::now() + Duration::from_secs(self.config.validity_days * 24 * 60 * 60);
+        let days_until_expiry =
+            (expires_at.duration_since(SystemTime::now())?.as_secs() / (24 * 60 * 60)) as u64;
         let needs_renewal = days_until_expiry <= self.config.renewal_threshold_days;
 
         Ok(CertificateStatus {
@@ -239,10 +249,10 @@ impl CertificateManager {
     /// Start background certificate renewal task
     pub async fn start_renewal_task(self) -> Result<()> {
         let check_interval = Duration::from_secs(24 * 60 * 60); // Check daily
-        
+
         loop {
             tokio::time::sleep(check_interval).await;
-            
+
             if let Err(e) = self.renew_if_needed().await {
                 error!("Certificate renewal failed: {}", e);
             }

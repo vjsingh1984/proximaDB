@@ -122,9 +122,8 @@ impl WorkloadTimeSeries {
         }
 
         let mean = series.iter().map(|p| p.value).sum::<f64>() / series.len() as f64;
-        let variance = series.iter()
-            .map(|p| (p.value - mean).powi(2))
-            .sum::<f64>() / series.len() as f64;
+        let variance =
+            series.iter().map(|p| (p.value - mean).powi(2)).sum::<f64>() / series.len() as f64;
 
         variance
     }
@@ -205,9 +204,8 @@ impl WorkloadAnalyzer {
 
         let analyzer = self.clone();
         let handle = tokio::spawn(async move {
-            let mut analysis_interval = interval(Duration::from_secs(
-                analyzer.config.analysis_interval_secs,
-            ));
+            let mut analysis_interval =
+                interval(Duration::from_secs(analyzer.config.analysis_interval_secs));
 
             loop {
                 tokio::select! {
@@ -262,14 +260,10 @@ impl WorkloadAnalyzer {
     }
 
     /// Record a workload metric
-    pub async fn record_metric(
-        &self,
-        collection_id: &str,
-        metric: &str,
-        value: f64,
-    ) -> Result<()> {
+    pub async fn record_metric(&self, collection_id: &str, metric: &str, value: f64) -> Result<()> {
         let mut time_series = self.time_series.write().await;
-        let series = time_series.entry(collection_id.to_string())
+        let series = time_series
+            .entry(collection_id.to_string())
             .or_insert_with(WorkloadTimeSeries::new);
 
         series.add_point(metric, value, self.config.max_data_points);
@@ -280,7 +274,8 @@ impl WorkloadAnalyzer {
     /// Analyze workload for a specific collection
     pub async fn analyze_workload(&self, collection_id: &str) -> Result<WorkloadPattern> {
         let time_series = self.time_series.read().await;
-        let series = time_series.get(collection_id)
+        let series = time_series
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No time series data for collection"))?;
 
         // Calculate statistics
@@ -339,9 +334,7 @@ impl WorkloadAnalyzer {
         };
 
         // Calculate latency percentiles
-        let mut latencies: Vec<f64> = series.query_latency_ms.iter()
-            .map(|p| p.value)
-            .collect();
+        let mut latencies: Vec<f64> = series.query_latency_ms.iter().map(|p| p.value).collect();
         latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let p50 = if !latencies.is_empty() {
@@ -399,7 +392,8 @@ impl WorkloadAnalyzer {
         } else if stats.burstiness_score > 100.0 {
             WorkloadPattern::BatchProcessing
         } else if stats.pattern_stability > self.config.stability_threshold
-            && stats.burstiness_score < 10.0 {
+            && stats.burstiness_score < 10.0
+        {
             WorkloadPattern::Streaming
         } else if stats.query_latency_p99 > 1000.0 && stats.avg_reads_per_sec < 100.0 {
             WorkloadPattern::Analytics
@@ -419,7 +413,8 @@ impl WorkloadAnalyzer {
     /// Get workload statistics for a collection
     pub async fn get_statistics(&self, collection_id: &str) -> Result<WorkloadStatistics> {
         let time_series = self.time_series.read().await;
-        let series = time_series.get(collection_id)
+        let series = time_series
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No time series data for collection"))?;
 
         self.calculate_statistics(series)
@@ -433,7 +428,8 @@ impl WorkloadAnalyzer {
     ) -> Result<WorkloadPattern> {
         // Simple prediction based on current trend
         let time_series = self.time_series.read().await;
-        let series = time_series.get(collection_id)
+        let series = time_series
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No time series data for collection"))?;
 
         let read_trend = WorkloadTimeSeries::calculate_trend(&series.reads_per_sec);
@@ -473,7 +469,7 @@ impl Clone for WorkloadAnalyzer {
             patterns: self.patterns.clone(),
             config: self.config.clone(),
             monitor_handle: Arc::new(RwLock::new(None)), // Don't clone handle
-            shutdown_tx: Arc::new(RwLock::new(None)), // Don't clone shutdown channel
+            shutdown_tx: Arc::new(RwLock::new(None)),    // Don't clone shutdown channel
         }
     }
 }
@@ -488,9 +484,18 @@ mod tests {
 
         // Simulate read-heavy workload
         for i in 0..20 {
-            analyzer.record_metric("test_collection", "reads_per_sec", 1000.0 + i as f64).await.unwrap();
-            analyzer.record_metric("test_collection", "writes_per_sec", 10.0).await.unwrap();
-            analyzer.record_metric("test_collection", "query_latency_ms", 5.0).await.unwrap();
+            analyzer
+                .record_metric("test_collection", "reads_per_sec", 1000.0 + i as f64)
+                .await
+                .unwrap();
+            analyzer
+                .record_metric("test_collection", "writes_per_sec", 10.0)
+                .await
+                .unwrap();
+            analyzer
+                .record_metric("test_collection", "query_latency_ms", 5.0)
+                .await
+                .unwrap();
         }
 
         let pattern = analyzer.analyze_workload("test_collection").await.unwrap();
@@ -503,9 +508,18 @@ mod tests {
 
         // Record metrics
         for i in 0..10 {
-            analyzer.record_metric("test_collection", "reads_per_sec", 100.0 * (i + 1) as f64).await.unwrap();
-            analyzer.record_metric("test_collection", "writes_per_sec", 50.0).await.unwrap();
-            analyzer.record_metric("test_collection", "query_latency_ms", 10.0 + i as f64).await.unwrap();
+            analyzer
+                .record_metric("test_collection", "reads_per_sec", 100.0 * (i + 1) as f64)
+                .await
+                .unwrap();
+            analyzer
+                .record_metric("test_collection", "writes_per_sec", 50.0)
+                .await
+                .unwrap();
+            analyzer
+                .record_metric("test_collection", "query_latency_ms", 10.0 + i as f64)
+                .await
+                .unwrap();
         }
 
         let stats = analyzer.get_statistics("test_collection").await.unwrap();

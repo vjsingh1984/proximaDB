@@ -1,10 +1,10 @@
 //! Domain separation layer - clean business context implementation
 
 use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::info;
-use chrono::{DateTime, Utc};
 
 use super::{BusinessContext, DataSensitivityLevel};
 use crate::storage::tenant::entity_store::UserContext;
@@ -13,13 +13,13 @@ use crate::storage::tenant::entity_store::UserContext;
 pub struct DomainManager {
     /// Domain contexts by tenant
     tenant_domains: Arc<DashMap<String, Arc<DashMap<String, DomainContext>>>>,
-    
+
     /// Domain-specific entity stores
     domain_entity_stores: Arc<DashMap<String, Arc<DomainEntityStore>>>,
-    
+
     /// Domain business logic engines
     domain_logic_engines: Arc<DashMap<String, Arc<DomainLogicEngine>>>,
-    
+
     /// Simple domain audit logger
     domain_audit_logger: Arc<DomainAuditLogger>,
 }
@@ -102,7 +102,7 @@ impl DomainManager {
             domain_audit_logger: Arc::new(DomainAuditLogger::new()),
         }
     }
-    
+
     /// Create domain within tenant - clean implementation
     pub async fn create_domain(
         &self,
@@ -113,18 +113,25 @@ impl DomainManager {
     ) -> Result<DomainContext> {
         // Validate user can create domains in this tenant
         if user_context.tenant_id != tenant_id {
-            return Err(anyhow!("User not authorized to create domains in tenant {}", tenant_id));
+            return Err(anyhow!(
+                "User not authorized to create domains in tenant {}",
+                tenant_id
+            ));
         }
-        
+
         let domain_id = format!("{}::{}", tenant_id, domain_name);
-        
+
         // Check if domain already exists
         if let Some(tenant_domains) = self.tenant_domains.get(tenant_id) {
             if tenant_domains.contains_key(domain_name) {
-                return Err(anyhow!("Domain {} already exists in tenant {}", domain_name, tenant_id));
+                return Err(anyhow!(
+                    "Domain {} already exists in tenant {}",
+                    domain_name,
+                    tenant_id
+                ));
             }
         }
-        
+
         // Create domain context
         let domain_context = DomainContext {
             domain_id: domain_id.clone(),
@@ -135,52 +142,52 @@ impl DomainManager {
             status: DomainStatus::Active,
             collections: Arc::new(DashMap::new()),
         };
-        
+
         // Create domain entity store
         let domain_entity_store = DomainEntityStore::new(
             domain_id.clone(),
             tenant_id.to_string(),
             business_context.clone(),
         );
-        
+
         // Create domain logic engine
-        let domain_logic_engine = DomainLogicEngine::new(
-            domain_id.clone(),
-            &business_context,
-        );
-        
+        let domain_logic_engine = DomainLogicEngine::new(domain_id.clone(), &business_context);
+
         // Store domain
-        let tenant_domains = self.tenant_domains
+        let tenant_domains = self
+            .tenant_domains
             .entry(tenant_id.to_string())
             .or_insert_with(|| Arc::new(DashMap::new()));
-        
+
         tenant_domains.insert(domain_name.to_string(), domain_context.clone());
-        
+
         // Store domain components
-        self.domain_entity_stores.insert(domain_id.clone(), Arc::new(domain_entity_store));
-        self.domain_logic_engines.insert(domain_id.clone(), Arc::new(domain_logic_engine));
-        
+        self.domain_entity_stores
+            .insert(domain_id.clone(), Arc::new(domain_entity_store));
+        self.domain_logic_engines
+            .insert(domain_id.clone(), Arc::new(domain_logic_engine));
+
         // Log domain creation
-        self.domain_audit_logger.log_domain_created(
-            tenant_id,
-            domain_name,
-            &business_context,
-            user_context,
-        ).await?;
-        
-        info!("Created domain {} in tenant {} with business context: {}", 
-              domain_name, tenant_id, business_context.primary_function);
-        
+        self.domain_audit_logger
+            .log_domain_created(tenant_id, domain_name, &business_context, user_context)
+            .await?;
+
+        info!(
+            "Created domain {} in tenant {} with business context: {}",
+            domain_name, tenant_id, business_context.primary_function
+        );
+
         Ok(domain_context)
     }
-    
+
     /// Get domain context
     pub fn get_domain(&self, tenant_id: &str, domain_name: &str) -> Option<DomainContext> {
-        self.tenant_domains.get(tenant_id)?
+        self.tenant_domains
+            .get(tenant_id)?
             .get(domain_name)
             .map(|entry| entry.clone())
     }
-    
+
     /// Link collection to domain
     pub async fn link_collection_to_domain(
         &self,
@@ -192,9 +199,10 @@ impl DomainManager {
         user_context: &UserContext,
     ) -> Result<()> {
         // Get domain context
-        let domain_context = self.get_domain(tenant_id, domain_name)
+        let domain_context = self
+            .get_domain(tenant_id, domain_name)
             .ok_or_else(|| anyhow!("Domain {} not found in tenant {}", domain_name, tenant_id))?;
-        
+
         // Create collection mapping
         let mapping = CollectionDomainMapping {
             collection_id: collection_id.to_string(),
@@ -203,25 +211,31 @@ impl DomainManager {
             created_at: Utc::now(),
             sync_policy,
         };
-        
+
         // Store mapping in domain
-        domain_context.collections.insert(collection_id.to_string(), mapping.clone());
-        
+        domain_context
+            .collections
+            .insert(collection_id.to_string(), mapping.clone());
+
         // Log collection linking
-        self.domain_audit_logger.log_collection_linked(
-            tenant_id,
-            domain_name,
-            collection_id,
-            &mapping,
-            user_context,
-        ).await?;
-        
-        info!("Linked collection {} to domain {} in tenant {}", 
-              collection_id, domain_name, tenant_id);
-        
+        self.domain_audit_logger
+            .log_collection_linked(
+                tenant_id,
+                domain_name,
+                collection_id,
+                &mapping,
+                user_context,
+            )
+            .await?;
+
+        info!(
+            "Linked collection {} to domain {} in tenant {}",
+            collection_id, domain_name, tenant_id
+        );
+
         Ok(())
     }
-    
+
     /// List domains in tenant
     pub fn list_tenant_domains(&self, tenant_id: &str) -> Vec<DomainContext> {
         if let Some(tenant_domains) = self.tenant_domains.get(tenant_id) {
@@ -265,7 +279,7 @@ impl DomainAuditLogger {
             audit_events: Arc::new(DashMap::new()),
         }
     }
-    
+
     pub async fn log_domain_created(
         &self,
         tenant_id: &str,
@@ -282,11 +296,11 @@ impl DomainAuditLogger {
             timestamp: Utc::now(),
             business_context: business_context.clone(),
         };
-        
+
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
     }
-    
+
     pub async fn log_collection_linked(
         &self,
         tenant_id: &str,
@@ -307,7 +321,7 @@ impl DomainAuditLogger {
             timestamp: Utc::now(),
             business_context: BusinessContext::default(), // Simplified for now
         };
-        
+
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
     }
@@ -350,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_domain_creation() {
         let domain_manager = DomainManager::new();
-        
+
         let business_context = BusinessContext {
             primary_function: "risk_management".to_string(),
             data_sensitivity: DataSensitivityLevel::Confidential,
@@ -360,21 +374,24 @@ mod tests {
                 availability_requirement: 0.999,
             },
         };
-        
+
         let user_context = UserContext {
             user_id: "admin_user".to_string(),
             tenant_id: "test_tenant".to_string(),
             roles: vec!["domain_admin".to_string()],
             permissions: vec!["domain_create".to_string()],
         };
-        
-        let domain = domain_manager.create_domain(
-            "test_tenant",
-            "risk_management",
-            business_context.clone(),
-            &user_context,
-        ).await.unwrap();
-        
+
+        let domain = domain_manager
+            .create_domain(
+                "test_tenant",
+                "risk_management",
+                business_context.clone(),
+                &user_context,
+            )
+            .await
+            .unwrap();
+
         assert_eq!(domain.domain_name, "risk_management");
         assert_eq!(domain.tenant_id, "test_tenant");
         assert_eq!(domain.domain_id, "test_tenant::risk_management");
@@ -384,7 +401,7 @@ mod tests {
     #[tokio::test]
     async fn test_collection_domain_linking() {
         let domain_manager = DomainManager::new();
-        
+
         let business_context = BusinessContext::default();
         let user_context = UserContext {
             user_id: "admin_user".to_string(),
@@ -392,36 +409,43 @@ mod tests {
             roles: vec!["domain_admin".to_string()],
             permissions: vec!["domain_create".to_string(), "collection_link".to_string()],
         };
-        
+
         // Create domain
-        domain_manager.create_domain(
-            "test_tenant",
-            "customer_intelligence",
-            business_context,
-            &user_context,
-        ).await.unwrap();
-        
+        domain_manager
+            .create_domain(
+                "test_tenant",
+                "customer_intelligence",
+                business_context,
+                &user_context,
+            )
+            .await
+            .unwrap();
+
         // Link collection to domain
-        let result = domain_manager.link_collection_to_domain(
-            "test_tenant",
-            "customer_intelligence",
-            "customer_vectors",
-            MappingType::Direct,
-            SyncPolicy::Realtime,
-            &user_context,
-        ).await;
-        
+        let result = domain_manager
+            .link_collection_to_domain(
+                "test_tenant",
+                "customer_intelligence",
+                "customer_vectors",
+                MappingType::Direct,
+                SyncPolicy::Realtime,
+                &user_context,
+            )
+            .await;
+
         assert!(result.is_ok());
-        
+
         // Verify mapping exists
-        let domain = domain_manager.get_domain("test_tenant", "customer_intelligence").unwrap();
+        let domain = domain_manager
+            .get_domain("test_tenant", "customer_intelligence")
+            .unwrap();
         assert!(domain.collections.contains_key("customer_vectors"));
     }
 
     #[test]
     fn test_domain_listing() {
         let domain_manager = DomainManager::new();
-        
+
         // Should start empty
         let domains = domain_manager.list_tenant_domains("nonexistent_tenant");
         assert!(domains.is_empty());

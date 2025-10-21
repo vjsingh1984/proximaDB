@@ -23,10 +23,10 @@
 //! - Block metadata management
 //! - Quantization integration
 
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
 use tracing::debug;
 
 use crate::proto::proximadb_v1::VectorRecord;
@@ -64,7 +64,8 @@ impl SstRecord {
                         serde_json::Value::String(s)
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
-                        serde_json::Number::from_f64(f).map(serde_json::Value::Number)
+                        serde_json::Number::from_f64(f)
+                            .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
@@ -104,7 +105,10 @@ impl SstRecord {
     }
 
     /// Convert to OptimizedSearchRecord
-    pub fn to_optimized_search_result(&self, score: f32) -> crate::core::search::results::OptimizedSearchRecord {
+    pub fn to_optimized_search_result(
+        &self,
+        score: f32,
+    ) -> crate::core::search::results::OptimizedSearchRecord {
         let mut record = crate::core::search::results::OptimizedSearchRecord::default();
         record.id = self.id.clone();
         record.score = score;
@@ -287,29 +291,34 @@ pub mod utils {
 
     /// Calculate metadata statistics for records
     pub fn calculate_metadata_stats(records: &[VectorRecord]) -> ProximaBlockMetadata {
-        let min_id = records.iter()
+        let min_id = records
+            .iter()
             .map(|r| &r.id)
             .min()
             .cloned()
             .unwrap_or_default();
 
-        let max_id = records.iter()
+        let max_id = records
+            .iter()
             .map(|r| &r.id)
             .max()
             .cloned()
             .unwrap_or_default();
 
-        let min_timestamp = records.iter()
+        let min_timestamp = records
+            .iter()
             .map(|r| r.timestamp.unwrap_or(0) as u64)
             .min()
             .unwrap_or(0);
 
-        let max_timestamp = records.iter()
+        let max_timestamp = records
+            .iter()
             .map(|r| r.timestamp.unwrap_or(0) as u64)
             .max()
             .unwrap_or(0);
 
-        let uncompressed_size = records.iter()
+        let uncompressed_size = records
+            .iter()
             .map(|r| r.vector.len() * 4 + r.metadata.len() * 50)
             .sum();
 
@@ -333,7 +342,9 @@ pub mod utils {
     /// Calculate memory savings from quantization
     pub fn quantization_memory_savings(block: &ProximaDataBlock) -> f32 {
         if let Some(quantized) = &block.quantized {
-            let original_size = block.records.iter()
+            let original_size = block
+                .records
+                .iter()
                 .map(|r| r.vector.len() * 4)
                 .sum::<usize>() as f32;
 
@@ -354,7 +365,10 @@ pub mod utils {
     /// Get compression statistics for a block
     pub fn compression_stats(block: &ProximaDataBlock) -> (bool, usize) {
         let has_compression = !matches!(block.compression.algorithm, CompressionAlgorithm::None);
-        let compressed_size = block.metadata.compressed_size.unwrap_or(block.metadata.uncompressed_size);
+        let compressed_size = block
+            .metadata
+            .compressed_size
+            .unwrap_or(block.metadata.uncompressed_size);
         (has_compression, compressed_size)
     }
 }

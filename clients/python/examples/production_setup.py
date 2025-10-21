@@ -12,7 +12,7 @@ This example demonstrates production-ready configurations:
 - Graceful shutdown
 """
 
-import asyncio
+# import asyncio
 import logging
 import os
 import signal
@@ -60,12 +60,12 @@ class ProductionProximaDBClient:
         self.telemetry = None
         self._shutdown = False
         
-    async def initialize(self):
+    def initialize(self):
         """Initialize client with production configuration"""
         logger.info("Initializing production ProximaDB client...")
         
         # 1. Initialize telemetry
-        await self._setup_telemetry()
+        self._setup_telemetry()
         
         # 2. Create client configuration
         client_config = ClientConfig(
@@ -95,7 +95,7 @@ class ProductionProximaDBClient:
         self.client.set_cache_manager(self._create_cache_manager())
         
         # 7. Connect and verify
-        await self._verify_connection()
+        self._verify_connection()
         
         logger.info("Production client initialized successfully")
     
@@ -217,7 +217,7 @@ class ProductionProximaDBClient:
             enable_caching=self.config.get("enable_caching", True)
         )
     
-    async def _setup_telemetry(self):
+    def _setup_telemetry(self):
         """Set up telemetry and monitoring"""
         exporters = []
         
@@ -239,24 +239,24 @@ class ProductionProximaDBClient:
             service_version=self.config.get("version", "1.0.0")
         )
         
-        await self.telemetry.start()
+        self.telemetry.start()
     
-    async def _verify_connection(self):
+    def _verify_connection(self):
         """Verify client can connect to server"""
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                collections = await self.client.alist_collections()
+                collections = self.client.alist_collections()
                 logger.info(f"Connected to ProximaDB server, found {len(collections)} collections")
                 return
             except Exception as e:
                 if attempt < max_attempts - 1:
                     logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
-                    await asyncio.sleep(2 ** attempt)
+                    time.sleep(2 ** attempt)
                 else:
                     raise ConnectionError(f"Failed to connect to ProximaDB: {e}")
     
-    async def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> Dict[str, Any]:
         """Perform comprehensive health check"""
         health_status = {
             "status": "healthy",
@@ -302,7 +302,7 @@ class ProductionProximaDBClient:
         # Check server connectivity
         try:
             start = time.time()
-            await self.client.alist_collections()
+            self.client.alist_collections()
             latency = (time.time() - start) * 1000
             health_status["checks"]["server_connectivity"] = {
                 "status": "healthy",
@@ -326,7 +326,7 @@ class ProductionProximaDBClient:
         
         return health_status
     
-    async def graceful_shutdown(self):
+    def graceful_shutdown(self):
         """Perform graceful shutdown"""
         if self._shutdown:
             return
@@ -339,18 +339,18 @@ class ProductionProximaDBClient:
         
         # 2. Wait for in-flight requests (with timeout)
         logger.info("Waiting for in-flight requests...")
-        await asyncio.sleep(2)  # Simple wait, could be more sophisticated
+        time.sleep(2)  # Simple wait, could be more sophisticated
         
         # 3. Export final metrics
         if self.telemetry:
             logger.info("Exporting final metrics...")
-            await self.telemetry.flush()
-            await self.telemetry.stop()
+            self.telemetry.flush()
+            self.telemetry.stop()
         
         # 4. Close connections
         if self.client:
             logger.info("Closing connections...")
-            await self.client.adisconnect()
+            self.client.adisconnect()
         
         logger.info("Graceful shutdown completed")
     
@@ -360,18 +360,18 @@ class ProductionProximaDBClient:
 
 
 @asynccontextmanager
-async def create_production_client(config: Dict[str, Any]):
+def create_production_client(config: Dict[str, Any]):
     """Context manager for production client lifecycle"""
     client = ProductionProximaDBClient(config)
     
     try:
-        await client.initialize()
+        client.initialize()
         yield client
     finally:
-        await client.graceful_shutdown()
+        client.graceful_shutdown()
 
 
-async def demo_production_operations(client: ProductionProximaDBClient):
+def demo_production_operations(client: ProductionProximaDBClient):
     """Demonstrate production operations with monitoring"""
     collection_name = "production_demo"
     
@@ -391,11 +391,11 @@ async def demo_production_operations(client: ProductionProximaDBClient):
     )
     
     try:
-        await client.adelete_collection(collection_name)
+        client.adelete_collection(collection_name)
     except:
         pass
     
-    collection = await client.acreate_collection(config)
+    collection = client.acreate_collection(config)
     logger.info(f"Collection created: {collection.id}")
     
     # Insert vectors with monitoring
@@ -412,7 +412,7 @@ async def demo_production_operations(client: ProductionProximaDBClient):
             }
         ))
     
-    response = await client.ainsert_vectors(collection_name, vectors)
+    response = client.ainsert_vectors(collection_name, vectors)
     logger.info(f"Inserted {response.success_count} vectors")
     
     # Perform searches with caching
@@ -421,26 +421,26 @@ async def demo_production_operations(client: ProductionProximaDBClient):
     
     # First search (cache miss)
     start = time.time()
-    results1 = await client.asearch_vectors(collection_name, query_vector, top_k=10)
+    results1 = client.search(collection_name, query_vector, top_k=10)
     time1 = time.time() - start
     logger.info(f"First search took {time1*1000:.2f}ms (cache miss)")
     
     # Second search (cache hit)
     start = time.time()
-    results2 = await client.asearch_vectors(collection_name, query_vector, top_k=10)
+    results2 = client.search(collection_name, query_vector, top_k=10)
     time2 = time.time() - start
     logger.info(f"Second search took {time2*1000:.2f}ms (cache hit)")
     
     # Health check
-    health = await client.health_check()
+    health = client.health_check()
     logger.info(f"Health status: {health['status']}")
     
     # Clean up
-    await client.adelete_collection(collection_name)
+    client.adelete_collection(collection_name)
     logger.info("Demo collection deleted")
 
 
-async def main():
+def main():
     """Main function demonstrating production setup"""
     
     # Production configuration (typically from environment/config file)
@@ -483,9 +483,9 @@ async def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Create and use production client
-    async with create_production_client(config) as client:
+    with create_production_client(config) as client:
         # Run demo operations
-        await demo_production_operations(client)
+        demo_production_operations(client)
         
         # Show production metrics
         print("\n📊 Production Metrics:")
@@ -512,13 +512,13 @@ async def main():
         print(f"  - Entries: {cache_stats['query_cache']['entries']}")
         
         # Health check
-        health = await client.health_check()
+        health = client.health_check()
         print(f"\nHealth Status: {health['status'].upper()}")
         
         # Wait for shutdown signal (in production)
         print("\n✅ Production client running. Press Ctrl+C to shutdown...")
         try:
-            await shutdown_event.wait()
+            shutdown_event.wait()
         except KeyboardInterrupt:
             pass
     
@@ -527,4 +527,4 @@ async def main():
 
 if __name__ == "__main__":
     import numpy as np  # For demo data generation
-    asyncio.run(main())
+    main()

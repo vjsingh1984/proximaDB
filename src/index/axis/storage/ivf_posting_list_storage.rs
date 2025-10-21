@@ -29,8 +29,8 @@ use tracing::{debug, info};
 
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 // Type alias for compatibility
 pub type PostingEntry = PostingListEntry;
@@ -177,7 +177,7 @@ impl PostingListStorage {
                         },
                     );
                     metadata.insert(
-                        "vector_id".to_string(), 
+                        "vector_id".to_string(),
                         crate::proto::proximadb_v1::SqlValue {
                             value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                 entry.vector_id.clone(),
@@ -190,10 +190,12 @@ impl PostingListStorage {
                             id,
                             vector,
                             metadata,
-                            timestamp: Some(std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs() as i64),
+                            timestamp: Some(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs() as i64,
+                            ),
                             updated_at: None,
                             expires_at: None,
                             version: None,
@@ -293,7 +295,8 @@ impl PostingListStorage {
                 );
                 // Create zero-copy system for the reader
                 // Create UnifiedCachingFilesystem for the reader
-                let base_fs = filesystem.get_filesystem("file://")
+                let base_fs = filesystem
+                    .get_filesystem("file://")
                     .map_err(|e| anyhow!("Failed to get base filesystem: {}", e))?;
                 let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
                     base_fs,

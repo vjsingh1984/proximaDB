@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{ProximaDataBlock, RowBasedConfig, ProximaBlockMetadata, BlockCompressionConfig};
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::compression::CompressionAlgorithm;
-use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use super::block_structures::BlockStatistics;
+use super::{BlockCompressionConfig, ProximaBlockMetadata, ProximaDataBlock, RowBasedConfig};
+use crate::core::compression::CompressionAlgorithm;
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::common::compaction_orchestrator::FilenameCodec;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -611,11 +611,12 @@ mod tests {
             encoding_marker: 0x00,
             encoding_metadata: None,
             block_id: 0,
-            records: records.clone(),  // Include the test records
+            records: records.clone(), // Include the test records
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
-            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             quantized_section: None,
             metadata: ProximaBlockMetadata::default(),
             compression_config: BlockCompressionConfig::default(),
@@ -682,7 +683,7 @@ mod tests {
         let codec = FilenameCodec::new();
         let sst_filename = codec.generate(3, "sst");
         assert!(sst_filename.contains("L3_"));
-        assert!(sst_filename.ends_with(".sst"));  // Updated to use .sst extension
+        assert!(sst_filename.ends_with(".sst")); // Updated to use .sst extension
 
         let swift_filename = codec.generate(2, "swift");
         assert!(swift_filename.contains("L2_"));

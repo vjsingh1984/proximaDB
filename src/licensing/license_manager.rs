@@ -3,12 +3,12 @@
 //! Handles license tier validation, feature gating, and both online/offline license enforcement
 //! for privacy-conscious customers and air-gapped deployments
 
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
-use anyhow::{Result, anyhow};
-use tracing::{info, debug, warn};
 
 /// Comprehensive license management for all deployment scenarios
 #[derive(Debug, Clone)]
@@ -33,10 +33,10 @@ pub struct LicenseConfig {
 /// Deployment models for license management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeploymentModel {
-    SaaSHosted,           // ProximaDB-hosted SaaS
-    CustomerVPC,          // Customer VPC with limited connectivity
-    AirGapped,            // Completely air-gapped on-premises
-    Hybrid,               // Mixed deployment with some connectivity
+    SaaSHosted,  // ProximaDB-hosted SaaS
+    CustomerVPC, // Customer VPC with limited connectivity
+    AirGapped,   // Completely air-gapped on-premises
+    Hybrid,      // Mixed deployment with some connectivity
 }
 
 /// Complete license information
@@ -168,11 +168,11 @@ pub struct UsageLimits {
 /// Support tier levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SupportTier {
-    Community,              // Forum support only
-    Standard,               // Email support
-    Priority,               // Priority support with SLA
-    Dedicated,              // Dedicated customer success manager
-    WhiteGlove,           // 24/7 white-glove support
+    Community,  // Forum support only
+    Standard,   // Email support
+    Priority,   // Priority support with SLA
+    Dedicated,  // Dedicated customer success manager
+    WhiteGlove, // 24/7 white-glove support
 }
 
 /// License status and validation result
@@ -189,15 +189,18 @@ pub enum LicenseStatus {
 /// Isolation levels for multi-tenancy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IsolationLevel {
-    Basic,                  // Basic tenant separation
-    Enhanced,               // Advanced isolation with monitoring
-    Complete,               // Full enterprise isolation with audit
+    Basic,    // Basic tenant separation
+    Enhanced, // Advanced isolation with monitoring
+    Complete, // Full enterprise isolation with audit
 }
 
 impl LicenseManager {
     /// Create new license manager
     pub async fn new(config: LicenseConfig) -> Result<Self> {
-        info!("🔐 Initializing license manager for deployment model: {:?}", config.deployment_model);
+        info!(
+            "🔐 Initializing license manager for deployment model: {:?}",
+            config.deployment_model
+        );
 
         let tier_enforcement = TierEnforcement::new();
         let offline_validator = OfflineLicenseValidator::new(&config)?;
@@ -211,23 +214,38 @@ impl LicenseManager {
 
         // Load existing license if available
         if let Ok(license) = manager.load_license_from_storage().await {
-            info!("✅ Loaded existing license: {} ({})", license.customer_name, license.license_tier);
+            info!(
+                "✅ Loaded existing license: {} ({})",
+                license.customer_name, license.license_tier
+            );
         }
 
         Ok(manager)
     }
 
     /// Validate license for feature access
-    pub async fn validate_feature_access(&self, feature: &str, usage_context: &UsageContext) -> Result<FeatureValidation> {
-        debug!("🔍 Validating feature access: {} for user {}", feature, usage_context.user_id);
+    pub async fn validate_feature_access(
+        &self,
+        feature: &str,
+        usage_context: &UsageContext,
+    ) -> Result<FeatureValidation> {
+        debug!(
+            "🔍 Validating feature access: {} for user {}",
+            feature, usage_context.user_id
+        );
 
         // Check if license exists and is valid
-        let license = self.current_license.as_ref()
+        let license = self
+            .current_license
+            .as_ref()
             .ok_or_else(|| anyhow!("No license found"))?;
 
         // Validate license is not expired
         let license_status = self.check_license_status(license).await?;
-        if !matches!(license_status, LicenseStatus::Valid | LicenseStatus::GracePeriod { .. }) {
+        if !matches!(
+            license_status,
+            LicenseStatus::Valid | LicenseStatus::GracePeriod { .. }
+        ) {
             return Ok(FeatureValidation {
                 allowed: false,
                 reason: format!("License status: {:?}", license_status),
@@ -241,14 +259,19 @@ impl LicenseManager {
         if !feature_allowed {
             return Ok(FeatureValidation {
                 allowed: false,
-                reason: format!("Feature '{}' not available in {:?} tier", feature, license.license_tier),
+                reason: format!(
+                    "Feature '{}' not available in {:?} tier",
+                    feature, license.license_tier
+                ),
                 limits_exceeded: vec![],
                 upgrade_required: Some(self.suggest_license_upgrade(feature)),
             });
         }
 
         // Check usage limits
-        let usage_validation = self.validate_usage_limits(usage_context, &license.usage_limits).await?;
+        let usage_validation = self
+            .validate_usage_limits(usage_context, &license.usage_limits)
+            .await?;
         if !usage_validation.within_limits {
             return Ok(FeatureValidation {
                 allowed: false,
@@ -292,7 +315,11 @@ impl LicenseManager {
 
         for license_path in license_paths {
             if let Ok(license_data) = tokio::fs::read_to_string(license_path).await {
-                match self.offline_validator.validate_license_token(&license_data).await {
+                match self
+                    .offline_validator
+                    .validate_license_token(&license_data)
+                    .await
+                {
                     Ok(license) => {
                         info!("✅ Loaded offline license from: {}", license_path);
                         return Ok(license);
@@ -362,7 +389,8 @@ impl LicenseManager {
         // Check expiration
         if let Some(expires_at) = license.expires_at {
             if Utc::now() > expires_at {
-                let grace_period_end = expires_at + Duration::days(self.config.grace_period_days as i64);
+                let grace_period_end =
+                    expires_at + Duration::days(self.config.grace_period_days as i64);
                 if Utc::now() > grace_period_end {
                     return Ok(LicenseStatus::Expired);
                 } else {
@@ -374,7 +402,10 @@ impl LicenseManager {
 
         // For privacy-conscious deployments, validate offline
         if self.config.offline_validation_only {
-            return self.offline_validator.validate_offline_license(license).await;
+            return self
+                .offline_validator
+                .validate_offline_license(license)
+                .await;
         }
 
         // For SaaS deployments, could validate online (if phone home is enabled)
@@ -387,7 +418,11 @@ impl LicenseManager {
     }
 
     /// Validate feature entitlement based on license tier
-    fn is_feature_entitled(&self, feature: &str, entitlements: &FeatureEntitlements) -> Result<bool> {
+    fn is_feature_entitled(
+        &self,
+        feature: &str,
+        entitlements: &FeatureEntitlements,
+    ) -> Result<bool> {
         let entitled = match feature {
             // AI Features
             "natural_language_queries" => entitlements.ai_capabilities.natural_language_queries,
@@ -397,17 +432,30 @@ impl LicenseManager {
             // Multi-tenant features
             "multi_tenant_isolation" => entitlements.multi_tenant_features.max_tenants.is_some(),
             "advanced_rbac" => entitlements.multi_tenant_features.rbac_advanced_features,
-            "custom_tenant_config" => entitlements.multi_tenant_features.custom_tenant_configuration,
+            "custom_tenant_config" => {
+                entitlements
+                    .multi_tenant_features
+                    .custom_tenant_configuration
+            }
 
             // Performance features
-            "all_storage_engines" => entitlements.performance_features.storage_engines_allowed.len() > 3,
+            "all_storage_engines" => {
+                entitlements
+                    .performance_features
+                    .storage_engines_allowed
+                    .len()
+                    > 3
+            }
             "advanced_caching" => entitlements.performance_features.advanced_caching,
             "performance_monitoring" => entitlements.performance_features.performance_monitoring,
 
             // Security features
             "sso_integration" => entitlements.security_features.sso_integration,
             "audit_logging" => entitlements.security_features.audit_logging,
-            "compliance_frameworks" => !entitlements.security_features.compliance_frameworks.is_empty(),
+            "compliance_frameworks" => !entitlements
+                .security_features
+                .compliance_frameworks
+                .is_empty(),
 
             // Enterprise features
             "deployment_automation" => entitlements.enterprise_features.deployment_automation,
@@ -425,20 +473,30 @@ impl LicenseManager {
     }
 
     /// Validate usage limits
-    async fn validate_usage_limits(&self, context: &UsageContext, limits: &UsageLimits) -> Result<UsageValidation> {
+    async fn validate_usage_limits(
+        &self,
+        context: &UsageContext,
+        limits: &UsageLimits,
+    ) -> Result<UsageValidation> {
         let mut exceeded_limits = Vec::new();
 
         // Check collection limits
         if let Some(max_collections) = limits.max_collections {
             if context.current_collections > max_collections {
-                exceeded_limits.push(format!("Collections: {} > {}", context.current_collections, max_collections));
+                exceeded_limits.push(format!(
+                    "Collections: {} > {}",
+                    context.current_collections, max_collections
+                ));
             }
         }
 
         // Check vector limits
         if let Some(max_vectors) = limits.max_vectors_total {
             if context.current_vectors > max_vectors {
-                exceeded_limits.push(format!("Vectors: {} > {}", context.current_vectors, max_vectors));
+                exceeded_limits.push(format!(
+                    "Vectors: {} > {}",
+                    context.current_vectors, max_vectors
+                ));
             }
         }
 
@@ -446,7 +504,10 @@ impl LicenseManager {
         if let Some(max_api_calls) = limits.max_api_calls_per_month {
             let daily_limit = max_api_calls / 30; // Approximate daily limit
             if context.api_calls_today > daily_limit {
-                exceeded_limits.push(format!("API calls today: {} > {}", context.api_calls_today, daily_limit));
+                exceeded_limits.push(format!(
+                    "API calls today: {} > {}",
+                    context.api_calls_today, daily_limit
+                ));
             }
         }
 
@@ -454,7 +515,10 @@ impl LicenseManager {
         if let Some(max_ai_queries) = limits.max_ai_queries_per_month {
             let daily_ai_limit = max_ai_queries / 30;
             if context.ai_queries_today > daily_ai_limit {
-                exceeded_limits.push(format!("AI queries today: {} > {}", context.ai_queries_today, daily_ai_limit));
+                exceeded_limits.push(format!(
+                    "AI queries today: {} > {}",
+                    context.ai_queries_today, daily_ai_limit
+                ));
             }
         }
 
@@ -615,7 +679,11 @@ impl FeatureEntitlements {
             ai_capabilities: AICapabilities {
                 natural_language_queries: true,
                 executive_dashboards: true,
-                llm_providers_allowed: vec!["OpenAI".to_string(), "Anthropic".to_string(), "Cohere".to_string()],
+                llm_providers_allowed: vec![
+                    "OpenAI".to_string(),
+                    "Anthropic".to_string(),
+                    "Cohere".to_string(),
+                ],
                 ai_queries_per_month: Some(10000), // Higher AI usage
                 advanced_ai_features: true,
             },
@@ -626,7 +694,12 @@ impl FeatureEntitlements {
                 custom_tenant_configuration: true,
             },
             performance_features: PerformanceFeatures {
-                storage_engines_allowed: vec!["SST".to_string(), "VIPER".to_string(), "NOVA".to_string(), "SWIFT".to_string()],
+                storage_engines_allowed: vec![
+                    "SST".to_string(),
+                    "VIPER".to_string(),
+                    "NOVA".to_string(),
+                    "SWIFT".to_string(),
+                ],
                 max_qps: Some(5000),
                 advanced_caching: true,
                 performance_monitoring: true,
@@ -656,7 +729,7 @@ impl FeatureEntitlements {
                 natural_language_queries: true,
                 executive_dashboards: true,
                 llm_providers_allowed: vec!["ALL".to_string()], // All 9 providers
-                ai_queries_per_month: None, // Unlimited
+                ai_queries_per_month: None,                     // Unlimited
                 advanced_ai_features: true,
             },
             multi_tenant_features: MultiTenantFeatures {
@@ -667,7 +740,7 @@ impl FeatureEntitlements {
             },
             performance_features: PerformanceFeatures {
                 storage_engines_allowed: vec!["ALL".to_string()], // All 7 engines
-                max_qps: None, // Unlimited
+                max_qps: None,                                    // Unlimited
                 advanced_caching: true,
                 performance_monitoring: true,
                 custom_optimization: true,
@@ -675,7 +748,11 @@ impl FeatureEntitlements {
             security_features: SecurityFeatures {
                 sso_integration: true,
                 audit_logging: true,
-                compliance_frameworks: vec!["SOC2".to_string(), "GDPR".to_string(), "HIPAA".to_string()],
+                compliance_frameworks: vec![
+                    "SOC2".to_string(),
+                    "GDPR".to_string(),
+                    "HIPAA".to_string(),
+                ],
                 advanced_encryption: true,
                 security_monitoring: true,
             },
@@ -708,7 +785,7 @@ impl UsageLimits {
         Self {
             max_collections: Some(1000),
             max_vectors_total: Some(100_000_000), // 100M vectors
-            max_storage_gb: Some(1000), // 1TB
+            max_storage_gb: Some(1000),           // 1TB
             max_api_calls_per_month: Some(3_000_000), // ~100K/day
             max_ai_queries_per_month: Some(300_000), // ~10K/day
             max_concurrent_users: Some(100),
@@ -718,12 +795,12 @@ impl UsageLimits {
     /// Enterprise usage limits (unlimited)
     pub fn enterprise_limits() -> Self {
         Self {
-            max_collections: None, // Unlimited
-            max_vectors_total: None, // Unlimited
-            max_storage_gb: None, // Unlimited
-            max_api_calls_per_month: None, // Unlimited
+            max_collections: None,          // Unlimited
+            max_vectors_total: None,        // Unlimited
+            max_storage_gb: None,           // Unlimited
+            max_api_calls_per_month: None,  // Unlimited
             max_ai_queries_per_month: None, // Unlimited
-            max_concurrent_users: None, // Unlimited
+            max_concurrent_users: None,     // Unlimited
         }
     }
 }
@@ -732,8 +809,8 @@ impl Default for LicenseConfig {
     fn default() -> Self {
         Self {
             deployment_model: DeploymentModel::CustomerVPC, // Conservative default
-            enable_phone_home: false, // Privacy-conscious default
-            offline_validation_only: true, // Air-gapped friendly
+            enable_phone_home: false,                       // Privacy-conscious default
+            offline_validation_only: true,                  // Air-gapped friendly
             license_check_interval_hours: 24,
             grace_period_days: 7,
             enable_usage_analytics: false, // Privacy-conscious default
@@ -742,8 +819,8 @@ impl Default for LicenseConfig {
 }
 
 // Supporting types and trait implementations
-use super::tier_enforcement::TierEnforcement;
 use super::offline_validation::OfflineLicenseValidator;
+use super::tier_enforcement::TierEnforcement;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeveloperLimits {
@@ -777,7 +854,10 @@ mod tests {
         let trial_license = manager.create_trial_license().await.unwrap();
 
         assert_eq!(trial_license.customer_id, "trial_customer");
-        assert!(matches!(trial_license.license_tier, LicenseTier::Free { .. }));
+        assert!(matches!(
+            trial_license.license_tier,
+            LicenseTier::Free { .. }
+        ));
         assert!(trial_license.expires_at.is_some());
     }
 
@@ -789,7 +869,11 @@ mod tests {
 
         let enterprise_entitlements = FeatureEntitlements::enterprise_tier();
         assert!(enterprise_entitlements.ai_capabilities.advanced_ai_features);
-        assert!(enterprise_entitlements.enterprise_features.dedicated_support);
+        assert!(
+            enterprise_entitlements
+                .enterprise_features
+                .dedicated_support
+        );
     }
 
     #[test]

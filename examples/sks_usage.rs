@@ -7,9 +7,7 @@
 
 //! Example usage of the Semantic Knowledge Store (SKS) feature
 
-use proximadb::proto::proximadb_v1::{
-    VectorRecord,
-};
+use proximadb::proto::proximadb_v1::VectorRecord;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -65,9 +63,11 @@ fn create_sample_vector_record() -> anyhow::Result<VectorRecord> {
     metadata.insert(
         "title".to_string(),
         proximadb::proto::proximadb_v1::SqlValue {
-            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                "Attention Is All You Need".to_string()
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "Attention Is All You Need".to_string(),
+                ),
+            ),
         },
     );
 
@@ -81,9 +81,11 @@ fn create_sample_vector_record() -> anyhow::Result<VectorRecord> {
     metadata.insert(
         "domain".to_string(),
         proximadb::proto::proximadb_v1::SqlValue {
-            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                "machine learning".to_string()
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "machine learning".to_string(),
+                ),
+            ),
         },
     );
 
@@ -124,16 +126,16 @@ fn demonstrate_metadata_operations(record: &VectorRecord) {
         match &value.value {
             Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                 println!("   - {}: {} (string)", key, s);
-            },
+            }
             Some(proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                 println!("   - {}: {} (int)", key, i);
-            },
+            }
             Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                 println!("   - {}: {} (float)", key, f);
-            },
+            }
             Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                 println!("   - {}: {} (bool)", key, b);
-            },
+            }
             _ => {
                 println!("   - {}: <unknown type>", key);
             }
@@ -150,14 +152,12 @@ fn demonstrate_search_concepts() {
     println!("   - Distance metrics: Cosine, Euclidean, Manhattan, Dot Product");
 
     // Example distance metric usage
-    let distance_metrics = vec![
-        "Cosine",
-        "Euclidean",
-        "Manhattan",
-        "DotProduct"
-    ];
+    let distance_metrics = vec!["Cosine", "Euclidean", "Manhattan", "DotProduct"];
 
-    println!("   - Available distance metrics: {}", distance_metrics.join(", "));
+    println!(
+        "   - Available distance metrics: {}",
+        distance_metrics.join(", ")
+    );
 }
 
 /// Example search result structure

@@ -22,9 +22,9 @@ use std::sync::Arc;
 use tokio::time::{Duration, interval};
 use tracing::{debug, info, warn};
 
-use crate::storage::traits::{UnifiedMetricsCollector, MetricsOperationType};
-use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
+use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 
 /// Cache warming strategies for different scenarios
 #[derive(Debug, Clone)]
@@ -112,7 +112,10 @@ impl CacheWarmer {
     pub async fn start_warming(&self) -> Result<()> {
         let mut warming_interval = interval(self.warming_interval);
 
-        info!("🔥 Cache warming started with {} strategies", self.warming_strategies.len());
+        info!(
+            "🔥 Cache warming started with {} strategies",
+            self.warming_strategies.len()
+        );
 
         loop {
             warming_interval.tick().await;
@@ -120,12 +123,8 @@ impl CacheWarmer {
             if let Err(e) = self.execute_warming_cycle().await {
                 warn!("Cache warming cycle failed: {}", e);
                 // Report error to unified metrics
-                self.metrics_collector.record(
-                    MetricsOperationType::Write,
-                    0,
-                    false,
-                    None,
-                );
+                self.metrics_collector
+                    .record(MetricsOperationType::Write, 0, false, None);
             }
         }
     }
@@ -160,34 +159,59 @@ impl CacheWarmer {
             Some(total_warmed as usize),
         );
 
-        info!("🔥 Cache warming cycle completed: {} vectors warmed in {:?}", total_warmed, cycle_duration);
+        info!(
+            "🔥 Cache warming cycle completed: {} vectors warmed in {:?}",
+            total_warmed, cycle_duration
+        );
         Ok(())
     }
 
     /// Execute specific warming strategy
     async fn execute_strategy(&self, strategy: &WarmingStrategy) -> Result<u64> {
         match strategy {
-            WarmingStrategy::PopularityBased { top_count, min_access_count } => {
-                self.warm_popular_vectors(*top_count, *min_access_count).await
+            WarmingStrategy::PopularityBased {
+                top_count,
+                min_access_count,
+            } => {
+                self.warm_popular_vectors(*top_count, *min_access_count)
+                    .await
             }
-            WarmingStrategy::CollectionBased { priority_collections, max_vectors_per_collection } => {
-                self.warm_priority_collections(priority_collections, *max_vectors_per_collection).await
+            WarmingStrategy::CollectionBased {
+                priority_collections,
+                max_vectors_per_collection,
+            } => {
+                self.warm_priority_collections(priority_collections, *max_vectors_per_collection)
+                    .await
             }
-            WarmingStrategy::SimilarityBased { similarity_count, similarity_threshold } => {
-                self.warm_similar_vectors(*similarity_count, *similarity_threshold).await
+            WarmingStrategy::SimilarityBased {
+                similarity_count,
+                similarity_threshold,
+            } => {
+                self.warm_similar_vectors(*similarity_count, *similarity_threshold)
+                    .await
             }
-            WarmingStrategy::TimeBased { pattern_window_hours, prefetch_count } => {
-                self.warm_temporal_patterns(*pattern_window_hours, *prefetch_count).await
+            WarmingStrategy::TimeBased {
+                pattern_window_hours,
+                prefetch_count,
+            } => {
+                self.warm_temporal_patterns(*pattern_window_hours, *prefetch_count)
+                    .await
             }
         }
     }
 
     /// Warm most popular vectors based on access patterns
     async fn warm_popular_vectors(&self, top_count: usize, min_access_count: u64) -> Result<u64> {
-        debug!("🔥 Warming {} popular vectors (min access: {})", top_count, min_access_count);
+        debug!(
+            "🔥 Warming {} popular vectors (min access: {})",
+            top_count, min_access_count
+        );
 
         // Get access patterns from orchestrator
-        let access_patterns = self.cache_orchestrator.pattern_tracker().get_popular_keys(top_count, min_access_count);
+        let access_patterns = self
+            .cache_orchestrator
+            .pattern_tracker()
+            .get_popular_keys(top_count, min_access_count);
         let mut warmed_count = 0u64;
 
         for (cache_key, access_count) in access_patterns {
@@ -203,7 +227,10 @@ impl CacheWarmer {
                 // Load from storage and cache
                 if let Some(engine) = self.get_best_engine_for_collection(&collection_id) {
                     // We need base_path for storage engines - get from collection metadata
-                    if let Ok(Some(vector)) = self.load_vector_with_base_path(&engine, &collection_id, &vector_id).await {
+                    if let Ok(Some(vector)) = self
+                        .load_vector_with_base_path(&engine, &collection_id, &vector_id)
+                        .await
+                    {
                         if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
                             let _ = vector_cache.put(cache_key.clone(), vector).await;
                             warmed_count += 1;
@@ -221,18 +248,31 @@ impl CacheWarmer {
             }
         }
 
-        debug!("🔥 Popularity warming completed: {} vectors cached", warmed_count);
+        debug!(
+            "🔥 Popularity warming completed: {} vectors cached",
+            warmed_count
+        );
         Ok(warmed_count)
     }
 
     /// Warm entire priority collections
-    async fn warm_priority_collections(&self, collections: &[String], max_per_collection: usize) -> Result<u64> {
-        debug!("🔥 Warming {} priority collections (max {} per collection)", collections.len(), max_per_collection);
+    async fn warm_priority_collections(
+        &self,
+        collections: &[String],
+        max_per_collection: usize,
+    ) -> Result<u64> {
+        debug!(
+            "🔥 Warming {} priority collections (max {} per collection)",
+            collections.len(),
+            max_per_collection
+        );
 
         let mut total_warmed = 0u64;
 
         for collection_id in collections {
-            let warmed = self.warm_collection(collection_id, max_per_collection).await?;
+            let warmed = self
+                .warm_collection(collection_id, max_per_collection)
+                .await?;
             total_warmed += warmed;
 
             // Report per-collection metrics
@@ -248,8 +288,15 @@ impl CacheWarmer {
     }
 
     /// Warm vectors similar to recently accessed ones
-    async fn warm_similar_vectors(&self, similarity_count: usize, similarity_threshold: f32) -> Result<u64> {
-        debug!("🔥 Warming {} similar vectors (threshold: {})", similarity_count, similarity_threshold);
+    async fn warm_similar_vectors(
+        &self,
+        similarity_count: usize,
+        similarity_threshold: f32,
+    ) -> Result<u64> {
+        debug!(
+            "🔥 Warming {} similar vectors (threshold: {})",
+            similarity_count, similarity_threshold
+        );
 
         // TODO: Implement similarity-based warming using vector embeddings
         // This would require:
@@ -262,8 +309,15 @@ impl CacheWarmer {
     }
 
     /// Warm vectors based on temporal access patterns
-    async fn warm_temporal_patterns(&self, window_hours: u64, prefetch_count: usize) -> Result<u64> {
-        debug!("🔥 Warming {} vectors based on {}h temporal patterns", prefetch_count, window_hours);
+    async fn warm_temporal_patterns(
+        &self,
+        window_hours: u64,
+        prefetch_count: usize,
+    ) -> Result<u64> {
+        debug!(
+            "🔥 Warming {} vectors based on {}h temporal patterns",
+            prefetch_count, window_hours
+        );
 
         // TODO: Implement temporal pattern analysis
         // This would require:
@@ -286,7 +340,10 @@ impl CacheWarmer {
     }
 
     /// Helper: Get best storage engine for collection
-    fn get_best_engine_for_collection(&self, _collection_id: &str) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    fn get_best_engine_for_collection(
+        &self,
+        _collection_id: &str,
+    ) -> Option<&Arc<dyn UnifiedStorageEngine>> {
         // For now, return first available engine
         // TODO: Implement engine selection based on collection metadata
         self.storage_engines.values().next()
@@ -302,7 +359,9 @@ impl CacheWarmer {
         // TODO: Get base_path from collection metadata service
         // For now, use default path
         let base_path = "/data/collections";
-        engine.vector_by_id(collection_id, base_path, vector_id).await
+        engine
+            .vector_by_id(collection_id, base_path, vector_id)
+            .await
     }
 
     /// Helper: Warm specific collection

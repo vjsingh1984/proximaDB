@@ -74,7 +74,9 @@ async fn test_single_metadata_backend_instance() {
 
     // Create SharedServices which creates the single metadata backend
     let (shared_services, collection_service) =
-        SharedServices::new(None, &storage_config, None, None).await.unwrap();
+        SharedServices::new(None, &storage_config, None, None)
+            .await
+            .unwrap();
 
     // Verify collection service was injected into storage engine
     {

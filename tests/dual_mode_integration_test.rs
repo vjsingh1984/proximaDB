@@ -7,8 +7,8 @@ use proximadb::{
     core::config::SstConfig,
     core::{hardware_capabilities, search::SearchParams},
     proto::proximadb_v1::{
-        Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric,
-        StorageEngine, VectorRecord, SqlValue, sql_value,
+        Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, SqlValue,
+        StorageEngine, VectorRecord, sql_value,
     },
     storage::{
         engines::impls::sst::SstEngine,
@@ -42,16 +42,22 @@ impl StorageTestFixture {
                 vector: vec![i as f32 / num_vectors as f32; dimension],
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("category".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(if i % 2 == 0 {
-                            "even".to_string()
-                        } else {
-                            "odd".to_string()
-                        })),
-                    });
-                    metadata.insert("index".to_string(), SqlValue {
-                        value: Some(sql_value::Value::NumberValue(i as f64)),
-                    });
+                    metadata.insert(
+                        "category".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(if i % 2 == 0 {
+                                "even".to_string()
+                            } else {
+                                "odd".to_string()
+                            })),
+                        },
+                    );
+                    metadata.insert(
+                        "index".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue(i as f64)),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some(i as i64),
@@ -75,18 +81,14 @@ impl StorageTestFixture {
         let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
-        let sst_engine = Arc::new(
-            SstEngine::new().await?,
-        );
+        let sst_engine = Arc::new(SstEngine::new().await?);
 
         // Create VIPER engine
         use proximadb::core::config::ViperConfig;
 
         let viper_config = ViperConfig::default();
 
-        let viper_engine = Arc::new(
-            ViperEngine::new().await?,
-        );
+        let viper_engine = Arc::new(ViperEngine::new().await?);
 
         Ok(Self {
             sst_engine,
@@ -345,10 +347,7 @@ mod tests {
         };
 
         // Create search params for the test
-        use proximadb::{
-            core::search::SearchParams,
-            storage::traits::StorageQueryMetadata,
-        };
+        use proximadb::{core::search::SearchParams, storage::traits::StorageQueryMetadata};
 
         let mut search_params = SearchParams::single_vector(vec![0.5; fixture.dimension]);
         search_params.top_k = Some(10);

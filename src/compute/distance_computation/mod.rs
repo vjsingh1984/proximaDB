@@ -38,10 +38,9 @@ pub use quantized::{
 
 // Re-export sparse vector optimization types
 pub use sparse::{
-    CosineSparsityChecker, CosineSparsityWarning, CosineWarningConfig,
-    SparseDistanceResult, SparsityAnalyzer, SparsityConfig, SparsityInfo,
-    estimate_cosine_degradation, is_cosine_safe, sparse_l2_distance,
-    sparse_l2_distance_scalar, sparse_l2_distance_squared,
+    CosineSparsityChecker, CosineSparsityWarning, CosineWarningConfig, SparseDistanceResult,
+    SparsityAnalyzer, SparsityConfig, SparsityInfo, estimate_cosine_degradation, is_cosine_safe,
+    sparse_l2_distance, sparse_l2_distance_scalar, sparse_l2_distance_squared,
 };
 
 // DEPRECATED: These exports from core are deprecated. Use UnifiedDistanceCompute instead.

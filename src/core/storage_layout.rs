@@ -266,7 +266,7 @@ impl StoragePathResolver {
     /// Get metadata directory (shared across node instance)
     /// Returns: /data/proximadb/1/metadata/
     pub fn metadata_path(&self, instance_id: Option<u32>) -> Result<PathBuf, StorageLayoutError> {
-        let instance_id = instance_id.unwrap_or(1);  // Default to instance 1
+        let instance_id = instance_id.unwrap_or(1); // Default to instance 1
         let base_path = self.get_base_path(instance_id)?;
 
         Ok(base_path
@@ -478,7 +478,10 @@ mod tests {
             storage_path,
             PathBuf::from("/data/proximadb/1/store/test-uuid-123")
         );
-        assert_eq!(metadata_path, PathBuf::from("/data/proximadb/1/metadata_info"));
+        assert_eq!(
+            metadata_path,
+            PathBuf::from("/data/proximadb/1/metadata_info")
+        );
     }
 
     #[test]

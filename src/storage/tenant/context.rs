@@ -1,6 +1,6 @@
 //! Tenant context and configuration - simple data structures
 
-use super::{Industry, ComplianceFramework, SecurityPolicies};
+use super::{ComplianceFramework, Industry, SecurityPolicies};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -42,19 +42,19 @@ pub enum TenantStatus {
 pub struct ResourceLimits {
     /// Maximum memory usage in MB
     pub max_memory_mb: u64,
-    
+
     /// Maximum storage in MB
     pub max_storage_mb: u64,
-    
+
     /// Maximum operations per minute
     pub max_operations_per_minute: u64,
-    
+
     /// Maximum concurrent users
     pub max_concurrent_users: u32,
-    
+
     /// Maximum collections
     pub max_collections: u32,
-    
+
     /// Maximum domains
     pub max_domains: u32,
 }
@@ -62,8 +62,8 @@ pub struct ResourceLimits {
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            max_memory_mb: 4096,        // 4GB default
-            max_storage_mb: 102400,     // 100GB default
+            max_memory_mb: 4096,    // 4GB default
+            max_storage_mb: 102400, // 100GB default
             max_operations_per_minute: 10000,
             max_concurrent_users: 100,
             max_collections: 50,
@@ -125,7 +125,7 @@ impl TenantContext {
         business_context: BusinessContext,
     ) -> Result<DomainContext> {
         let domain_id = format!("{}::{}", self.tenant_id, domain_name);
-        
+
         if let Some(domain) = self.domains.get(domain_name) {
             Ok(domain.clone())
         } else {
@@ -137,22 +137,23 @@ impl TenantContext {
                 created_at: Utc::now(),
                 status: DomainStatus::Active,
             };
-            
-            self.domains.insert(domain_name.to_string(), domain_context.clone());
+
+            self.domains
+                .insert(domain_name.to_string(), domain_context.clone());
             Ok(domain_context)
         }
     }
-    
+
     /// Get domain by name
     pub fn get_domain(&self, domain_name: &str) -> Option<DomainContext> {
         self.domains.get(domain_name).map(|entry| entry.clone())
     }
-    
+
     /// List all domains in tenant
     pub fn list_domains(&self) -> Vec<DomainContext> {
         self.domains.iter().map(|entry| entry.clone()).collect()
     }
-    
+
     /// Check if tenant is active
     pub fn is_active(&self) -> bool {
         self.status == TenantStatus::Active
@@ -199,7 +200,7 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             security_policies: SecurityPolicies::default(),
         };
-        
+
         let context = TenantContext {
             tenant_id: "test_tenant".to_string(),
             config,
@@ -208,7 +209,7 @@ mod tests {
             domains: Arc::new(DashMap::new()),
             resource_limits: ResourceLimits::default(),
         };
-        
+
         assert_eq!(context.tenant_id, "test_tenant");
         assert_eq!(context.config.organization_name, "Test Corp");
         assert_eq!(context.config.industry, Industry::Financial);
@@ -226,7 +227,7 @@ mod tests {
             domains: Arc::new(DashMap::new()),
             resource_limits: ResourceLimits::default(),
         };
-        
+
         let business_context = BusinessContext {
             primary_function: "risk_management".to_string(),
             data_sensitivity: DataSensitivityLevel::Confidential,
@@ -236,8 +237,11 @@ mod tests {
                 availability_requirement: 0.999,
             },
         };
-        
-        let domain = context.get_or_create_domain("risk", business_context).await.unwrap();
+
+        let domain = context
+            .get_or_create_domain("risk", business_context)
+            .await
+            .unwrap();
         assert_eq!(domain.domain_name, "risk");
         assert_eq!(domain.tenant_id, "test_tenant");
         assert_eq!(domain.domain_id, "test_tenant::risk");

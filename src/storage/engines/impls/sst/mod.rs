@@ -224,8 +224,8 @@ use crate::core::bloom::{self as bloom_filter, BloomFilterConfig, BloomFilterStr
 pub mod compaction;
 pub mod decompression_cache;
 pub mod error;
-pub mod flush_eventlog_integration;
 pub mod filter_methods;
+pub mod flush_eventlog_integration;
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
 pub mod indexed_reader;
@@ -238,15 +238,15 @@ pub mod unified_reader;
 pub mod writer;
 
 // New modular structure
-pub mod core;
-pub mod flush;
-pub mod search;
-pub mod collections;
-pub mod utils;
-pub mod trait_impl;
 pub mod blocks;
 pub mod codebook_integration;
+pub mod collections;
+pub mod core;
+pub mod flush;
 pub mod manifest;
+pub mod search;
+pub mod trait_impl;
+pub mod utils;
 
 // Test modules
 #[cfg(test)]
@@ -264,13 +264,12 @@ pub use readers::UnifiedSstableReader;
 pub use writer::SstableWriter;
 
 // Re-export from new modular structure
-pub use core::SstEngine;
-pub use flush::{FlushCoordinator, FlushOptimizer, FlushOperations, SortStats};
-pub use search::{SearchCoordinator, SearchOperations, SearchOptimizer};
+pub use blocks::{CompressionType, QuantizedBlockData, SstRecord};
 pub use collections::CollectionSizeInfo;
-pub use utils::{SortingStats, MemoryEstimate, SstableFileUtils, SstableFileInfo};
-pub use blocks::{SstRecord, QuantizedBlockData,
-                 CompressionType};
+pub use core::SstEngine;
+pub use flush::{FlushCoordinator, FlushOperations, FlushOptimizer, SortStats};
+pub use search::{SearchCoordinator, SearchOperations, SearchOptimizer};
+pub use utils::{MemoryEstimate, SortingStats, SstableFileInfo, SstableFileUtils};
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::search::results::OptimizedSearchRecord;
@@ -316,11 +315,11 @@ use crate::storage::engines::core::ops::{
 use crate::core::search::smart_execution_strategy::ExecutionStrategy;
 
 // Import Proxima common structures (shared with SWIFT)
+use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, BlockStatistics, ColumnStatistics, ProximaBlockMetadata,
     ProximaDataBlock,
 };
-use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
 
@@ -385,12 +384,7 @@ mod sst_filename_tests {
             } else {
                 None
             };
-            assert_eq!(
-                result,
-                expected,
-                "Failed for filename: {}",
-                filename
-            );
+            assert_eq!(result, expected, "Failed for filename: {}", filename);
         }
     }
 
@@ -535,12 +529,15 @@ impl SstEntry {
             .with_metadata(self.record.metadata.clone());
 
         if let Some(version) = self.record.version {
-            search_record = search_record.with_version_info(version, self.record.timestamp.unwrap_or(0));
+            search_record =
+                search_record.with_version_info(version, self.record.timestamp.unwrap_or(0));
         }
 
         if let Some(source) = &self.record.source {
             search_record = search_record.with_source(crate::proto::proximadb_v1::SourceContent {
-                data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(source.clone()))
+                data: Some(
+                    crate::proto::proximadb_v1::source_content::Data::TextContent(source.clone()),
+                ),
             });
         }
 
@@ -640,15 +637,15 @@ pub struct SstableHeader {
 
     // NEW: Direct access offsets for selective loading (hierarchical architecture)
     pub global_bloom_offset: u64, // Offset to global bloom filter
-    pub global_bloom_size: u32, // Size of global bloom filter
-    pub block_index_offset: u64, // Offset to block index (with per-block blooms)
-    pub block_index_size: u32, // Size of block index
-    pub data_blocks_offset: u64, // Offset to first data block
+    pub global_bloom_size: u32,   // Size of global bloom filter
+    pub block_index_offset: u64,  // Offset to block index (with per-block blooms)
+    pub block_index_size: u32,    // Size of block index
+    pub data_blocks_offset: u64,  // Offset to first data block
 
     // NEW: Vector format analysis for bytemuck optimization
-    pub vector_format: VectorFormat, // Fixed, Variable, or Mixed
+    pub vector_format: VectorFormat,  // Fixed, Variable, or Mixed
     pub fixed_dimension: Option<u32>, // For fixed-dimension optimization
-    pub compression_ratio: f32, // Achieved compression ratio
+    pub compression_ratio: f32,       // Achieved compression ratio
 }
 
 // SST compression now uses unified_compression::CompressionAlgorithm directly
@@ -1044,7 +1041,8 @@ mod compression_helpers {
             enable_metadata_compression: true,
             compression_threshold_bytes: 1024, // 1KB threshold for testing
             dictionary_compression: false,
-            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             metadata_algorithm: None, // Use main algorithm for metadata
         }
     }
@@ -1215,8 +1213,8 @@ mod block_utils {
     /// Deprecated: Not used in production - ProximaDataBlock handles encoding internally
     #[allow(dead_code)]
     pub fn encode_with_proxima(block: &ProximaDataBlock) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
         use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme as CodecScheme;
+        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
         use std::io::Write;
 
         // Get dimension from the first record since metadata doesn't have it directly
@@ -1247,11 +1245,11 @@ mod block_utils {
 
             // Override lossy schemes with lossless alternatives
             let scheme = match &detected_scheme {
-                CodecScheme::Simple8b | CodecScheme::RunLength |
-                CodecScheme::VByte | CodecScheme::Zigzag { .. } |
-                CodecScheme::PForDelta { .. } => {
-                    CodecScheme::Delta { base: 0 }
-                },
+                CodecScheme::Simple8b
+                | CodecScheme::RunLength
+                | CodecScheme::VByte
+                | CodecScheme::Zigzag { .. }
+                | CodecScheme::PForDelta { .. } => CodecScheme::Delta { base: 0 },
                 _ => detected_scheme.clone(),
             };
 
@@ -1276,7 +1274,9 @@ mod block_utils {
 
     /// Decode vectors from Proxima format
     pub fn decode_with_proxima(data: &[u8], marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
+        use crate::storage::engines::core::ops::proximacodec::{
+            ProximaCodec, types::ProximaScheme,
+        };
         use std::io::Read;
 
         let mut cursor = std::io::Cursor::new(data);
@@ -1672,11 +1672,11 @@ impl BatchExtractionStats {
 // Debug derive removed - CrossCacheOrchestrator doesn't implement Debug
 // SST-specific optimization structures removed - now using universal module
 
-    // All writes go through WAL → Flush → SSTable directly
-    // No intermediate memtable needed
+// All writes go through WAL → Flush → SSTable directly
+// No intermediate memtable needed
 
-    // Legacy flush method removed - all operations now use do_flush through UnifiedStorageEngine trait
+// Legacy flush method removed - all operations now use do_flush through UnifiedStorageEngine trait
 
-    // SST is now pure SSTable storage - no memtable to query
+// SST is now pure SSTable storage - no memtable to query
 
 // EngineCompactionResult removed - now using unified storage::traits::CompactionResult

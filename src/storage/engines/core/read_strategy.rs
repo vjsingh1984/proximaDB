@@ -26,16 +26,12 @@ pub enum ReadAccessStrategy {
     /// Cached read with selective access - for point/range queries
     /// Used for: Point lookups, filtered scans, search operations
     /// Benefits: Reduces cloud API calls, improves latency
-    CachedSelective {
-        filter: Option<FilterExpression>,
-    },
+    CachedSelective { filter: Option<FilterExpression> },
 
     /// Cached read optimized for search workloads
     /// Used for: Vector similarity search with metadata filtering
     /// Benefits: Caches bloom filters and indexes for repeated access
-    CachedSearch {
-        prefetch_metadata: bool,
-    },
+    CachedSearch { prefetch_metadata: bool },
 
     /// Cached read for metadata-only operations
     /// Used for: Schema discovery, statistics gathering
@@ -59,7 +55,9 @@ impl ReadAccessStrategy {
             Self::CachedSelective { .. } => true,
             Self::CachedSearch { .. } => true,
             Self::CachedMetadataOnly => true,
-            Self::Adaptive { initial_strategy, .. } => initial_strategy.should_use_cache(),
+            Self::Adaptive {
+                initial_strategy, ..
+            } => initial_strategy.should_use_cache(),
         }
     }
 
@@ -70,7 +68,9 @@ impl ReadAccessStrategy {
             Self::CachedSelective { .. } => false,
             Self::CachedSearch { prefetch_metadata } => *prefetch_metadata,
             Self::CachedMetadataOnly => true,
-            Self::Adaptive { initial_strategy, .. } => initial_strategy.should_prefetch_metadata(),
+            Self::Adaptive {
+                initial_strategy, ..
+            } => initial_strategy.should_prefetch_metadata(),
         }
     }
 
@@ -81,12 +81,16 @@ impl ReadAccessStrategy {
             Self::CachedSelective { .. } => true,
             Self::CachedSearch { .. } => true,
             Self::CachedMetadataOnly => false,
-            Self::Adaptive { initial_strategy, .. } => initial_strategy.should_cache_data_blocks(),
+            Self::Adaptive {
+                initial_strategy, ..
+            } => initial_strategy.should_cache_data_blocks(),
         }
     }
 
     /// Convert legacy SST ReadStrategy to unified strategy
-    pub fn from_sst_strategy(strategy: &super::super::impls::sst::readers::sst_query_engine::ReadStrategy) -> Self {
+    pub fn from_sst_strategy(
+        strategy: &super::super::impls::sst::readers::sst_query_engine::ReadStrategy,
+    ) -> Self {
         use super::super::impls::sst::readers::sst_query_engine::ReadStrategy;
 
         match strategy {
@@ -149,7 +153,9 @@ mod tests {
         assert!(!cached.should_prefetch_metadata());
         assert!(cached.should_cache_data_blocks());
 
-        let search = ReadAccessStrategy::CachedSearch { prefetch_metadata: true };
+        let search = ReadAccessStrategy::CachedSearch {
+            prefetch_metadata: true,
+        };
         assert!(search.should_use_cache());
         assert!(search.should_prefetch_metadata());
         assert!(search.should_cache_data_blocks());
@@ -166,9 +172,18 @@ mod tests {
 
         assert_eq!(reader_name("SST", DIRECT_READER_PREFIX), "DirectSSTReader");
         assert_eq!(reader_name("SST", CACHED_READER_PREFIX), "CachedSSTReader");
-        assert_eq!(reader_name("SST", UNIFIED_READER_PREFIX), "UnifiedSSTReader");
+        assert_eq!(
+            reader_name("SST", UNIFIED_READER_PREFIX),
+            "UnifiedSSTReader"
+        );
 
-        assert_eq!(reader_name("Swift", DIRECT_READER_PREFIX), "DirectSWIFTReader");
-        assert_eq!(reader_name("Nova", CACHED_READER_PREFIX), "CachedNOVAReader");
+        assert_eq!(
+            reader_name("Swift", DIRECT_READER_PREFIX),
+            "DirectSWIFTReader"
+        );
+        assert_eq!(
+            reader_name("Nova", CACHED_READER_PREFIX),
+            "CachedNOVAReader"
+        );
     }
 }

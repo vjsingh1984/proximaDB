@@ -7,18 +7,18 @@
 //! - Advanced session management
 //! - Security monitoring and alerting
 
-use super::unified_rbac::{UnifiedUserContext, UnifiedPermission};
+use super::unified_rbac::{UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
 
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc, Duration};
-use serde::{Deserialize, Serialize};
-use tracing::warn;
+use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
-use std::pin::Pin;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use tracing::warn;
 
 /// Multi-Factor Authentication (MFA) service
 pub struct MFAService {
@@ -77,12 +77,19 @@ pub struct MFASession {
 
 /// MFA provider implementation trait
 pub trait MFAProviderImpl: Send + Sync {
-    fn send_challenge(&self, user_context: &UnifiedUserContext)
-        -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
-    fn verify_challenge(&self, session_id: &str, challenge_response: &str)
-        -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
-    fn is_configured_for_user(&self, user_context: &UnifiedUserContext)
-        -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
+    fn send_challenge(
+        &self,
+        user_context: &UnifiedUserContext,
+    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
+    fn verify_challenge(
+        &self,
+        session_id: &str,
+        challenge_response: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
+    fn is_configured_for_user(
+        &self,
+        user_context: &UnifiedUserContext,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
 }
 
 impl MFAService {
@@ -114,11 +121,12 @@ impl MFAService {
         // MFA required for admin operations
         if self.config.required_for_admin {
             match requested_permission {
-                UnifiedPermission::SystemAdmin |
-                UnifiedPermission::TenantAdmin |
-                UnifiedPermission::ConfigureSystem => return true,
-                UnifiedPermission::CollectionAdmin(_) |
-                UnifiedPermission::DomainAdmin(_) => return true,
+                UnifiedPermission::SystemAdmin
+                | UnifiedPermission::TenantAdmin
+                | UnifiedPermission::ConfigureSystem => return true,
+                UnifiedPermission::CollectionAdmin(_) | UnifiedPermission::DomainAdmin(_) => {
+                    return true;
+                }
                 _ => {}
             }
         }
@@ -126,9 +134,9 @@ impl MFAService {
         // MFA required for sensitive data access
         if self.config.required_for_sensitive_data {
             match requested_permission {
-                UnifiedPermission::RiskDataAccess |
-                UnifiedPermission::FinancialDataAccess |
-                UnifiedPermission::ComplianceDataAccess => return true,
+                UnifiedPermission::RiskDataAccess
+                | UnifiedPermission::FinancialDataAccess
+                | UnifiedPermission::ComplianceDataAccess => return true,
                 _ => {}
             }
         }
@@ -142,8 +150,13 @@ impl MFAService {
         user_context: &UnifiedUserContext,
         preferred_provider: Option<MFAProvider>,
     ) -> Result<MFAChallenge> {
-        let provider = preferred_provider
-            .unwrap_or_else(|| self.config.allowed_providers.first().cloned().unwrap_or(MFAProvider::TOTP));
+        let provider = preferred_provider.unwrap_or_else(|| {
+            self.config
+                .allowed_providers
+                .first()
+                .cloned()
+                .unwrap_or(MFAProvider::TOTP)
+        });
 
         let session_id = format!("mfa_{}", uuid::Uuid::new_v4());
         let challenge_data = format!("challenge_{}", uuid::Uuid::new_v4());
@@ -165,12 +178,14 @@ impl MFAService {
 
         // Log MFA challenge initiation
         if let Some(audit_logger) = &self.audit_logger {
-            let _ = audit_logger.log_event(create_mfa_audit_event(
-                "mfa_challenge_initiated",
-                user_context,
-                Some(&session_id),
-                true,
-            )).await;
+            let _ = audit_logger
+                .log_event(create_mfa_audit_event(
+                    "mfa_challenge_initiated",
+                    user_context,
+                    Some(&session_id),
+                    true,
+                ))
+                .await;
         }
 
         Ok(MFAChallenge {
@@ -187,7 +202,9 @@ impl MFAService {
         session_id: &str,
         challenge_response: &str,
     ) -> Result<MFAVerificationResult> {
-        let mut session = self.active_sessions.get_mut(session_id)
+        let mut session = self
+            .active_sessions
+            .get_mut(session_id)
             .ok_or_else(|| anyhow!("MFA session not found or expired"))?;
 
         // Check session expiration
@@ -227,12 +244,14 @@ impl MFAService {
                     metadata: HashMap::new(),
                 };
 
-                let _ = audit_logger.log_event(create_mfa_audit_event(
-                    "mfa_verification_success",
-                    &user_context,
-                    Some(session_id),
-                    true,
-                )).await;
+                let _ = audit_logger
+                    .log_event(create_mfa_audit_event(
+                        "mfa_verification_success",
+                        &user_context,
+                        Some(session_id),
+                        true,
+                    ))
+                    .await;
             }
 
             Ok(MFAVerificationResult {
@@ -257,12 +276,14 @@ impl MFAService {
                     metadata: HashMap::new(),
                 };
 
-                let _ = audit_logger.log_event(create_mfa_audit_event(
-                    "mfa_verification_failed",
-                    &user_context,
-                    Some(session_id),
-                    false,
-                )).await;
+                let _ = audit_logger
+                    .log_event(create_mfa_audit_event(
+                        "mfa_verification_failed",
+                        &user_context,
+                        Some(session_id),
+                        false,
+                    ))
+                    .await;
             }
 
             Ok(MFAVerificationResult {
@@ -401,7 +422,9 @@ impl RateLimitingService {
 
     /// Check user-specific rate limit
     async fn check_user_rate_limit(&self, user_id: &str, now: DateTime<Utc>) -> Result<()> {
-        let mut counter = self.user_counters.entry(user_id.to_string())
+        let mut counter = self
+            .user_counters
+            .entry(user_id.to_string())
             .or_insert_with(|| RateLimitCounter::new(now));
 
         // Reset counter if window has elapsed
@@ -420,7 +443,9 @@ impl RateLimitingService {
 
     /// Check tenant-specific rate limit
     async fn check_tenant_rate_limit(&self, tenant_id: &str, now: DateTime<Utc>) -> Result<()> {
-        let mut counter = self.tenant_counters.entry(tenant_id.to_string())
+        let mut counter = self
+            .tenant_counters
+            .entry(tenant_id.to_string())
             .or_insert_with(|| RateLimitCounter::new(now));
 
         if now >= counter.window_start + Duration::minutes(1) {
@@ -437,7 +462,9 @@ impl RateLimitingService {
 
     /// Check IP-based rate limit
     async fn check_ip_rate_limit(&self, ip: &str, now: DateTime<Utc>) -> Result<()> {
-        let mut counter = self.ip_counters.entry(ip.to_string())
+        let mut counter = self
+            .ip_counters
+            .entry(ip.to_string())
             .or_insert_with(|| RateLimitCounter::new(now));
 
         if now >= counter.window_start + Duration::minutes(1) {
@@ -553,11 +580,7 @@ impl IPAccessControlService {
     }
 
     /// Check if IP address is allowed access
-    pub async fn is_ip_allowed(
-        &self,
-        ip: &str,
-        tenant_id: Option<&str>,
-    ) -> Result<IPAccessResult> {
+    pub async fn is_ip_allowed(&self, ip: &str, tenant_id: Option<&str>) -> Result<IPAccessResult> {
         if !self.config.enabled {
             return Ok(IPAccessResult::allowed());
         }
@@ -570,22 +593,29 @@ impl IPAccessControlService {
                     drop(block);
                     self.blocked_ips.remove(ip);
                 } else {
-                    return Ok(IPAccessResult::blocked(format!("IP blocked until {}", expires_at)));
+                    return Ok(IPAccessResult::blocked(format!(
+                        "IP blocked until {}",
+                        expires_at
+                    )));
                 }
             } else {
-                return Ok(IPAccessResult::blocked("IP permanently blocked".to_string()));
+                return Ok(IPAccessResult::blocked(
+                    "IP permanently blocked".to_string(),
+                ));
             }
         }
 
         // Check tenant-specific IP restrictions
         if let Some(tenant_id) = tenant_id {
             if let Some(allowed_ranges) = self.tenant_allowed_ips.get(tenant_id) {
-                let ip_allowed = allowed_ranges.iter().any(|range| {
-                    self.ip_in_range(ip, range)
-                });
+                let ip_allowed = allowed_ranges
+                    .iter()
+                    .any(|range| self.ip_in_range(ip, range));
 
                 if !ip_allowed {
-                    return Ok(IPAccessResult::blocked("IP not in tenant allowed ranges".to_string()));
+                    return Ok(IPAccessResult::blocked(
+                        "IP not in tenant allowed ranges".to_string(),
+                    ));
                 }
             }
         }
@@ -677,7 +707,10 @@ fn create_mfa_audit_event(
             let mut details = HashMap::new();
             details.insert("mfa_action".to_string(), serde_json::json!(action));
             details.insert("success".to_string(), serde_json::json!(success));
-            details.insert("user_id".to_string(), serde_json::json!(user_context.user_id));
+            details.insert(
+                "user_id".to_string(),
+                serde_json::json!(user_context.user_id),
+            );
             details
         },
         risk_score: if success { Some(0.0) } else { Some(0.8) },
@@ -721,17 +754,23 @@ mod tests {
 
         // Test admin permission requires MFA
         let admin_permission = UnifiedPermission::SystemAdmin;
-        let requires_mfa = mfa_service.is_mfa_required(&user_context, &admin_permission).await;
+        let requires_mfa = mfa_service
+            .is_mfa_required(&user_context, &admin_permission)
+            .await;
         assert!(requires_mfa);
 
         // Test sensitive data permission requires MFA
         let sensitive_permission = UnifiedPermission::FinancialDataAccess;
-        let requires_mfa_sensitive = mfa_service.is_mfa_required(&user_context, &sensitive_permission).await;
+        let requires_mfa_sensitive = mfa_service
+            .is_mfa_required(&user_context, &sensitive_permission)
+            .await;
         assert!(requires_mfa_sensitive);
 
         // Test regular permission doesn't require MFA
         let regular_permission = UnifiedPermission::CollectionRead("test".to_string());
-        let no_mfa_required = mfa_service.is_mfa_required(&user_context, &regular_permission).await;
+        let no_mfa_required = mfa_service
+            .is_mfa_required(&user_context, &regular_permission)
+            .await;
         assert!(!no_mfa_required);
     }
 
@@ -750,7 +789,9 @@ mod tests {
         let user_context = UnifiedUserContext::anonymous();
 
         // Test rate limit check
-        let result = rate_service.check_rate_limit(&user_context, "192.168.1.1").await;
+        let result = rate_service
+            .check_rate_limit(&user_context, "192.168.1.1")
+            .await;
         assert!(result.is_ok());
 
         let rate_result = result.unwrap();
@@ -772,15 +813,21 @@ mod tests {
         let ip_service = IPAccessControlService::new(config);
 
         // Test IP access
-        let result = ip_service.is_ip_allowed("192.168.1.1", Some("test_tenant")).await;
+        let result = ip_service
+            .is_ip_allowed("192.168.1.1", Some("test_tenant"))
+            .await;
         assert!(result.is_ok());
 
         let access_result = result.unwrap();
         assert!(access_result.allowed);
 
         // Test IP blocking
-        ip_service.block_ip("192.168.1.100", "Test block", Some(Duration::minutes(60))).await;
-        let blocked_result = ip_service.is_ip_allowed("192.168.1.100", Some("test_tenant")).await;
+        ip_service
+            .block_ip("192.168.1.100", "Test block", Some(Duration::minutes(60)))
+            .await;
+        let blocked_result = ip_service
+            .is_ip_allowed("192.168.1.100", Some("test_tenant"))
+            .await;
         assert!(blocked_result.is_ok());
 
         let blocked_access = blocked_result.unwrap();

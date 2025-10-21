@@ -18,14 +18,14 @@ use proximadb::storage::engines::impls::viper::UnifiedVIPERReader;
 use proximadb::storage::engines::impls::helix::UnifiedHELIXReader;
 
 /// Test helper to create a test filesystem factory
-fn create_test_filesystem_factory() -> Arc<FilesystemFactory> {
-    Arc::new(FilesystemFactory::default())
+async fn create_test_filesystem_factory() -> Arc<FilesystemFactory> {
+    Arc::new(FilesystemFactory::create_default().await.unwrap())
 }
 
 /// Test that all engines implement StrategyAwareReader trait consistently
 #[tokio::test]
 async fn test_strategy_aware_trait_consistency() -> Result<()> {
-    let factory = create_test_filesystem_factory();
+    let factory = create_test_filesystem_factory().await;
     let collection_id = "test_collection".to_string();
 
     // Test SST engine

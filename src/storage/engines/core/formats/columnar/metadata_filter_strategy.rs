@@ -11,13 +11,13 @@
 // when possible and correctness when necessary.
 
 use anyhow::{Result, anyhow};
-use arrow_array::{RecordBatch, UInt32Array, ArrayRef};
+use arrow_array::{ArrayRef, RecordBatch, UInt32Array};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+use super::{FilterCondition, FilterLogic, MetadataFilter};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
-use super::{FilterCondition, MetadataFilter, FilterLogic};
 
 /// Strategy for handling metadata filters based on column types
 #[derive(Debug, Clone)]
@@ -65,10 +65,7 @@ pub struct MetadataFilterAnalyzer {
 }
 
 impl MetadataFilterAnalyzer {
-    pub fn new(
-        filterable_columns: Vec<String>,
-        allow_slow_queries: bool,
-    ) -> Self {
+    pub fn new(filterable_columns: Vec<String>, allow_slow_queries: bool) -> Self {
         Self {
             filterable_columns: filterable_columns.into_iter().collect(),
             allow_slow_queries,
@@ -77,10 +74,7 @@ impl MetadataFilterAnalyzer {
     }
 
     /// Analyze metadata filters and determine optimal strategy
-    pub fn analyze_filters(
-        &self,
-        filters: &[MetadataFilter],
-    ) -> Result<MetadataFilterStrategy> {
+    pub fn analyze_filters(&self, filters: &[MetadataFilter]) -> Result<MetadataFilterStrategy> {
         if filters.is_empty() {
             return Ok(MetadataFilterStrategy::NoFilter);
         }
@@ -135,7 +129,8 @@ impl MetadataFilterAnalyzer {
                         "Query requires filtering on non-indexed columns: {:?}. \
                         This would require a full table scan. \
                         Enable allow_slow_queries or add these columns to filterable_columns.",
-                        non_filterable.iter()
+                        non_filterable
+                            .iter()
                             .map(|f| f.column().to_string())
                             .collect::<Vec<_>>()
                     ));
@@ -162,7 +157,8 @@ impl MetadataFilterAnalyzer {
                     return Err(anyhow!(
                         "Query requires filtering on non-indexed columns: {:?}. \
                         Enable allow_slow_queries to proceed with slower performance.",
-                        non_filterable.iter()
+                        non_filterable
+                            .iter()
                             .map(|f| f.column().to_string())
                             .collect::<Vec<_>>()
                     ));
@@ -212,11 +208,7 @@ impl MetadataFilterAnalyzer {
                 }
 
                 // Extract metadata for this row and check filter
-                let passes = self.check_filter_for_row(
-                    metadata_column,
-                    row_idx,
-                    filter,
-                )?;
+                let passes = self.check_filter_for_row(metadata_column, row_idx, filter)?;
 
                 mask[row_idx] &= passes;
             }
@@ -226,9 +218,11 @@ impl MetadataFilterAnalyzer {
         let indices: Vec<u32> = mask
             .iter()
             .enumerate()
-            .filter_map(|(idx, &passes)| {
-                if passes { Some(idx as u32) } else { None }
-            })
+            .filter_map(
+                |(idx, &passes)| {
+                    if passes { Some(idx as u32) } else { None }
+                },
+            )
             .collect();
 
         if indices.is_empty() {
@@ -241,9 +235,7 @@ impl MetadataFilterAnalyzer {
         let arrays = batch
             .columns()
             .iter()
-            .map(|col| {
-                arrow_select::take::take(col, &indices_array, None)
-            })
+            .map(|col| arrow_select::take::take(col, &indices_array, None))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("Failed to filter batch: {}", e))?;
 
@@ -323,29 +315,29 @@ mod tests {
 
     #[test]
     fn test_strategy_selection() {
-        let analyzer = MetadataFilterAnalyzer::new(
-            vec!["category".to_string(), "priority".to_string()],
-            true,
-        );
+        let analyzer =
+            MetadataFilterAnalyzer::new(vec!["category".to_string(), "priority".to_string()], true);
 
         // Fast path: all filterable
-        let filters = vec![
-            MetadataFilter {
-                conditions: vec![FilterCondition::Equals("category".to_string(), serde_json::Value::String("electronics".to_string()))],
-                logic: FilterLogic::And,
-            },
-        ];
+        let filters = vec![MetadataFilter {
+            conditions: vec![FilterCondition::Equals(
+                "category".to_string(),
+                serde_json::Value::String("electronics".to_string()),
+            )],
+            logic: FilterLogic::And,
+        }];
 
         let strategy = analyzer.analyze_filters(&filters).unwrap();
         matches!(strategy, MetadataFilterStrategy::FastFilterable { .. });
 
         // Slow path: non-filterable
-        let filters = vec![
-            MetadataFilter {
-                conditions: vec![FilterCondition::Equals("custom_field".to_string(), serde_json::Value::String("value".to_string()))],
-                logic: FilterLogic::And,
-            },
-        ];
+        let filters = vec![MetadataFilter {
+            conditions: vec![FilterCondition::Equals(
+                "custom_field".to_string(),
+                serde_json::Value::String("value".to_string()),
+            )],
+            logic: FilterLogic::And,
+        }];
 
         let strategy = analyzer.analyze_filters(&filters).unwrap();
         matches!(strategy, MetadataFilterStrategy::SlowFullScan { .. });
@@ -353,11 +345,18 @@ mod tests {
         // Mixed path
         let filters = vec![
             MetadataFilter {
-                conditions: vec![FilterCondition::Equals("category".to_string(), serde_json::Value::String("electronics".to_string()))],
+                conditions: vec![FilterCondition::Equals(
+                    "category".to_string(),
+                    serde_json::Value::String("electronics".to_string()),
+                )],
                 logic: FilterLogic::And,
             },
             MetadataFilter {
-                conditions: vec![FilterCondition::Range("custom_field".to_string(), serde_json::Value::Number(serde_json::Number::from(100)), serde_json::Value::Number(serde_json::Number::from(i64::MAX)))],
+                conditions: vec![FilterCondition::Range(
+                    "custom_field".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(100)),
+                    serde_json::Value::Number(serde_json::Number::from(i64::MAX)),
+                )],
                 logic: FilterLogic::And,
             },
         ];
@@ -373,15 +372,21 @@ mod tests {
             false, // Don't allow slow queries
         );
 
-        let filters = vec![
-            MetadataFilter {
-                conditions: vec![FilterCondition::Equals("unknown_field".to_string(), serde_json::Value::String("value".to_string()))],
-                logic: FilterLogic::And,
-            },
-        ];
+        let filters = vec![MetadataFilter {
+            conditions: vec![FilterCondition::Equals(
+                "unknown_field".to_string(),
+                serde_json::Value::String("value".to_string()),
+            )],
+            logic: FilterLogic::And,
+        }];
 
         let result = analyzer.analyze_filters(&filters);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("allow_slow_queries"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("allow_slow_queries")
+        );
     }
 }

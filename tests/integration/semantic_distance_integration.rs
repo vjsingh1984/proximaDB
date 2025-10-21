@@ -387,7 +387,9 @@ async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
     debug!("Skipping quantization level setup and quantization test for semantic consistency test");
 
     // Skip quantization testing due to missing level setup
-    debug!("✅ Quantization semantic distance test skipped - focusing on core distance computation");
+    debug!(
+        "✅ Quantization semantic distance test skipped - focusing on core distance computation"
+    );
 
     debug!("Testing semantic distance with raw vectors:");
 
@@ -404,7 +406,8 @@ async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
         let mut results = Vec::new();
         for (i, vector) in vectors.iter().enumerate() {
             // Use direct distance computation for raw vectors
-            let distance_compute = proximadb::compute::distance_computation::UnifiedDistanceCompute::new(metric);
+            let distance_compute =
+                proximadb::compute::distance_computation::UnifiedDistanceCompute::new(metric);
             let distance_result = distance_compute.calculate_distance(query, vector, &metric);
 
             debug!(

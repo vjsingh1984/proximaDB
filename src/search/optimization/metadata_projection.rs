@@ -13,15 +13,15 @@
 //! - **Projected fields (2-3 fields)**: 1.61µs = 16.3x faster
 //! - **Projected fields (5-6 fields)**: 2.48µs = 10.6x faster
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 
 // Reuse existing access tracker from cache eviction system
 pub use crate::storage::cache::eviction::AccessTracker;
 
 // Use generic field projection that works for both Parquet and ProximaDataBlocks
-use super::field_projection::{FieldProjection, FieldName};
+use super::field_projection::{FieldName, FieldProjection};
 
 /// Configuration for metadata projection optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ impl Default for MetadataProjectionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            projection_threshold: 5,  // Use projection if ≤5 fields needed
+            projection_threshold: 5, // Use projection if ≤5 fields needed
             auto_analyze: true,
             track_access_patterns: true,
         }
@@ -157,12 +157,14 @@ impl MetadataProjectionOptimizer {
 
         tokio::spawn(async move {
             use crate::storage::traits::MetricsOperationType;
-            let _ = metrics.record_operation(
-                MetricsOperationType::Read,
-                true,
-                field_count,
-                std::time::Duration::from_micros(1), // Projection is fast
-            ).await;
+            let _ = metrics
+                .record_operation(
+                    MetricsOperationType::Read,
+                    true,
+                    field_count,
+                    std::time::Duration::from_micros(1), // Projection is fast
+                )
+                .await;
         });
 
         // Simple projection: filter to requested fields
@@ -196,10 +198,7 @@ pub fn extract_field_names(fields: &[String]) -> HashSet<String> {
 }
 
 /// Helper function: Estimate projection benefit
-pub fn estimate_projection_benefit(
-    required_fields: usize,
-    total_fields: usize,
-) -> f64 {
+pub fn estimate_projection_benefit(required_fields: usize, total_fields: usize) -> f64 {
     if total_fields == 0 || required_fields >= total_fields {
         1.0 // No benefit
     } else {
@@ -216,16 +215,10 @@ mod tests {
         let optimizer = MetadataProjectionOptimizer::new();
 
         // Should use projection for subset of fields
-        assert!(optimizer.should_use_projection(
-            &vec!["f1".to_string(), "f2".to_string()],
-            10
-        ));
+        assert!(optimizer.should_use_projection(&vec!["f1".to_string(), "f2".to_string()], 10));
 
         // Should not use projection for all fields
-        assert!(!optimizer.should_use_projection(
-            &vec!["f1".to_string(), "f2".to_string()],
-            2
-        ));
+        assert!(!optimizer.should_use_projection(&vec!["f1".to_string(), "f2".to_string()], 2));
     }
 
     #[tokio::test]
@@ -291,10 +284,7 @@ mod tests {
         let optimizer = MetadataProjectionOptimizer::with_config(config);
 
         // Should not use projection when disabled
-        assert!(!optimizer.should_use_projection(
-            &vec!["f1".to_string()],
-            10
-        ));
+        assert!(!optimizer.should_use_projection(&vec!["f1".to_string()], 10));
     }
 
     #[test]

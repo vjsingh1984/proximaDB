@@ -90,20 +90,20 @@ pub mod optimization;
 pub mod unified_columnar_io; // NEW: Consolidated Parquet and Arrow IPC operations
 
 // Modular components with semantic names (replacing old monolithic files)
-pub mod parquet_write_engine;  // Columnar write operations and Parquet file generation
-pub mod columnar_query_engine;  // Columnar read operations and query execution
+pub mod columnar_query_engine;
+pub mod parquet_write_engine; // Columnar write operations and Parquet file generation // Columnar read operations and query execution
 // Quantization now handled by unified compute module
 pub mod batch_operations;
 pub mod columnar_schema;
 pub mod config_builder;
 pub mod footer_cache;
 pub mod hybrid_writer;
+pub mod metadata_collector;
 pub mod native_metadata;
 pub mod nova_metadata;
 pub mod parquet_io_layer; // Low-level I/O operations (formerly shared_parquet_reader)
 pub mod parquet_metadata; // NEW: Zero-copy metadata serialization for Parquet
-pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA
-pub mod metadata_collector; // NEW: Trait for engine-specific metadata collection during writes
+pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA // NEW: Trait for engine-specific metadata collection during writes
 pub use metadata_collector::MetadataCollector;
 pub mod unified_compaction; // Unified Parquet compaction using StreamingParquetWriter
 // quantization_config_conversion moved to common/quantization_adapter.rs
@@ -120,72 +120,68 @@ mod examples_test;
 
 // Comprehensive tests for ID-aware columnar storage
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod simple_branched_test;
+#[cfg(test)]
+mod tests;
 
 // Re-export common compression mapping function
 pub use common::map_core_to_parquet_compression;
 
 // Re-export column name constants
 pub use constants::{
-    FIELD_ID, FIELD_COLLECTION_ID, FIELD_VECTOR_FP32,
-    FIELD_Q_BINARY, FIELD_Q_INT8, FIELD_Q_PQ4, FIELD_Q_PQ8, FIELD_Q_PQ16, FIELD_Q_PQ32,
-    FIELD_QP_BINARY_THRESHOLD, FIELD_QP_INT8_MIN, FIELD_QP_INT8_MAX, FIELD_QP_INT8_SCALE,
-    FIELD_QP_PQ_SUBQUANTIZERS, FIELD_QP_PQ_CENTROIDS,
-    FIELD_ROW_GROUP_OFFSET, FIELD_ROW_INDEX,
-    FIELD_TIMESTAMP, FIELD_UPDATED_AT, FIELD_EXPIRES_AT, FIELD_VERSION,
-    FIELD_EXTRA_META, FIELD_SOURCE, FIELD_SCHEMA_VERSION, FIELD_IS_DELETED,
+    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE, DEFAULT_WRITE_BATCH_SIZE, FIELD_COLLECTION_ID,
+    FIELD_EXPIRES_AT, FIELD_EXTRA_META, FIELD_ID, FIELD_IS_DELETED, FIELD_Q_BINARY, FIELD_Q_INT8,
+    FIELD_Q_PQ4, FIELD_Q_PQ8, FIELD_Q_PQ16, FIELD_Q_PQ32, FIELD_QP_BINARY_THRESHOLD,
+    FIELD_QP_INT8_MAX, FIELD_QP_INT8_MIN, FIELD_QP_INT8_SCALE, FIELD_QP_PQ_CENTROIDS,
+    FIELD_QP_PQ_SUBQUANTIZERS, FIELD_ROW_GROUP_OFFSET, FIELD_ROW_INDEX, FIELD_SCHEMA_VERSION,
+    FIELD_SOURCE, FIELD_TIMESTAMP, FIELD_UPDATED_AT, FIELD_VECTOR_FP32, FIELD_VERSION,
     PARQUET_EXTENSION, VIPER_FILE_EXTENSION,
-    DEFAULT_ROW_GROUP_SIZE, DEFAULT_PAGE_SIZE, DEFAULT_WRITE_BATCH_SIZE,
 };
 
 // Re-exports for convenience
 pub use id_index::{ColumnarIdIndex, IndexStats, ParquetLocation};
 pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowGroupIterator};
 pub use unified_compaction::{
-    UnifiedColumnarCompaction, ColumnarCompactionResult, VersionContinuityMode,
+    ColumnarCompactionResult, UnifiedColumnarCompaction, VersionContinuityMode,
 };
 // Re-export from columnar_query_engine module
 pub use columnar_query_engine::{
+    BranchedFilterExecutor,
+
+    CacheStrategy,
+    CollectionContext,
+    FilterPath,
+    FilterValue,
+    PagePruningInfo,
+    PageRange,
     // Core query types with semantic names
     ParquetQueryEngine,
     ParquetReader,
+    QuantizationMethod,
     QueryConfig,
     QueryStatistics,
-    CacheStrategy,
-    FilterPath,
-    BranchedFilterExecutor,
-
-    // Unified reader types (for backward compatibility)
-    UnifiedParquetReader,
     ReaderConfig,
     ReadingStrategy,
     ReadingStrategySelector,
-    SchemaMapping,
-    CollectionContext,
-    FilterValue,
-    QuantizationMethod,
-    SeekRange,
-    VectorPosition,
-    Stage2Strategy,
-    SearchType,
     RowGroupAccessPattern,
-    PagePruningInfo,
-    PageRange,
+    SchemaMapping,
+    SearchType,
+    SeekRange,
+    Stage2Strategy,
+    // Unified reader types (for backward compatibility)
+    UnifiedParquetReader,
+    VectorPosition,
 };
 
 // Re-export from parquet_write_engine module
 pub use parquet_write_engine::{
-    BatchParquetWriter,
-    IdLessLookup,
-    ParquetWriterConfig,
-    StreamingParquetWriter,
+    BatchParquetWriter, IdLessLookup, ParquetWriter, ParquetWriterConfig, StreamingParquetWriter,
     StreamingParquetWriterStats,
-    ParquetWriter,
 };
 // Quantization now handled by unified compute module
-pub use self::metadata_filter_strategy::{MetadataFilterAnalyzer, MetadataFilterStrategy, FilterPerformanceMetrics};
+pub use self::metadata_filter_strategy::{
+    FilterPerformanceMetrics, MetadataFilterAnalyzer, MetadataFilterStrategy,
+};
 pub use batch_operations::ColumnarBatchOperations;
 pub use columnar_schema::ColumnarSchema;
 pub use footer_cache::{CacheStats, FooterCacheConfig, ParquetFooterCache, WarmingStrategy};
@@ -221,7 +217,7 @@ pub use parquet_metadata::{
 
 // New unified infrastructure exports
 pub use schema::{
-    ColumnarSchemaBuilder, ColumnarSchemaConfig, CompressionMetadata, ColumnarFilterableSpec,
+    ColumnarFilterableSpec, ColumnarSchemaBuilder, ColumnarSchemaConfig, CompressionMetadata,
     FilterableData, create_schema_from_collection, validate_schema_compatibility,
 };
 pub use serialization::{
@@ -527,10 +523,13 @@ pub fn create_columnar_schema(
         DataType::Map(
             Arc::new(Field::new(
                 "entries",
-                DataType::Struct(vec![
-                    Field::new("key", DataType::Utf8, false),
-                    Field::new("value", DataType::Utf8, true),
-                ].into()),
+                DataType::Struct(
+                    vec![
+                        Field::new("key", DataType::Utf8, false),
+                        Field::new("value", DataType::Utf8, true),
+                    ]
+                    .into(),
+                ),
                 false,
             )),
             false, // not sorted
@@ -604,19 +603,21 @@ impl ColumnarFactory {
             batch_size: 1024,
             cache_metadata: true,
             parallel_row_groups: false, // Add missing field
-            cache_context: None, // Add missing cache_context field
+            cache_context: None,        // Add missing cache_context field
         };
 
         // Create reader with empty paths and 0 dimension - caller will set actual values
         // Create a default UnifiedCachingFilesystem for testing/default usage
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?);
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
+        );
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
                 base_fs,
                 "default_collection".to_string(),
                 "columnar".to_string(),
-            )
+            ),
         );
         let reader = UnifiedParquetReader::new(
             vec![],
@@ -631,7 +632,7 @@ impl ColumnarFactory {
 
     /// Create streaming Parquet writer with all optimizations
     /// Note: id_less_storage should typically be false to keep customer ID column
-    pub fn create_streaming_writer<P: AsRef<std::path::Path>>(
+    pub async fn create_streaming_writer<P: AsRef<std::path::Path>>(
         file_path: P,
         dimension: usize,
         enable_bloom_filters: bool,
@@ -641,11 +642,11 @@ impl ColumnarFactory {
         let config = ParquetWriterConfig {
             enable_bloom_filters,
             id_less_storage: enable_id_less_optimization, // Should be false for customer APIs
-            quantization, // Use proto config directly
+            quantization,                                 // Use proto config directly
             ..Default::default()
         };
 
-        StreamingParquetWriter::new(file_path, dimension, config, None)
+        StreamingParquetWriter::new(file_path, dimension, config, None).await
     }
 
     /// Create columnar optimizer with hardware-specific settings

@@ -281,7 +281,8 @@ impl IntegratedSearchOptimizer {
 
         // Build collection config
         let collection_config = collection.config.as_ref().map(|config| CollectionConfig {
-            default_distance_metric: config.distance_metric
+            default_distance_metric: config
+                .distance_metric
                 .and_then(|m| DistanceMetric::try_from(m).ok())
                 .unwrap_or(DistanceMetric::Cosine),
             vector_dimension: config.dimension as usize,
@@ -301,9 +302,9 @@ impl IntegratedSearchOptimizer {
             ],
             storage_info,
             filter_expression: None, // TODO: Extract from search request
-            query_vector: None, // TODO: Extract from search request
-            top_k: 100, // Default top-k
-            min_score: None, // No minimum score by default
+            query_vector: None,      // TODO: Extract from search request
+            top_k: 100,              // Default top-k
+            min_score: None,         // No minimum score by default
             enable_early_termination: true, // Enable optimizations by default
         })
     }

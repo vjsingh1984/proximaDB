@@ -263,9 +263,9 @@ impl UniversalDistanceAdapter {
         })?;
 
         // Initialize hardware acceleration manager
-        let hardware_manager = Arc::new(
-            HardwareAccelerationManager::new(hardware_capabilities.clone())
-        );
+        let hardware_manager = Arc::new(HardwareAccelerationManager::new(
+            hardware_capabilities.clone(),
+        ));
 
         // Initialize unified distance compute engine
         let distance_engine = Arc::new(UnifiedDistanceCompute::default());
@@ -295,7 +295,8 @@ impl UniversalDistanceAdapter {
         );
 
         // Initialize distance table cache
-        let cache_orchestrator = Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
+        let cache_orchestrator =
+            Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
         let distance_cache = Arc::new(
             DistanceTableCache::new(&config.cache_config, cache_orchestrator)
                 .await
@@ -492,9 +493,15 @@ impl UniversalDistanceAdapter {
             cache_hit_rate: cache_stats.hit_rate_percent,
             cache_size_mb: cache_stats.size_mb,
             total_computations: cache_stats.total_requests,
-            hardware_acceleration_usage: hardware_stats.get("acceleration_usage_rate").copied().unwrap_or(0.0) as f32,
+            hardware_acceleration_usage: hardware_stats
+                .get("acceleration_usage_rate")
+                .copied()
+                .unwrap_or(0.0) as f32,
             supported_engines: self.get_supported_engines().await,
-            average_computation_time_us: hardware_stats.get("average_operation_time_us").copied().unwrap_or(0.0) as u64,
+            average_computation_time_us: hardware_stats
+                .get("average_operation_time_us")
+                .copied()
+                .unwrap_or(0.0) as u64,
         })
     }
 

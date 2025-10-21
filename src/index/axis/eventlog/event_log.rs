@@ -270,7 +270,8 @@ impl EventLogQueue {
 
         // Remove events for deleted files
         self.active_events
-            .write().await
+            .write()
+            .await
             .retain(|e| !e.file_paths.iter().any(|f| deleted_files.contains(f)));
 
         // Persist changes
@@ -301,11 +302,15 @@ impl EventLogQueue {
         {
             // Ensure parent directory exists using filesystem API
             let state_dir = format!("{}/queue/{}", self.base_url, self.collection_id);
-            self.filesystem.create_dir_all(&state_dir).await
+            self.filesystem
+                .create_dir_all(&state_dir)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to create queue directory: {}", e))?;
 
             // Now write the actual state file
-            self.filesystem.write(&state_path, &json, None).await
+            self.filesystem
+                .write(&state_path, &json, None)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to persist queue state: {}", e))?;
         }
 
@@ -371,7 +376,8 @@ impl EventLogQueue {
     /// Find event by ID
     async fn find_event(&self, event_id: &str) -> Option<IndexEvent> {
         self.active_events
-            .read().await
+            .read()
+            .await
             .iter()
             .find(|e| e.event_id == event_id)
             .cloned()
@@ -380,7 +386,8 @@ impl EventLogQueue {
     /// Find event offset by ID
     async fn find_event_offset(&self, event_id: &str) -> Option<usize> {
         self.active_events
-            .read().await
+            .read()
+            .await
             .iter()
             .position(|e| e.event_id == event_id)
     }
@@ -587,7 +594,9 @@ mod tests {
         assert_eq!(queue.get_pending_events().await.len(), 2);
 
         // Clean up file1 after compaction
-        queue.cleanup_compacted_files(vec!["file1.sstable".to_string()]).await;
+        queue
+            .cleanup_compacted_files(vec!["file1.sstable".to_string()])
+            .await;
 
         // Should have only event2 remaining
         let events = queue.get_pending_events().await;

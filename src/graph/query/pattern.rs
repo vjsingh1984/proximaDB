@@ -49,9 +49,8 @@
 //! ```
 
 use super::ast::{
-    CompiledPattern, EdgeDirection, EdgePattern, FoundPath, MatchResult,
-    NodePattern, PathElement, PathPattern, PropertyConstraint, PropertyProjection,
-    ReturnSpec, VariableBinding, WhereClause,
+    CompiledPattern, EdgeDirection, EdgePattern, FoundPath, MatchResult, NodePattern, PathElement,
+    PathPattern, PropertyConstraint, PropertyProjection, ReturnSpec, VariableBinding, WhereClause,
 };
 use super::{QueryContext, QueryResult};
 use crate::core::error::ProximaDBError;
@@ -656,7 +655,9 @@ impl PatternMatcher {
                 serde_json::Value::Number(serde_json::Number::from(*i))
             }
             Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0)))
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0)),
+                )
             }
             Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
                 serde_json::Value::Bool(*b)

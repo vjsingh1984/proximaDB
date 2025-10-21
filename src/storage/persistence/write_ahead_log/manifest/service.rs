@@ -18,12 +18,13 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::interval;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use super::types::{
-    GlobalManifestEntry, GlobalCheckpoint, CheckpointCollectionState, GlobalLsnAllocator, WalEntryStatus
+    CheckpointCollectionState, GlobalCheckpoint, GlobalLsnAllocator, GlobalManifestEntry,
+    WalEntryStatus,
 };
 
 /// Configuration for the global manifest service
@@ -42,9 +43,9 @@ pub struct GlobalManifestServiceConfig {
 impl Default for GlobalManifestServiceConfig {
     fn default() -> Self {
         Self {
-            batch_interval_ms: 100,  // Write every 100ms
-            max_batch_size: 1000,    // Or when 1000 entries accumulated
-            channel_buffer_size: 10000,  // Can buffer 10k pending entries
+            batch_interval_ms: 100,     // Write every 100ms
+            max_batch_size: 1000,       // Or when 1000 entries accumulated
+            channel_buffer_size: 10000, // Can buffer 10k pending entries
         }
     }
 }
@@ -113,8 +114,10 @@ impl GlobalManifestService {
         // Start background worker
         service.start_background_worker(append_rx).await;
 
-        info!("✅ GlobalManifestService started with {} existing entries",
-              service.entries.read().await.len());
+        info!(
+            "✅ GlobalManifestService started with {} existing entries",
+            service.entries.read().await.len()
+        );
 
         Ok(service)
     }
@@ -183,10 +186,8 @@ impl GlobalManifestService {
         debug!("💾 Flushing {} manifest entries to disk", batch.len());
 
         // Extract entries and sort by LSN
-        let mut entries_to_write: Vec<GlobalManifestEntry> = batch
-            .iter()
-            .map(|req| req.entry.clone())
-            .collect();
+        let mut entries_to_write: Vec<GlobalManifestEntry> =
+            batch.iter().map(|req| req.entry.clone()).collect();
         entries_to_write.sort_by_key(|e| e.global_lsn);
 
         // Write to staging file first (crash safety)
@@ -234,14 +235,16 @@ impl GlobalManifestService {
         // Format: manifest_{min_lsn}_{max_lsn}.jsonl
         let min_lsn = new_entries.iter().map(|e| e.global_lsn).min().unwrap_or(0);
         let max_lsn = new_entries.iter().map(|e| e.global_lsn).max().unwrap_or(0);
-        let segment_url = format!("{}/manifest_{:020}_{:020}.jsonl",
-                                 self.wal_base_url, min_lsn, max_lsn);
+        let segment_url = format!(
+            "{}/manifest_{:020}_{:020}.jsonl",
+            self.wal_base_url, min_lsn, max_lsn
+        );
 
         // Serialize entries
         let mut content = Vec::new();
         for entry in new_entries {
-            let mut line = serde_json::to_vec(entry)
-                .context("Failed to serialize manifest entry")?;
+            let mut line =
+                serde_json::to_vec(entry).context("Failed to serialize manifest entry")?;
             line.push(b'\n');
             content.extend_from_slice(&line);
         }
@@ -252,10 +255,15 @@ impl GlobalManifestService {
         if file_exists {
             // File exists - this is a status update
             // Append to existing file instead of overwriting
-            debug!("📝 Appending status update to existing manifest segment: {}", segment_url);
+            debug!(
+                "📝 Appending status update to existing manifest segment: {}",
+                segment_url
+            );
 
             // Read existing content
-            let existing_content = fs.read(&segment_url).await
+            let existing_content = fs
+                .read(&segment_url)
+                .await
                 .context("Failed to read existing manifest segment")?;
 
             // Append new entries
@@ -266,21 +274,33 @@ impl GlobalManifestService {
             let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
                 ::create_metadata_strategy(&*fs, None)?;
             let opts = strategy.create_file_options(&*fs, &segment_url)?;
-            fs.write(&segment_url, &combined_content, Some(opts)).await
+            fs.write(&segment_url, &combined_content, Some(opts))
+                .await
                 .context("Failed to write manifest segment with status update")?;
 
-            debug!("💾 Appended {} status updates to manifest segment: {} (LSN {}-{})",
-                   new_entries.len(), segment_url, min_lsn, max_lsn);
+            debug!(
+                "💾 Appended {} status updates to manifest segment: {} (LSN {}-{})",
+                new_entries.len(),
+                segment_url,
+                min_lsn,
+                max_lsn
+            );
         } else {
             // New file - write normally
             let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
                 ::create_metadata_strategy(&*fs, None)?;
             let opts = strategy.create_file_options(&*fs, &segment_url)?;
-            fs.write(&segment_url, &content, Some(opts)).await
+            fs.write(&segment_url, &content, Some(opts))
+                .await
                 .context("Failed to write manifest segment")?;
 
-            debug!("💾 Wrote new manifest segment: {} ({} entries, LSN {}-{})",
-                   segment_url, new_entries.len(), min_lsn, max_lsn);
+            debug!(
+                "💾 Wrote new manifest segment: {} ({} entries, LSN {}-{})",
+                segment_url,
+                new_entries.len(),
+                min_lsn,
+                max_lsn
+            );
         }
 
         // Best-effort sync (no-op for cloud storage)
@@ -288,7 +308,6 @@ impl GlobalManifestService {
 
         Ok(())
     }
-
 
     /// Get the global manifest URL
     fn global_manifest_url(&self) -> String {
@@ -319,7 +338,7 @@ impl GlobalManifestService {
             })
             .map(|entry| entry.url)
             .collect();
-        manifest_files.sort();  // Lexicographic sort works due to zero-padded LSN
+        manifest_files.sort(); // Lexicographic sort works due to zero-padded LSN
 
         if manifest_files.is_empty() {
             info!("📝 No existing manifest segments found, starting fresh");
@@ -378,7 +397,10 @@ impl GlobalManifestService {
         let mut sorted_entries = final_entries;
         sorted_entries.sort_by_key(|e| e.global_lsn);
 
-        info!("✅ Loaded {} unique manifest entries (after deduplication)", sorted_entries.len());
+        info!(
+            "✅ Loaded {} unique manifest entries (after deduplication)",
+            sorted_entries.len()
+        );
 
         *self.entries.write().await = sorted_entries;
 
@@ -403,17 +425,17 @@ impl GlobalManifestService {
             return Ok(());
         }
 
-        let data = fs.read(&url).await
-            .context("Failed to read checkpoint")?;
+        let data = fs.read(&url).await.context("Failed to read checkpoint")?;
 
-        let checkpoint: GlobalCheckpoint = serde_json::from_slice(&data)
-            .context("Failed to parse checkpoint")?;
+        let checkpoint: GlobalCheckpoint =
+            serde_json::from_slice(&data).context("Failed to parse checkpoint")?;
 
         *self.latest_checkpoint.write().await = Some(checkpoint.clone());
 
-        info!("✅ Loaded checkpoint {} at LSN {}",
-              checkpoint.checkpoint_id,
-              checkpoint.checkpoint_lsn);
+        info!(
+            "✅ Loaded checkpoint {} at LSN {}",
+            checkpoint.checkpoint_id, checkpoint.checkpoint_lsn
+        );
 
         Ok(())
     }
@@ -453,8 +475,7 @@ impl GlobalManifestService {
             .context("Failed to send append request")?;
 
         // Wait for response
-        rx.await
-            .context("Failed to receive append response")?
+        rx.await.context("Failed to receive append response")?
     }
 
     /// Get all entries for a collection
@@ -519,7 +540,10 @@ impl GlobalManifestService {
             // This works efficiently on cloud storage without read-modify-write
             self.write_to_staging(&status_updates).await?;
 
-            info!("✅ Marked {} entries as Flushed (wrote status update segment)", status_updates.len());
+            info!(
+                "✅ Marked {} entries as Flushed (wrote status update segment)",
+                status_updates.len()
+            );
         }
 
         Ok(())
@@ -534,8 +558,8 @@ impl GlobalManifestService {
 
         let mut buf = Vec::new();
         for entry in entries.iter() {
-            let mut line = serde_json::to_vec(entry)
-                .context("Failed to serialize manifest entry")?;
+            let mut line =
+                serde_json::to_vec(entry).context("Failed to serialize manifest entry")?;
             line.push(b'\n');
             buf.extend_from_slice(&line);
         }
@@ -543,7 +567,8 @@ impl GlobalManifestService {
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)?;
         let opts = strategy.create_file_options(&*fs, &url)?;
-        fs.write(&url, &buf, Some(opts)).await
+        fs.write(&url, &buf, Some(opts))
+            .await
             .context("Failed to rewrite global manifest")?;
 
         let _ = fs.sync_file(&url).await;
@@ -609,9 +634,10 @@ impl GlobalManifestService {
         // Update in-memory checkpoint
         *self.latest_checkpoint.write().await = Some(checkpoint.clone());
 
-        info!("✅ Created checkpoint {} at LSN {}",
-              checkpoint.checkpoint_id,
-              checkpoint.checkpoint_lsn);
+        info!(
+            "✅ Created checkpoint {} at LSN {}",
+            checkpoint.checkpoint_id, checkpoint.checkpoint_lsn
+        );
 
         Ok(checkpoint)
     }
@@ -621,13 +647,14 @@ impl GlobalManifestService {
         let url = format!("{}/checkpoint.state", self.wal_base_url);
         let fs = self.filesystem_factory.get_filesystem(&url)?;
 
-        let data = serde_json::to_vec_pretty(checkpoint)
-            .context("Failed to serialize checkpoint")?;
+        let data =
+            serde_json::to_vec_pretty(checkpoint).context("Failed to serialize checkpoint")?;
 
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)?;
         let opts = strategy.create_file_options(&*fs, &url)?;
-        fs.write(&url, &data, Some(opts)).await
+        fs.write(&url, &data, Some(opts))
+            .await
             .context("Failed to write checkpoint")?;
 
         let _ = fs.sync_file(&url).await;
@@ -650,7 +677,8 @@ impl GlobalManifestService {
 
         // Remove entries that are checkpointed and can be safely deleted
         entries.retain(|e| {
-            e.global_lsn >= checkpoint.safe_to_delete_before_lsn || e.status == WalEntryStatus::Active
+            e.global_lsn >= checkpoint.safe_to_delete_before_lsn
+                || e.status == WalEntryStatus::Active
         });
 
         let removed_count = original_count - entries.len();
@@ -660,7 +688,8 @@ impl GlobalManifestService {
             self.rewrite_manifest().await?;
 
             // Cloud storage: Delete old manifest segment files
-            self.cleanup_old_manifest_segments(checkpoint.safe_to_delete_before_lsn).await?;
+            self.cleanup_old_manifest_segments(checkpoint.safe_to_delete_before_lsn)
+                .await?;
 
             info!("🧹 Cleaned up {} checkpointed WAL entries", removed_count);
         }
@@ -684,9 +713,11 @@ impl GlobalManifestService {
 
             // Parse max_lsn from filename: manifest_{min_lsn}_{max_lsn}.jsonl
             if let Some(filename) = entry.url.split('/').last() {
-                if let Some(max_lsn_str) = filename.strip_prefix("manifest_")
+                if let Some(max_lsn_str) = filename
+                    .strip_prefix("manifest_")
                     .and_then(|s| s.strip_suffix(".jsonl"))
-                    .and_then(|s| s.split('_').nth(1)) {
+                    .and_then(|s| s.split('_').nth(1))
+                {
                     if let Ok(max_lsn) = max_lsn_str.parse::<u64>() {
                         if max_lsn < safe_to_delete_before_lsn {
                             // Delete this segment
@@ -696,7 +727,10 @@ impl GlobalManifestService {
                                     deleted_count += 1;
                                 }
                                 Err(e) => {
-                                    warn!("⚠️  Failed to delete manifest segment {}: {}", entry.url, e);
+                                    warn!(
+                                        "⚠️  Failed to delete manifest segment {}: {}",
+                                        entry.url, e
+                                    );
                                 }
                             }
                         }
@@ -735,24 +769,24 @@ impl GlobalManifestService {
 //     use super::*;
 //     use super::super::global_manifest::SerializationFormat;
 //     use super::super::BatchId;
-// 
+//
 //     #[tokio::test]
 //     async fn test_concurrent_appends() {
 //         let temp_dir = tempfile::tempdir().unwrap();
 //         let wal_url = format!("file://{}", temp_dir.path().display());
-// 
+//
 //         let fs_factory = Arc::new(
 //             crate::storage::persistence::filesystem::FilesystemFactory::create_default()
 //                 .await
 //                 .unwrap()
 //         );
-// 
+//
 //         let service = GlobalManifestService::new(
 //             GlobalManifestServiceConfig::default(),
 //             fs_factory,
 //             wal_url,
 //         ).await.unwrap();
-// 
+//
 //         // Spawn 10 concurrent append tasks
 //         let mut handles = vec![];
 //         for i in 0..10 {
@@ -776,19 +810,19 @@ impl GlobalManifestService {
 //             });
 //             handles.push(handle);
 //         }
-// 
+//
 //         // Wait for all tasks
 //         for handle in handles {
 //             handle.await.unwrap();
 //         }
-// 
+//
 //         // Give background worker time to flush
 //         tokio::time::sleep(Duration::from_millis(500)).await;
-// 
+//
 //         // Verify all entries were written
 //         let entries = service.get_all_entries().await;
 //         assert_eq!(entries.len(), 1000);
-// 
+//
 //         // Verify LSNs are unique and sequential
 //         // for (i, entry) in entries.iter().enumerate() {
 //         //     assert_eq!(entry.global_lsn, (i + 1) as u64);

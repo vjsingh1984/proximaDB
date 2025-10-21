@@ -3,45 +3,33 @@
 //! This module provides efficient Parquet querying capabilities for columnar storage engines.
 //! It's organized into focused submodules for better maintainability and clarity.
 
+pub mod adaptive_filter_executor;
+pub mod column_projector;
 pub mod columnar_reader;
 pub mod filter_pushdown_engine;
-pub mod column_projector;
 pub mod query_metrics;
 pub mod result_cache;
-pub mod adaptive_filter_executor;
 pub mod unified_reader;
 
 // Re-export main types for convenience with semantic names
-pub use columnar_reader::{ParquetReader, ReaderBuilder};
-pub use filter_pushdown_engine::{PredicateBuilder, FilterPushdown};
-pub use column_projector::{ProjectionBuilder, ColumnProjection};
-pub use query_metrics::{QueryStatistics, StatisticsCollector};
-pub use result_cache::{QueryCache, CacheStrategy};
 pub use adaptive_filter_executor::{BranchedFilterExecutor, FilterPath};
+pub use column_projector::{ColumnProjection, ProjectionBuilder};
+pub use columnar_reader::{ParquetReader, ReaderBuilder};
+pub use filter_pushdown_engine::{FilterPushdown, PredicateBuilder};
+pub use query_metrics::{QueryStatistics, StatisticsCollector};
+pub use result_cache::{CacheStrategy, QueryCache};
 
 // Re-export unified reader types for compatibility
 pub use unified_reader::{
-    UnifiedParquetReader,
-    ReaderConfig,
-    ReadingStrategy,
-    ReadingStrategySelector,
-    SchemaMapping,
-    CollectionContext,
-    FilterValue,
-    QuantizationMethod,
-    SeekRange,
-    VectorPosition,
-    Stage2Strategy,
-    SearchType,
-    RowGroupAccessPattern,
-    PagePruningInfo,
-    PageRange,
+    CollectionContext, FilterValue, PagePruningInfo, PageRange, QuantizationMethod, ReaderConfig,
+    ReadingStrategy, ReadingStrategySelector, RowGroupAccessPattern, SchemaMapping, SearchType,
+    SeekRange, Stage2Strategy, UnifiedParquetReader, VectorPosition,
 };
 
 // Common traits used across query implementations
+use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
-use crate::proto::proximadb_v1::{VectorRecord, MetadataFilter};
 
 /// Common trait for all Parquet readers
 pub trait ParquetQueryEngine: Send + Sync {
@@ -53,11 +41,7 @@ pub trait ParquetQueryEngine: Send + Sync {
     ) -> Result<Vec<VectorRecord>>;
 
     /// Query by IDs
-    async fn query_by_ids(
-        &self,
-        file_path: &str,
-        ids: &[String],
-    ) -> Result<Vec<VectorRecord>>;
+    async fn query_by_ids(&self, file_path: &str, ids: &[String]) -> Result<Vec<VectorRecord>>;
 
     /// Query with projection
     async fn query_with_projection(

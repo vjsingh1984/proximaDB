@@ -460,7 +460,10 @@ mod tests {
         // The comparison should still produce a valid response even with no engines
         assert!(comparison.winner.is_none());
         assert_eq!(comparison.recommendations.len(), 1);
-        assert_eq!(comparison.recommendations[0], "All engines performing within acceptable parameters");
+        assert_eq!(
+            comparison.recommendations[0],
+            "All engines performing within acceptable parameters"
+        );
     }
 
     #[tokio::test]

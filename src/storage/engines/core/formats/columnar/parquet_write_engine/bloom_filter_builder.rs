@@ -9,12 +9,12 @@
 //! The custom bloom filters are used for ID tracking and metadata filtering
 //! that supplements Parquet's native capabilities.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
 use crate::core::bloom::{
-    BloomFilter, BloomFilterBuilder as CoreBloomBuilder,
-    BloomFilterConfig as CoreConfig, BloomStrategy
+    BloomFilter, BloomFilterBuilder as CoreBloomBuilder, BloomFilterConfig as CoreConfig,
+    BloomStrategy,
 };
 use crate::proto::proximadb_v1::VectorRecord;
 
@@ -52,11 +52,11 @@ pub struct BloomFilterConfig {
 impl Default for BloomFilterConfig {
     fn default() -> Self {
         Self {
-            fpp: 0.01,  // 1% false positive rate (matching core default)
+            fpp: 0.01,   // 1% false positive rate (matching core default)
             ndv: 100000, // Default expected items
             per_row_group: true,
             max_memory_bytes: 1024 * 1024, // 1MB per filter
-            bits_per_key: Some(10.0), // Default 10 bits per key
+            bits_per_key: Some(10.0),      // Default 10 bits per key
         }
     }
 }
@@ -195,7 +195,7 @@ impl BloomFilterBuilder {
             // deserialize already returns Box<dyn BloomFilterStrategy>
             let filter = crate::core::bloom::factory::BloomFilterFactory::deserialize(
                 &config,
-                &filter_bytes
+                &filter_bytes,
             )?;
             bloom_filters.insert(row_group, filter);
         }
@@ -212,7 +212,8 @@ impl BloomFilterBuilder {
         let total_filters = self.bloom_filters.len();
 
         // Use core bloom filter's stats
-        let total_memory: usize = self.bloom_filters
+        let total_memory: usize = self
+            .bloom_filters
             .values()
             .map(|f| {
                 // BloomFilterStrategy doesn't have stats() method
@@ -280,8 +281,7 @@ mod tests {
         assert!(builder.might_contain(0, "id_3"));
 
         // Should not contain (unless false positive)
-        assert!(!builder.might_contain(0, "id_999") ||
-                builder.config.fpp > 0.0); // Allow for false positives
+        assert!(!builder.might_contain(0, "id_999") || builder.config.fpp > 0.0); // Allow for false positives
     }
 
     #[test]
@@ -302,12 +302,10 @@ mod tests {
 
         // Check isolation between row groups
         assert!(builder.might_contain(0, "rg0_id1"));
-        assert!(!builder.might_contain(0, "rg1_id1") ||
-                builder.config.fpp > 0.0);
+        assert!(!builder.might_contain(0, "rg1_id1") || builder.config.fpp > 0.0);
 
         assert!(builder.might_contain(1, "rg1_id1"));
-        assert!(!builder.might_contain(1, "rg0_id1") ||
-                builder.config.fpp > 0.0);
+        assert!(!builder.might_contain(1, "rg0_id1") || builder.config.fpp > 0.0);
     }
 
     #[test]

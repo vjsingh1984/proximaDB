@@ -138,7 +138,9 @@ fn decode_dictionary_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     // Read dictionary values
     let dict_bytes = 4 + num_unique * 4;
     if data.len() < dict_bytes {
-        return Err(anyhow::anyhow!("Dictionary decode: insufficient dictionary data"));
+        return Err(anyhow::anyhow!(
+            "Dictionary decode: insufficient dictionary data"
+        ));
     }
 
     let mut dictionary = Vec::with_capacity(num_unique);
@@ -183,15 +185,23 @@ fn decode_dictionary_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     let dict_bytes = 4 + num_unique * 8;
     if data.len() < dict_bytes {
-        return Err(anyhow::anyhow!("Dictionary decode: insufficient dictionary data"));
+        return Err(anyhow::anyhow!(
+            "Dictionary decode: insufficient dictionary data"
+        ));
     }
 
     let mut dictionary = Vec::with_capacity(num_unique);
     for i in 0..num_unique {
         let offset = 4 + i * 8;
         let value = i64::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
         ]);
         dictionary.push(value);
     }
@@ -286,8 +296,7 @@ mod tests {
     fn test_dictionary_categorical() {
         // Simulated status codes
         let values = vec![
-            200i32, 200, 404, 200, 500, 200, 404, 200,
-            200, 404, 500, 200, 200, 404, 200, 200,
+            200i32, 200, 404, 200, 500, 200, 404, 200, 200, 404, 500, 200, 200, 404, 200, 200,
         ];
 
         let encoded = encode_i32(&values).unwrap();
@@ -305,8 +314,7 @@ mod tests {
     #[test]
     fn test_dictionary_f32_roundtrip() {
         let values = vec![
-            1.0f32, 2.0, 1.0, 3.0, 2.0, 1.0, 3.0, 2.0,
-            1.0, 1.0, 2.0, 3.0, 1.0, 2.0, 1.0, 3.0,
+            1.0f32, 2.0, 1.0, 3.0, 2.0, 1.0, 3.0, 2.0, 1.0, 1.0, 2.0, 3.0, 1.0, 2.0, 1.0, 3.0,
         ];
 
         let encoded = encode_f32(&values).unwrap();
@@ -321,8 +329,8 @@ mod tests {
     #[test]
     fn test_dictionary_i64_roundtrip() {
         let values = vec![
-            1000i64, 2000, 1000, 3000, 2000, 1000, 3000, 2000,
-            1000, 1000, 2000, 3000, 1000, 2000, 1000, 3000,
+            1000i64, 2000, 1000, 3000, 2000, 1000, 3000, 2000, 1000, 1000, 2000, 3000, 1000, 2000,
+            1000, 3000,
         ];
 
         let encoded = encode_i64(&values).unwrap();
@@ -401,9 +409,8 @@ mod tests {
     fn test_dictionary_user_ratings() {
         // Simulated 1-5 star ratings
         let values = vec![
-            5i32, 4, 5, 3, 4, 5, 5, 4, 3, 5,
-            4, 5, 2, 4, 5, 5, 4, 5, 3, 4,
-            5, 5, 4, 5, 1, 4, 5, 5, 4, 5,
+            5i32, 4, 5, 3, 4, 5, 5, 4, 3, 5, 4, 5, 2, 4, 5, 5, 4, 5, 3, 4, 5, 5, 4, 5, 1, 4, 5, 5,
+            4, 5,
         ];
 
         let encoded = encode_i32(&values).unwrap();

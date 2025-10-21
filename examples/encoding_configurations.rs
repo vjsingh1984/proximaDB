@@ -1,7 +1,7 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout
-};
 use proximadb::core::compression::CompressionAlgorithm;
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, VectorEncodingLayout,
+};
 
 /// Example encoding configurations for different workload patterns
 /// Implements the recommendations from docs/ENCODING_PERFORMANCE.adoc
@@ -26,12 +26,12 @@ pub fn create_worm_config() -> BlockCompressionConfig {
 
         // Use Zstd for best compression ratio
         algorithm: CompressionAlgorithm::Zstd,
-        compression_level: 6,  // Higher level for better compression
+        compression_level: 6, // Higher level for better compression
 
         // Enable all compression features
         enable_vector_compression: true,
         enable_metadata_compression: true,
-        compression_threshold_bytes: 4096,  // Lower threshold
+        compression_threshold_bytes: 4096, // Lower threshold
         dictionary_compression: true,
         metadata_algorithm: Some(CompressionAlgorithm::Zstd),
     }
@@ -57,12 +57,12 @@ pub fn create_realtime_config() -> BlockCompressionConfig {
 
         // Use LZ4 for fast compression/decompression
         algorithm: CompressionAlgorithm::Lz4,
-        compression_level: 1,  // Fastest compression
+        compression_level: 1, // Fastest compression
 
         // Minimize compression overhead
-        enable_vector_compression: false,  // Skip vector compression
+        enable_vector_compression: false, // Skip vector compression
         enable_metadata_compression: true,
-        compression_threshold_bytes: 16384,  // Higher threshold
+        compression_threshold_bytes: 16384, // Higher threshold
         dictionary_compression: false,
         metadata_algorithm: Some(CompressionAlgorithm::Lz4),
     }
@@ -92,13 +92,13 @@ pub fn create_balanced_config() -> BlockCompressionConfig {
 
         // Balanced compression algorithm
         algorithm: CompressionAlgorithm::Snappy,
-        compression_level: 3,  // Moderate compression
+        compression_level: 3, // Moderate compression
 
         // Selective compression
         enable_vector_compression: true,
         enable_metadata_compression: true,
-        compression_threshold_bytes: 8192,  // Standard threshold
-        dictionary_compression: false,  // Skip for speed
+        compression_threshold_bytes: 8192, // Standard threshold
+        dictionary_compression: false,     // Skip for speed
         metadata_algorithm: Some(CompressionAlgorithm::Snappy),
     }
 }
@@ -161,17 +161,21 @@ pub fn create_gcs_config() -> BlockCompressionConfig {
 pub fn validate_encoding_config(
     config: &BlockCompressionConfig,
     expected_dimensions: usize,
-    latency_budget_ms: f64
+    latency_budget_ms: f64,
 ) -> Result<(), String> {
     match config.vector_layout {
-        VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector if expected_dimensions > 1536 => {
+        VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector
+            if expected_dimensions > 1536 =>
+        {
             if latency_budget_ms < 100.0 {
-                return Err("TransposeField encoding may exceed latency budget for high dimensions".into());
+                return Err(
+                    "TransposeField encoding may exceed latency budget for high dimensions".into(),
+                );
             }
-        },
+        }
         VectorEncodingLayout::FullVector if expected_dimensions < 256 => {
             println!("Warning: Missing compression opportunity for low dimensions");
-        },
+        }
         _ => {}
     }
     Ok(())
@@ -186,14 +190,20 @@ mod tests {
     fn test_workload_configurations() {
         // Test WORM configuration
         let worm_config = create_worm_config();
-        assert_eq!(worm_config.vector_layout, VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
+        assert_eq!(
+            worm_config.vector_layout,
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector
+        );
         assert_eq!(worm_config.algorithm, CompressionAlgorithm::Zstd);
         assert!(worm_config.enable_vector_compression);
         assert!(worm_config.dictionary_compression);
 
         // Test real-time configuration
         let realtime_config = create_realtime_config();
-        assert_eq!(realtime_config.vector_layout, VectorEncodingLayout::FullVector);
+        assert_eq!(
+            realtime_config.vector_layout,
+            VectorEncodingLayout::FullVector
+        );
         assert_eq!(realtime_config.algorithm, CompressionAlgorithm::Lz4);
         assert!(!realtime_config.enable_vector_compression);
         assert!(!realtime_config.dictionary_compression);
@@ -228,7 +238,10 @@ mod tests {
     #[test]
     fn test_cloud_provider_configs() {
         let aws_config = create_aws_config();
-        assert_eq!(aws_config.vector_layout, VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
+        assert_eq!(
+            aws_config.vector_layout,
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector
+        );
         assert_eq!(aws_config.algorithm, CompressionAlgorithm::Zstd);
 
         let azure_config = create_azure_config();
@@ -236,7 +249,10 @@ mod tests {
         assert_eq!(azure_config.algorithm, CompressionAlgorithm::Snappy);
 
         let gcs_config = create_gcs_config();
-        assert_eq!(gcs_config.vector_layout, VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
+        assert_eq!(
+            gcs_config.vector_layout,
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector
+        );
         assert_eq!(gcs_config.algorithm, CompressionAlgorithm::Gzip);
     }
 }
@@ -263,8 +279,10 @@ pub fn example_configuration_selection() {
     let latency_budget = 100.0; // 100ms budget
 
     match validate_encoding_config(&balanced_config, dimension, latency_budget) {
-        Ok(_) => println!("✓ Configuration validated for {}D vectors with {}ms budget",
-                         dimension, latency_budget),
+        Ok(_) => println!(
+            "✓ Configuration validated for {}D vectors with {}ms budget",
+            dimension, latency_budget
+        ),
         Err(e) => println!("✗ Configuration validation failed: {}", e),
     }
 }

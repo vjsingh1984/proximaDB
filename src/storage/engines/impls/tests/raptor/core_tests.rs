@@ -56,7 +56,10 @@ fn test_constants_consistency() {
     // assert!(K2_BOUNDARY_THRESHOLD > 0.0 && K2_BOUNDARY_THRESHOLD < 1.0);
 
     // Placeholder test to keep function valid
-    assert!(true, "Constants test deferred - requires exported constants");
+    assert!(
+        true,
+        "Constants test deferred - requires exported constants"
+    );
 }
 
 #[test]
@@ -70,7 +73,10 @@ fn test_file_format_constants() {
     // assert!(RAPTOR_FORMAT_VERSION > 0);
 
     // Placeholder test to keep function valid
-    assert!(true, "File format constants test deferred - requires exported constants");
+    assert!(
+        true,
+        "File format constants test deferred - requires exported constants"
+    );
 }
 
 // Helper function (from test context)

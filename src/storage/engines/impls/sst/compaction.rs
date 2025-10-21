@@ -21,15 +21,15 @@
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::compactor_impl::{SstCompactor, ZeroCopyCompactionStats};
-use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Added VectorRecord import
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::core::{SstConfig, String}; // OPTIMIZED: VectorRecord imported above
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Added VectorRecord import
 use crate::storage::Result;
 // Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType,
 };
@@ -184,21 +184,14 @@ impl Compaction {
             .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?,
         );
         // Create unified caching filesystem for compaction
-        let base_fs = filesystem_factory
-            .get_filesystem("file://")
-            .map_err(|e| {
-                crate::core::StorageError::SstEngine(format!(
-                    "Failed to get base filesystem: {}",
-                    e
-                ))
-            })?;
-        let unified_fs = Arc::new(
-            UnifiedCachingFilesystem::new(
-                base_fs,
-                "compaction".to_string(), // collection_id
-                "sst_compaction".to_string(),
-            )
-        );
+        let base_fs = filesystem_factory.get_filesystem("file://").map_err(|e| {
+            crate::core::StorageError::SstEngine(format!("Failed to get base filesystem: {}", e))
+        })?;
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            "compaction".to_string(), // collection_id
+            "sst_compaction".to_string(),
+        ));
         let unified_reader = Arc::new(UnifiedSstableReader::new(
             filesystem_factory.clone(),
             unified_fs,
@@ -980,9 +973,7 @@ impl Compaction {
                     .output_file
                     .parent()
                     .ok_or_else(|| {
-                        crate::core::StorageError::SstEngine(
-                            "Invalid output file path".to_string(),
-                        )
+                        crate::core::StorageError::SstEngine("Invalid output file path".to_string())
                     })?
                     .to_string_lossy()
                     .to_string(),

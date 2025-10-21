@@ -50,11 +50,11 @@
 //! ### 1. **Transparent Backend Selection**
 //! Automatic routing based on URL scheme:
 //! ```rust
-//! // Automatically uses S3 backend
-//! let fs = FilesystemFactory::from_url("s3://bucket/path")?;
-//!
-//! // Automatically uses local backend
-//! let fs = FilesystemFactory::from_url("file:///data/vectors")?;
+//! use std::sync::Arc;
+//! // Create a factory and get a filesystem by URL
+//! let factory = Arc::new(FilesystemFactory::create_default().await?);
+//! let fs = factory.get_filesystem("s3://bucket/path")?; // S3 backend
+//! let local = factory.get_filesystem("file:///data/vectors")?; // Local backend
 //! ```
 //!
 //! ### 2. **Atomic Operations**
@@ -128,10 +128,12 @@
 //! ## Usage Examples
 //!
 //! ```rust
-//! use proximadb::storage::filesystem::{FilesystemFactory, FileOptions};
+//! use std::sync::Arc;
+//! use proximadb::storage::persistence::filesystem::{FilesystemFactory, FileOptions};
 //!
-//! // Create filesystem from URL
-//! let fs = FilesystemFactory::from_url("s3://my-bucket/vectors")?;
+//! // Create factory and filesystem
+//! let factory = Arc::new(FilesystemFactory::create_default().await?);
+//! let fs = factory.get_filesystem("s3://my-bucket/vectors")?;
 //!
 //! // Write with atomic guarantees
 //! fs.write_atomic(
@@ -181,16 +183,16 @@ pub mod write_strategy;
 // zero_copy_filesystem removed - functionality integrated into UnifiedCachingFilesystem
 
 // Unified filesystem modules
+pub mod access_tracker;
+pub mod cache_metrics;
+pub mod disk_cache;
+pub mod metadata_traits;
+pub mod orchestrator_integration;
+pub mod prefetch_engine;
+pub mod range_optimizer;
 pub mod unified;
 pub mod unified_cache;
 pub mod unified_config;
-pub mod disk_cache;
-pub mod range_optimizer;
-pub mod access_tracker;
-pub mod prefetch_engine;
-pub mod cache_metrics;
-pub mod orchestrator_integration;
-pub mod metadata_traits;
 
 #[cfg(test)]
 pub mod tests;
@@ -200,8 +202,7 @@ pub use local::LocalFileSystem;
 
 // Re-export centralized scheme validation functions
 pub use scheme_validation::{
-    validate_url, extract_scheme, normalize_url, is_supported_scheme,
-    FilesystemScheme,
+    FilesystemScheme, extract_scheme, is_supported_scheme, normalize_url, validate_url,
 };
 
 /// Filesystem operation result type
@@ -846,7 +847,10 @@ impl FilesystemFactory {
     ///
     /// **DEPRECATED**: Use `create_default()` instead. This method creates a non-functional
     /// factory without registered filesystems and exists only for backward compatibility.
-    #[deprecated(since = "0.1.5", note = "Use `create_default()` instead - this creates a broken factory")]
+    #[deprecated(
+        since = "0.1.5",
+        note = "Use `create_default()` instead - this creates a broken factory"
+    )]
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),
@@ -906,7 +910,10 @@ impl FilesystemFactory {
     /// **DEPRECATED**: Use `create()` instead for clearer semantics.
     /// Having `new()` on a factory is confusing - factories should have static
     /// creation methods like `create()`, `create_default()`, etc.
-    #[deprecated(since = "0.1.5", note = "Use `create(config)` instead for clearer factory semantics")]
+    #[deprecated(
+        since = "0.1.5",
+        note = "Use `create(config)` instead for clearer factory semantics"
+    )]
     pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
         Self::create(config).await
     }
@@ -1127,7 +1134,6 @@ impl FilesystemFactory {
         Ok(())
     }
 
-
     /// Extract bucket/container name from URL
     pub fn extract_bucket_from_url(&self, url: &str) -> FsResult<Option<String>> {
         // Handle URLs without schemes by prepending file://
@@ -1300,7 +1306,9 @@ impl FilesystemFactory {
             // Check for scheme mapping (e.g., gs -> gcs)
             let mapped_scheme = self.config.scheme_mapping.get(raw_scheme);
 
-            let result = mapped_scheme.cloned().unwrap_or_else(|| raw_scheme.to_string());
+            let result = mapped_scheme
+                .cloned()
+                .unwrap_or_else(|| raw_scheme.to_string());
             debug!("returning scheme: {}", result);
             Ok(result)
         } else {
@@ -1341,7 +1349,10 @@ impl FilesystemFactory {
             } else if url.starts_with("file:///") {
                 // Absolute path: file:///absolute/path
                 let absolute_path = &url[8..]; // Remove "file:///" prefix
-                trace!("🔍 [FILESYSTEM] resolve_path: Absolute path: '/{}'", absolute_path);
+                trace!(
+                    "🔍 [FILESYSTEM] resolve_path: Absolute path: '/{}'",
+                    absolute_path
+                );
                 Ok(format!("/{}", absolute_path))
             } else {
                 // Implicit relative path: file://relative/path (treat as relative)
@@ -1357,7 +1368,10 @@ impl FilesystemFactory {
             let parsed_url = Url::parse(url)
                 .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
             let path = parsed_url.path();
-            trace!("🔍 [FILESYSTEM] resolve_path: Non-file scheme path: '{}'", path);
+            trace!(
+                "🔍 [FILESYSTEM] resolve_path: Non-file scheme path: '{}'",
+                path
+            );
             Ok(path.to_string())
         }
     }

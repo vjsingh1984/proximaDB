@@ -19,13 +19,13 @@
 //! Demonstrates the usage of PULSAR and QUASAR graph engines
 
 use proximadb::graph::PropertyValue;
+use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::pulsar::PulsarConfig;
 use proximadb::graph::engines::quasar::QuasarConfig;
 use proximadb::graph::{
-    Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node,
-    PulsarGraphEngine, QuasarGraphEngine,
+    Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node, PulsarGraphEngine,
+    QuasarGraphEngine,
 };
-use proximadb::graph::engines::GraphEngine;
 use proximadb::proto::proximadb_v1::property_value::Value;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -148,7 +148,9 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Alice's neighbors: {} people", neighbors.len());
 
     // Cross-shard traversal
-    let traversal_result = engine.cross_shard_traversal(&"alice".to_string(), 2).await?;
+    let traversal_result = engine
+        .cross_shard_traversal(&"alice".to_string(), 2)
+        .await?;
     println!(
         "✓ Cross-shard traversal found {} nodes",
         traversal_result.len()

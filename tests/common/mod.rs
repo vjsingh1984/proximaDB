@@ -11,6 +11,12 @@ pub mod integration_test_helpers;
 // Centralized test data generation
 pub mod test_data;
 
+// Test collection builder (fluent API for creating test collections)
+pub mod collection_builder;
+
+// Vector generation utilities (random, sequential, clustered, with metadata)
+pub mod vector_generator;
+
 // Global test counter to ensure unique collection IDs
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 static INIT: Once = Once::new();

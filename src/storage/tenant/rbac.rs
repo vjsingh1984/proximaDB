@@ -1,32 +1,32 @@
 //! Enhanced RBAC for multi-tenant architecture - clean implementation
 
 use anyhow::{Result, anyhow};
-use dashmap::DashMap;
-use std::sync::Arc;
-use std::collections::{HashMap, HashSet};
-use tracing::info;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tracing::info;
 
-use super::{UserContext, TenantManager};
+use super::{TenantManager, UserContext};
 
 /// Enhanced RBAC manager for multi-tenant operations
 pub struct EnhancedRBACManager {
     /// Tenant-specific role definitions
     tenant_roles: Arc<DashMap<String, Arc<DashMap<String, TenantRole>>>>,
-    
+
     /// Collection permissions with tenant context
     collection_permissions: Arc<DashMap<String, CollectionPermissions>>,
-    
+
     /// Domain permissions within tenants
     domain_permissions: Arc<DashMap<String, DomainPermissions>>,
-    
+
     /// User role assignments
     user_role_assignments: Arc<DashMap<String, UserRoleAssignment>>,
-    
+
     /// RBAC audit logger
     rbac_audit_logger: Arc<RBACEventLogger>,
-    
+
     /// Tenant manager reference
     tenant_manager: Arc<TenantManager>,
 }
@@ -49,25 +49,25 @@ pub enum Permission {
     TenantAdmin,
     TenantRead,
     TenantWrite,
-    
-    // Domain-level permissions  
+
+    // Domain-level permissions
     DomainCreate,
     DomainRead(String),
     DomainWrite(String),
     DomainAdmin(String),
-    
+
     // Collection-level permissions
     CollectionCreate,
     CollectionRead(String),
     CollectionWrite(String),
     CollectionDelete(String),
     CollectionAdmin(String),
-    
+
     // Entity-level permissions
     EntityRead(String),
     EntityWrite(String),
     EntityDelete(String),
-    
+
     // Special permissions
     AuditRead,
     SystemAdmin,
@@ -136,7 +136,7 @@ impl EnhancedRBACManager {
             tenant_manager,
         }
     }
-    
+
     /// Create tenant role - clean implementation
     pub async fn create_tenant_role(
         &self,
@@ -148,7 +148,7 @@ impl EnhancedRBACManager {
     ) -> Result<TenantRole> {
         // Validate creator has admin permissions
         self.validate_admin_permission(creator_context, tenant_id)?;
-        
+
         let role = TenantRole {
             role_name: role_name.to_string(),
             tenant_id: tenant_id.to_string(),
@@ -157,28 +157,30 @@ impl EnhancedRBACManager {
             created_at: Utc::now(),
             created_by: creator_context.user_id.clone(),
         };
-        
+
         // Store role in tenant-specific storage
-        let tenant_roles = self.tenant_roles
+        let tenant_roles = self
+            .tenant_roles
             .entry(tenant_id.to_string())
             .or_insert_with(|| Arc::new(DashMap::new()));
-        
+
         tenant_roles.insert(role_name.to_string(), role.clone());
-        
+
         // Log role creation
-        self.rbac_audit_logger.log_role_created(
-            tenant_id,
+        self.rbac_audit_logger
+            .log_role_created(tenant_id, role_name, &role.permissions, creator_context)
+            .await?;
+
+        info!(
+            "Created role {} in tenant {} with {} permissions",
             role_name,
-            &role.permissions,
-            creator_context,
-        ).await?;
-        
-        info!("Created role {} in tenant {} with {} permissions", 
-              role_name, tenant_id, role.permissions.len());
-        
+            tenant_id,
+            role.permissions.len()
+        );
+
         Ok(role)
     }
-    
+
     /// Assign role to user - clean implementation
     pub async fn assign_user_role(
         &self,
@@ -189,13 +191,14 @@ impl EnhancedRBACManager {
     ) -> Result<()> {
         // Validate assigner has admin permissions
         self.validate_admin_permission(assigner_context, tenant_id)?;
-        
+
         // Get role definition
         let role = self.get_tenant_role(tenant_id, role_name)?;
-        
+
         // Get or create user assignment
         let user_key = format!("{}::{}", tenant_id, user_id);
-        let mut assignment = self.user_role_assignments
+        let mut assignment = self
+            .user_role_assignments
             .get(&user_key)
             .map(|entry| entry.clone())
             .unwrap_or_else(|| UserRoleAssignment {
@@ -206,28 +209,29 @@ impl EnhancedRBACManager {
                 assigned_at: Utc::now(),
                 assigned_by: assigner_context.user_id.clone(),
             });
-        
+
         // Add role
         assignment.roles.insert(role_name.to_string());
-        
+
         // Recalculate effective permissions
-        assignment.effective_permissions = self.calculate_effective_permissions(tenant_id, &assignment.roles)?;
-        
+        assignment.effective_permissions =
+            self.calculate_effective_permissions(tenant_id, &assignment.roles)?;
+
         // Store assignment
         self.user_role_assignments.insert(user_key, assignment);
-        
+
         // Log role assignment
-        self.rbac_audit_logger.log_role_assigned(
-            tenant_id,
-            user_id,
-            role_name,
-            assigner_context,
-        ).await?;
-        
-        info!("Assigned role {} to user {} in tenant {}", role_name, user_id, tenant_id);
+        self.rbac_audit_logger
+            .log_role_assigned(tenant_id, user_id, role_name, assigner_context)
+            .await?;
+
+        info!(
+            "Assigned role {} to user {} in tenant {}",
+            role_name, user_id, tenant_id
+        );
         Ok(())
     }
-    
+
     /// Validate collection access with tenant context
     pub async fn validate_collection_access(
         &self,
@@ -237,43 +241,59 @@ impl EnhancedRBACManager {
         user_context: &UserContext,
     ) -> Result<AccessValidationResult> {
         // Basic tenant validation
-        self.tenant_manager.validate_user_tenant_access(&user_context.tenant_id, tenant_id)?;
-        
+        self.tenant_manager
+            .validate_user_tenant_access(&user_context.tenant_id, tenant_id)?;
+
         // Get collection permissions
         let collection_key = format!("{}::{}", tenant_id, collection_id);
-        let permissions = self.collection_permissions.get(&collection_key)
-            .ok_or_else(|| anyhow!("Collection {} not found in tenant {}", collection_id, tenant_id))?;
-        
+        let permissions = self
+            .collection_permissions
+            .get(&collection_key)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Collection {} not found in tenant {}",
+                    collection_id,
+                    tenant_id
+                )
+            })?;
+
         // Get user effective permissions
         let user_key = format!("{}::{}", tenant_id, user_context.user_id);
-        let user_assignment = self.user_role_assignments.get(&user_key)
-            .ok_or_else(|| anyhow!("User {} not found in tenant {}", user_context.user_id, tenant_id))?;
-        
+        let user_assignment = self.user_role_assignments.get(&user_key).ok_or_else(|| {
+            anyhow!(
+                "User {} not found in tenant {}",
+                user_context.user_id,
+                tenant_id
+            )
+        })?;
+
         // Check operation permission
         let access_granted = match operation {
             CollectionOperation::Read => {
                 self.check_collection_read_permission(&permissions, &user_assignment)
-            },
+            }
             CollectionOperation::Write => {
                 self.check_collection_write_permission(&permissions, &user_assignment)
-            },
+            }
             CollectionOperation::Delete => {
                 self.check_collection_admin_permission(&permissions, &user_assignment)
-            },
+            }
             CollectionOperation::Admin => {
                 self.check_collection_admin_permission(&permissions, &user_assignment)
-            },
+            }
         };
-        
+
         // Log access validation
-        self.rbac_audit_logger.log_access_validation(
-            tenant_id,
-            collection_id,
-            &operation,
-            user_context,
-            access_granted,
-        ).await?;
-        
+        self.rbac_audit_logger
+            .log_access_validation(
+                tenant_id,
+                collection_id,
+                &operation,
+                user_context,
+                access_granted,
+            )
+            .await?;
+
         Ok(AccessValidationResult {
             granted: access_granted,
             user_context: user_context.clone(),
@@ -285,11 +305,15 @@ impl EnhancedRBACManager {
             validation_metadata: ValidationMetadata {
                 validated_at: Utc::now(),
                 permissions_checked: user_assignment.effective_permissions.clone(),
-                validation_reason: if access_granted { "Authorized".to_string() } else { "Insufficient permissions".to_string() },
+                validation_reason: if access_granted {
+                    "Authorized".to_string()
+                } else {
+                    "Insufficient permissions".to_string()
+                },
             },
         })
     }
-    
+
     // Helper methods for permission checking
     fn check_collection_read_permission(
         &self,
@@ -298,61 +322,76 @@ impl EnhancedRBACManager {
     ) -> bool {
         // Check if user has any read role for this collection
         user_assignment.roles.iter().any(|role| {
-            permissions.read_roles.contains(role) || 
-            permissions.admin_roles.contains(role)
-        }) || user_assignment.effective_permissions.contains(&Permission::TenantAdmin)
+            permissions.read_roles.contains(role) || permissions.admin_roles.contains(role)
+        }) || user_assignment
+            .effective_permissions
+            .contains(&Permission::TenantAdmin)
     }
-    
+
     fn check_collection_write_permission(
         &self,
         permissions: &CollectionPermissions,
         user_assignment: &UserRoleAssignment,
     ) -> bool {
         user_assignment.roles.iter().any(|role| {
-            permissions.write_roles.contains(role) || 
-            permissions.admin_roles.contains(role)
-        }) || user_assignment.effective_permissions.contains(&Permission::TenantAdmin)
+            permissions.write_roles.contains(role) || permissions.admin_roles.contains(role)
+        }) || user_assignment
+            .effective_permissions
+            .contains(&Permission::TenantAdmin)
     }
-    
+
     fn check_collection_admin_permission(
         &self,
         permissions: &CollectionPermissions,
         user_assignment: &UserRoleAssignment,
     ) -> bool {
-        user_assignment.roles.iter().any(|role| {
-            permissions.admin_roles.contains(role)
-        }) || user_assignment.effective_permissions.contains(&Permission::TenantAdmin)
+        user_assignment
+            .roles
+            .iter()
+            .any(|role| permissions.admin_roles.contains(role))
+            || user_assignment
+                .effective_permissions
+                .contains(&Permission::TenantAdmin)
     }
-    
+
     fn validate_admin_permission(&self, user_context: &UserContext, tenant_id: &str) -> Result<()> {
-        if user_context.permissions.contains(&"tenant_admin".to_string()) ||
-           user_context.permissions.contains(&"system_admin".to_string()) {
+        if user_context
+            .permissions
+            .contains(&"tenant_admin".to_string())
+            || user_context
+                .permissions
+                .contains(&"system_admin".to_string())
+        {
             Ok(())
         } else {
-            Err(anyhow!("User {} lacks admin permission for tenant {}", 
-                       user_context.user_id, tenant_id))
+            Err(anyhow!(
+                "User {} lacks admin permission for tenant {}",
+                user_context.user_id,
+                tenant_id
+            ))
         }
     }
-    
+
     fn get_tenant_role(&self, tenant_id: &str, role_name: &str) -> Result<TenantRole> {
-        self.tenant_roles.get(tenant_id)
+        self.tenant_roles
+            .get(tenant_id)
             .and_then(|roles| roles.get(role_name).map(|role| role.clone()))
             .ok_or_else(|| anyhow!("Role {} not found in tenant {}", role_name, tenant_id))
     }
-    
+
     fn calculate_effective_permissions(
         &self,
         tenant_id: &str,
         role_names: &HashSet<String>,
     ) -> Result<HashSet<Permission>> {
         let mut effective_permissions = HashSet::new();
-        
+
         for role_name in role_names {
             if let Ok(role) = self.get_tenant_role(tenant_id, role_name) {
                 effective_permissions.extend(role.permissions);
             }
         }
-        
+
         Ok(effective_permissions)
     }
 }
@@ -409,7 +448,7 @@ impl RBACEventLogger {
             audit_events: Arc::new(DashMap::new()),
         }
     }
-    
+
     pub async fn log_role_created(
         &self,
         tenant_id: &str,
@@ -427,11 +466,11 @@ impl RBACEventLogger {
             user_id: creator_context.user_id.clone(),
             timestamp: Utc::now(),
         };
-        
+
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
     }
-    
+
     pub async fn log_role_assigned(
         &self,
         tenant_id: &str,
@@ -449,11 +488,11 @@ impl RBACEventLogger {
             user_id: assigner_context.user_id.clone(),
             timestamp: Utc::now(),
         };
-        
+
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
     }
-    
+
     pub async fn log_access_validation(
         &self,
         tenant_id: &str,
@@ -473,7 +512,7 @@ impl RBACEventLogger {
             user_id: user_context.user_id.clone(),
             timestamp: Utc::now(),
         };
-        
+
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
     }
@@ -521,41 +560,49 @@ impl EnhancedRBACManager {
         creator_context: &UserContext,
     ) -> Result<Vec<TenantRole>> {
         let mut created_roles = Vec::new();
-        
+
         // Admin role
-        let admin_role = self.create_tenant_role(
-            tenant_id,
-            "tenant_admin",
-            [Permission::TenantAdmin].into_iter().collect(),
-            "Full tenant administration access".to_string(),
-            creator_context,
-        ).await?;
+        let admin_role = self
+            .create_tenant_role(
+                tenant_id,
+                "tenant_admin",
+                [Permission::TenantAdmin].into_iter().collect(),
+                "Full tenant administration access".to_string(),
+                creator_context,
+            )
+            .await?;
         created_roles.push(admin_role);
-        
+
         // User role
-        let user_role = self.create_tenant_role(
-            tenant_id,
-            "tenant_user",
-            [Permission::TenantRead].into_iter().collect(),
-            "Basic tenant read access".to_string(),
-            creator_context,
-        ).await?;
+        let user_role = self
+            .create_tenant_role(
+                tenant_id,
+                "tenant_user",
+                [Permission::TenantRead].into_iter().collect(),
+                "Basic tenant read access".to_string(),
+                creator_context,
+            )
+            .await?;
         created_roles.push(user_role);
-        
+
         // Analyst role
-        let analyst_role = self.create_tenant_role(
-            tenant_id,
-            "analyst",
-            [
-                Permission::TenantRead,
-                Permission::DomainRead("analytics".to_string()),
-                Permission::CollectionRead("*".to_string()),
-            ].into_iter().collect(),
-            "Analytics and reporting access".to_string(),
-            creator_context,
-        ).await?;
+        let analyst_role = self
+            .create_tenant_role(
+                tenant_id,
+                "analyst",
+                [
+                    Permission::TenantRead,
+                    Permission::DomainRead("analytics".to_string()),
+                    Permission::CollectionRead("*".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                "Analytics and reporting access".to_string(),
+                creator_context,
+            )
+            .await?;
         created_roles.push(analyst_role);
-        
+
         Ok(created_roles)
     }
 }
@@ -563,12 +610,12 @@ impl EnhancedRBACManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::{TenantConfig, Industry, ComplianceFramework, SecurityPolicies};
     use crate::storage::tenant::context::ResourceLimits;
+    use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies, TenantConfig};
 
     async fn create_test_rbac_setup() -> (EnhancedRBACManager, UserContext) {
         let tenant_manager = Arc::new(TenantManager::new());
-        
+
         // Create test tenant
         let tenant_config = TenantConfig {
             organization_name: "Test Corp".to_string(),
@@ -577,38 +624,46 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             security_policies: SecurityPolicies::default(),
         };
-        
-        tenant_manager.create_tenant("test_tenant".to_string(), tenant_config).await.unwrap();
-        
+
+        tenant_manager
+            .create_tenant("test_tenant".to_string(), tenant_config)
+            .await
+            .unwrap();
+
         let rbac_manager = EnhancedRBACManager::new(tenant_manager);
-        
+
         let admin_context = UserContext {
             user_id: "admin_user".to_string(),
             tenant_id: "test_tenant".to_string(),
             roles: vec!["system_admin".to_string()],
             permissions: vec!["tenant_admin".to_string(), "system_admin".to_string()],
         };
-        
+
         (rbac_manager, admin_context)
     }
 
     #[tokio::test]
     async fn test_role_creation() {
         let (rbac_manager, admin_context) = create_test_rbac_setup().await;
-        
+
         let permissions = [
             Permission::CollectionRead("products".to_string()),
             Permission::CollectionWrite("products".to_string()),
-        ].into_iter().collect();
-        
-        let role = rbac_manager.create_tenant_role(
-            "test_tenant",
-            "product_manager",
-            permissions,
-            "Product management role".to_string(),
-            &admin_context,
-        ).await.unwrap();
-        
+        ]
+        .into_iter()
+        .collect();
+
+        let role = rbac_manager
+            .create_tenant_role(
+                "test_tenant",
+                "product_manager",
+                permissions,
+                "Product management role".to_string(),
+                &admin_context,
+            )
+            .await
+            .unwrap();
+
         assert_eq!(role.role_name, "product_manager");
         assert_eq!(role.tenant_id, "test_tenant");
         assert_eq!(role.permissions.len(), 2);
@@ -617,39 +672,41 @@ mod tests {
     #[tokio::test]
     async fn test_user_role_assignment() {
         let (rbac_manager, admin_context) = create_test_rbac_setup().await;
-        
+
         // Create role first
-        let permissions = [Permission::CollectionRead("test_collection".to_string())].into_iter().collect();
-        rbac_manager.create_tenant_role(
-            "test_tenant",
-            "test_role",
-            permissions,
-            "Test role".to_string(),
-            &admin_context,
-        ).await.unwrap();
-        
+        let permissions = [Permission::CollectionRead("test_collection".to_string())]
+            .into_iter()
+            .collect();
+        rbac_manager
+            .create_tenant_role(
+                "test_tenant",
+                "test_role",
+                permissions,
+                "Test role".to_string(),
+                &admin_context,
+            )
+            .await
+            .unwrap();
+
         // Assign role to user
-        let result = rbac_manager.assign_user_role(
-            "test_tenant",
-            "test_user",
-            "test_role",
-            &admin_context,
-        ).await;
-        
+        let result = rbac_manager
+            .assign_user_role("test_tenant", "test_user", "test_role", &admin_context)
+            .await;
+
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_standard_roles_creation() {
         let (rbac_manager, admin_context) = create_test_rbac_setup().await;
-        
-        let roles = rbac_manager.create_standard_roles(
-            "test_tenant",
-            &admin_context,
-        ).await.unwrap();
-        
+
+        let roles = rbac_manager
+            .create_standard_roles("test_tenant", &admin_context)
+            .await
+            .unwrap();
+
         assert_eq!(roles.len(), 3); // admin, user, analyst
-        
+
         let role_names: Vec<String> = roles.iter().map(|r| r.role_name.clone()).collect();
         assert!(role_names.contains(&"tenant_admin".to_string()));
         assert!(role_names.contains(&"tenant_user".to_string()));

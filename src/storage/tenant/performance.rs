@@ -3,14 +3,14 @@
 //! Real-time monitoring and enforcement of per-tenant performance SLAs
 //! to ensure tenant isolation and resource guarantees.
 
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::Duration;
-use chrono::{DateTime, Utc};
-use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn, error};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 /// Real-time tenant performance monitor
 #[derive(Debug)]
@@ -94,7 +94,9 @@ impl TenantPerformanceMonitor {
     pub async fn start_monitoring(&self) -> Result<()> {
         info!("🔍 Starting tenant performance monitoring");
 
-        let mut interval = tokio::time::interval(Duration::from_millis(self.monitoring_config.monitoring_interval_ms));
+        let mut interval = tokio::time::interval(Duration::from_millis(
+            self.monitoring_config.monitoring_interval_ms,
+        ));
 
         loop {
             interval.tick().await;
@@ -116,7 +118,11 @@ impl TenantPerformanceMonitor {
     }
 
     /// Check if tenant operation is allowed under SLA
-    pub async fn check_operation_sla(&self, tenant_id: &str, operation_type: &str) -> Result<SLACheckResult> {
+    pub async fn check_operation_sla(
+        &self,
+        tenant_id: &str,
+        operation_type: &str,
+    ) -> Result<SLACheckResult> {
         let metrics = self.get_tenant_metrics(tenant_id).await?;
         let sla = self.get_tenant_sla(tenant_id).await?;
 
@@ -128,7 +134,10 @@ impl TenantPerformanceMonitor {
                 current_value: metrics.current_qps,
                 limit_value: sla.max_qps as f64,
                 retry_after_seconds: Some(60), // Wait 1 minute for QPS to cool down
-                reason: format!("QPS limit exceeded: {:.1} > {} for tenant {}", metrics.current_qps, sla.max_qps, tenant_id),
+                reason: format!(
+                    "QPS limit exceeded: {:.1} > {} for tenant {}",
+                    metrics.current_qps, sla.max_qps, tenant_id
+                ),
             });
         }
 
@@ -140,8 +149,10 @@ impl TenantPerformanceMonitor {
                 current_value: metrics.avg_response_time_ms,
                 limit_value: sla.max_response_time_ms as f64,
                 retry_after_seconds: Some(10), // Short retry for response time issues
-                reason: format!("Response time SLA exceeded: {:.1}ms > {}ms for tenant {}",
-                               metrics.avg_response_time_ms, sla.max_response_time_ms, tenant_id),
+                reason: format!(
+                    "Response time SLA exceeded: {:.1}ms > {}ms for tenant {}",
+                    metrics.avg_response_time_ms, sla.max_response_time_ms, tenant_id
+                ),
             });
         }
 
@@ -153,8 +164,10 @@ impl TenantPerformanceMonitor {
                 current_value: metrics.concurrent_operations as f64,
                 limit_value: sla.max_concurrent_operations as f64,
                 retry_after_seconds: Some(5), // Quick retry for concurrency
-                reason: format!("Concurrency limit exceeded: {} > {} for tenant {}",
-                               metrics.concurrent_operations, sla.max_concurrent_operations, tenant_id),
+                reason: format!(
+                    "Concurrency limit exceeded: {} > {} for tenant {}",
+                    metrics.concurrent_operations, sla.max_concurrent_operations, tenant_id
+                ),
             });
         }
 
@@ -166,8 +179,10 @@ impl TenantPerformanceMonitor {
                 current_value: metrics.memory_usage_bytes as f64,
                 limit_value: sla.max_memory_bytes as f64,
                 retry_after_seconds: Some(30), // Longer wait for memory cleanup
-                reason: format!("Memory limit exceeded: {} > {} bytes for tenant {}",
-                               metrics.memory_usage_bytes, sla.max_memory_bytes, tenant_id),
+                reason: format!(
+                    "Memory limit exceeded: {} > {} bytes for tenant {}",
+                    metrics.memory_usage_bytes, sla.max_memory_bytes, tenant_id
+                ),
             });
         }
 
@@ -200,9 +215,12 @@ impl TenantPerformanceMonitor {
         let mut metrics_map = self.tenant_metrics.write().await;
         metrics_map.insert(tenant_id.to_string(), current_metrics);
 
-        debug!("📊 Updated metrics for tenant {}: {:.1} QPS, {:.1}ms avg response time",
-               tenant_id, metrics_map.get(tenant_id).unwrap().current_qps,
-               metrics_map.get(tenant_id).unwrap().avg_response_time_ms);
+        debug!(
+            "📊 Updated metrics for tenant {}: {:.1} QPS, {:.1}ms avg response time",
+            tenant_id,
+            metrics_map.get(tenant_id).unwrap().current_qps,
+            metrics_map.get(tenant_id).unwrap().avg_response_time_ms
+        );
 
         Ok(())
     }
@@ -212,7 +230,10 @@ impl TenantPerformanceMonitor {
         let sla_check = self.check_operation_sla(tenant_id, "monitoring").await?;
 
         if !sla_check.allowed {
-            error!("🚨 SLA VIOLATION for tenant {}: {}", tenant_id, sla_check.reason);
+            error!(
+                "🚨 SLA VIOLATION for tenant {}: {}",
+                tenant_id, sla_check.reason
+            );
 
             // Trigger SLA violation response
             self.handle_sla_violation(tenant_id, &sla_check).await?;
@@ -222,22 +243,34 @@ impl TenantPerformanceMonitor {
     }
 
     /// Handle SLA violations with appropriate responses
-    async fn handle_sla_violation(&self, tenant_id: &str, violation: &SLACheckResult) -> Result<()> {
+    async fn handle_sla_violation(
+        &self,
+        tenant_id: &str,
+        violation: &SLACheckResult,
+    ) -> Result<()> {
         match violation.violation_type {
             Some(SLAViolationType::QPSLimitExceeded) => {
-                warn!("🚨 Throttling tenant {} due to QPS limit exceeded", tenant_id);
+                warn!(
+                    "🚨 Throttling tenant {} due to QPS limit exceeded",
+                    tenant_id
+                );
                 // Implement QPS throttling
-                self.apply_qps_throttling(tenant_id, violation.limit_value as u32).await?;
+                self.apply_qps_throttling(tenant_id, violation.limit_value as u32)
+                    .await?;
             }
             Some(SLAViolationType::MemoryLimitExceeded) => {
-                warn!("🚨 Applying memory pressure to tenant {} due to limit exceeded", tenant_id);
+                warn!(
+                    "🚨 Applying memory pressure to tenant {} due to limit exceeded",
+                    tenant_id
+                );
                 // Implement memory pressure responses
                 self.apply_memory_pressure(tenant_id).await?;
             }
             Some(SLAViolationType::ConcurrencyLimitExceeded) => {
                 warn!("🚨 Limiting concurrent operations for tenant {}", tenant_id);
                 // Implement concurrency limiting
-                self.apply_concurrency_limits(tenant_id, violation.limit_value as u32).await?;
+                self.apply_concurrency_limits(tenant_id, violation.limit_value as u32)
+                    .await?;
             }
             _ => {
                 info!("🔧 General SLA violation handling for tenant {}", tenant_id);
@@ -313,13 +346,17 @@ impl TenantPerformanceMonitor {
 
     async fn get_tenant_metrics(&self, tenant_id: &str) -> Result<TenantMetrics> {
         let metrics_map = self.tenant_metrics.read().await;
-        metrics_map.get(tenant_id).cloned()
+        metrics_map
+            .get(tenant_id)
+            .cloned()
             .ok_or_else(|| anyhow!("No metrics found for tenant: {}", tenant_id))
     }
 
     async fn get_tenant_sla(&self, tenant_id: &str) -> Result<TenantSLA> {
         let sla_map = self.sla_config.read().await;
-        sla_map.get(tenant_id).cloned()
+        sla_map
+            .get(tenant_id)
+            .cloned()
             .ok_or_else(|| anyhow!("No SLA configuration found for tenant: {}", tenant_id))
             .or_else(|_| Ok(TenantSLA::default_for_tenant(tenant_id)))
     }
@@ -330,13 +367,13 @@ impl TenantSLA {
     pub fn default_for_tenant(tenant_id: &str) -> Self {
         Self {
             tenant_id: tenant_id.to_string(),
-            max_qps: 1000,                    // 1000 QPS default
-            max_response_time_ms: 200,        // 200ms max response time
-            min_uptime_percent: 99.9,         // 99.9% uptime SLA
-            max_memory_bytes: 1024 * 1024 * 1024, // 1GB memory limit
+            max_qps: 1000,                               // 1000 QPS default
+            max_response_time_ms: 200,                   // 200ms max response time
+            min_uptime_percent: 99.9,                    // 99.9% uptime SLA
+            max_memory_bytes: 1024 * 1024 * 1024,        // 1GB memory limit
             max_storage_bytes: 100 * 1024 * 1024 * 1024, // 100GB storage limit
-            max_concurrent_operations: 50,    // 50 concurrent operations
-            guaranteed_cache_hit_rate: Some(85.0), // 85% cache hit rate guarantee
+            max_concurrent_operations: 50,               // 50 concurrent operations
+            guaranteed_cache_hit_rate: Some(85.0),       // 85% cache hit rate guarantee
         }
     }
 
@@ -344,13 +381,13 @@ impl TenantSLA {
     pub fn enterprise_sla(tenant_id: &str) -> Self {
         Self {
             tenant_id: tenant_id.to_string(),
-            max_qps: 5000,                    // 5000 QPS for enterprise
-            max_response_time_ms: 100,        // 100ms max response time
-            min_uptime_percent: 99.95,        // 99.95% uptime SLA
-            max_memory_bytes: 10 * 1024 * 1024 * 1024, // 10GB memory limit
+            max_qps: 5000,                                // 5000 QPS for enterprise
+            max_response_time_ms: 100,                    // 100ms max response time
+            min_uptime_percent: 99.95,                    // 99.95% uptime SLA
+            max_memory_bytes: 10 * 1024 * 1024 * 1024,    // 10GB memory limit
             max_storage_bytes: 1024 * 1024 * 1024 * 1024, // 1TB storage limit
-            max_concurrent_operations: 200,   // 200 concurrent operations
-            guaranteed_cache_hit_rate: Some(90.0), // 90% cache hit rate guarantee
+            max_concurrent_operations: 200,               // 200 concurrent operations
+            guaranteed_cache_hit_rate: Some(90.0),        // 90% cache hit rate guarantee
         }
     }
 }
@@ -362,7 +399,7 @@ impl Default for PerformanceMonitoringConfig {
             metrics_retention_hours: 24 * 7, // Keep 1 week of metrics
             enable_real_time_alerting: true,
             enable_sla_enforcement: true,
-            violation_threshold_count: 3,    // 3 violations before enforcement
+            violation_threshold_count: 3, // 3 violations before enforcement
         }
     }
 }
@@ -377,24 +414,33 @@ mod tests {
 
         // Setup test tenant with high QPS
         let mut metrics_map = monitor.tenant_metrics.write().await;
-        metrics_map.insert("test_tenant".to_string(), TenantMetrics {
-            tenant_id: "test_tenant".to_string(),
-            current_qps: 1500.0, // Exceeds default 1000 QPS limit
-            avg_response_time_ms: 50.0,
-            memory_usage_bytes: 100 * 1024 * 1024, // 100MB
-            storage_used_bytes: 1024 * 1024 * 1024, // 1GB
-            concurrent_operations: 10,
-            cache_hit_rate: 90.0,
-            error_rate: 0.1,
-            last_updated: Utc::now(),
-            uptime_minutes: 60,
-        });
+        metrics_map.insert(
+            "test_tenant".to_string(),
+            TenantMetrics {
+                tenant_id: "test_tenant".to_string(),
+                current_qps: 1500.0, // Exceeds default 1000 QPS limit
+                avg_response_time_ms: 50.0,
+                memory_usage_bytes: 100 * 1024 * 1024,  // 100MB
+                storage_used_bytes: 1024 * 1024 * 1024, // 1GB
+                concurrent_operations: 10,
+                cache_hit_rate: 90.0,
+                error_rate: 0.1,
+                last_updated: Utc::now(),
+                uptime_minutes: 60,
+            },
+        );
         drop(metrics_map);
 
-        let sla_check = monitor.check_operation_sla("test_tenant", "search").await.unwrap();
+        let sla_check = monitor
+            .check_operation_sla("test_tenant", "search")
+            .await
+            .unwrap();
 
         assert!(!sla_check.allowed);
-        assert!(matches!(sla_check.violation_type, Some(SLAViolationType::QPSLimitExceeded)));
+        assert!(matches!(
+            sla_check.violation_type,
+            Some(SLAViolationType::QPSLimitExceeded)
+        ));
         assert_eq!(sla_check.current_value, 1500.0);
         assert_eq!(sla_check.limit_value, 1000.0);
     }
@@ -405,21 +451,27 @@ mod tests {
 
         // Setup test tenant within limits
         let mut metrics_map = monitor.tenant_metrics.write().await;
-        metrics_map.insert("compliant_tenant".to_string(), TenantMetrics {
-            tenant_id: "compliant_tenant".to_string(),
-            current_qps: 500.0, // Within 1000 QPS limit
-            avg_response_time_ms: 80.0, // Within 200ms limit
-            memory_usage_bytes: 500 * 1024 * 1024, // 500MB - within 1GB limit
-            storage_used_bytes: 50 * 1024 * 1024 * 1024, // 50GB - within 100GB limit
-            concurrent_operations: 25, // Within 50 operation limit
-            cache_hit_rate: 88.0,
-            error_rate: 0.05,
-            last_updated: Utc::now(),
-            uptime_minutes: 120,
-        });
+        metrics_map.insert(
+            "compliant_tenant".to_string(),
+            TenantMetrics {
+                tenant_id: "compliant_tenant".to_string(),
+                current_qps: 500.0,                    // Within 1000 QPS limit
+                avg_response_time_ms: 80.0,            // Within 200ms limit
+                memory_usage_bytes: 500 * 1024 * 1024, // 500MB - within 1GB limit
+                storage_used_bytes: 50 * 1024 * 1024 * 1024, // 50GB - within 100GB limit
+                concurrent_operations: 25,             // Within 50 operation limit
+                cache_hit_rate: 88.0,
+                error_rate: 0.05,
+                last_updated: Utc::now(),
+                uptime_minutes: 120,
+            },
+        );
         drop(metrics_map);
 
-        let sla_check = monitor.check_operation_sla("compliant_tenant", "search").await.unwrap();
+        let sla_check = monitor
+            .check_operation_sla("compliant_tenant", "search")
+            .await
+            .unwrap();
 
         assert!(sla_check.allowed);
         assert!(sla_check.violation_type.is_none());

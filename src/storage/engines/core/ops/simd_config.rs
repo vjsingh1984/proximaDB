@@ -271,8 +271,8 @@ impl SIMDConfiguration {
 
     /// Load configuration from TOML file
     pub fn load_from_file() -> Result<Self, Box<dyn std::error::Error>> {
-        let config_path = std::env::var("PROXIMADB_CONFIG")
-            .unwrap_or_else(|_| "config/simd.toml".to_string());
+        let config_path =
+            std::env::var("PROXIMADB_CONFIG").unwrap_or_else(|_| "config/simd.toml".to_string());
 
         if std::path::Path::new(&config_path).exists() {
             let content = std::fs::read_to_string(config_path)?;

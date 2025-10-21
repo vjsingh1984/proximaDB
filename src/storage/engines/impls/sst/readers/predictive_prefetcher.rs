@@ -696,7 +696,11 @@ mod tests {
         }
 
         // Check hot blocks were identified
-        let pattern = prefetcher.access_patterns.random_patterns.get("random.sstable").unwrap();
+        let pattern = prefetcher
+            .access_patterns
+            .random_patterns
+            .get("random.sstable")
+            .unwrap();
 
         assert_eq!(pattern.hot_blocks[&5], 20);
         assert_eq!(pattern.hot_blocks[&10], 20);

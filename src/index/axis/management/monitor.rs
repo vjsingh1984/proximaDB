@@ -624,21 +624,22 @@ impl AlertManager {
     async fn process_alerts(&self) {
         let mut alerts_to_remove = Vec::new();
         let mut alerts_to_update = Vec::new();
-        
+
         // Check each active alert for resolution conditions
         {
             let active_alerts = self.active_alerts.read().await;
             for (alert_id, alert) in active_alerts.iter() {
                 // Check if alert condition has been resolved
                 let is_resolved = self.check_alert_resolution(alert).await;
-                
+
                 if is_resolved {
                     info!("Alert {} resolved: {}", alert_id, alert.message);
                     alerts_to_remove.push(alert_id.clone());
                 } else {
                     // Check if alert needs escalation (been active too long)
                     let alert_age = chrono::Utc::now().signed_duration_since(alert.triggered_at);
-                    if alert_age.num_seconds() > 3600 && !alert.resolved { // 1 hour
+                    if alert_age.num_seconds() > 3600 && !alert.resolved {
+                        // 1 hour
                         // Escalate unacknowledged alerts
                         let mut escalated_alert = alert.clone();
                         escalated_alert.severity = match alert.severity {
@@ -648,15 +649,18 @@ impl AlertManager {
                             AlertSeverity::Emergency => AlertSeverity::Emergency, // Already at max
                         };
                         escalated_alert.message = format!("ESCALATED: {}", alert.message);
-                        
+
                         alerts_to_update.push((alert_id.clone(), escalated_alert));
-                        warn!("Alert {} escalated due to age: {:.0} minutes", 
-                              alert_id, alert_age.num_minutes());
+                        warn!(
+                            "Alert {} escalated due to age: {:.0} minutes",
+                            alert_id,
+                            alert_age.num_minutes()
+                        );
                     }
                 }
             }
         }
-        
+
         // Remove resolved alerts
         {
             let mut active_alerts = self.active_alerts.write().await;
@@ -670,10 +674,10 @@ impl AlertManager {
                         resolution_time_ms: Some(
                             chrono::Utc::now()
                                 .signed_duration_since(alert.triggered_at)
-                                .num_milliseconds() as u64
+                                .num_milliseconds() as u64,
                         ),
                     });
-                    
+
                     // Notify subscribers of resolution
                     let subscribers = self.subscribers.read().await;
                     for subscriber in subscribers.iter() {
@@ -684,7 +688,7 @@ impl AlertManager {
                 }
             }
         }
-        
+
         // Update escalated alerts
         {
             let mut active_alerts = self.active_alerts.write().await;
@@ -693,7 +697,7 @@ impl AlertManager {
             }
         }
     }
-    
+
     /// Check if an alert's triggering condition has been resolved
     async fn check_alert_resolution(&self, alert: &Alert) -> bool {
         match alert.alert_type {
@@ -766,55 +770,64 @@ impl HealthChecker {
     /// Check system health
     async fn check_system_health(&self) -> Result<()> {
         let mut health_updates = Vec::new();
-        
+
         // Check CPU usage
         if let Ok(cpu_usage) = self.get_cpu_usage().await {
-            health_updates.push(("cpu".to_string(), ComponentHealth {
-                component_name: "cpu".to_string(),
-                status: if cpu_usage < 80.0 { 
-                    HealthStatus::Healthy 
-                } else if cpu_usage < 95.0 { 
-                    HealthStatus::Degraded 
-                } else { 
-                    HealthStatus::Unhealthy 
+            health_updates.push((
+                "cpu".to_string(),
+                ComponentHealth {
+                    component_name: "cpu".to_string(),
+                    status: if cpu_usage < 80.0 {
+                        HealthStatus::Healthy
+                    } else if cpu_usage < 95.0 {
+                        HealthStatus::Degraded
+                    } else {
+                        HealthStatus::Unhealthy
+                    },
+                    last_check: chrono::Utc::now(),
+                    response_time_ms: 0.0, // CPU check is instant
                 },
-                last_check: chrono::Utc::now(),
-                response_time_ms: 0.0, // CPU check is instant
-            }));
+            ));
         }
-        
+
         // Check memory usage
         if let Ok(memory_usage_percent) = self.get_memory_usage().await {
-            health_updates.push(("memory".to_string(), ComponentHealth {
-                component_name: "memory".to_string(),
-                status: if memory_usage_percent < 85.0 { 
-                    HealthStatus::Healthy 
-                } else if memory_usage_percent < 95.0 { 
-                    HealthStatus::Degraded 
-                } else { 
-                    HealthStatus::Unhealthy 
+            health_updates.push((
+                "memory".to_string(),
+                ComponentHealth {
+                    component_name: "memory".to_string(),
+                    status: if memory_usage_percent < 85.0 {
+                        HealthStatus::Healthy
+                    } else if memory_usage_percent < 95.0 {
+                        HealthStatus::Degraded
+                    } else {
+                        HealthStatus::Unhealthy
+                    },
+                    last_check: chrono::Utc::now(),
+                    response_time_ms: 0.0,
                 },
-                last_check: chrono::Utc::now(),
-                response_time_ms: 0.0,
-            }));
+            ));
         }
-        
+
         // Check disk space
         if let Ok(disk_usage_percent) = self.get_disk_usage().await {
-            health_updates.push(("disk".to_string(), ComponentHealth {
-                component_name: "disk".to_string(),
-                status: if disk_usage_percent < 80.0 { 
-                    HealthStatus::Healthy 
-                } else if disk_usage_percent < 90.0 { 
-                    HealthStatus::Degraded 
-                } else { 
-                    HealthStatus::Unhealthy 
+            health_updates.push((
+                "disk".to_string(),
+                ComponentHealth {
+                    component_name: "disk".to_string(),
+                    status: if disk_usage_percent < 80.0 {
+                        HealthStatus::Healthy
+                    } else if disk_usage_percent < 90.0 {
+                        HealthStatus::Degraded
+                    } else {
+                        HealthStatus::Unhealthy
+                    },
+                    last_check: chrono::Utc::now(),
+                    response_time_ms: 0.0,
                 },
-                last_check: chrono::Utc::now(),
-                response_time_ms: 0.0,
-            }));
+            ));
         }
-        
+
         // Update component health
         {
             let mut component_health = self.component_health.write().await;
@@ -822,34 +835,46 @@ impl HealthChecker {
                 component_health.insert(component_name, health);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get CPU usage percentage using system metrics collector
     async fn get_cpu_usage(&self) -> Result<f64> {
         // Use existing system metrics collector to avoid duplication
         use crate::metrics::collectors::MetricsCollector as _;
         let system_collector = crate::metrics::collectors::SystemMetricsCollector::new();
         let sample = system_collector.collect().await?;
-        Ok(sample.values.get("cpu_usage_percent").copied().unwrap_or(0.0))
+        Ok(sample
+            .values
+            .get("cpu_usage_percent")
+            .copied()
+            .unwrap_or(0.0))
     }
-    
+
     /// Get memory usage percentage using system metrics collector
     async fn get_memory_usage(&self) -> Result<f64> {
         // Use existing system metrics collector to avoid duplication
         use crate::metrics::collectors::MetricsCollector as _;
         let system_collector = crate::metrics::collectors::SystemMetricsCollector::new();
         let sample = system_collector.collect().await?;
-        Ok(sample.values.get("memory_usage_percent").copied().unwrap_or(0.0))
+        Ok(sample
+            .values
+            .get("memory_usage_percent")
+            .copied()
+            .unwrap_or(0.0))
     }
-    
+
     /// Get disk usage percentage using system metrics collector
     async fn get_disk_usage(&self) -> Result<f64> {
         // Use existing system metrics collector to avoid duplication
         use crate::metrics::collectors::MetricsCollector as _;
         let system_collector = crate::metrics::collectors::SystemMetricsCollector::new();
         let sample = system_collector.collect().await?;
-        Ok(sample.values.get("disk_usage_percent").copied().unwrap_or(0.0))
+        Ok(sample
+            .values
+            .get("disk_usage_percent")
+            .copied()
+            .unwrap_or(0.0))
     }
 }

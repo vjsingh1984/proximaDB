@@ -15,7 +15,7 @@
 
 use super::helpers::*;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::swift::id_index::{IdIndex, BlockLocation};
+use crate::storage::engines::impls::swift::id_index::{BlockLocation, IdIndex};
 use crate::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 
@@ -32,7 +32,9 @@ async fn test_swift_engine_creation() {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
         ),
     );
-    let engine = crate::storage::engines::impls::swift::SwiftEngine::new().await.unwrap();
+    let engine = crate::storage::engines::impls::swift::SwiftEngine::new()
+        .await
+        .unwrap();
     assert_eq!(engine.engine_name(), "SWIFT");
     assert_eq!(engine.engine_version(), "1.0.0");
 }
@@ -46,7 +48,9 @@ async fn test_swift_feature_support() {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
         ),
     );
-    let engine = crate::storage::engines::impls::swift::SwiftEngine::new().await.unwrap();
+    let engine = crate::storage::engines::impls::swift::SwiftEngine::new()
+        .await
+        .unwrap();
 
     assert!(engine.supports_feature("id_lookup"));
     assert!(engine.supports_feature("similarity_search"));

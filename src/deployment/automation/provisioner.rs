@@ -4,14 +4,15 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{
-    DetectedEnvironment, PlatformType, ResourceAvailability, NetworkConfig, SecurityConstraints,
-    PerformanceProfile, DeploymentRecommendation, MonitoringConfig, BackupStrategy,
-    ComplianceFramework, EncryptionRequirements, OptimalConfig, DeploymentStrategy, ScalingConfig, CapacityEstimate
+    BackupStrategy, CapacityEstimate, ComplianceFramework, DeploymentRecommendation,
+    DeploymentStrategy, DetectedEnvironment, EncryptionRequirements, MonitoringConfig,
+    NetworkConfig, OptimalConfig, PerformanceProfile, PlatformType, ResourceAvailability,
+    ScalingConfig, SecurityConstraints,
 };
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use tracing::{info, debug};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 /// Enterprise deployment provisioner for automated setup
@@ -153,10 +154,14 @@ pub struct NextStep {
 impl DeploymentProvisioner {
     /// Create new deployment provisioner
     pub async fn new() -> Result<Self> {
-        let mut platform_deployers: HashMap<PlatformType, Box<dyn PlatformDeployer + Send + Sync>> = HashMap::new();
+        let mut platform_deployers: HashMap<PlatformType, Box<dyn PlatformDeployer + Send + Sync>> =
+            HashMap::new();
 
         // Initialize platform-specific deployers
-        platform_deployers.insert(PlatformType::Kubernetes, Box::new(KubernetesDeployer::new()));
+        platform_deployers.insert(
+            PlatformType::Kubernetes,
+            Box::new(KubernetesDeployer::new()),
+        );
         platform_deployers.insert(PlatformType::DockerCompose, Box::new(DockerDeployer::new()));
         platform_deployers.insert(PlatformType::AWS, Box::new(AWSDeployer::new()));
         platform_deployers.insert(PlatformType::Azure, Box::new(AzureDeployer::new()));
@@ -169,30 +174,53 @@ impl DeploymentProvisioner {
     }
 
     /// Execute complete enterprise deployment
-    pub async fn deploy_enterprise(&self, request: EnterpriseDeploymentRequest) -> Result<DeploymentResult> {
+    pub async fn deploy_enterprise(
+        &self,
+        request: EnterpriseDeploymentRequest,
+    ) -> Result<DeploymentResult> {
         let deployment_id = Uuid::new_v4().to_string();
         let start_time = std::time::Instant::now();
 
-        info!("🚀 Starting enterprise deployment for {}: {}", request.customer_name, deployment_id);
+        info!(
+            "🚀 Starting enterprise deployment for {}: {}",
+            request.customer_name, deployment_id
+        );
 
         // Step 1: Generate enterprise configuration
-        let enterprise_config = self.config_generator
+        let enterprise_config = self
+            .config_generator
             .generate_enterprise_config(&request)
             .await?;
 
-        info!("✅ Generated enterprise configuration for {}", request.customer_name);
+        info!(
+            "✅ Generated enterprise configuration for {}",
+            request.customer_name
+        );
 
         // Step 2: Get platform-specific deployer
-        let deployer = self.platform_deployers.get(&request.environment.platform_type)
-            .ok_or_else(|| anyhow!("No deployer available for platform: {:?}", request.environment.platform_type))?;
+        let deployer = self
+            .platform_deployers
+            .get(&request.environment.platform_type)
+            .ok_or_else(|| {
+                anyhow!(
+                    "No deployer available for platform: {:?}",
+                    request.environment.platform_type
+                )
+            })?;
 
         // Step 3: Execute platform-specific deployment
-        let platform_result = deployer.deploy(deployment_id.clone(), &request, &enterprise_config).await?;
+        let platform_result = deployer
+            .deploy(deployment_id.clone(), &request, &enterprise_config)
+            .await?;
 
-        info!("✅ Platform deployment completed for {}", request.customer_name);
+        info!(
+            "✅ Platform deployment completed for {}",
+            request.customer_name
+        );
 
         // Step 4: Validate deployment health
-        let health_checks = self.validation_engine
+        let health_checks = self
+            .validation_engine
             .validate_deployment(&deployment_id, &platform_result)
             .await?;
 
@@ -200,13 +228,18 @@ impl DeploymentProvisioner {
         let _monitoring_setup = self.setup_monitoring(&deployment_id, &request).await?;
 
         // Step 6: Generate customer documentation and next steps
-        let next_steps = self.generate_customer_next_steps(&request, &platform_result).await?;
+        let next_steps = self
+            .generate_customer_next_steps(&request, &platform_result)
+            .await?;
 
         let deployment_time_minutes = start_time.elapsed().as_secs() as u32 / 60;
 
         let deployment_result = DeploymentResult {
             deployment_id,
-            status: if health_checks.iter().all(|h| matches!(h.status, HealthStatus::Healthy)) {
+            status: if health_checks
+                .iter()
+                .all(|h| matches!(h.status, HealthStatus::Healthy))
+            {
                 DeploymentStatus::Succeeded
             } else {
                 DeploymentStatus::PartiallySucceeded
@@ -216,10 +249,24 @@ impl DeploymentProvisioner {
             configuration_summary: ConfigurationSummary {
                 storage_engine: enterprise_config.storage_engine.clone(),
                 memory_allocation_mb: enterprise_config.memory_allocation_mb,
-                estimated_capacity: format!("{} collections, {} vectors, {} QPS",
-                                          request.environment.resource_availability.estimated_capacity.max_collections,
-                                          request.environment.resource_availability.estimated_capacity.max_vectors_total,
-                                          request.environment.resource_availability.estimated_capacity.estimated_qps),
+                estimated_capacity: format!(
+                    "{} collections, {} vectors, {} QPS",
+                    request
+                        .environment
+                        .resource_availability
+                        .estimated_capacity
+                        .max_collections,
+                    request
+                        .environment
+                        .resource_availability
+                        .estimated_capacity
+                        .max_vectors_total,
+                    request
+                        .environment
+                        .resource_availability
+                        .estimated_capacity
+                        .estimated_qps
+                ),
                 security_features_enabled: enterprise_config.security_features.clone(),
                 ai_providers_configured: enterprise_config.ai_providers.clone(),
                 backup_schedule: enterprise_config.backup_schedule.clone(),
@@ -230,33 +277,45 @@ impl DeploymentProvisioner {
             troubleshooting_info: None,
         };
 
-        info!("🎉 Enterprise deployment complete for {} in {} minutes: {}",
-              request.customer_name, deployment_time_minutes, deployment_result.status);
+        info!(
+            "🎉 Enterprise deployment complete for {} in {} minutes: {}",
+            request.customer_name, deployment_time_minutes, deployment_result.status
+        );
 
         Ok(deployment_result)
     }
 
     /// Generate customer next steps after successful deployment
-    async fn generate_customer_next_steps(&self, request: &EnterpriseDeploymentRequest, platform_result: &PlatformDeploymentResult) -> Result<Vec<NextStep>> {
+    async fn generate_customer_next_steps(
+        &self,
+        request: &EnterpriseDeploymentRequest,
+        platform_result: &PlatformDeploymentResult,
+    ) -> Result<Vec<NextStep>> {
         let mut steps = vec![
             NextStep {
                 step_number: 1,
                 title: "Verify ProximaDB Access".to_string(),
-                description: format!("Access your ProximaDB instance at {} and verify the health endpoint responds", platform_result.endpoints.rest_api),
+                description: format!(
+                    "Access your ProximaDB instance at {} and verify the health endpoint responds",
+                    platform_result.endpoints.rest_api
+                ),
                 documentation_url: Some("https://docs.proximadb.com/getting-started".to_string()),
                 estimated_time_minutes: 5,
             },
             NextStep {
                 step_number: 2,
                 title: "Create Your First Collection".to_string(),
-                description: "Create a test collection and insert sample vectors to verify functionality".to_string(),
+                description:
+                    "Create a test collection and insert sample vectors to verify functionality"
+                        .to_string(),
                 documentation_url: Some("https://docs.proximadb.com/collections".to_string()),
                 estimated_time_minutes: 10,
             },
             NextStep {
                 step_number: 3,
                 title: "Configure Authentication".to_string(),
-                description: "Set up enterprise authentication and user management for your team".to_string(),
+                description: "Set up enterprise authentication and user management for your team"
+                    .to_string(),
                 documentation_url: Some("https://docs.proximadb.com/auth".to_string()),
                 estimated_time_minutes: 20,
             },
@@ -267,7 +326,8 @@ impl DeploymentProvisioner {
             steps.push(NextStep {
                 step_number: 4,
                 title: "Test AI Natural Language Querying".to_string(),
-                description: "Try natural language queries against your data using the AI endpoint".to_string(),
+                description: "Try natural language queries against your data using the AI endpoint"
+                    .to_string(),
                 documentation_url: Some("https://docs.proximadb.com/ai-features".to_string()),
                 estimated_time_minutes: 15,
             });
@@ -275,8 +335,12 @@ impl DeploymentProvisioner {
             steps.push(NextStep {
                 step_number: 5,
                 title: "Generate Executive Dashboard".to_string(),
-                description: "Create your first AI-powered executive dashboard with business insights".to_string(),
-                documentation_url: Some("https://docs.proximadb.com/executive-dashboard".to_string()),
+                description:
+                    "Create your first AI-powered executive dashboard with business insights"
+                        .to_string(),
+                documentation_url: Some(
+                    "https://docs.proximadb.com/executive-dashboard".to_string(),
+                ),
                 estimated_time_minutes: 10,
             });
         }
@@ -285,7 +349,8 @@ impl DeploymentProvisioner {
         steps.push(NextStep {
             step_number: 6,
             title: "Review Monitoring and Alerting".to_string(),
-            description: "Access your monitoring dashboard and configure alerts for your team".to_string(),
+            description: "Access your monitoring dashboard and configure alerts for your team"
+                .to_string(),
             documentation_url: Some("https://docs.proximadb.com/monitoring".to_string()),
             estimated_time_minutes: 15,
         });
@@ -294,7 +359,11 @@ impl DeploymentProvisioner {
     }
 
     /// Setup monitoring for deployed instance
-    async fn setup_monitoring(&self, deployment_id: &str, request: &EnterpriseDeploymentRequest) -> Result<MonitoringSetupResult> {
+    async fn setup_monitoring(
+        &self,
+        deployment_id: &str,
+        request: &EnterpriseDeploymentRequest,
+    ) -> Result<MonitoringSetupResult> {
         info!("📊 Setting up monitoring for deployment: {}", deployment_id);
 
         // Configure enterprise dashboard
@@ -310,23 +379,33 @@ impl DeploymentProvisioner {
             dashboard_configured: true,
             alerting_configured: true,
             logging_configured: true,
-            monitoring_endpoints: vec![
-                format!("https://monitoring.{}.proximadb.com", deployment_id),
-            ],
+            monitoring_endpoints: vec![format!(
+                "https://monitoring.{}.proximadb.com",
+                deployment_id
+            )],
         })
     }
 
     /// Generate dashboard configuration
-    async fn generate_dashboard_config(&self, _request: &EnterpriseDeploymentRequest) -> Result<DashboardConfig> {
+    async fn generate_dashboard_config(
+        &self,
+        _request: &EnterpriseDeploymentRequest,
+    ) -> Result<DashboardConfig> {
         Ok(DashboardConfig {
             enabled: true,
             refresh_interval_seconds: 30,
-            panels: vec!["system_metrics".to_string(), "query_performance".to_string()],
+            panels: vec![
+                "system_metrics".to_string(),
+                "query_performance".to_string(),
+            ],
         })
     }
 
     /// Generate alerting rules
-    async fn generate_alerting_rules(&self, _request: &EnterpriseDeploymentRequest) -> Result<AlertingRules> {
+    async fn generate_alerting_rules(
+        &self,
+        _request: &EnterpriseDeploymentRequest,
+    ) -> Result<AlertingRules> {
         Ok(AlertingRules {
             rules: vec![AlertRule {
                 name: "high_cpu_usage".to_string(),
@@ -356,14 +435,28 @@ impl ConfigurationGenerator {
     }
 
     /// Generate complete enterprise configuration
-    pub async fn generate_enterprise_config(&self, request: &EnterpriseDeploymentRequest) -> Result<EnterpriseConfiguration> {
-        debug!("⚙️ Generating enterprise configuration for {}", request.customer_name);
+    pub async fn generate_enterprise_config(
+        &self,
+        request: &EnterpriseDeploymentRequest,
+    ) -> Result<EnterpriseConfiguration> {
+        debug!(
+            "⚙️ Generating enterprise configuration for {}",
+            request.customer_name
+        );
 
         let config = EnterpriseConfiguration {
             customer_name: request.customer_name.clone(),
             tenant_id: request.tenant_id.clone(),
-            storage_engine: request.environment.performance_characteristics.recommended_storage_engine.clone(),
-            memory_allocation_mb: request.environment.performance_characteristics.optimal_configuration.memory_allocation_mb,
+            storage_engine: request
+                .environment
+                .performance_characteristics
+                .recommended_storage_engine
+                .clone(),
+            memory_allocation_mb: request
+                .environment
+                .performance_characteristics
+                .optimal_configuration
+                .memory_allocation_mb,
             security_features: self.generate_security_features(&request.security_requirements),
             ai_providers: request.ai_providers.clone(),
             backup_schedule: "0 2 * * *".to_string(), // Daily at 2 AM
@@ -444,7 +537,10 @@ impl PlatformDeployer for KubernetesDeployer {
         request: &EnterpriseDeploymentRequest,
         config: &EnterpriseConfiguration,
     ) -> Result<PlatformDeploymentResult> {
-        info!("📦 Deploying to Kubernetes for customer: {}", request.customer_name);
+        info!(
+            "📦 Deploying to Kubernetes for customer: {}",
+            request.customer_name
+        );
 
         let namespace = format!("proximadb-{}", request.tenant_id.to_lowercase());
 
@@ -458,10 +554,22 @@ impl PlatformDeployer for KubernetesDeployer {
 
         // Generate endpoints
         let endpoints = DeploymentEndpoints {
-            rest_api: format!("http://proximadb-service.{}.svc.cluster.local:5678", namespace),
-            grpc_api: format!("grpc://proximadb-service.{}.svc.cluster.local:5679", namespace),
-            dashboard_url: format!("http://proximadb-service.{}.svc.cluster.local:8080/dashboard", namespace),
-            monitoring_url: Some(format!("http://proximadb-service.{}.svc.cluster.local:9090/metrics", namespace)),
+            rest_api: format!(
+                "http://proximadb-service.{}.svc.cluster.local:5678",
+                namespace
+            ),
+            grpc_api: format!(
+                "grpc://proximadb-service.{}.svc.cluster.local:5679",
+                namespace
+            ),
+            dashboard_url: format!(
+                "http://proximadb-service.{}.svc.cluster.local:8080/dashboard",
+                namespace
+            ),
+            monitoring_url: Some(format!(
+                "http://proximadb-service.{}.svc.cluster.local:9090/metrics",
+                namespace
+            )),
             api_documentation_url: "https://docs.proximadb.com/api".to_string(),
         };
 
@@ -498,7 +606,10 @@ impl PlatformDeployer for DockerDeployer {
         request: &EnterpriseDeploymentRequest,
         config: &EnterpriseConfiguration,
     ) -> Result<PlatformDeploymentResult> {
-        info!("🐳 Deploying to Docker for customer: {}", request.customer_name);
+        info!(
+            "🐳 Deploying to Docker for customer: {}",
+            request.customer_name
+        );
 
         // Generate docker-compose.yml
         let docker_compose = self.generate_docker_compose(config).await?;
@@ -589,11 +700,20 @@ networks:
 // Additional platform deployers...
 #[derive(Debug)]
 pub struct AWSDeployer;
-impl AWSDeployer { pub fn new() -> Self { Self } }
+impl AWSDeployer {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 #[async_trait::async_trait]
 impl PlatformDeployer for AWSDeployer {
-    async fn deploy(&self, deployment_id: String, request: &EnterpriseDeploymentRequest, config: &EnterpriseConfiguration) -> Result<PlatformDeploymentResult> {
+    async fn deploy(
+        &self,
+        deployment_id: String,
+        request: &EnterpriseDeploymentRequest,
+        config: &EnterpriseConfiguration,
+    ) -> Result<PlatformDeploymentResult> {
         // AWS-specific deployment logic would go here
         Ok(PlatformDeploymentResult {
             deployment_id,
@@ -613,11 +733,20 @@ impl PlatformDeployer for AWSDeployer {
 
 #[derive(Debug)]
 pub struct AzureDeployer;
-impl AzureDeployer { pub fn new() -> Self { Self } }
+impl AzureDeployer {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 #[async_trait::async_trait]
 impl PlatformDeployer for AzureDeployer {
-    async fn deploy(&self, deployment_id: String, _request: &EnterpriseDeploymentRequest, _config: &EnterpriseConfiguration) -> Result<PlatformDeploymentResult> {
+    async fn deploy(
+        &self,
+        deployment_id: String,
+        _request: &EnterpriseDeploymentRequest,
+        _config: &EnterpriseConfiguration,
+    ) -> Result<PlatformDeploymentResult> {
         // Azure-specific deployment logic
         Ok(PlatformDeploymentResult {
             deployment_id,
@@ -645,20 +774,35 @@ impl ValidationEngine {
     }
 
     /// Validate deployment health comprehensively
-    pub async fn validate_deployment(&self, deployment_id: &str, platform_result: &PlatformDeploymentResult) -> Result<Vec<HealthCheck>> {
+    pub async fn validate_deployment(
+        &self,
+        deployment_id: &str,
+        platform_result: &PlatformDeploymentResult,
+    ) -> Result<Vec<HealthCheck>> {
         info!("🏥 Validating deployment health: {}", deployment_id);
 
         let health_checks = vec![
             self.check_api_endpoints(&platform_result.endpoints).await?,
-            self.check_database_connectivity(&platform_result.endpoints).await?,
-            self.check_multi_tenant_functionality(&platform_result.endpoints).await?,
-            self.check_ai_capabilities(&platform_result.endpoints).await?,
-            self.check_performance_baseline(&platform_result.endpoints).await?,
+            self.check_database_connectivity(&platform_result.endpoints)
+                .await?,
+            self.check_multi_tenant_functionality(&platform_result.endpoints)
+                .await?,
+            self.check_ai_capabilities(&platform_result.endpoints)
+                .await?,
+            self.check_performance_baseline(&platform_result.endpoints)
+                .await?,
         ];
 
-        let healthy_count = health_checks.iter().filter(|h| matches!(h.status, HealthStatus::Healthy)).count();
+        let healthy_count = health_checks
+            .iter()
+            .filter(|h| matches!(h.status, HealthStatus::Healthy))
+            .count();
 
-        info!("🏥 Health validation complete: {}/{} checks healthy", healthy_count, health_checks.len());
+        info!(
+            "🏥 Health validation complete: {}/{} checks healthy",
+            healthy_count,
+            health_checks.len()
+        );
 
         Ok(health_checks)
     }
@@ -686,18 +830,16 @@ impl ValidationEngine {
                     })
                 }
             }
-            Err(e) => {
-                Ok(HealthCheck {
-                    check_name: "REST API Health".to_string(),
-                    status: HealthStatus::Unhealthy,
-                    details: format!("Could not connect to REST API: {}", e),
-                    resolution_steps: vec![
-                        "Verify ProximaDB is running".to_string(),
-                        "Check network connectivity".to_string(),
-                        "Verify firewall rules allow port 5678".to_string(),
-                    ],
-                })
-            }
+            Err(e) => Ok(HealthCheck {
+                check_name: "REST API Health".to_string(),
+                status: HealthStatus::Unhealthy,
+                details: format!("Could not connect to REST API: {}", e),
+                resolution_steps: vec![
+                    "Verify ProximaDB is running".to_string(),
+                    "Check network connectivity".to_string(),
+                    "Verify firewall rules allow port 5678".to_string(),
+                ],
+            }),
         }
     }
 
@@ -712,7 +854,10 @@ impl ValidationEngine {
         });
 
         match client
-            .post(&format!("{}/api/v1/ai/natural-language/query", endpoints.rest_api))
+            .post(&format!(
+                "{}/api/v1/ai/natural-language/query",
+                endpoints.rest_api
+            ))
             .json(&test_request)
             .send()
             .await
@@ -729,7 +874,8 @@ impl ValidationEngine {
                     Ok(HealthCheck {
                         check_name: "AI Capabilities".to_string(),
                         status: HealthStatus::Warning,
-                        details: "AI endpoint available but may need API key configuration".to_string(),
+                        details: "AI endpoint available but may need API key configuration"
+                            .to_string(),
                         resolution_steps: vec![
                             "Configure LLM provider API keys".to_string(),
                             "Verify AI module is enabled in configuration".to_string(),
@@ -737,22 +883,23 @@ impl ValidationEngine {
                     })
                 }
             }
-            Err(_) => {
-                Ok(HealthCheck {
-                    check_name: "AI Capabilities".to_string(),
-                    status: HealthStatus::Warning,
-                    details: "AI endpoint not available - may require configuration".to_string(),
-                    resolution_steps: vec![
-                        "Configure AI providers in deployment settings".to_string(),
-                        "Verify LLM API keys are properly set".to_string(),
-                    ],
-                })
-            }
+            Err(_) => Ok(HealthCheck {
+                check_name: "AI Capabilities".to_string(),
+                status: HealthStatus::Warning,
+                details: "AI endpoint not available - may require configuration".to_string(),
+                resolution_steps: vec![
+                    "Configure AI providers in deployment settings".to_string(),
+                    "Verify LLM API keys are properly set".to_string(),
+                ],
+            }),
         }
     }
 
     // Additional health check methods...
-    async fn check_database_connectivity(&self, _endpoints: &DeploymentEndpoints) -> Result<HealthCheck> {
+    async fn check_database_connectivity(
+        &self,
+        _endpoints: &DeploymentEndpoints,
+    ) -> Result<HealthCheck> {
         Ok(HealthCheck {
             check_name: "Database Connectivity".to_string(),
             status: HealthStatus::Healthy,
@@ -761,7 +908,10 @@ impl ValidationEngine {
         })
     }
 
-    async fn check_multi_tenant_functionality(&self, _endpoints: &DeploymentEndpoints) -> Result<HealthCheck> {
+    async fn check_multi_tenant_functionality(
+        &self,
+        _endpoints: &DeploymentEndpoints,
+    ) -> Result<HealthCheck> {
         Ok(HealthCheck {
             check_name: "Multi-Tenant Functionality".to_string(),
             status: HealthStatus::Healthy,
@@ -770,7 +920,10 @@ impl ValidationEngine {
         })
     }
 
-    async fn check_performance_baseline(&self, _endpoints: &DeploymentEndpoints) -> Result<HealthCheck> {
+    async fn check_performance_baseline(
+        &self,
+        _endpoints: &DeploymentEndpoints,
+    ) -> Result<HealthCheck> {
         Ok(HealthCheck {
             check_name: "Performance Baseline".to_string(),
             status: HealthStatus::Healthy,
@@ -811,7 +964,6 @@ pub struct TroubleshootingInfo {
     pub resolution_steps: Vec<String>,
     pub support_contact: String,
 }
-
 
 #[cfg(test)]
 mod tests {

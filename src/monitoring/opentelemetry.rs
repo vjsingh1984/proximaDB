@@ -125,7 +125,10 @@ impl OpenTelemetryManager {
             return Ok(());
         }
 
-        info!("Initializing OpenTelemetry for service: {}", self.config.service_name);
+        info!(
+            "Initializing OpenTelemetry for service: {}",
+            self.config.service_name
+        );
 
         // Initialize span processor for traces
         if self.config.enable_traces {
@@ -213,8 +216,10 @@ impl OpenTelemetryManager {
         // In a real implementation, this would send to OTLP endpoint
         // For now, we log the metrics that would be exported
         for metric in otel_metrics {
-            debug!("OTel Metric: {} = {} at {:?}", 
-                   metric.name, metric.value, metric.timestamp);
+            debug!(
+                "OTel Metric: {} = {} at {:?}",
+                metric.name, metric.value, metric.timestamp
+            );
         }
 
         info!("OpenTelemetry metrics export completed");
@@ -222,7 +227,11 @@ impl OpenTelemetryManager {
     }
 
     /// Create a new span for distributed tracing
-    pub fn start_span(&self, operation_name: &str, attributes: HashMap<String, String>) -> Option<SpanData> {
+    pub fn start_span(
+        &self,
+        operation_name: &str,
+        attributes: HashMap<String, String>,
+    ) -> Option<SpanData> {
         if !self.config.enable_traces {
             return None;
         }
@@ -245,19 +254,28 @@ impl OpenTelemetryManager {
     /// Finish a span and export it
     pub async fn finish_span(&self, mut span: SpanData) -> Result<()> {
         span.end_time = Some(std::time::SystemTime::now());
-        
+
         // Calculate span duration
-        let duration = span.end_time.unwrap()
+        let duration = span
+            .end_time
+            .unwrap()
             .duration_since(span.start_time)
             .unwrap_or_default();
 
-        debug!("Finished OTel span: {} in {:.2}ms", 
-               span.operation_name, duration.as_secs_f64() * 1000.0);
+        debug!(
+            "Finished OTel span: {} in {:.2}ms",
+            span.operation_name,
+            duration.as_secs_f64() * 1000.0
+        );
 
         // In a real implementation, this would send to OTLP endpoint
         // For now, we log the span data that would be exported
-        info!("OTel Span Export: {} ({}) - {:.2}ms", 
-              span.operation_name, span.span_id, duration.as_secs_f64() * 1000.0);
+        info!(
+            "OTel Span Export: {} ({}) - {:.2}ms",
+            span.operation_name,
+            span.span_id,
+            duration.as_secs_f64() * 1000.0
+        );
 
         Ok(())
     }
@@ -317,7 +335,10 @@ pub async fn export_global_metrics(metrics: &crate::metrics::SystemMetrics) -> R
 }
 
 /// Convenience function to start span via global manager
-pub fn start_global_span(operation_name: &str, attributes: HashMap<String, String>) -> Option<SpanData> {
+pub fn start_global_span(
+    operation_name: &str,
+    attributes: HashMap<String, String>,
+) -> Option<SpanData> {
     if let Ok(guard) = GLOBAL_OTEL_MANAGER.lock() {
         if let Some(ref manager) = *guard {
             manager.start_span(operation_name, attributes)
@@ -330,7 +351,8 @@ pub fn start_global_span(operation_name: &str, attributes: HashMap<String, Strin
 }
 
 /// Get reference to the global OpenTelemetry manager
-pub fn global_opentelemetry_manager() -> Option<std::sync::MutexGuard<'static, Option<OpenTelemetryManager>>> {
+pub fn global_opentelemetry_manager()
+-> Option<std::sync::MutexGuard<'static, Option<OpenTelemetryManager>>> {
     GLOBAL_OTEL_MANAGER.lock().ok()
 }
 

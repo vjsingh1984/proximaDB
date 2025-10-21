@@ -17,10 +17,10 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::index::axis::index_factory::AxisVectorIndex;
     use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
     use crate::proto::proximadb_v1::MetadataItem;
+    use crate::proto::proximadb_v1::VectorRecord;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -120,7 +120,10 @@ mod tests {
 
         for (id, vec) in &vectors {
             let record = create_test_record(id.to_string(), vec.clone(), vec![]);
-            index.add(id.to_string(), record.vector.clone()).await.unwrap();
+            index
+                .add(id.to_string(), record.vector.clone())
+                .await
+                .unwrap();
         }
 
         // Build index
@@ -161,7 +164,10 @@ mod tests {
             }];
 
             let record = create_test_record(format!("vec_{}", i), vec, metadata);
-            index.add(format!("vec_{}", i), record.vector.clone()).await.unwrap();
+            index
+                .add(format!("vec_{}", i), record.vector.clone())
+                .await
+                .unwrap();
         }
 
         // Build index
@@ -189,7 +195,10 @@ mod tests {
         let record2 = create_test_record("v2".to_string(), vec![0.0, 1.0, 0.0, 0.0], vec![]);
 
         // Add before build - should work
-        index.add("v1".to_string(), record1.vector.clone()).await.unwrap();
+        index
+            .add("v1".to_string(), record1.vector.clone())
+            .await
+            .unwrap();
 
         // Build index
         index.build().await.unwrap();
@@ -289,7 +298,10 @@ mod tests {
             vec[i % 4] = 1.0;
 
             let record = create_test_record(format!("vec_{}", i), vec, vec![]);
-            index.add(format!("vec_{}", i), record.vector.clone()).await.unwrap();
+            index
+                .add(format!("vec_{}", i), record.vector.clone())
+                .await
+                .unwrap();
         }
 
         // Build should still work
@@ -329,7 +341,10 @@ mod tests {
 
         // Add correct vector
         let record = create_test_record("v1".to_string(), vec![1.0, 0.0, 0.0, 0.0], vec![]);
-        index.add("v1".to_string(), record.vector.clone()).await.unwrap();
+        index
+            .add("v1".to_string(), record.vector.clone())
+            .await
+            .unwrap();
 
         // Build
         index.build().await.unwrap();

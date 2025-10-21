@@ -3,9 +3,9 @@
 //! Builds secure, effective prompts for LLM-based SQL translation
 //! with security constraints and context awareness.
 
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
 
 /// Prompt builder for LLM queries
 #[derive(Debug, Clone)]
@@ -30,35 +30,39 @@ impl PromptBuilder {
         // Secure SQL translation template
         templates.insert(
             PromptTemplate::SecureTranslation,
-            include_str!("../../prompts/secure_sql_translation.txt").to_string()
+            include_str!("../../prompts/secure_sql_translation.txt").to_string(),
         );
 
         // Fallback templates if files don't exist
-        if templates.get(&PromptTemplate::SecureTranslation).unwrap().is_empty() {
+        if templates
+            .get(&PromptTemplate::SecureTranslation)
+            .unwrap()
+            .is_empty()
+        {
             templates.insert(
                 PromptTemplate::SecureTranslation,
-                Self::default_secure_translation_template()
+                Self::default_secure_translation_template(),
             );
         }
 
         templates.insert(
             PromptTemplate::BusinessIntelligence,
-            Self::default_business_intelligence_template()
+            Self::default_business_intelligence_template(),
         );
 
         templates.insert(
             PromptTemplate::DataAnalysis,
-            Self::default_data_analysis_template()
+            Self::default_data_analysis_template(),
         );
 
         templates.insert(
             PromptTemplate::TrendAnalysis,
-            Self::default_trend_analysis_template()
+            Self::default_trend_analysis_template(),
         );
 
         templates.insert(
             PromptTemplate::ExplanationGeneration,
-            Self::default_explanation_template()
+            Self::default_explanation_template(),
         );
 
         Self { templates }
@@ -70,7 +74,9 @@ impl PromptBuilder {
         template: PromptTemplate,
         variables: &[(&str, &str)],
     ) -> Result<String> {
-        let template_text = self.templates.get(&template)
+        let template_text = self
+            .templates
+            .get(&template)
             .ok_or_else(|| anyhow!("Template {:?} not found", template))?;
 
         let mut prompt = template_text.clone();
@@ -84,7 +90,10 @@ impl PromptBuilder {
         // Validate that all placeholders were replaced
         if prompt.contains('{') && prompt.contains('}') {
             let remaining_placeholders = self.extract_placeholders(&prompt);
-            return Err(anyhow!("Unresolved placeholders in prompt: {:?}", remaining_placeholders));
+            return Err(anyhow!(
+                "Unresolved placeholders in prompt: {:?}",
+                remaining_placeholders
+            ));
         }
 
         Ok(prompt)
@@ -152,7 +161,8 @@ REQUIREMENTS:
 RESPONSE FORMAT:
 Provide only the SQL query, optionally wrapped in ```sql code blocks.
 
-SQL:"#.to_string()
+SQL:"#
+            .to_string()
     }
 
     /// Default business intelligence template
@@ -215,7 +225,8 @@ Provide analysis with:
 - Anomalies or outliers
 - Recommendations
 
-DATA ANALYSIS:"#.to_string()
+DATA ANALYSIS:"#
+            .to_string()
     }
 
     /// Default trend analysis template
@@ -248,7 +259,8 @@ Provide trend analysis with:
 - Predictions and forecasts
 - Strategic recommendations
 
-TREND ANALYSIS:"#.to_string()
+TREND ANALYSIS:"#
+            .to_string()
     }
 
     /// Default explanation template
@@ -281,7 +293,8 @@ Provide a clear explanation that:
 - What it means for the user
 - What they should do next
 
-EXPLANATION:"#.to_string()
+EXPLANATION:"#
+            .to_string()
     }
 
     /// Get available templates
@@ -290,16 +303,24 @@ EXPLANATION:"#.to_string()
     }
 
     /// Validate template variables
-    pub fn validate_template_variables(&self, template: &PromptTemplate, variables: &[(&str, &str)]) -> Result<Vec<String>> {
-        let template_text = self.templates.get(template)
+    pub fn validate_template_variables(
+        &self,
+        template: &PromptTemplate,
+        variables: &[(&str, &str)],
+    ) -> Result<Vec<String>> {
+        let template_text = self
+            .templates
+            .get(template)
             .ok_or_else(|| anyhow!("Template {:?} not found", template))?;
 
         let required_placeholders = self.extract_placeholders(template_text);
-        let provided_variables: HashMap<String, String> = variables.iter()
+        let provided_variables: HashMap<String, String> = variables
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
-        let missing_variables: Vec<String> = required_placeholders.iter()
+        let missing_variables: Vec<String> = required_placeholders
+            .iter()
             .filter(|placeholder| !provided_variables.contains_key(*placeholder))
             .cloned()
             .collect();
@@ -316,7 +337,11 @@ mod tests {
     fn test_prompt_builder_creation() {
         let builder = PromptBuilder::new();
         assert!(!builder.templates.is_empty());
-        assert!(builder.templates.contains_key(&PromptTemplate::SecureTranslation));
+        assert!(
+            builder
+                .templates
+                .contains_key(&PromptTemplate::SecureTranslation)
+        );
     }
 
     #[test]
@@ -325,7 +350,10 @@ mod tests {
 
         let variables = vec![
             ("user_accessible_tables", "collections, vectors"),
-            ("schema_context", "TABLE collections (id VARCHAR, name VARCHAR)"),
+            (
+                "schema_context",
+                "TABLE collections (id VARCHAR, name VARCHAR)",
+            ),
             ("natural_language_query", "Show me all collections"),
             ("tenant_id", "tenant_1"),
             ("user_id", "user_123"),
@@ -365,10 +393,9 @@ mod tests {
             ("user_id", "user_1"),
         ];
 
-        let missing = builder.validate_template_variables(
-            &PromptTemplate::SecureTranslation,
-            &complete_variables
-        ).unwrap();
+        let missing = builder
+            .validate_template_variables(&PromptTemplate::SecureTranslation, &complete_variables)
+            .unwrap();
 
         assert!(missing.is_empty());
 
@@ -378,10 +405,9 @@ mod tests {
             ("schema_context", "schema"),
         ];
 
-        let missing = builder.validate_template_variables(
-            &PromptTemplate::SecureTranslation,
-            &incomplete_variables
-        ).unwrap();
+        let missing = builder
+            .validate_template_variables(&PromptTemplate::SecureTranslation, &incomplete_variables)
+            .unwrap();
 
         assert!(!missing.is_empty());
     }

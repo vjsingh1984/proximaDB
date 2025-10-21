@@ -16,27 +16,30 @@
 //! - Filesystem setup
 //! - Search helpers
 
-use std::sync::Arc;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
-use anyhow::Result;
+use std::sync::Arc;
 use tempfile::TempDir;
 
-use crate::storage::engines::impls::sst::{SstEngine, SstRecord};
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::{InMemoryCodebookStore, UnifiedQuantizationEngine};
 use crate::core::SstConfig;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
-use crate::proto::proximadb_v1::{VectorRecord, MetadataItem, Collection, CollectionConfig};
+use crate::proto::proximadb_v1::{Collection, CollectionConfig, MetadataItem, VectorRecord};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::{
-    UnifiedSstableReader, ReaderConfig, CollectionContext,
+    CollectionContext, ReaderConfig, UnifiedSstableReader,
 };
+use crate::storage::engines::impls::sst::{SstEngine, SstRecord};
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 // manifest module is not exposed - tests may need refactoring
 // use crate::storage::engines::impls::sst::manifest::SstManifest;
-use crate::core::search::{SearchParams, SearchPlan, StorageInfo, FilterableColumn, CollectionConfig as SearchCollectionConfig};
 use crate::core::BloomFilterConfig;
+use crate::core::search::{
+    CollectionConfig as SearchCollectionConfig, FilterableColumn, SearchParams, SearchPlan,
+    StorageInfo,
+};
 
 // ============================================================================
 // Engine Creation Utilities
@@ -318,7 +321,9 @@ pub async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
 
     let fs_config = FilesystemConfig::default();
     let fs_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-    let fs = fs_factory.get_filesystem("file:///tmp/proximadb-test").unwrap();
+    let fs = fs_factory
+        .get_filesystem("file:///tmp/proximadb-test")
+        .unwrap();
 
     let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
         fs,
@@ -326,7 +331,11 @@ pub async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
         "sst".to_string(),
     ));
 
-    Arc::new(UnifiedSstableReader::new(fs_factory, unified_fs, "test_collection".to_string()))
+    Arc::new(UnifiedSstableReader::new(
+        fs_factory,
+        unified_fs,
+        "test_collection".to_string(),
+    ))
 }
 
 /// Create a test UnifiedSstableReader
@@ -338,7 +347,9 @@ pub async fn create_test_reader() -> UnifiedSstableReader {
 
     let config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
-    let fs = filesystem.get_filesystem("file:///tmp/proximadb-test").unwrap();
+    let fs = filesystem
+        .get_filesystem("file:///tmp/proximadb-test")
+        .unwrap();
 
     let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
         fs,
@@ -435,27 +446,29 @@ pub fn create_test_search_params() -> SearchParams {
 pub fn create_mock_search_results(count: usize) -> Vec<OptimizedSearchRecord> {
     use crate::proto::proximadb_v1::{SqlValue, sql_value};
 
-    (0..count).map(|i| {
-        let mut metadata = HashMap::new();
-        metadata.insert(
-            "category".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue("test".to_string())),
-            },
-        );
-        metadata.insert(
-            "index".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::NumberValue(i as f64)),
-            },
-        );
+    (0..count)
+        .map(|i| {
+            let mut metadata = HashMap::new();
+            metadata.insert(
+                "category".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue("test".to_string())),
+                },
+            );
+            metadata.insert(
+                "index".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::NumberValue(i as f64)),
+                },
+            );
 
-        OptimizedSearchRecord::new(format!("result_{}", i), 1.0 - (i as f32 * 0.1))
-            .with_similarity(1.0 - (i as f32 * 0.1))
-            .add_vector((0..128).map(|j| (i * 128 + j) as f32 / 1000.0).collect())
-            .with_metadata(metadata)
-            .with_version_info(1, chrono::Utc::now().timestamp())
-    }).collect()
+            OptimizedSearchRecord::new(format!("result_{}", i), 1.0 - (i as f32 * 0.1))
+                .with_similarity(1.0 - (i as f32 * 0.1))
+                .add_vector((0..128).map(|j| (i * 128 + j) as f32 / 1000.0).collect())
+                .with_metadata(metadata)
+                .with_version_info(1, chrono::Utc::now().timestamp())
+        })
+        .collect()
 }
 
 /// Create a test collection context
@@ -571,11 +584,13 @@ pub fn create_test_quantization_engine() -> Arc<UnifiedQuantizationEngine> {
 /// Vector of generated test vectors
 pub fn generate_test_vectors(count: usize, dimension: usize, pattern: &str) -> Vec<Vec<f32>> {
     match pattern {
-        "sequential" => {
-            (0..count)
-                .map(|i| (0..dimension).map(|j| (i * dimension + j) as f32 / 1000.0).collect())
-                .collect()
-        }
+        "sequential" => (0..count)
+            .map(|i| {
+                (0..dimension)
+                    .map(|j| (i * dimension + j) as f32 / 1000.0)
+                    .collect()
+            })
+            .collect(),
         "uniform" => {
             vec![vec![0.1; dimension]; count]
         }
@@ -600,9 +615,12 @@ pub fn generate_test_metadata(count: usize, prefix: &str) -> Vec<MetadataItem> {
     (0..count)
         .map(|i| MetadataItem {
             key: format!("{}_{}", prefix, i),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                format!("value_{}", i),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                    "value_{}",
+                    i
+                )),
+            ),
         })
         .collect()
 }
@@ -620,8 +638,14 @@ pub fn generate_test_metadata(count: usize, prefix: &str) -> Vec<MetadataItem> {
 /// If the flush result indicates failure
 pub fn assert_flush_success(result: &crate::storage::traits::FlushResult) {
     assert!(result.success, "Flush operation should succeed");
-    assert!(result.entries_flushed.unwrap_or(0) > 0, "Should have flushed at least one entry");
-    assert!(result.bytes_written.unwrap_or(0) > 0, "Should have written some bytes");
+    assert!(
+        result.entries_flushed.unwrap_or(0) > 0,
+        "Should have flushed at least one entry"
+    );
+    assert!(
+        result.bytes_written.unwrap_or(0) > 0,
+        "Should have written some bytes"
+    );
 }
 
 /// Validate that search results match expectations
@@ -641,8 +665,16 @@ pub fn assert_search_results(results: &[OptimizedSearchRecord], expected_count: 
     );
 
     for (i, result) in results.iter().enumerate() {
-        assert!(!result.id.is_empty(), "Result {} should have non-empty ID", i);
-        assert!(result.similarity.is_some(), "Result {} should have similarity score", i);
+        assert!(
+            !result.id.is_empty(),
+            "Result {} should have non-empty ID",
+            i
+        );
+        assert!(
+            result.similarity.is_some(),
+            "Result {} should have similarity score",
+            i
+        );
     }
 }
 

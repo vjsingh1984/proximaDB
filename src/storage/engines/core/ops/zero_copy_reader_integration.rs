@@ -45,11 +45,7 @@ impl ZeroCopyReaderIntegration {
 
         // 2. Create unified caching filesystem (replaces zero-copy filesystem)
         let zero_copy_fs = filesystem_factory
-            .get_unified_caching_filesystem(
-                base_path,
-                collection_id.to_string(),
-                "sst".to_string(),
-            )
+            .get_unified_caching_filesystem(base_path, collection_id.to_string(), "sst".to_string())
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
         // 3. Create enhanced reader with unified caching filesystem

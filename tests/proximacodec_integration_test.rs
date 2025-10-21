@@ -8,12 +8,14 @@
 //! 2. ProximaDataBlock uses ProximaCodec for all encoding strategies
 //! 3. Round-trip encoding/decoding preserves data perfectly (lossless)
 
-use proximadb::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
-use proximadb::storage::engines::core::ops::proximacodec::types::ProximaScheme;
-use proximadb::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock;
-use proximadb::storage::engines::core::formats::proximablocks::{BlockCompressionConfig, VectorEncodingLayout};
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
+use proximadb::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock;
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, VectorEncodingLayout,
+};
+use proximadb::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+use proximadb::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
 
 #[test]
 fn test_proximacodec_basic_roundtrip() {
@@ -21,19 +23,25 @@ fn test_proximacodec_basic_roundtrip() {
 
     // Test f32 encoding
     let values = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
-    let encoded = codec.encode(&values, ProximaScheme::Delta { base: 0 }).unwrap();
+    let encoded = codec
+        .encode(&values, ProximaScheme::Delta { base: 0 })
+        .unwrap();
     let decoded = codec.decode(&encoded).unwrap();
     assert_eq!(values, decoded);
 
     // Test i32 encoding
     let values_i32 = vec![10i32, 20, 30, 40, 50];
-    let encoded_i32 = codec.encode_i32(&values_i32, ProximaScheme::Delta { base: 0 }).unwrap();
+    let encoded_i32 = codec
+        .encode_i32(&values_i32, ProximaScheme::Delta { base: 0 })
+        .unwrap();
     let decoded_i32 = codec.decode_i32(&encoded_i32).unwrap();
     assert_eq!(values_i32, decoded_i32);
 
     // Test i64 encoding
     let values_i64 = vec![100i64, 200, 300, 400, 500];
-    let encoded_i64 = codec.encode_i64(&values_i64, ProximaScheme::Delta { base: 0 }).unwrap();
+    let encoded_i64 = codec
+        .encode_i64(&values_i64, ProximaScheme::Delta { base: 0 })
+        .unwrap();
     let decoded_i64 = codec.decode_i64(&encoded_i64).unwrap();
     assert_eq!(values_i64, decoded_i64);
 }
@@ -70,10 +78,15 @@ fn test_proximacodec_adaptive_scheme_selection() {
     let scheme = analysis::analyze_and_choose_scheme_f32(&sequential);
 
     match scheme {
-        ProximaScheme::Delta { .. } | ProximaScheme::DoubleDelta { .. } | ProximaScheme::PForDelta { .. } => {
+        ProximaScheme::Delta { .. }
+        | ProximaScheme::DoubleDelta { .. }
+        | ProximaScheme::PForDelta { .. } => {
             println!("✓ Sequential data correctly identified: {:?}", scheme);
-        },
-        other => panic!("Expected Delta/DoubleDelta/PForDelta for sequential, got {:?}", other),
+        }
+        other => panic!(
+            "Expected Delta/DoubleDelta/PForDelta for sequential, got {:?}",
+            other
+        ),
     }
 
     // Sparse data - should choose SparseBitmap or SparseCOO
@@ -86,7 +99,7 @@ fn test_proximacodec_adaptive_scheme_selection() {
     match scheme {
         ProximaScheme::SparseBitmap | ProximaScheme::SparseCOO => {
             println!("✓ Sparse data correctly identified: {:?}", scheme);
-        },
+        }
         other => panic!("Expected Sparse scheme for sparse data, got {:?}", other),
     }
 }
@@ -137,23 +150,40 @@ fn test_proximadatablock_with_proximacodec() {
 
         // Deserialize
         let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
-        println!("Deserialized block has {} records", deserialized.records.len());
+        println!(
+            "Deserialized block has {} records",
+            deserialized.records.len()
+        );
 
         // Verify round-trip
         assert_eq!(block.records.len(), deserialized.records.len());
-        for (i, (orig, deser)) in block.records.iter().zip(deserialized.records.iter()).enumerate() {
+        for (i, (orig, deser)) in block
+            .records
+            .iter()
+            .zip(deserialized.records.iter())
+            .enumerate()
+        {
             if orig.id != deser.id {
-                println!("ID mismatch at index {}: orig='{}', deser='{}'", i, orig.id, deser.id);
+                println!(
+                    "ID mismatch at index {}: orig='{}', deser='{}'",
+                    i, orig.id, deser.id
+                );
             }
             assert_eq!(orig.id, deser.id);
 
             if orig.vector != deser.vector {
-                println!("Vector mismatch at index {}: orig={:?}, deser={:?}", i, orig.vector, deser.vector);
+                println!(
+                    "Vector mismatch at index {}: orig={:?}, deser={:?}",
+                    i, orig.vector, deser.vector
+                );
             }
             assert_eq!(orig.vector, deser.vector);
 
             if orig.timestamp != deser.timestamp {
-                println!("Timestamp mismatch at index {}: orig={:?}, deser={:?}", i, orig.timestamp, deser.timestamp);
+                println!(
+                    "Timestamp mismatch at index {}: orig={:?}, deser={:?}",
+                    i, orig.timestamp, deser.timestamp
+                );
             }
             assert_eq!(orig.timestamp, deser.timestamp);
         }
@@ -171,7 +201,10 @@ fn test_large_vector_encoding() {
 
     // Analyze and choose optimal scheme
     let detected_scheme = analysis::analyze_and_choose_scheme_f32(&values);
-    println!("Detected scheme for 1536-dim embedding: {:?}", detected_scheme);
+    println!(
+        "Detected scheme for 1536-dim embedding: {:?}",
+        detected_scheme
+    );
 
     // Encode
     let encoded = codec.encode(&values, detected_scheme).unwrap();
@@ -187,7 +220,10 @@ fn test_large_vector_encoding() {
 
     println!("Original size: {} bytes", values.len() * 4);
     println!("Encoded size: {} bytes", encoded.len());
-    println!("Compression ratio: {:.2}x", (values.len() * 4) as f32 / encoded.len() as f32);
+    println!(
+        "Compression ratio: {:.2}x",
+        (values.len() * 4) as f32 / encoded.len() as f32
+    );
 }
 
 #[test]
@@ -196,7 +232,9 @@ fn test_type_safety() {
 
     // Encode as f32
     let values_f32 = vec![1.0f32, 2.0, 3.0];
-    let encoded = codec.encode(&values_f32, ProximaScheme::Delta { base: 0 }).unwrap();
+    let encoded = codec
+        .encode(&values_f32, ProximaScheme::Delta { base: 0 })
+        .unwrap();
 
     // Try to decode as i64 (should fail)
     let result_i64 = codec.decode_i64(&encoded);
@@ -217,7 +255,9 @@ fn test_compression_effectiveness() {
 
     // Sequential data - should compress very well with Delta
     let sequential: Vec<i64> = (0..10000).collect();
-    let encoded = codec.encode_i64(&sequential, ProximaScheme::Delta { base: 0 }).unwrap();
+    let encoded = codec
+        .encode_i64(&sequential, ProximaScheme::Delta { base: 0 })
+        .unwrap();
 
     let original_size = sequential.len() * 8;
     let compressed_size = encoded.len();
@@ -229,5 +269,8 @@ fn test_compression_effectiveness() {
     println!("  Ratio: {:.2}x", ratio);
 
     // Should achieve at least 2x compression for sequential data
-    assert!(ratio > 2.0, "Expected at least 2x compression for sequential data");
+    assert!(
+        ratio > 2.0,
+        "Expected at least 2x compression for sequential data"
+    );
 }

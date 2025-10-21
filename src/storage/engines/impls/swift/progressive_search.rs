@@ -8,14 +8,12 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
-
-
 use super::{MetadataFilter, SwiftFile};
+use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
@@ -421,13 +419,13 @@ async fn phase3_pq_refinement(
 ) -> Result<Vec<Candidate>> {
     // Create distance computation engine for PQ operations
     // Note: Skip PQ distance table computation for now, use direct computation
-    let distance_table: Option<Vec<Vec<f32>>> = if sst.header.quantization.pq_codebooks.unwrap_or(0) > 0
-    {
-        // TODO: Implement proper PQ distance table computation
-        None
-    } else {
-        None
-    };
+    let distance_table: Option<Vec<Vec<f32>>> =
+        if sst.header.quantization.pq_codebooks.unwrap_or(0) > 0 {
+            // TODO: Implement proper PQ distance table computation
+            None
+        } else {
+            None
+        };
 
     // Use unified quantization for INT8 fallback
     let quantization_config = StorageQuantizationConfig::default();
@@ -604,7 +602,10 @@ async fn phase4_full_precision(
         .into_iter()
         .map(|search_record| VectorRecord {
             id: search_record.id,
-            vector: search_record.vector.map(|v| (*v).clone()).unwrap_or_default(),
+            vector: search_record
+                .vector
+                .map(|v| (*v).clone())
+                .unwrap_or_default(),
             metadata: search_record.metadata,
             version: None,
             timestamp: Some(0),
@@ -667,7 +668,7 @@ fn condition_matches_block_stats(
 
 fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool {
     // Convert metadata to HashMap for easier lookup
-    let metadata_map: std::collections::HashMap<String, serde_json::Value> = 
+    let metadata_map: std::collections::HashMap<String, serde_json::Value> =
         crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
 
     for condition in &filter.conditions {

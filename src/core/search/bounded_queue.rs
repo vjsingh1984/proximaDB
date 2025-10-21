@@ -4,9 +4,9 @@
 //! only the top-k results during vector search, enabling efficient
 //! memory usage and early termination.
 
-use std::collections::BinaryHeap;
-use std::cmp::Ordering;
 use crate::core::search::results::OptimizedSearchRecord;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 /// A wrapper for search records that implements reverse ordering for min-heap
 #[derive(Clone)]
@@ -78,7 +78,7 @@ impl BoundedPriorityQueue {
     /// Any new result must beat this score to be considered
     pub fn min_score_threshold(&self) -> f32 {
         if self.heap.len() < self.capacity {
-            f32::NEG_INFINITY  // Still accepting any score
+            f32::NEG_INFINITY // Still accepting any score
         } else {
             self.min_score
         }
@@ -101,10 +101,7 @@ impl BoundedPriorityQueue {
 
     /// Convert to sorted vector (highest score first)
     pub fn into_sorted_vec(self) -> Vec<OptimizedSearchRecord> {
-        let mut results: Vec<_> = self.heap
-            .into_iter()
-            .map(|entry| entry.record)
-            .collect();
+        let mut results: Vec<_> = self.heap.into_iter().map(|entry| entry.record).collect();
 
         // Sort by score descending (highest first)
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
@@ -113,7 +110,8 @@ impl BoundedPriorityQueue {
 
     /// Update the minimum score from the heap
     fn update_min_score(&mut self) {
-        self.min_score = self.heap
+        self.min_score = self
+            .heap
             .peek()
             .map(|e| e.record.score)
             .unwrap_or(f32::NEG_INFINITY);

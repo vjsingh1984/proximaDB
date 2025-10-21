@@ -114,22 +114,26 @@ pub trait BaseCache: Send + Sync {
     // Metrics operations
     async fn record_hit(&self, _tier: CacheTier) {
         // Record cache hit using unified metrics
-        self.metrics().record_operation(
-            crate::storage::traits::MetricsOperationType::CacheHit,
-            true,  // success
-            0,     // bytes
-            std::time::Duration::from_millis(0),
-        ).await;
+        self.metrics()
+            .record_operation(
+                crate::storage::traits::MetricsOperationType::CacheHit,
+                true, // success
+                0,    // bytes
+                std::time::Duration::from_millis(0),
+            )
+            .await;
     }
 
     async fn record_miss(&self) {
         // Record cache miss using unified metrics
-        self.metrics().record_operation(
-            crate::storage::traits::MetricsOperationType::CacheMiss,
-            true,  // success (miss is a valid outcome, not a failure)
-            0,     // bytes
-            std::time::Duration::from_millis(0),
-        ).await;
+        self.metrics()
+            .record_operation(
+                crate::storage::traits::MetricsOperationType::CacheMiss,
+                true, // success (miss is a valid outcome, not a failure)
+                0,    // bytes
+                std::time::Duration::from_millis(0),
+            )
+            .await;
     }
 
     fn metrics(&self) -> &UnifiedMetricsCollector;

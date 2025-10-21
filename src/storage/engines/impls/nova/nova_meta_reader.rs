@@ -22,9 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::hierarchical_stats::{
-    SuperBlock, EnhancedRowGroupStats, ZoneMap, BasicZoneMaps,
-};
+use super::hierarchical_stats::{BasicZoneMaps, EnhancedRowGroupStats, SuperBlock, ZoneMap};
 use super::nova_meta_collector::NovaMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -60,7 +58,8 @@ impl NovaMetaReader {
         let fs_url = if parquet_path.starts_with("s3://")
             || parquet_path.starts_with("gs://")
             || parquet_path.starts_with("azure://")
-            || parquet_path.starts_with("wasbs://") {
+            || parquet_path.starts_with("wasbs://")
+        {
             parquet_path.to_string()
         } else {
             "file://".to_string()
@@ -75,7 +74,8 @@ impl NovaMetaReader {
             .map_err(|e| anyhow::anyhow!("Failed to deserialize NOVA metadata: {}", e))?;
 
         let metadata_arc = Arc::new(metadata);
-        self.metadata_cache.insert(parquet_path.to_string(), metadata_arc.clone());
+        self.metadata_cache
+            .insert(parquet_path.to_string(), metadata_arc.clone());
 
         Ok(metadata_arc)
     }
@@ -124,7 +124,11 @@ impl NovaMetaReader {
         if let Some(threshold) = distance_threshold {
             let distance = self.euclidean_distance(query_vector, &zone_map.centroid);
             // Add variance as buffer for conservative pruning
-            let max_variance = zone_map.variance.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0);
+            let max_variance = zone_map
+                .variance
+                .iter()
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(&0.0);
             if distance - max_variance.sqrt() > threshold {
                 return false;
             }
@@ -164,7 +168,8 @@ impl NovaMetaReader {
         if let Some(threshold) = distance_threshold {
             let centroid_distance = self.euclidean_distance(query_vector, &zone_map.centroid);
             // Conservative pruning: add standard deviation as buffer
-            let std_dev = zone_map.variance.iter().map(|v| v.sqrt()).sum::<f32>() / zone_map.dimension as f32;
+            let std_dev =
+                zone_map.variance.iter().map(|v| v.sqrt()).sum::<f32>() / zone_map.dimension as f32;
             if centroid_distance - std_dev > threshold {
                 return false;
             }
@@ -220,7 +225,9 @@ impl NovaMetaReader {
     /// Get cache statistics
     pub fn cache_stats(&self) -> (usize, usize) {
         let num_entries = self.metadata_cache.len();
-        let total_size: usize = self.metadata_cache.values()
+        let total_size: usize = self
+            .metadata_cache
+            .values()
             .map(|m| std::mem::size_of_val(m.as_ref()))
             .sum();
         (num_entries, total_size)
@@ -289,9 +296,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_bounds_check() {
-        let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::create(
-            Default::default()
-        ).await.unwrap()));
+        let reader = NovaMetaReader::new(Arc::new(
+            FilesystemFactory::create(Default::default()).await.unwrap(),
+        ));
 
         let vector = vec![1.0, 2.0, 3.0];
         let min_values = vec![0.0, 1.0, 2.0];
@@ -305,9 +312,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_euclidean_distance() {
-        let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::create(
-            Default::default()
-        ).await.unwrap()));
+        let reader = NovaMetaReader::new(Arc::new(
+            FilesystemFactory::create(Default::default()).await.unwrap(),
+        ));
 
         let v1 = vec![1.0, 2.0, 3.0];
         let v2 = vec![4.0, 5.0, 6.0];

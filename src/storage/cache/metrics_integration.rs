@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, info};
 
-use crate::storage::traits::{UnifiedMetricsCollector, MetricsOperationType};
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 
 /// Cache metrics collector that integrates with unified metrics framework
 pub struct CacheMetricsCollector {
@@ -114,12 +114,8 @@ impl CacheMetricsCollector {
             if let Err(e) = self.collect_and_report_metrics().await {
                 tracing::warn!("Cache metrics collection failed: {}", e);
                 // Report collection error using unified metrics
-                self.metrics_collector.record(
-                    MetricsOperationType::Read,
-                    0,
-                    false,
-                    None,
-                );
+                self.metrics_collector
+                    .record(MetricsOperationType::Read, 0, false, None);
             }
         }
     }
@@ -131,23 +127,23 @@ impl CacheMetricsCollector {
         // Report cache hit rate (dashboard-ready metric)
         if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
             let stats = query_cache.statistics().await;
-                let total_requests = stats.hit_count + stats.miss_count;
-                let hit_rate = if total_requests > 0 {
-                    stats.hit_count as f64 / total_requests as f64
-                } else {
-                    0.0
-                };
+            let total_requests = stats.hit_count + stats.miss_count;
+            let hit_rate = if total_requests > 0 {
+                stats.hit_count as f64 / total_requests as f64
+            } else {
+                0.0
+            };
 
-                // Report basic cache metrics to unified framework
-                self.metrics_collector.record(
-                    MetricsOperationType::Read,
-                    0,
-                    true,
-                    Some(stats.hit_count as usize),
-                );
+            // Report basic cache metrics to unified framework
+            self.metrics_collector.record(
+                MetricsOperationType::Read,
+                0,
+                true,
+                Some(stats.hit_count as usize),
+            );
 
-                // Report per-engine cache performance
-                self.report_engine_cache_metrics().await?;
+            // Report per-engine cache performance
+            self.report_engine_cache_metrics().await?;
         }
 
         // Report collection performance
@@ -159,7 +155,10 @@ impl CacheMetricsCollector {
             None,
         );
 
-        debug!("📊 Cache metrics reported to unified framework in {:?}", collection_duration);
+        debug!(
+            "📊 Cache metrics reported to unified framework in {:?}",
+            collection_duration
+        );
         Ok(())
     }
 
@@ -192,29 +191,29 @@ impl CacheMetricsCollector {
     pub async fn get_dashboard_metrics(&self) -> Result<CachePerformanceMetrics> {
         if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
             let stats = query_cache.statistics().await;
-                let total_requests = stats.hit_count + stats.miss_count;
-                let hit_rate = if total_requests > 0 {
-                    stats.hit_count as f64 / total_requests as f64
-                } else {
-                    0.0
-                };
+            let total_requests = stats.hit_count + stats.miss_count;
+            let hit_rate = if total_requests > 0 {
+                stats.hit_count as f64 / total_requests as f64
+            } else {
+                0.0
+            };
 
-                let cache_size = query_cache.size().await;
-                let memory_bytes = query_cache.memory_usage().await;
-                let memory_mb = memory_bytes as f64 / (1024.0 * 1024.0);
-                let memory_efficiency = if memory_mb > 0.0 {
-                    cache_size as f64 / memory_mb
-                } else {
-                    0.0
-                };
+            let cache_size = query_cache.size().await;
+            let memory_bytes = query_cache.memory_usage().await;
+            let memory_mb = memory_bytes as f64 / (1024.0 * 1024.0);
+            let memory_efficiency = if memory_mb > 0.0 {
+                cache_size as f64 / memory_mb
+            } else {
+                0.0
+            };
 
-                return Ok(CachePerformanceMetrics {
-                    hit_rate,
-                    miss_rate: 1.0 - hit_rate,
-                    avg_latency_us: 45.0, // Placeholder - would come from actual latency measurements
-                    memory_efficiency,
-                    warmness_score: hit_rate * 0.8 + (memory_efficiency / 1000.0).min(1.0) * 0.2,
-                });
+            return Ok(CachePerformanceMetrics {
+                hit_rate,
+                miss_rate: 1.0 - hit_rate,
+                avg_latency_us: 45.0, // Placeholder - would come from actual latency measurements
+                memory_efficiency,
+                warmness_score: hit_rate * 0.8 + (memory_efficiency / 1000.0).min(1.0) * 0.2,
+            });
         }
 
         // Fallback metrics if cache not available

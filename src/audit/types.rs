@@ -2,9 +2,9 @@
 //!
 //! Core types for the comprehensive audit logging system
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 /// Comprehensive audit event structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ pub enum AuditEventType {
 /// Resource being audited
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditResource {
-    pub resource_type: String,  // "collection", "vector", "tenant", "user", "system"
+    pub resource_type: String, // "collection", "vector", "tenant", "user", "system"
     pub resource_id: String,
     pub parent_resource: Option<Box<AuditResource>>,
 }
@@ -52,8 +52,13 @@ pub struct AuditResource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditResult {
     Success,
-    Failure { error_code: String, error_message: String },
-    Partial { warnings: Vec<String> },
+    Failure {
+        error_code: String,
+        error_message: String,
+    },
+    Partial {
+        warnings: Vec<String>,
+    },
 }
 
 /// Security alert generated from audit analysis
@@ -129,7 +134,12 @@ impl AuditEvent {
     }
 
     /// Set request context
-    pub fn with_request_context(mut self, request_id: String, ip_address: Option<String>, user_agent: Option<String>) -> Self {
+    pub fn with_request_context(
+        mut self,
+        request_id: String,
+        ip_address: Option<String>,
+        user_agent: Option<String>,
+    ) -> Self {
         self.request_id = Some(request_id);
         self.ip_address = ip_address;
         self.user_agent = user_agent;

@@ -6,13 +6,13 @@
 #[cfg(test)]
 mod tests {
     use super::super::unified_handlers::*;
+    use crate::proto::proximadb_v1::sql_value::Value;
     use crate::proto::proximadb_v1::{
         CollectionConfig, CollectionOperation, CollectionRequest, IncludeFields, SearchQuery,
         VectorBatchRequest, VectorOperation, VectorRecord, VectorSearchRequest,
     };
     use chrono::Utc;
     use std::collections::HashMap;
-    use crate::proto::proximadb_v1::sql_value::Value;
 
     /// Helper to create test collection config
     fn create_test_collection_config(name: &str) -> CollectionConfig {
@@ -285,7 +285,10 @@ mod tests {
         };
 
         assert_eq!(config.dimension, 256);
-        assert_eq!(config.distance_metric, Some(DistanceMetric::Euclidean as i32));
+        assert_eq!(
+            config.distance_metric,
+            Some(DistanceMetric::Euclidean as i32)
+        );
         assert!(config.description.is_none());
         assert!(config.tags.is_empty());
 

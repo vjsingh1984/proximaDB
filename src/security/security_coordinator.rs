@@ -3,15 +3,20 @@
 //! Central coordination point for all security operations including
 //! authentication, authorization, audit, and security policy enforcement.
 
-use super::unified_rbac::{ConsolidatedRBACManager, UnifiedUserContext, UnifiedPermission, RBACConfig};
-use super::unified_auth::{UnifiedAuthService, AuthenticationConfig, AuthenticationData, AuthenticationMethod, JwtConfig, SSOConfig};
-use crate::audit::logger::{AuditLogger, AuditConfig};
+use super::unified_auth::{
+    AuthenticationConfig, AuthenticationData, AuthenticationMethod, JwtConfig, SSOConfig,
+    UnifiedAuthService,
+};
+use super::unified_rbac::{
+    ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
+};
+use crate::audit::logger::{AuditConfig, AuditLogger};
 
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
-use tracing::{info, warn, debug};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 /// Security coordinator configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +40,6 @@ pub enum SecurityMode {
     #[serde(rename = "enterprise")]
     Enterprise,
 }
-
 
 /// TLS configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,29 +103,37 @@ impl SecurityCoordinator {
         let auth_result = self.auth_service.authenticate(auth_data).await?;
 
         if !auth_result.success {
-            return Err(anyhow!("Authentication failed: {}",
-                auth_result.error_message.unwrap_or("Unknown error".to_string())));
+            return Err(anyhow!(
+                "Authentication failed: {}",
+                auth_result
+                    .error_message
+                    .unwrap_or("Unknown error".to_string())
+            ));
         }
 
         // Step 2: Populate effective permissions via RBAC
         let mut user_context = auth_result.user_context;
-        let effective_permissions = self.rbac_manager
+        let effective_permissions = self
+            .rbac_manager
             .get_effective_permissions(&user_context)
             .await?;
         user_context.effective_permissions = effective_permissions;
 
         // Step 3: Check authorization for requested permission
-        let authorized = self.rbac_manager
+        let authorized = self
+            .rbac_manager
             .check_permission(&user_context, &requested_permission)
             .await?;
 
         if !authorized {
             // Log authorization failure
-            self.audit_logger.log_event(create_authorization_failure_event(
-                &user_context,
-                &requested_permission,
-                start_time
-            )).await?;
+            self.audit_logger
+                .log_event(create_authorization_failure_event(
+                    &user_context,
+                    &requested_permission,
+                    start_time,
+                ))
+                .await?;
 
             return Err(anyhow!("Insufficient permissions for requested operation"));
         }
@@ -151,7 +163,8 @@ impl SecurityCoordinator {
 
         // Populate effective permissions
         let mut user_context = auth_result.user_context;
-        let effective_permissions = self.rbac_manager
+        let effective_permissions = self
+            .rbac_manager
             .get_effective_permissions(&user_context)
             .await?;
         user_context.effective_permissions = effective_permissions;
@@ -165,11 +178,16 @@ impl SecurityCoordinator {
         user_context: &UnifiedUserContext,
         permission: &UnifiedPermission,
     ) -> Result<bool> {
-        self.rbac_manager.check_permission(user_context, permission).await
+        self.rbac_manager
+            .check_permission(user_context, permission)
+            .await
     }
 
     /// Get security policy for tenant
-    pub async fn get_tenant_security_policy(&self, tenant_id: &str) -> Result<TenantSecurityPolicy> {
+    pub async fn get_tenant_security_policy(
+        &self,
+        tenant_id: &str,
+    ) -> Result<TenantSecurityPolicy> {
         // This would integrate with tenant manager
         // For now, return default policy based on security mode
         Ok(match self.config.mode {
@@ -207,13 +225,17 @@ impl SecurityCoordinator {
         // Check authentication health
         if !self.config.authentication.enabled && self.config.mode != SecurityMode::Development {
             status.authentication_healthy = false;
-            status.issues.push("Authentication disabled in non-development mode".to_string());
+            status
+                .issues
+                .push("Authentication disabled in non-development mode".to_string());
         }
 
         // Check TLS health
         if !self.config.tls.enabled && self.config.mode == SecurityMode::Production {
             status.tls_healthy = false;
-            status.issues.push("TLS disabled in production mode".to_string());
+            status
+                .issues
+                .push("TLS disabled in production mode".to_string());
         }
 
         // Check audit health
@@ -222,10 +244,10 @@ impl SecurityCoordinator {
             status.issues.push("Audit logging disabled".to_string());
         }
 
-        status.overall_healthy = status.authentication_healthy &&
-                                status.rbac_healthy &&
-                                status.audit_healthy &&
-                                status.tls_healthy;
+        status.overall_healthy = status.authentication_healthy
+            && status.rbac_healthy
+            && status.audit_healthy
+            && status.tls_healthy;
 
         status
     }
@@ -355,9 +377,18 @@ fn create_authorization_failure_event(
         request_id: None,
         details: {
             let mut details = HashMap::new();
-            details.insert("requested_permission".to_string(), serde_json::json!(format!("{:?}", requested_permission)));
-            details.insert("user_roles".to_string(), serde_json::json!(user_context.roles));
-            details.insert("auth_method".to_string(), serde_json::json!(format!("{:?}", user_context.auth_method)));
+            details.insert(
+                "requested_permission".to_string(),
+                serde_json::json!(format!("{:?}", requested_permission)),
+            );
+            details.insert(
+                "user_roles".to_string(),
+                serde_json::json!(user_context.roles),
+            );
+            details.insert(
+                "auth_method".to_string(),
+                serde_json::json!(format!("{:?}", user_context.auth_method)),
+            );
             if let Some(tenant) = &user_context.tenant_id {
                 details.insert("tenant_id".to_string(), serde_json::json!(tenant));
             }
@@ -460,6 +491,10 @@ mod tests {
         let enterprise_policy = TenantSecurityPolicy::enterprise();
         assert!(enterprise_policy.require_authentication);
         assert!(enterprise_policy.require_mfa);
-        assert!(enterprise_policy.compliance_frameworks.contains(&"SOC2".to_string()));
+        assert!(
+            enterprise_policy
+                .compliance_frameworks
+                .contains(&"SOC2".to_string())
+        );
     }
 }

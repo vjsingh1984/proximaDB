@@ -3,26 +3,25 @@
 //! This module provides the core reader functionality for Parquet files,
 //! including file access, record batch reading, and conversion to VectorRecords.
 
+use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::{Context, Result};
 use arrow::record_batch::RecordBatch;
 use arrow_array::Array;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
-use crate::storage::persistence::filesystem::FileSystem;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::constants::{
-    FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32,
-    FIELD_VERSION, FIELD_EXPIRES_AT, FIELD_IS_DELETED
+    FIELD_EXPIRES_AT, FIELD_ID, FIELD_IS_DELETED, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
 use crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarReader;
 
-use super::unified_reader::{UnifiedParquetReader, ReaderConfig};
+use super::unified_reader::{ReaderConfig, UnifiedParquetReader};
 use super::{QueryConfig, QueryStatistics};
 
 /// Core Parquet reader implementation
@@ -41,52 +40,58 @@ impl ParquetReader {
     }
 
     /// Read Parquet file and return all records
-    pub fn read_all(&mut self, file_path: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<VectorRecord>>> + Send + '_>> {
+    pub fn read_all(
+        &mut self,
+        file_path: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<VectorRecord>>> + Send + '_>>
+    {
         let file_path = file_path.to_string();
         Box::pin(async move {
-        info!("Reading all records from {}", file_path);
+            info!("Reading all records from {}", file_path);
 
-        let file = File::open(&file_path)
-            .context("Failed to open Parquet file")?;
+            let file = File::open(&file_path).context("Failed to open Parquet file")?;
 
-        let reader = SerializedFileReader::new(file)?;
-        let metadata = reader.metadata();
+            let reader = SerializedFileReader::new(file)?;
+            let metadata = reader.metadata();
 
-        debug!(
-            "File has {} row groups with {} total rows",
-            metadata.num_row_groups(),
-            metadata.file_metadata().num_rows()
-        );
+            debug!(
+                "File has {} row groups with {} total rows",
+                metadata.num_row_groups(),
+                metadata.file_metadata().num_rows()
+            );
 
-        // Use UnifiedParquetReader for actual reading
-        // Create UnifiedCachingFilesystem for optimal performance
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?);
-        let base_fs = filesystem_factory.get_filesystem("file://")?;
-        let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-                base_fs,
+            // Use UnifiedParquetReader for actual reading
+            // Create UnifiedCachingFilesystem for optimal performance
+            let filesystem_factory = Arc::new(
+                crate::storage::persistence::filesystem::FilesystemFactory::create_default()
+                    .await?,
+            );
+            let base_fs = filesystem_factory.get_filesystem("file://")?;
+            let cached_filesystem = Arc::new(
+                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                    base_fs,
+                    "default_collection".to_string(),
+                    "columnar".to_string(),
+                ),
+            );
+            let unified_reader = UnifiedParquetReader::new(
+                vec![file_path.clone()],
+                1024,
+                filesystem_factory,
+                cached_filesystem,
                 "default_collection".to_string(),
                 "columnar".to_string(),
-            )
-        );
-        let unified_reader = UnifiedParquetReader::new(
-            vec![file_path.clone()],
-            1024,
-            filesystem_factory,
-            cached_filesystem,
-            "default_collection".to_string(),
-            "columnar".to_string(),
-        )?;
+            )?;
 
-        // Read all records
-        let records = unified_reader.read_all_records(0, None).await?;
+            // Read all records
+            let records = unified_reader.read_all_records(0, None).await?;
 
-        // Update statistics
-        self.stats.files_read += 1;
-        self.stats.records_read += records.len();
-        self.stats.row_groups_read += metadata.num_row_groups() as usize;
+            // Update statistics
+            self.stats.files_read += 1;
+            self.stats.records_read += records.len();
+            self.stats.row_groups_read += metadata.num_row_groups() as usize;
 
-        Ok(records)
+            Ok(records)
         })
     }
 
@@ -96,12 +101,17 @@ impl ParquetReader {
         file_path: &str,
         filesystem: Arc<dyn FileSystem>,
     ) -> Result<Vec<VectorRecord>> {
-        info!("Reading all records from {} using filesystem API", file_path);
+        info!(
+            "Reading all records from {} using filesystem API",
+            file_path
+        );
 
         // For now, we'll read the entire file into memory and create a byte slice
         // This is not optimal for large files, but works with the current Parquet reader API
         // TODO: In the future, implement streaming readers that work with async I/O
-        let file_data = filesystem.read(file_path).await
+        let file_data = filesystem
+            .read(file_path)
+            .await
             .context("Failed to read Parquet file from filesystem")?;
 
         // Use bytes::Bytes which implements ChunkReader
@@ -140,19 +150,14 @@ impl ParquetReader {
         file_path: &str,
         row_groups: &[usize],
     ) -> Result<Vec<VectorRecord>> {
-        debug!(
-            "Reading row groups {:?} from {}",
-            row_groups, file_path
-        );
+        debug!("Reading row groups {:?} from {}", row_groups, file_path);
 
         let mut all_records = Vec::new();
 
         for &row_group in row_groups {
             let file = File::open(file_path)?;
             let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-            let reader = builder
-                .with_row_groups(vec![row_group])
-                .build()?;
+            let reader = builder.with_row_groups(vec![row_group]).build()?;
 
             for batch_result in reader {
                 let batch = batch_result?;
@@ -173,10 +178,7 @@ impl ParquetReader {
         file_path: &str,
         columns: &[String],
     ) -> Result<RecordBatch> {
-        debug!(
-            "Reading projected columns {:?} from {}",
-            columns, file_path
-        );
+        debug!("Reading projected columns {:?} from {}", columns, file_path);
 
         let file = File::open(file_path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -188,14 +190,9 @@ impl ParquetReader {
             .filter_map(|name| schema.index_of(name).ok())
             .collect();
 
-        let projection = ProjectionMask::roots(
-            builder.parquet_schema(),
-            column_indices.clone(),
-        );
+        let projection = ProjectionMask::roots(builder.parquet_schema(), column_indices.clone());
 
-        let reader = builder
-            .with_projection(projection)
-            .build()?;
+        let reader = builder.with_projection(projection).build()?;
 
         // Read first batch for now (could be extended)
         let batch = reader
@@ -219,7 +216,12 @@ impl ParquetReader {
         // Debug: Print all column names
         let schema = batch.schema();
         for (idx, field) in schema.fields().iter().enumerate() {
-            debug!("🔍 DEBUG: Column[{}]: name='{}', type={:?}", idx, field.name(), field.data_type());
+            debug!(
+                "🔍 DEBUG: Column[{}]: name='{}', type={:?}",
+                idx,
+                field.name(),
+                field.data_type()
+            );
         }
 
         // Extract ID column
@@ -244,8 +246,10 @@ impl ParquetReader {
             .ok_or_else(|| anyhow::anyhow!("Vector column not found"))?;
 
         // Try FixedSizeListArray first (preferred), then fallback to ListArray
-        let vector_values = if let Some(fixed_list) = vector_column.as_any()
-            .downcast_ref::<arrow::array::FixedSizeListArray>() {
+        let vector_values = if let Some(fixed_list) = vector_column
+            .as_any()
+            .downcast_ref::<arrow::array::FixedSizeListArray>(
+        ) {
             // Handle FixedSizeList (newer format)
             debug!("🔍 DEBUG: Vector column is FixedSizeList");
 
@@ -262,14 +266,14 @@ impl ParquetReader {
             for row in 0..num_rows {
                 let start = row * list_size;
                 let end = start + list_size;
-                let vector: Vec<f32> = (start..end)
-                    .map(|i| float_array.value(i))
-                    .collect();
+                let vector: Vec<f32> = (start..end).map(|i| float_array.value(i)).collect();
                 vector_values.push(vector);
             }
             vector_values
-        } else if let Some(list_array) = vector_column.as_any()
-            .downcast_ref::<arrow::array::ListArray>() {
+        } else if let Some(list_array) = vector_column
+            .as_any()
+            .downcast_ref::<arrow::array::ListArray>()
+        {
             // Handle ListArray (older format)
             debug!("🔍 DEBUG: Vector column is ListArray (legacy format)");
 
@@ -283,21 +287,26 @@ impl ParquetReader {
             for row in 0..num_rows {
                 let start = list_array.value_offsets()[row] as usize;
                 let end = list_array.value_offsets()[row + 1] as usize;
-                let vector: Vec<f32> = (start..end)
-                    .map(|i| float_array.value(i))
-                    .collect();
+                let vector: Vec<f32> = (start..end).map(|i| float_array.value(i)).collect();
                 vector_values.push(vector);
             }
             vector_values
         } else {
-            return Err(anyhow::anyhow!("Vector column is neither FixedSizeList nor List type"));
+            return Err(anyhow::anyhow!(
+                "Vector column is neither FixedSizeList nor List type"
+            ));
         };
 
         // Extract metadata columns - look for any columns that aren't standard columns
         let standard_columns = vec![
-            FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32,
-            FIELD_VERSION, FIELD_EXPIRES_AT, FIELD_IS_DELETED,
-            "row_group_offset", "row_index"
+            FIELD_ID,
+            FIELD_TIMESTAMP,
+            FIELD_VECTOR_FP32,
+            FIELD_VERSION,
+            FIELD_EXPIRES_AT,
+            FIELD_IS_DELETED,
+            "row_group_offset",
+            "row_index",
         ];
 
         for row in 0..num_rows {
@@ -312,46 +321,77 @@ impl ParquetReader {
                     continue;
                 }
 
-                debug!("🔍 DEBUG: Processing potential metadata column: {}", column_name);
+                debug!(
+                    "🔍 DEBUG: Processing potential metadata column: {}",
+                    column_name
+                );
 
                 // Try to extract metadata value from this column
                 if let Some(column) = batch.column_by_name(column_name) {
                     // Check if this is a Map column (for metadata stored as key-value pairs)
                     if column_name == "extra_meta" {
                         // Handle Map type for metadata
-                        if let Some(map_array) = column.as_any().downcast_ref::<arrow::array::MapArray>() {
-                            debug!("🔍 DEBUG: Processing Map for row {}, is_null={}", row, map_array.is_null(row));
+                        if let Some(map_array) =
+                            column.as_any().downcast_ref::<arrow::array::MapArray>()
+                        {
+                            debug!(
+                                "🔍 DEBUG: Processing Map for row {}, is_null={}",
+                                row,
+                                map_array.is_null(row)
+                            );
                             if !map_array.is_null(row) {
                                 let offsets = map_array.offsets();
                                 let start = offsets[row] as usize;
                                 let end = offsets[row + 1] as usize;
-                                debug!("🔍 DEBUG: Map offsets for row {}: start={}, end={}, entries={}", row, start, end, end - start);
+                                debug!(
+                                    "🔍 DEBUG: Map offsets for row {}: start={}, end={}, entries={}",
+                                    row,
+                                    start,
+                                    end,
+                                    end - start
+                                );
 
                                 // Get the struct array that contains key-value pairs
                                 // MapArray.values() returns the flattened entries, not individual maps
                                 // We need to use the struct array directly
                                 let entries = map_array.entries();
                                 debug!("🔍 DEBUG: Map entries type: {:?}", entries.data_type());
-                                if let Some(struct_array) = entries.as_any().downcast_ref::<arrow::array::StructArray>() {
-                                    debug!("🔍 DEBUG: Found StructArray with {} entries, {} columns",
-                                        struct_array.len(), struct_array.num_columns());
+                                if let Some(struct_array) =
+                                    entries.as_any().downcast_ref::<arrow::array::StructArray>()
+                                {
+                                    debug!(
+                                        "🔍 DEBUG: Found StructArray with {} entries, {} columns",
+                                        struct_array.len(),
+                                        struct_array.num_columns()
+                                    );
                                     // Get key and value arrays
                                     if let (Some(key_array), Some(value_array)) = (
                                         struct_array.column_by_name("key"),
-                                        struct_array.column_by_name("value")
+                                        struct_array.column_by_name("value"),
                                     ) {
                                         debug!("🔍 DEBUG: Found key and value arrays");
                                         if let (Some(keys), Some(values)) = (
-                                            key_array.as_any().downcast_ref::<arrow::array::StringArray>(),
-                                            value_array.as_any().downcast_ref::<arrow::array::StringArray>()
+                                            key_array
+                                                .as_any()
+                                                .downcast_ref::<arrow::array::StringArray>(),
+                                            value_array
+                                                .as_any()
+                                                .downcast_ref::<arrow::array::StringArray>(),
                                         ) {
                                             // Extract all key-value pairs for this row
-                                            debug!("🔍 DEBUG: Extracting {} entries for row {}", end - start, row);
+                                            debug!(
+                                                "🔍 DEBUG: Extracting {} entries for row {}",
+                                                end - start,
+                                                row
+                                            );
                                             for i in start..end {
                                                 if !keys.is_null(i) && !values.is_null(i) {
                                                     let key = keys.value(i);
                                                     let value = values.value(i);
-                                                    debug!("🔍 DEBUG: Found map metadata {}={} for row {}", key, value, row);
+                                                    debug!(
+                                                        "🔍 DEBUG: Found map metadata {}={} for row {}",
+                                                        key, value, row
+                                                    );
                                                     metadata.insert(
                                                         key.to_string(),
                                                         crate::proto::proximadb_v1::SqlValue {
@@ -369,49 +409,85 @@ impl ParquetReader {
                     }
 
                     // Try different types of columns for non-map metadata
-                    if let Some(string_array) = column.as_any().downcast_ref::<arrow::array::StringArray>() {
+                    if let Some(string_array) =
+                        column.as_any().downcast_ref::<arrow::array::StringArray>()
+                    {
                         // Skip null values - use is_null() method which checks the null bitmap
                         if !string_array.is_null(row) {
                             let value = string_array.value(row);
-                            debug!("🔍 DEBUG: Found string metadata {}={} for row {}", column_name, value, row);
+                            debug!(
+                                "🔍 DEBUG: Found string metadata {}={} for row {}",
+                                column_name, value, row
+                            );
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value.to_string())),
-                                }
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                            value.to_string(),
+                                        ),
+                                    ),
+                                },
                             );
                         }
-                    } else if let Some(int_array) = column.as_any().downcast_ref::<arrow::array::Int64Array>() {
+                    } else if let Some(int_array) =
+                        column.as_any().downcast_ref::<arrow::array::Int64Array>()
+                    {
                         if !int_array.is_null(row) {
                             let value = int_array.value(row);
-                            debug!("🔍 DEBUG: Found int metadata {}={} for row {}", column_name, value, row);
+                            debug!(
+                                "🔍 DEBUG: Found int metadata {}={} for row {}",
+                                column_name, value, row
+                            );
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(value)),
-                                }
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                                            value,
+                                        ),
+                                    ),
+                                },
                             );
                         }
-                    } else if let Some(float_array) = column.as_any().downcast_ref::<arrow::array::Float64Array>() {
+                    } else if let Some(float_array) =
+                        column.as_any().downcast_ref::<arrow::array::Float64Array>()
+                    {
                         if !float_array.is_null(row) {
                             let value = float_array.value(row);
-                            debug!("🔍 DEBUG: Found float metadata {}={} for row {}", column_name, value, row);
+                            debug!(
+                                "🔍 DEBUG: Found float metadata {}={} for row {}",
+                                column_name, value, row
+                            );
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(value)),
-                                }
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                            value,
+                                        ),
+                                    ),
+                                },
                             );
                         }
-                    } else if let Some(bool_array) = column.as_any().downcast_ref::<arrow::array::BooleanArray>() {
+                    } else if let Some(bool_array) =
+                        column.as_any().downcast_ref::<arrow::array::BooleanArray>()
+                    {
                         if !bool_array.is_null(row) {
                             let value = bool_array.value(row);
-                            debug!("🔍 DEBUG: Found bool metadata {}={} for row {}", column_name, value, row);
+                            debug!(
+                                "🔍 DEBUG: Found bool metadata {}={} for row {}",
+                                column_name, value, row
+                            );
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(value)),
-                                }
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(
+                                            value,
+                                        ),
+                                    ),
+                                },
                             );
                         }
                     }
@@ -427,30 +503,39 @@ impl ParquetReader {
             };
 
             if row < 3 || record.id.contains("_A_") || record.id.contains("_B_") && row < 25 {
-                debug!("🔍 DEBUG: Created record {}: metadata keys={:?}, values={:?}",
+                debug!(
+                    "🔍 DEBUG: Created record {}: metadata keys={:?}, values={:?}",
                     record.id,
                     record.metadata.keys().collect::<Vec<_>>(),
-                    record.metadata.iter().map(|(k, v)| {
-                        let val_str = if let Some(value) = &v.value {
-                            use crate::proto::proximadb_v1::sql_value::Value;
-                            match value {
-                                Value::StringValue(s) => s.clone(),
-                                Value::NumberValue(f) => f.to_string(),
-                                Value::BoolValue(b) => b.to_string(),
-                                Value::Int64Value(i) => i.to_string(),
-                                _ => "?".to_string(),
-                            }
-                        } else {
-                            "null".to_string()
-                        };
-                        format!("{}={}", k, val_str)
-                    }).collect::<Vec<_>>());
+                    record
+                        .metadata
+                        .iter()
+                        .map(|(k, v)| {
+                            let val_str = if let Some(value) = &v.value {
+                                use crate::proto::proximadb_v1::sql_value::Value;
+                                match value {
+                                    Value::StringValue(s) => s.clone(),
+                                    Value::NumberValue(f) => f.to_string(),
+                                    Value::BoolValue(b) => b.to_string(),
+                                    Value::Int64Value(i) => i.to_string(),
+                                    _ => "?".to_string(),
+                                }
+                            } else {
+                                "null".to_string()
+                            };
+                            format!("{}={}", k, val_str)
+                        })
+                        .collect::<Vec<_>>()
+                );
             }
 
             records.push(record);
         }
 
-        debug!("🔍 DEBUG batch_to_records: Extracted {} records", records.len());
+        debug!(
+            "🔍 DEBUG batch_to_records: Extracted {} records",
+            records.len()
+        );
         Ok(records)
     }
 

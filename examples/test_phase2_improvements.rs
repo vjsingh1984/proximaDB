@@ -1,11 +1,15 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
-};
 use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
+};
 use std::collections::HashMap;
 
-fn create_pattern_vectors(num_vectors: usize, dimension: usize, pattern: &str) -> Vec<VectorRecord> {
+fn create_pattern_vectors(
+    num_vectors: usize,
+    dimension: usize,
+    pattern: &str,
+) -> Vec<VectorRecord> {
     let mut vectors = Vec::new();
 
     for row in 0..num_vectors {
@@ -21,31 +25,31 @@ fn create_pattern_vectors(num_vectors: usize, dimension: usize, pattern: &str) -
                         vector.push(0.0);
                     }
                 }
-            },
+            }
             "constant" => {
                 // All same value
                 for _ in 0..dimension {
                     vector.push(42.0);
                 }
-            },
+            }
             "sequential" => {
                 // Monotonic values
                 for dim in 0..dimension {
                     vector.push(row as f32 * dimension as f32 + dim as f32);
                 }
-            },
+            }
             "normalized" => {
                 // Embeddings in [-1, 1] range
                 for dim in 0..dimension {
                     let value = ((row + dim) as f32 * 0.123).sin() * 0.95;
                     vector.push(value);
                 }
-            },
+            }
             _ => {
                 // Random pattern
                 for dim in 0..dimension {
-                    let value = ((row as f32) * 0.01 + (dim as f32) * 0.1) +
-                               (row as f32 * dim as f32).sin() * 0.05;
+                    let value = ((row as f32) * 0.01 + (dim as f32) * 0.1)
+                        + (row as f32 * dim as f32).sin() * 0.05;
                     vector.push(value);
                 }
             }
@@ -95,17 +99,23 @@ fn test_pattern(pattern: &str, vectors: &[VectorRecord]) {
 
     // Expected compression ratios with Phase 2 improvements
     let expected_ratio = match pattern {
-        "sparse" => 20.0,    // Should get >20x with RLE
-        "constant" => 100.0, // Should get >100x with RLE
+        "sparse" => 20.0,     // Should get >20x with RLE
+        "constant" => 100.0,  // Should get >100x with RLE
         "sequential" => 30.0, // Should get >30x with Delta
         "normalized" => 10.0, // Should get >10x with FrameOfReference
-        _ => 1.5,           // Random data
+        _ => 1.5,             // Random data
     };
 
     if compression_ratio >= expected_ratio * 0.5 {
-        println!("  ✅ PASS: Achieved good compression for {} pattern", pattern);
+        println!(
+            "  ✅ PASS: Achieved good compression for {} pattern",
+            pattern
+        );
     } else {
-        println!("  ⚠️  WARN: Lower than expected compression ({:.1}x expected)", expected_ratio);
+        println!(
+            "  ⚠️  WARN: Lower than expected compression ({:.1}x expected)",
+            expected_ratio
+        );
     }
 }
 
@@ -114,7 +124,7 @@ fn main() -> anyhow::Result<()> {
     println!("============================================");
 
     let patterns = vec!["sparse", "constant", "sequential", "normalized", "random"];
-    
+
     for pattern in &patterns {
         let vectors = create_pattern_vectors(256, 256, pattern);
         test_pattern(pattern, &vectors);

@@ -4,8 +4,8 @@
 
 use anyhow::Result;
 use arrow_array::{
-    Array, BooleanArray, FixedSizeListArray, Float32Array, Int64Array, RecordBatch, StringArray,
-    MapArray, StructArray, ArrayRef, builder::StringBuilder,
+    Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Int64Array, MapArray,
+    RecordBatch, StringArray, StructArray, builder::StringBuilder,
 };
 use arrow_buffer::{OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field, Schema};
@@ -13,9 +13,7 @@ use arrow_schema::{DataType, Field, Schema};
 // Currently using direct ArrowWriter for test data generation
 use parquet::arrow::ArrowWriter;
 // Also import columnar exports for future migration
-use crate::storage::engines::core::formats::columnar::{
-    BatchParquetWriter, ParquetWriterConfig,
-};
+use crate::storage::engines::core::formats::columnar::{BatchParquetWriter, ParquetWriterConfig};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::fs::File;
@@ -239,10 +237,13 @@ impl ParquetTestDataGenerator {
                 DataType::Map(
                     Arc::new(Field::new(
                         "entries",
-                        DataType::Struct(vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ].into()),
+                        DataType::Struct(
+                            vec![
+                                Field::new("key", DataType::Utf8, false),
+                                Field::new("value", DataType::Utf8, true),
+                            ]
+                            .into(),
+                        ),
                         false,
                     )),
                     false, // not sorted
@@ -318,10 +319,13 @@ impl ParquetTestDataGenerator {
                 DataType::Map(
                     Arc::new(Field::new(
                         "entries",
-                        DataType::Struct(vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ].into()),
+                        DataType::Struct(
+                            vec![
+                                Field::new("key", DataType::Utf8, false),
+                                Field::new("value", DataType::Utf8, true),
+                            ]
+                            .into(),
+                        ),
                         false,
                     )),
                     false, // not sorted
@@ -365,10 +369,13 @@ impl ParquetTestDataGenerator {
                 DataType::Map(
                     Arc::new(Field::new(
                         "entries",
-                        DataType::Struct(vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ].into()),
+                        DataType::Struct(
+                            vec![
+                                Field::new("key", DataType::Utf8, false),
+                                Field::new("value", DataType::Utf8, true),
+                            ]
+                            .into(),
+                        ),
                         false,
                     )),
                     false, // not sorted
@@ -414,7 +421,8 @@ impl ParquetTestDataGenerator {
                 } else {
                     // Add metadata entries
                     keys_builder.append_value("category");
-                    values_builder.append_value(&format!("cat_{}", i % config.metadata_cardinality));
+                    values_builder
+                        .append_value(&format!("cat_{}", i % config.metadata_cardinality));
                     entry_count += 1;
 
                     keys_builder.append_value("year");
@@ -447,17 +455,21 @@ impl ParquetTestDataGenerator {
             let map_array = MapArray::try_new(
                 Arc::new(Field::new(
                     "entries",
-                    DataType::Struct(vec![
-                        Field::new("key", DataType::Utf8, false),
-                        Field::new("value", DataType::Utf8, true),
-                    ].into()),
+                    DataType::Struct(
+                        vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ]
+                        .into(),
+                    ),
                     false,
                 )),
                 OffsetBuffer::new(ScalarBuffer::from(offsets)),
                 struct_array,
                 None,
                 false,
-            ).unwrap();
+            )
+            .unwrap();
 
             arrays.push(Arc::new(map_array));
         }
@@ -548,17 +560,21 @@ impl ParquetTestDataGenerator {
             let map_array = MapArray::try_new(
                 Arc::new(Field::new(
                     "entries",
-                    DataType::Struct(vec![
-                        Field::new("key", DataType::Utf8, false),
-                        Field::new("value", DataType::Utf8, true),
-                    ].into()),
+                    DataType::Struct(
+                        vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ]
+                        .into(),
+                    ),
                     false,
                 )),
                 OffsetBuffer::new(ScalarBuffer::from(offsets)),
                 struct_array,
                 None,
                 false,
-            ).unwrap();
+            )
+            .unwrap();
 
             arrays.push(Arc::new(map_array));
         }
@@ -694,17 +710,21 @@ impl ParquetTestDataGenerator {
             let map_array = MapArray::try_new(
                 Arc::new(Field::new(
                     "entries",
-                    DataType::Struct(vec![
-                        Field::new("key", DataType::Utf8, false),
-                        Field::new("value", DataType::Utf8, true),
-                    ].into()),
+                    DataType::Struct(
+                        vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ]
+                        .into(),
+                    ),
                     false,
                 )),
                 OffsetBuffer::new(ScalarBuffer::from(offsets)),
                 struct_array,
                 None,
                 false,
-            ).unwrap();
+            )
+            .unwrap();
 
             arrays.push(Arc::new(map_array));
         }

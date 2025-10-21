@@ -10,17 +10,13 @@
 use anyhow::Result;
 use tracing::{debug, trace};
 
+use crate::core::hardware_capabilities::HardwareBackend;
+use crate::storage::engines::core::ops::proximacodec::simd::{
+    get_simd_backend, simd_bitpack_encode_f32, simd_delta_encode_f32,
+    simd_frame_of_reference_encode_f32, simd_pfor_delta_encode_f32, simd_zigzag_encode_f32,
+};
 use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
-use crate::storage::engines::core::ops::proximacodec::simd::{
-    get_simd_backend,
-    simd_delta_encode_f32,
-    simd_bitpack_encode_f32,
-    simd_frame_of_reference_encode_f32,
-    simd_zigzag_encode_f32,
-    simd_pfor_delta_encode_f32,
-};
-use crate::core::hardware_capabilities::HardwareBackend;
 
 // Import GPU kernels
 #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
@@ -49,7 +45,12 @@ pub struct GpuEncoder;
 
 impl GpuEncoder {
     /// Dispatch Delta encoding to appropriate GPU backend
-    fn gpu_delta_encode(&self, values: &[f32], base: f32, backend: &HardwareBackend) -> Result<Vec<i64>> {
+    fn gpu_delta_encode(
+        &self,
+        values: &[f32],
+        base: f32,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<i64>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
             HardwareBackend::CUDA => cuda::cuda_delta_encode_f32(values, base),
@@ -65,14 +66,22 @@ impl GpuEncoder {
 
             _ => {
                 // Fall back to SIMD if GPU kernel not available
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_delta_encode_f32(values, base)
             }
         }
     }
 
     /// Dispatch BitPacked encoding to appropriate GPU backend
-    fn gpu_bitpack_encode(&self, values: &[f32], bits: u8, backend: &HardwareBackend) -> Result<Vec<u8>> {
+    fn gpu_bitpack_encode(
+        &self,
+        values: &[f32],
+        bits: u8,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<u8>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
             HardwareBackend::CUDA => cuda::cuda_bitpack_encode_f32(values, bits),
@@ -87,36 +96,61 @@ impl GpuEncoder {
             HardwareBackend::OpenCL => opencl::opencl_bitpack_encode_f32(values, bits),
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_bitpack_encode_f32(values, bits)
             }
         }
     }
 
     /// Dispatch FrameOfReference encoding to appropriate GPU backend
-    fn gpu_frame_of_reference_encode(&self, values: &[f32], reference: i64, bits: u8, backend: &HardwareBackend) -> Result<Vec<u8>> {
+    fn gpu_frame_of_reference_encode(
+        &self,
+        values: &[f32],
+        reference: i64,
+        bits: u8,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<u8>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
-            HardwareBackend::CUDA => cuda::cuda_frame_of_reference_encode_f32(values, reference, bits),
+            HardwareBackend::CUDA => {
+                cuda::cuda_frame_of_reference_encode_f32(values, reference, bits)
+            }
 
             #[cfg(all(feature = "gpu", target_os = "linux"))]
-            HardwareBackend::ROCm => rocm::rocm_frame_of_reference_encode_f32(values, reference, bits),
+            HardwareBackend::ROCm => {
+                rocm::rocm_frame_of_reference_encode_f32(values, reference, bits)
+            }
 
             #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
-            HardwareBackend::MPS => metal::metal_frame_of_reference_encode_f32(values, reference, bits),
+            HardwareBackend::MPS => {
+                metal::metal_frame_of_reference_encode_f32(values, reference, bits)
+            }
 
             #[cfg(feature = "gpu")]
-            HardwareBackend::OpenCL => opencl::opencl_frame_of_reference_encode_f32(values, reference, bits),
+            HardwareBackend::OpenCL => {
+                opencl::opencl_frame_of_reference_encode_f32(values, reference, bits)
+            }
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_frame_of_reference_encode_f32(values, reference, bits)
             }
         }
     }
 
     /// Dispatch Zigzag encoding to appropriate GPU backend
-    fn gpu_zigzag_encode(&self, values: &[f32], bits: u8, backend: &HardwareBackend) -> Result<Vec<u8>> {
+    fn gpu_zigzag_encode(
+        &self,
+        values: &[f32],
+        bits: u8,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<u8>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
             HardwareBackend::CUDA => cuda::cuda_zigzag_encode_f32(values, bits),
@@ -131,14 +165,23 @@ impl GpuEncoder {
             HardwareBackend::OpenCL => opencl::opencl_zigzag_encode_f32(values, bits),
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_zigzag_encode_f32(values, bits)
             }
         }
     }
 
     /// Dispatch PForDelta encoding to appropriate GPU backend
-    fn gpu_pfor_delta_encode(&self, values: &[f32], majority_bits: u8, base: i64, backend: &HardwareBackend) -> Result<Vec<u8>> {
+    fn gpu_pfor_delta_encode(
+        &self,
+        values: &[f32],
+        majority_bits: u8,
+        base: i64,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<u8>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
             HardwareBackend::CUDA => cuda::cuda_pfor_delta_encode_f32(values, majority_bits, base),
@@ -150,10 +193,15 @@ impl GpuEncoder {
             HardwareBackend::MPS => metal::metal_pfor_delta_encode_f32(values, majority_bits, base),
 
             #[cfg(feature = "gpu")]
-            HardwareBackend::OpenCL => opencl::opencl_pfor_delta_encode_f32(values, majority_bits, base),
+            HardwareBackend::OpenCL => {
+                opencl::opencl_pfor_delta_encode_f32(values, majority_bits, base)
+            }
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_pfor_delta_encode_f32(values, majority_bits, base)
             }
         }
@@ -192,49 +240,95 @@ impl RawEncoder for GpuEncoder {
 
         match scheme {
             ProximaScheme::Delta { base } => {
-                trace!("🚀 [GPU] Encoding {} values with Delta (base={})", values.len(), base);
+                trace!(
+                    "🚀 [GPU] Encoding {} values with Delta (base={})",
+                    values.len(),
+                    base
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_f32(values, *base)?;
 
-                debug!("✅ [GPU] Delta encoded {} values → {} bytes (using baseline format)", values.len(), result.len());
+                debug!(
+                    "✅ [GPU] Delta encoded {} values → {} bytes (using baseline format)",
+                    values.len(),
+                    result.len()
+                );
                 Ok(result)
             }
 
             ProximaScheme::BitPacked { bits } => {
-                trace!("🚀 [GPU] Encoding {} values with BitPacked ({}b/val)", values.len(), bits);
+                trace!(
+                    "🚀 [GPU] Encoding {} values with BitPacked ({}b/val)",
+                    values.len(),
+                    bits
+                );
 
                 let packed = self.gpu_bitpack_encode(values, *bits, &backend)?;
 
-                debug!("✅ [GPU] BitPacked encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [GPU] BitPacked encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
             ProximaScheme::FrameOfReference { reference, bits } => {
-                trace!("🚀 [GPU] Encoding {} values with FrameOfReference (ref={}, {}b/val)", values.len(), reference, bits);
+                trace!(
+                    "🚀 [GPU] Encoding {} values with FrameOfReference (ref={}, {}b/val)",
+                    values.len(),
+                    reference,
+                    bits
+                );
 
-                let packed = self.gpu_frame_of_reference_encode(values, *reference, *bits, &backend)?;
+                let packed =
+                    self.gpu_frame_of_reference_encode(values, *reference, *bits, &backend)?;
 
-                debug!("✅ [GPU] FrameOfReference encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [GPU] FrameOfReference encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
             ProximaScheme::Zigzag { bits } => {
-                trace!("🚀 [GPU] Encoding {} values with Zigzag ({}b/val)", values.len(), bits);
+                trace!(
+                    "🚀 [GPU] Encoding {} values with Zigzag ({}b/val)",
+                    values.len(),
+                    bits
+                );
 
                 let packed = self.gpu_zigzag_encode(values, *bits, &backend)?;
 
-                debug!("✅ [GPU] Zigzag encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [GPU] Zigzag encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
-            ProximaScheme::PForDelta { majority_bits, base } => {
-                trace!("🚀 [GPU] Encoding {} values with PForDelta ({}b majority, base={})", values.len(), majority_bits, base);
+            ProximaScheme::PForDelta {
+                majority_bits,
+                base,
+            } => {
+                trace!(
+                    "🚀 [GPU] Encoding {} values with PForDelta ({}b majority, base={})",
+                    values.len(),
+                    majority_bits,
+                    base
+                );
 
                 let packed = self.gpu_pfor_delta_encode(values, *majority_bits, *base, &backend)?;
 
-                debug!("✅ [GPU] PForDelta encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [GPU] PForDelta encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
@@ -247,18 +341,29 @@ impl RawEncoder for GpuEncoder {
     fn encode_i64(&self, values: &[i64], scheme: &ProximaScheme) -> Result<Vec<u8>> {
         match scheme {
             ProximaScheme::Delta { base } => {
-                trace!("🚀 [GPU] Encoding {} i64 values with Delta (base={})", values.len(), base);
+                trace!(
+                    "🚀 [GPU] Encoding {} i64 values with Delta (base={})",
+                    values.len(),
+                    base
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_i64(values, *base)?;
 
-                debug!("✅ [GPU] Delta encoded {} i64 values → {} bytes (using baseline format)", values.len(), result.len());
+                debug!(
+                    "✅ [GPU] Delta encoded {} i64 values → {} bytes (using baseline format)",
+                    values.len(),
+                    result.len()
+                );
                 Ok(result)
             }
 
             _ => {
-                anyhow::bail!("GPU encoder does not support scheme: {} for i64", scheme.name())
+                anyhow::bail!(
+                    "GPU encoder does not support scheme: {} for i64",
+                    scheme.name()
+                )
             }
         }
     }
@@ -266,18 +371,29 @@ impl RawEncoder for GpuEncoder {
     fn encode_i32(&self, values: &[i32], scheme: &ProximaScheme) -> Result<Vec<u8>> {
         match scheme {
             ProximaScheme::Delta { base } => {
-                trace!("🚀 [GPU] Encoding {} i32 values with Delta (base={})", values.len(), base);
+                trace!(
+                    "🚀 [GPU] Encoding {} i32 values with Delta (base={})",
+                    values.len(),
+                    base
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_i32(values, *base)?;
 
-                debug!("✅ [GPU] Delta encoded {} i32 values → {} bytes (using baseline format)", values.len(), result.len());
+                debug!(
+                    "✅ [GPU] Delta encoded {} i32 values → {} bytes (using baseline format)",
+                    values.len(),
+                    result.len()
+                );
                 Ok(result)
             }
 
             _ => {
-                anyhow::bail!("GPU encoder does not support scheme: {} for i32", scheme.name())
+                anyhow::bail!(
+                    "GPU encoder does not support scheme: {} for i32",
+                    scheme.name()
+                )
             }
         }
     }
@@ -301,9 +417,15 @@ mod tests {
         // Should support: Delta, BitPacked, FrameOfReference, Zigzag, PForDelta
         assert!(encoder.supports(&ProximaScheme::Delta { base: 0 }));
         assert!(encoder.supports(&ProximaScheme::BitPacked { bits: 8 }));
-        assert!(encoder.supports(&ProximaScheme::FrameOfReference { reference: 0, bits: 8 }));
+        assert!(encoder.supports(&ProximaScheme::FrameOfReference {
+            reference: 0,
+            bits: 8
+        }));
         assert!(encoder.supports(&ProximaScheme::Zigzag { bits: 8 }));
-        assert!(encoder.supports(&ProximaScheme::PForDelta { majority_bits: 8, base: 0 }));
+        assert!(encoder.supports(&ProximaScheme::PForDelta {
+            majority_bits: 8,
+            base: 0
+        }));
 
         // Should not support other schemes
         assert!(!encoder.supports(&ProximaScheme::RunLength));
@@ -332,10 +454,17 @@ mod tests {
         // Using baseline bitpacked format: [base:4][bits:1][packed_deltas]
         // Baseline format is wire-compatible across all implementations
         // Verify compression (32 values * 4 bytes raw = 128 bytes)
-        println!("GPU Encoded size: {} bytes (raw would be 128 bytes)", encoded.len());
+        println!(
+            "GPU Encoded size: {} bytes (raw would be 128 bytes)",
+            encoded.len()
+        );
 
         // Bitpacked format should provide some compression for sequential data
         // but may not always be < 128 due to bitpacking overhead and float representation
-        assert!(encoded.len() <= 160, "Encoded size should be reasonable: {} bytes", encoded.len());
+        assert!(
+            encoded.len() <= 160,
+            "Encoded size should be reasonable: {} bytes",
+            encoded.len()
+        );
     }
 }

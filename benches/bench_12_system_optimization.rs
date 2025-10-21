@@ -23,9 +23,9 @@
 //! - Batch processing optimizations
 
 mod common;
-use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+use common::benchmark_utils::{STANDARD_BATCH_SIZES, STANDARD_DIMENSIONS, print_system_info};
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::core::search::results::OptimizedSearchRecord;
 use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord};
 use rand::{Rng, SeedableRng};
@@ -69,25 +69,29 @@ fn create_vector_record(id: &str, vector: Vec<f32>, with_metadata: bool) -> Vect
             (
                 "category".to_string(),
                 SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "benchmark".to_string(),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "benchmark".to_string(),
+                        ),
+                    ),
                 },
             ),
             (
                 "score".to_string(),
                 SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
-                        0.95,
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(0.95),
+                    ),
                 },
             ),
             (
                 "tags".to_string(),
                 SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "test,benchmark,performance".to_string(),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "test,benchmark,performance".to_string(),
+                        ),
+                    ),
                 },
             ),
         ])
@@ -120,7 +124,7 @@ fn bench_record_cloning(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     // Use subset of standard dimensions for cloning tests
-    let dimensions = vec![384, 768, 1536];  // MiniLM, BERT, OpenAI
+    let dimensions = vec![384, 768, 1536]; // MiniLM, BERT, OpenAI
     let sparsities = vec![0.0, 0.3, 0.7, 0.9];
 
     for dimension in dimensions {
@@ -138,9 +142,7 @@ fn bench_record_cloning(c: &mut Criterion) {
             let optimized_records: Vec<OptimizedSearchRecord> = vectors
                 .iter()
                 .enumerate()
-                .map(|(i, v)| {
-                    create_optimized_record(&format!("opt_{}", i), v.clone(), i as f32)
-                })
+                .map(|(i, v)| create_optimized_record(&format!("opt_{}", i), v.clone(), i as f32))
                 .collect();
 
             // Benchmark VectorRecord cloning (deep clone)
@@ -198,10 +200,7 @@ fn bench_arc_memory_patterns(c: &mut Criterion) {
                 (plain_vectors.len() * dimension * 4 * clone_count) as u64,
             ));
             group.bench_with_input(
-                BenchmarkId::new(
-                    "deep_clone",
-                    format!("d{}_x{}", dimension, clone_count),
-                ),
+                BenchmarkId::new("deep_clone", format!("d{}_x{}", dimension, clone_count)),
                 &(plain_vectors, *clone_count),
                 |b, (vecs, count)| {
                     b.iter(|| {
@@ -219,7 +218,9 @@ fn bench_arc_memory_patterns(c: &mut Criterion) {
             // With Arc - reference counting
             let arc_vectors: Vec<Arc<Vec<f32>>> =
                 vectors.clone().into_iter().map(Arc::new).collect();
-            group.throughput(Throughput::Bytes((arc_vectors.len() * 8 * clone_count) as u64));
+            group.throughput(Throughput::Bytes(
+                (arc_vectors.len() * 8 * clone_count) as u64,
+            ));
             group.bench_with_input(
                 BenchmarkId::new("arc_clone", format!("d{}_x{}", dimension, clone_count)),
                 &(arc_vectors, *clone_count),
@@ -311,8 +312,8 @@ fn bench_result_aggregation(c: &mut Criterion) {
                 &(search_results.clone(), *k),
                 |b, (results, top_k)| {
                     b.iter(|| {
-                        use std::collections::BinaryHeap;
                         use std::cmp::Ordering;
+                        use std::collections::BinaryHeap;
 
                         #[derive(Clone)]
                         struct HeapItem {
@@ -465,8 +466,8 @@ fn bench_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_processing");
     group.measurement_time(Duration::from_secs(5));
 
-    let dimension = 768;  // BERT dimension
-    let total_vectors = 5120;  // Use standard large batch size (power of 2)
+    let dimension = 768; // BERT dimension
+    let total_vectors = 5120; // Use standard large batch size (power of 2)
     // Use standard batch sizes plus small sizes for comparison
     let batch_sizes = vec![10, 256, 1024, 5120];
 

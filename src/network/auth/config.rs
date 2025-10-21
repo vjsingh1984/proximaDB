@@ -24,25 +24,25 @@ use std::collections::HashMap;
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
-    
+
     /// JWT configuration
     pub jwt: JwtConfig,
-    
+
     /// API key authentication
     pub api_keys: HashMap<String, ApiKeyInfo>,
-    
+
     /// Role-based access control settings
     pub rbac: RbacConfig,
-    
+
     /// OAuth2 providers (optional)
     pub oauth2: Option<OAuth2Config>,
-    
+
     /// Client certificate (mTLS) settings
     pub client_certificates: Option<ClientCertConfig>,
-    
+
     /// Session management
     pub session: SessionConfig,
-    
+
     /// Audit logging for authentication events
     pub audit_logging: AuditConfig,
 }
@@ -67,19 +67,19 @@ impl Default for AuthConfig {
 pub struct JwtConfig {
     /// JWT signing secret (must be kept secure)
     pub secret: Option<String>,
-    
+
     /// Token expiration time in seconds (default: 1 hour)
     pub expiration_secs: u64,
-    
+
     /// Refresh token expiration (default: 7 days)
     pub refresh_expiration_secs: u64,
-    
+
     /// JWT issuer claim
     pub issuer: String,
-    
+
     /// JWT audience claim
     pub audience: String,
-    
+
     /// Algorithm for signing tokens
     pub algorithm: JwtAlgorithm,
 }
@@ -88,7 +88,7 @@ impl Default for JwtConfig {
     fn default() -> Self {
         Self {
             secret: None,
-            expiration_secs: 3600, // 1 hour
+            expiration_secs: 3600,           // 1 hour
             refresh_expiration_secs: 604800, // 7 days
             issuer: "proximadb".to_string(),
             audience: "proximadb-api".to_string(),
@@ -113,25 +113,25 @@ pub enum JwtAlgorithm {
 pub struct ApiKeyInfo {
     /// User ID associated with this API key
     pub user_id: String,
-    
+
     /// Optional tenant/organization ID
     pub tenant_id: Option<String>,
-    
+
     /// Human-readable description of the key
     pub description: Option<String>,
-    
+
     /// Creation timestamp
     pub created_at: chrono::DateTime<chrono::Utc>,
-    
+
     /// Optional expiration timestamp
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
-    
+
     /// Whether the key is active
     pub active: bool,
-    
+
     /// Optional IP restrictions
     pub allowed_ips: Option<Vec<String>>,
-    
+
     /// Rate limiting override for this key
     pub rate_limit: Option<u32>,
 }
@@ -141,16 +141,16 @@ pub struct ApiKeyInfo {
 pub struct RbacConfig {
     /// Enable RBAC (if false, users get all permissions)
     pub enabled: bool,
-    
+
     /// Default role for new users
     pub default_role: String,
-    
+
     /// Whether to require auth for health endpoints
     pub require_auth_for_health: bool,
-    
+
     /// Whether to require auth for system metrics
     pub require_auth_for_metrics: bool,
-    
+
     /// Predefined roles and their permissions
     pub roles: HashMap<String, Vec<String>>,
 }
@@ -158,55 +158,64 @@ pub struct RbacConfig {
 impl Default for RbacConfig {
     fn default() -> Self {
         let mut roles = HashMap::new();
-        
+
         // Default roles
-        roles.insert("admin".to_string(), vec![
-            "CreateCollection".to_string(),
-            "DeleteCollection".to_string(),
-            "ListCollections".to_string(),
-            "ReadCollectionMetadata".to_string(),
-            "UpdateCollectionMetadata".to_string(),
-            "InsertVectors".to_string(),
-            "DeleteVectors".to_string(),
-            "SearchVectors".to_string(),
-            "UpdateVectors".to_string(),
-            "ReadVectors".to_string(),
-            "CreateGraphRelations".to_string(),
-            "DeleteGraphRelations".to_string(),
-            "TraverseGraph".to_string(),
-            "ReadGraphRelations".to_string(),
-            "ExecuteSqlQueries".to_string(),
-            "ExecuteSksFunctions".to_string(),
-            "ViewSystemMetrics".to_string(),
-            "ViewSystemHealth".to_string(),
-            "ConfigureSystem".to_string(),
-            "ManageUsers".to_string(),
-            "ManageRoles".to_string(),
-            "ManageApiKeys".to_string(),
-            "ViewAuditLogs".to_string(),
-        ]);
-        
-        roles.insert("user".to_string(), vec![
-            "ListCollections".to_string(),
-            "ReadCollectionMetadata".to_string(),
-            "InsertVectors".to_string(),
-            "SearchVectors".to_string(),
-            "ReadVectors".to_string(),
-            "ReadGraphRelations".to_string(),
-            "ExecuteSqlQueries".to_string(),
-            "ExecuteSksFunctions".to_string(),
-            "ViewSystemHealth".to_string(),
-        ]);
-        
-        roles.insert("readonly".to_string(), vec![
-            "ListCollections".to_string(),
-            "ReadCollectionMetadata".to_string(),
-            "SearchVectors".to_string(),
-            "ReadVectors".to_string(),
-            "ReadGraphRelations".to_string(),
-            "ViewSystemHealth".to_string(),
-        ]);
-        
+        roles.insert(
+            "admin".to_string(),
+            vec![
+                "CreateCollection".to_string(),
+                "DeleteCollection".to_string(),
+                "ListCollections".to_string(),
+                "ReadCollectionMetadata".to_string(),
+                "UpdateCollectionMetadata".to_string(),
+                "InsertVectors".to_string(),
+                "DeleteVectors".to_string(),
+                "SearchVectors".to_string(),
+                "UpdateVectors".to_string(),
+                "ReadVectors".to_string(),
+                "CreateGraphRelations".to_string(),
+                "DeleteGraphRelations".to_string(),
+                "TraverseGraph".to_string(),
+                "ReadGraphRelations".to_string(),
+                "ExecuteSqlQueries".to_string(),
+                "ExecuteSksFunctions".to_string(),
+                "ViewSystemMetrics".to_string(),
+                "ViewSystemHealth".to_string(),
+                "ConfigureSystem".to_string(),
+                "ManageUsers".to_string(),
+                "ManageRoles".to_string(),
+                "ManageApiKeys".to_string(),
+                "ViewAuditLogs".to_string(),
+            ],
+        );
+
+        roles.insert(
+            "user".to_string(),
+            vec![
+                "ListCollections".to_string(),
+                "ReadCollectionMetadata".to_string(),
+                "InsertVectors".to_string(),
+                "SearchVectors".to_string(),
+                "ReadVectors".to_string(),
+                "ReadGraphRelations".to_string(),
+                "ExecuteSqlQueries".to_string(),
+                "ExecuteSksFunctions".to_string(),
+                "ViewSystemHealth".to_string(),
+            ],
+        );
+
+        roles.insert(
+            "readonly".to_string(),
+            vec![
+                "ListCollections".to_string(),
+                "ReadCollectionMetadata".to_string(),
+                "SearchVectors".to_string(),
+                "ReadVectors".to_string(),
+                "ReadGraphRelations".to_string(),
+                "ViewSystemHealth".to_string(),
+            ],
+        );
+
         Self {
             enabled: true,
             default_role: "user".to_string(),
@@ -240,13 +249,13 @@ pub struct OAuth2Provider {
 pub struct ClientCertConfig {
     /// Enable client certificate authentication
     pub enabled: bool,
-    
+
     /// Path to CA certificate for validating client certificates
     pub ca_cert_path: String,
-    
+
     /// Whether to require client certificates for all requests
     pub required: bool,
-    
+
     /// Certificate revocation list (CRL) path
     pub crl_path: Option<String>,
 }
@@ -256,13 +265,13 @@ pub struct ClientCertConfig {
 pub struct SessionConfig {
     /// Session timeout in seconds
     pub timeout_secs: u64,
-    
+
     /// Enable session persistence
     pub persistent: bool,
-    
+
     /// Session storage backend
     pub storage: SessionStorage,
-    
+
     /// Maximum concurrent sessions per user
     pub max_sessions_per_user: u32,
 }
@@ -298,16 +307,16 @@ pub struct RedisConfig {
 pub struct AuditConfig {
     /// Enable audit logging
     pub enabled: bool,
-    
+
     /// Log authentication events
     pub log_auth_events: bool,
-    
+
     /// Log authorization failures
     pub log_authz_failures: bool,
-    
+
     /// Log admin operations
     pub log_admin_operations: bool,
-    
+
     /// Audit log storage backend
     pub storage: AuditStorage,
 }
@@ -346,7 +355,7 @@ pub enum AuditStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_auth_config_default() {
         let config = AuthConfig::default();
@@ -357,17 +366,17 @@ mod tests {
         assert!(config.rbac.require_auth_for_metrics);
         assert_eq!(config.rbac.default_role, "user");
     }
-    
+
     #[test]
     fn test_default_roles() {
         let config = RbacConfig::default();
         assert!(config.roles.contains_key("admin"));
         assert!(config.roles.contains_key("user"));
         assert!(config.roles.contains_key("readonly"));
-        
+
         let admin_permissions = &config.roles["admin"];
         assert!(admin_permissions.contains(&"ManageUsers".to_string()));
-        
+
         let readonly_permissions = &config.roles["readonly"];
         assert!(!readonly_permissions.contains(&"DeleteVectors".to_string()));
     }

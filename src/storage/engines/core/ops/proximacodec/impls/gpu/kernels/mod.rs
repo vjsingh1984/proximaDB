@@ -42,7 +42,11 @@ pub mod cuda;
 #[cfg(all(feature = "gpu", target_os = "linux"))]
 pub mod rocm;
 
-#[cfg(all(any(feature = "gpu", feature = "metal"), target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(
+    any(feature = "gpu", feature = "metal"),
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 pub mod metal;
 
 #[cfg(feature = "gpu")]

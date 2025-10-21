@@ -285,7 +285,12 @@ mod tests {
         // Verify extreme compression
         // Original: 100000 × 4 bytes = 400000 bytes
         // Encoded: 4 (num_runs=1) + 8 (1 run) = 12 bytes
-        assert_eq!(encoded.len(), 12, "Should be minimal: {} bytes", encoded.len());
+        assert_eq!(
+            encoded.len(),
+            12,
+            "Should be minimal: {} bytes",
+            encoded.len()
+        );
     }
 
     #[test]

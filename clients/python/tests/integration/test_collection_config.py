@@ -32,21 +32,40 @@ logger = logging.getLogger(__name__)
 class TestCollectionConfigComprehensive:
     """Comprehensive tests for all collection configuration combinations"""
     
+    @pytest.fixture(autouse=True)
+    def setup_and_cleanup(self, request):
+        """Setup and cleanup before/after each test"""
+        # Cleanup before test to ensure clean state
+        try:
+            client = connect_rest("http://localhost:5678")
+            collections = client.list_collections()
+            for col in collections:
+                if col.name.startswith("test_config_"):
+                    try:
+                        client.delete_collection(col.name)
+                    except:
+                        pass
+        except:
+            pass
+        yield
+        # Cleanup after test
+        try:
+            client = connect_rest("http://localhost:5678")
+            self._cleanup_test_collections(client)
+        except:
+            pass
+
     @pytest.fixture
     def rest_client(self):
         """Create REST client"""
         client = connect_rest("http://localhost:5678")
         yield client
-        # Cleanup
-        self._cleanup_test_collections(client)
-    
+
     @pytest.fixture
     def grpc_client(self):
         """Create gRPC client"""
         client = connect_grpc("grpc://localhost:5679")
         yield client
-        # Cleanup
-        self._cleanup_test_collections(client)
     
     def _cleanup_test_collections(self, client):
         """Clean up test collections"""
@@ -306,27 +325,27 @@ class TestCollectionConfigComprehensive:
             None,
             
             # Single column
-            [FilterableColumn(name="category", datatype=FilterableDataType.STRING)],
-            
+            [FilterableColumn(name="category", data_type=FilterableDataType.STRING)],
+
             # Multiple columns with different types
             [
-                FilterableColumn(name="category", datatype=FilterableDataType.STRING),
-                FilterableColumn(name="price", datatype=FilterableDataType.FLOAT),
-                FilterableColumn(name="count", datatype=FilterableDataType.INTEGER),
-                FilterableColumn(name="active", datatype=FilterableDataType.BOOLEAN)
+                FilterableColumn(name="category", data_type=FilterableDataType.STRING),
+                FilterableColumn(name="price", data_type=FilterableDataType.FLOAT),
+                FilterableColumn(name="count", data_type=FilterableDataType.INTEGER),
+                FilterableColumn(name="active", data_type=FilterableDataType.BOOLEAN)
             ],
-            
+
             # Indexed columns
             [
                 FilterableColumn(
                     name="user_id",
-                    datatype=FilterableDataType.STRING,
+                    data_type=FilterableDataType.STRING,
                     indexed=True,
                     estimated_cardinality=10000
                 ),
                 FilterableColumn(
                     name="timestamp",
-                    datatype=FilterableDataType.INTEGER,
+                    data_type=FilterableDataType.INTEGER,
                     indexed=True
                 )
             ]
@@ -371,21 +390,21 @@ class TestCollectionConfigComprehensive:
         index_configs = [
             # HNSW configuration
             [IndexConfiguration(
-                name="hnsw_index",
+                index_name="hnsw_index",
                 algorithm=IndexingAlgorithm.HNSW,
-                config=HnswConfig(
+                hnsw_config=HnswConfig(
                     m=32,
                     ef_construction=400,
                     ef_search=100,
                     max_partition_size=200000
                 )
             )],
-            
+
             # IVF configuration
             [IndexConfiguration(
-                name="ivf_index",
+                index_name="ivf_index",
                 algorithm=IndexingAlgorithm.IVF,
-                config=IvfConfig(
+                ivf_config=IvfConfig(
                     n_lists=200,
                     n_probe=5,
                     quantization_bits=8,
@@ -397,22 +416,22 @@ class TestCollectionConfigComprehensive:
             # Multiple indices
             [
                 IndexConfiguration(
-                    name="primary_hnsw",
+                    index_name="primary_hnsw",
                     algorithm=IndexingAlgorithm.HNSW,
-                    config=HnswConfig(m=16, ef_construction=200)
+                    hnsw_config=HnswConfig(m=16, ef_construction=200)
                 ),
                 IndexConfiguration(
-                    name="secondary_flat",
+                    index_name="secondary_flat",
                     algorithm=IndexingAlgorithm.FLAT,
-                    config=FlatConfig(enable_simd=True, batch_size=2000)
+                    flat_config=FlatConfig(enable_simd=True, batch_size=2000)
                 )
             ],
             
             # PQ index
             [IndexConfiguration(
-                name="pq_index",
+                index_name="pq_index",
                 algorithm=IndexingAlgorithm.PQ,
-                config=PqConfig(
+                pq_config=PqConfig(
                     subvectors=16,
                     bits_per_subvector=4,
                     training_sample_count=20000,
@@ -422,9 +441,9 @@ class TestCollectionConfigComprehensive:
             
             # LSH index
             [IndexConfiguration(
-                name="lsh_index",
+                index_name="lsh_index",
                 algorithm=IndexingAlgorithm.LSH,
-                config=LshConfig(
+                lsh_config=LshConfig(
                     num_hash_tables=10,
                     hash_size=12,
                     num_hash_functions=5
@@ -510,8 +529,8 @@ class TestCollectionConfigComprehensive:
                 "storage_engine": StorageEngine.SST,
                 "primary_indexing_algorithm": IndexingAlgorithm.FLAT,
                 "filterable_columns": [
-                    FilterableColumn(name="category", datatype=FilterableDataType.STRING),
-                    FilterableColumn(name="priority", datatype=FilterableDataType.INTEGER)
+                    FilterableColumn(name="category", data_type=FilterableDataType.STRING),
+                    FilterableColumn(name="priority", data_type=FilterableDataType.INTEGER)
                 ]
             },
             
@@ -523,14 +542,14 @@ class TestCollectionConfigComprehensive:
                 "storage_engine": StorageEngine.VIPER,
                 "index_configs": [
                     IndexConfiguration(
-                        name="primary",
+                        index_name="primary",
                         algorithm=IndexingAlgorithm.HNSW,
-                        config=HnswConfig(m=16)
+                        hnsw_config=HnswConfig(m=16)
                     ),
                     IndexConfiguration(
-                        name="secondary",
+                        index_name="secondary",
                         algorithm=IndexingAlgorithm.FLAT,
-                        config=FlatConfig()
+                        flat_config=FlatConfig()
                     )
                 ],
                 "quantization_config": QuantizationConfig(
@@ -548,16 +567,16 @@ class TestCollectionConfigComprehensive:
                 "storage_engine": StorageEngine.VIPER,
                 "primary_indexing_algorithm": IndexingAlgorithm.HNSW,
                 "filterable_columns": [
-                    FilterableColumn(name="doc_type", datatype=FilterableDataType.STRING, indexed=True),
-                    FilterableColumn(name="score", datatype=FilterableDataType.FLOAT),
-                    FilterableColumn(name="timestamp", datatype=FilterableDataType.INTEGER, indexed=True),
-                    FilterableColumn(name="active", datatype=FilterableDataType.BOOLEAN)
+                    FilterableColumn(name="doc_type", data_type=FilterableDataType.STRING, indexed=True),
+                    FilterableColumn(name="score", data_type=FilterableDataType.FLOAT),
+                    FilterableColumn(name="timestamp", data_type=FilterableDataType.INTEGER, indexed=True),
+                    FilterableColumn(name="active", data_type=FilterableDataType.BOOLEAN)
                 ],
                 "index_configs": [
                     IndexConfiguration(
-                        name="main_index",
+                        index_name="main_index",
                         algorithm=IndexingAlgorithm.HNSW,
-                        config=HnswConfig(
+                        hnsw_config=HnswConfig(
                             m=32,
                             ef_construction=400,
                             ef_search=100,

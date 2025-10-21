@@ -12,10 +12,10 @@
 //! - SET operation planning (UNION, INTERSECT, EXCEPT)
 //! - CTE structure validation
 
+use crate::core::search::FilterExpression;
 use crate::query::ast::*;
 use crate::query::execution::planner::ExecutionPlanner;
 use crate::query::execution::{ExecutionOperation, ExecutionStrategy};
-use crate::core::search::FilterExpression;
 use std::sync::Arc;
 
 // ============================================================================
@@ -98,12 +98,12 @@ fn test_metadata_filter_cost_estimation() {
 }
 
 async fn create_test_planner() -> ExecutionPlanner {
+    use crate::graph::service::GraphOperationsService;
+    use crate::index::AxisManager;
     use crate::services::collection::manager::CollectionService;
     use crate::services::operations::vectors::VectorOperationsService;
-    use crate::graph::service::GraphOperationsService;
     use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-    use crate::index::AxisManager;
     use std::sync::Arc;
 
     // Create temporary directory for storage
@@ -114,35 +114,50 @@ async fn create_test_planner() -> ExecutionPlanner {
     let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
     // Create WAL manager with default config
-    use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory, WriteBufferStrategyType};
-    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::persistence::write_ahead_log::{
+        WALBatchFactory, WALConfig, WriteBufferStrategyType,
+    };
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem = Arc::new(
+        FilesystemFactory::create(fs_config)
+            .await
+            .expect("Failed to create filesystem"),
+    );
     let wal_config = WALConfig::default();
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         WriteBufferStrategyType::AvroBatch,
         &wal_config,
-        filesystem
-    ).await.expect("Failed to create WAL strategy");
-    let wal_manager = Arc::new(WriteAheadLogManager::new(
-        strategy,
-        wal_config
-    ).await.expect("Failed to create WAL manager"));
+        filesystem,
+    )
+    .await
+    .expect("Failed to create WAL strategy");
+    let wal_manager = Arc::new(
+        WriteAheadLogManager::new(strategy, wal_config)
+            .await
+            .expect("Failed to create WAL manager"),
+    );
 
     // Create Axis index manager with default config
     use crate::index::axis::AxisConfig;
     let axis_config = AxisConfig::default();
-    let axis_manager = Arc::new(AxisManager::new(
-        axis_config
-    ).await.expect("Failed to create Axis manager"));
+    let axis_manager = Arc::new(
+        AxisManager::new(axis_config)
+            .await
+            .expect("Failed to create Axis manager"),
+    );
 
     // Create collection service with universal metadata backend
+    use crate::core::config::StorageConfig;
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
     use crate::storage::traits::InternalCollectionProvider;
-    use crate::core::config::StorageConfig;
 
     let fs_config = FilesystemConfig::default();
-    let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem2 = Arc::new(
+        FilesystemFactory::create(fs_config)
+            .await
+            .expect("Failed to create filesystem"),
+    );
 
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
     let metadata_config = UniversalMetadataConfig {
@@ -154,18 +169,20 @@ async fn create_test_planner() -> ExecutionPlanner {
         backup_url: None,
         temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
     };
-    let metadata_backend = Arc::new(UniversalMetadataBackend::new(
-        metadata_config,
-        filesystem2
-    ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+    let metadata_backend = Arc::new(
+        UniversalMetadataBackend::new(metadata_config, filesystem2)
+            .await
+            .expect("Failed to create metadata backend"),
+    ) as Arc<dyn InternalCollectionProvider>;
     let storage_config = StorageConfig {
         metadata_url: storage_url.clone(),
         ..Default::default()
     };
-    let collection_service = Arc::new(CollectionService::new(
-        metadata_backend,
-        storage_config
-    ).await.expect("Failed to create collection service"));
+    let collection_service = Arc::new(
+        CollectionService::new(metadata_backend, storage_config)
+            .await
+            .expect("Failed to create collection service"),
+    );
 
     // Create vector operations service with all dependencies
     let vector_service = Arc::new(VectorOperationsService::new(

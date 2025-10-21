@@ -285,16 +285,16 @@ impl HardwareBackend {
     pub fn vector_width(&self) -> usize {
         match self {
             // GPU backends: Warp/Wavefront sizes
-            Self::CUDA => 32,      // NVIDIA warp size
-            Self::ROCm => 64,      // AMD wavefront size
-            Self::MPS => 32,       // Metal SIMD group size
-            Self::OpenCL => 32,    // Typical work-group size
+            Self::CUDA => 32,   // NVIDIA warp size
+            Self::ROCm => 64,   // AMD wavefront size
+            Self::MPS => 32,    // Metal SIMD group size
+            Self::OpenCL => 32, // Typical work-group size
 
             // CPU SIMD backends
-            Self::AVX512 => 16,    // 512 bits / 32 bits = 16x f32
-            Self::AVX2 => 8,       // 256 bits / 32 bits = 8x f32
-            Self::NEON => 4,       // 128 bits / 32 bits = 4x f32
-            Self::SSE => 4,        // 128 bits / 32 bits = 4x f32
+            Self::AVX512 => 16, // 512 bits / 32 bits = 16x f32
+            Self::AVX2 => 8,    // 256 bits / 32 bits = 8x f32
+            Self::NEON => 4,    // 128 bits / 32 bits = 4x f32
+            Self::SSE => 4,     // 128 bits / 32 bits = 4x f32
 
             // Scalar: No parallelism
             Self::Scalar => 1,

@@ -123,7 +123,9 @@ fn decode_sparse_coo_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
 
     // Each coordinate pair is 8 bytes (4 for index + 4 for value)
     if data.len() < 4 + num_nonzero * 8 {
-        return Err(anyhow::anyhow!("SparseCOO decode: insufficient coordinate data"));
+        return Err(anyhow::anyhow!(
+            "SparseCOO decode: insufficient coordinate data"
+        ));
     }
 
     // Initialize result with zeros
@@ -170,7 +172,9 @@ fn decode_sparse_coo_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     // Each coordinate pair is 12 bytes (4 for index + 8 for value)
     if data.len() < 4 + num_nonzero * 12 {
-        return Err(anyhow::anyhow!("SparseCOO decode: insufficient coordinate data"));
+        return Err(anyhow::anyhow!(
+            "SparseCOO decode: insufficient coordinate data"
+        ));
     }
 
     // Initialize result with zeros
@@ -307,7 +311,11 @@ mod tests {
 
         // COO: 4 (count) + 8 (one coordinate) = 12 bytes
         // Bitmap would need: 4 (count) + 12500 (bitmap) + 4 (value) = ~12508 bytes
-        assert!(encoded.len() <= 12, "COO should be tiny: {} bytes", encoded.len());
+        assert!(
+            encoded.len() <= 12,
+            "COO should be tiny: {} bytes",
+            encoded.len()
+        );
     }
 
     #[test]

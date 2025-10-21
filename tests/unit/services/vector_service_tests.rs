@@ -2,9 +2,9 @@
 //!
 //! Tests the actual vector operations orchestration functionality
 
-use proximadb::core::search::FilterExpression;
 use proximadb::compute::quantization::types::QuantizationLevel;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::core::search::FilterExpression;
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use std::collections::HashMap;
 
 #[cfg(test)]
@@ -13,9 +13,12 @@ mod tests {
 
     fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
         let mut metadata = HashMap::new();
-        metadata.insert("test_id".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue(id.to_string())),
-        });
+        metadata.insert(
+            "test_id".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(id.to_string())),
+            },
+        );
 
         VectorRecord {
             id: id.to_string(),
@@ -41,7 +44,7 @@ mod tests {
     #[test]
     fn test_quantization_levels() {
         use proximadb::compute::quantization::types::{
-            BinaryQuantization, ScalarQuantization, ProductQuantization
+            BinaryQuantization, ProductQuantization, ScalarQuantization,
         };
 
         // Test that quantization levels are properly defined
@@ -53,7 +56,7 @@ mod tests {
             QuantizationLevel::Scalar(ScalarQuantization {
                 scale: 1.0,
                 offset: 0.0,
-                bits: 8,  // INT8 quantization
+                bits: 8, // INT8 quantization
                 clamp_values: true,
             }),
             QuantizationLevel::Pq(ProductQuantization {
@@ -105,17 +108,26 @@ mod tests {
         let mut metadata = HashMap::new();
 
         // Test different SqlValue types
-        metadata.insert("string_field".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue("test".to_string())),
-        });
+        metadata.insert(
+            "string_field".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue("test".to_string())),
+            },
+        );
 
-        metadata.insert("number_field".to_string(), SqlValue {
-            value: Some(sql_value::Value::NumberValue(42.0)),
-        });
+        metadata.insert(
+            "number_field".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::NumberValue(42.0)),
+            },
+        );
 
-        metadata.insert("bool_field".to_string(), SqlValue {
-            value: Some(sql_value::Value::BoolValue(true)),
-        });
+        metadata.insert(
+            "bool_field".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::BoolValue(true)),
+            },
+        );
 
         assert_eq!(metadata.len(), 3);
         assert!(metadata.contains_key("string_field"));

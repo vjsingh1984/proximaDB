@@ -451,7 +451,10 @@ mod tests {
         );
         metadata.insert("brand".to_string(), json!("TechCorp"));
         metadata.insert("year".to_string(), json!(2023));
-        metadata.insert("description".to_string(), json!("Gaming electronics for professionals"));
+        metadata.insert(
+            "description".to_string(),
+            json!("Gaming electronics for professionals"),
+        );
         metadata
     }
 

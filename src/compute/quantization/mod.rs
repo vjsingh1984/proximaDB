@@ -19,8 +19,10 @@ pub use unified::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel, UniformQuantization,
 };
 
-pub use storage_engine::{StorageQuantizationConfig, StorageQuantizationEngine};
 pub use global_cache::{GlobalQuantizationCache, QuantizationCacheKey};
-pub use selection::{QuantizationSelector, QuantizationSelectionReason, RecommendedQuantizationLevel};
+pub use selection::{
+    QuantizationSelectionReason, QuantizationSelector, RecommendedQuantizationLevel,
+};
+pub use storage_engine::{StorageQuantizationConfig, StorageQuantizationEngine};
 
 pub use smart_defaults::QuantizationSmartDefaults;

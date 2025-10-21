@@ -182,7 +182,11 @@ impl UnifiedColumnarReader {
         // Sort files by name for consistent ordering
         parquet_files.sort();
 
-        debug!("Found {} Parquet files in {:?}", parquet_files.len(), data_dir);
+        debug!(
+            "Found {} Parquet files in {:?}",
+            parquet_files.len(),
+            data_dir
+        );
         Ok(parquet_files)
     }
 

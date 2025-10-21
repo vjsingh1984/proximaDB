@@ -13,9 +13,9 @@
 //! Source: src/query/unified_query_optimizer.rs
 //! Tests extracted: 3 (all tests from the source module)
 
-use proximadb::query::unified_query_optimizer::*;
+use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::Collection;
-use proximadb::core::search::{FilterExpression, SearchParams, ComparisonOperator};
+use proximadb::query::unified_query_optimizer::*;
 use std::sync::Arc;
 
 #[test]
@@ -36,20 +36,20 @@ fn test_cost_model_selectivity() {
 
     #[allow(unreachable_code)]
     {
-    let cost_model = panic!("UnifiedCostModel::new() is private");
+        let cost_model = panic!("UnifiedCostModel::new() is private");
 
-    let _equals = FilterCondition::Equals {
-        column: "id".to_string(),
-        value: serde_json::Value::String("test".to_string()),
-    };
-    // assert_eq!(cost_model.estimate_selectivity(&equals), 0.1);
+        let _equals = FilterCondition::Equals {
+            column: "id".to_string(),
+            value: serde_json::Value::String("test".to_string()),
+        };
+        // assert_eq!(cost_model.estimate_selectivity(&equals), 0.1);
 
-    let _range = FilterCondition::Range {
-        column: "price".to_string(),
-        min: serde_json::json!(10),
-        max: serde_json::json!(100),
-    };
-    // assert_eq!(cost_model.estimate_selectivity(&range), 0.3);
+        let _range = FilterCondition::Range {
+            column: "price".to_string(),
+            min: serde_json::json!(10),
+            max: serde_json::json!(100),
+        };
+        // assert_eq!(cost_model.estimate_selectivity(&range), 0.3);
     }
 }
 

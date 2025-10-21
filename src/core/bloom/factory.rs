@@ -7,8 +7,8 @@
 
 //! Bloom filter factory for creating appropriate implementations
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 
 use super::strategies::{
     BitPackedBloomFilter, ByteAlignedBloomFilter, CompositeBloomFilter, SimpleBloomFilter,
@@ -84,18 +84,10 @@ impl BloomFilterFactory {
 
         // Create filter based on strategy
         let filter: Box<dyn BloomFilterStrategy> = match config.strategy {
-            BloomStrategy::BitPacked => {
-                Box::new(BitPackedBloomFilter::from_bytes(data)?)
-            }
-            BloomStrategy::ByteAligned => {
-                Box::new(ByteAlignedBloomFilter::from_bytes(data)?)
-            }
-            BloomStrategy::Simple => {
-                Box::new(SimpleBloomFilter::from_bytes(data)?)
-            }
-            BloomStrategy::Composite => {
-                Box::new(CompositeBloomFilter::from_bytes(data)?)
-            }
+            BloomStrategy::BitPacked => Box::new(BitPackedBloomFilter::from_bytes(data)?),
+            BloomStrategy::ByteAligned => Box::new(ByteAlignedBloomFilter::from_bytes(data)?),
+            BloomStrategy::Simple => Box::new(SimpleBloomFilter::from_bytes(data)?),
+            BloomStrategy::Composite => Box::new(CompositeBloomFilter::from_bytes(data)?),
         };
 
         Ok(filter)

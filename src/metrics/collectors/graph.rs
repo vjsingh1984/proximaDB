@@ -437,8 +437,8 @@ impl MetricsCollector for QuasarMetricsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::OperationMode;
     use crate::graph::GraphOperationsService;
+    use crate::graph::OperationMode;
 
     #[tokio::test]
     async fn test_graph_metrics_collector() {

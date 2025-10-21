@@ -32,7 +32,6 @@ pub const FIELD_Q_PQ16: &str = "q_pq16";
 /// PQ32 quantized vector data (32 bits per code)
 pub const FIELD_Q_PQ32: &str = "q_pq32";
 
-
 // === Codebook Storage (File-Level Metadata) ===
 // NOTE: Codebooks are NOT stored as per-row columns!
 // They are stored as:
@@ -58,7 +57,6 @@ pub const FIELD_QP_PQ_SUBQUANTIZERS: &str = "qp_pq_subquantizers";
 
 /// PQ number of centroids per subquantizer parameter
 pub const FIELD_QP_PQ_CENTROIDS: &str = "qp_pq_centroids";
-
 
 // === Row Group Management ===
 /// Row group offset for ID-less storage
@@ -151,15 +149,7 @@ pub const QUANTIZATION_COLUMNS: &[&str] = &[
 ];
 
 /// All temporal columns
-pub const TEMPORAL_COLUMNS: &[&str] = &[
-    FIELD_TIMESTAMP,
-    FIELD_UPDATED_AT,
-    FIELD_EXPIRES_AT,
-];
+pub const TEMPORAL_COLUMNS: &[&str] = &[FIELD_TIMESTAMP, FIELD_UPDATED_AT, FIELD_EXPIRES_AT];
 
 /// Core required columns for vector storage
-pub const REQUIRED_COLUMNS: &[&str] = &[
-    FIELD_ID,
-    FIELD_VECTOR_FP32,
-    FIELD_TIMESTAMP,
-];
+pub const REQUIRED_COLUMNS: &[&str] = &[FIELD_ID, FIELD_VECTOR_FP32, FIELD_TIMESTAMP];

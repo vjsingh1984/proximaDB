@@ -92,10 +92,7 @@ impl EventLogNotifier for SstEventLogNotifier {
         // Block until EventLog acknowledges
         self.event_log.add_event(event).await?;
 
-        trace!(
-            "EventLog acknowledged SST compaction for {}",
-            collection_id
-        );
+        trace!("EventLog acknowledged SST compaction for {}", collection_id);
         Ok(())
     }
 
@@ -226,7 +223,10 @@ impl EventLogNotifierFactory {
                 // TODO: Implement specific notifiers for each engine
                 Ok(Box::new(Self::create_sst_notifier(event_log)))
             }
-            _ => Err(anyhow::anyhow!("Unknown storage engine type '{}' for event notifier", engine_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown storage engine type '{}' for event notifier",
+                engine_type
+            )),
         }
     }
 }
@@ -331,13 +331,15 @@ mod tests {
         // Notification blocks until EventLog acknowledges
         let start = std::time::Instant::now();
         for i in 0..10 {
-            let result = notifier.notify_flush(
-                "test_collection",
-                vec![format!("file_{}.sstable", i)],
-                100,
-                false,
-                true,
-            ).await;
+            let result = notifier
+                .notify_flush(
+                    "test_collection",
+                    vec![format!("file_{}.sstable", i)],
+                    100,
+                    false,
+                    true,
+                )
+                .await;
 
             // Handle collection not found error gracefully in test environment
             if let Err(e) = result {
@@ -351,11 +353,18 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should complete reasonably fast but not instant (because it waits for acknowledgment)
-        assert!(elapsed.as_millis() < 5000, "Notifications took {:?} - should complete within 5s", elapsed);
+        assert!(
+            elapsed.as_millis() < 5000,
+            "Notifications took {:?} - should complete within 5s",
+            elapsed
+        );
 
         // Verify the event log service is responding
         let health = event_log.get_health().await;
-        assert!(health.is_ok(), "Event log service should be responsive after flush notifications");
+        assert!(
+            health.is_ok(),
+            "Event log service should be responsive after flush notifications"
+        );
     }
 
     #[tokio::test]

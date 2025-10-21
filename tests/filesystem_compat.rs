@@ -9,9 +9,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::storage::persistence::filesystem::{
-    FileSystem, FileOptions, FilesystemFactory,
+    FileOptions, FileSystem, FilesystemFactory, metadata_traits::GenericMetadataSerializer,
     unified::UnifiedCachingFilesystem,
-    metadata_traits::GenericMetadataSerializer,
 };
 
 /// Test data for filesystem operations
@@ -45,7 +44,11 @@ mod basic_operations {
 
         // Read and verify
         let read_data = unified_fs.read(&test_path).await?;
-        assert_eq!(test_data, read_data.to_vec(), "Data should match after write/read");
+        assert_eq!(
+            test_data,
+            read_data.to_vec(),
+            "Data should match after write/read"
+        );
 
         Ok(())
     }
@@ -106,13 +109,19 @@ mod basic_operations {
         unified_fs.write(&test_path, &data, None).await?;
 
         // Verify file exists
-        assert!(unified_fs.exists(&test_path).await?, "File should exist after write");
+        assert!(
+            unified_fs.exists(&test_path).await?,
+            "File should exist after write"
+        );
 
         // Delete file
         unified_fs.delete(&test_path).await?;
 
         // Verify file is deleted
-        assert!(!unified_fs.exists(&test_path).await?, "File should not exist after delete");
+        assert!(
+            !unified_fs.exists(&test_path).await?,
+            "File should not exist after delete"
+        );
 
         Ok(())
     }
@@ -197,8 +206,10 @@ mod caching {
         );
 
         // Log the speedup for informational purposes
-        println!("Cache performance: First read: {:?}, Second read: {:?}, Speedup: {:.2}x",
-                 first_read, second_read, speedup_ratio);
+        println!(
+            "Cache performance: First read: {:?}, Second read: {:?}, Speedup: {:.2}x",
+            first_read, second_read, speedup_ratio
+        );
 
         Ok(())
     }
@@ -320,9 +331,7 @@ mod concurrency {
             let path = format!("{}/concurrent_{}.dat", base_path, i);
             let data = vec![i as u8; 1024];
 
-            tasks.spawn(async move {
-                fs.write(&path, &data, None).await
-            });
+            tasks.spawn(async move { fs.write(&path, &data, None).await });
         }
 
         // Wait for all writes to complete

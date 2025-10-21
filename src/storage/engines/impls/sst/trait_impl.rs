@@ -19,21 +19,19 @@
 //! Contains the main trait implementations for the SST engine,
 //! delegating to the appropriate modules for actual functionality.
 
-use std::collections::HashMap;
-use async_trait::async_trait;
 use anyhow::Result;
-use tracing::{info, debug};
+use async_trait::async_trait;
+use std::collections::HashMap;
+use tracing::{debug, info};
 
-use crate::storage::engines::impls::sst::core::SstEngine;
-use crate::storage::engines::impls::sst::SstError;
-use crate::storage::traits::{
-    UnifiedStorageEngine, StorageEngineStrategy,
-    FlushParameters, FlushResult,
-    CompactionParameters, CompactionResult,
-    StorageQueryContext
-};
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::engines::impls::sst::SstError;
+use crate::storage::engines::impls::sst::core::SstEngine;
+use crate::storage::traits::{
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    StorageQueryContext, UnifiedStorageEngine,
+};
 
 #[async_trait]
 impl UnifiedStorageEngine for SstEngine {
@@ -49,7 +47,9 @@ impl UnifiedStorageEngine for SstEngine {
         StorageEngineStrategy::Sst
     }
 
-    fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+    fn get_filesystem_factory(
+        &self,
+    ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
         self.filesystem()
     }
 
@@ -69,7 +69,11 @@ impl UnifiedStorageEngine for SstEngine {
             // This would be implemented in the compaction module
             Ok(CompactionResult {
                 success: true,
-                collections_affected: params.collection_id.as_ref().map(|id| vec![id.clone()]).unwrap_or_default(),
+                collections_affected: params
+                    .collection_id
+                    .as_ref()
+                    .map(|id| vec![id.clone()])
+                    .unwrap_or_default(),
                 entries_processed: Some(0),
                 entries_removed: Some(0),
                 bytes_read: Some(0),
@@ -83,7 +87,11 @@ impl UnifiedStorageEngine for SstEngine {
         } else {
             Ok(CompactionResult {
                 success: false,
-                collections_affected: params.collection_id.as_ref().map(|id| vec![id.clone()]).unwrap_or_default(),
+                collections_affected: params
+                    .collection_id
+                    .as_ref()
+                    .map(|id| vec![id.clone()])
+                    .unwrap_or_default(),
                 entries_processed: Some(0),
                 entries_removed: Some(0),
                 bytes_read: Some(0),
@@ -104,7 +112,10 @@ impl UnifiedStorageEngine for SstEngine {
         _base_path: &str,
         vector_id: &str,
     ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
-        debug!("🔍 SST: Looking up vector {} in collection {}", vector_id, collection_id);
+        debug!(
+            "🔍 SST: Looking up vector {} in collection {}",
+            vector_id, collection_id
+        );
 
         // Check if vector exists using bloom filters
         let exists = self.contains_vector(collection_id, vector_id).await?;
@@ -135,25 +146,28 @@ impl UnifiedStorageEngine for SstEngine {
 
         metrics.insert(
             "engine".to_string(),
-            serde_json::Value::String("sst".to_string())
+            serde_json::Value::String("sst".to_string()),
         );
 
         metrics.insert(
             "version".to_string(),
-            serde_json::Value::String(self.engine_version().to_string())
+            serde_json::Value::String(self.engine_version().to_string()),
         );
 
         // Add SST-specific metrics
         if let Some(compaction_manager) = self.compaction_manager() {
             metrics.insert(
                 "compaction_enabled".to_string(),
-                serde_json::Value::Bool(true)
+                serde_json::Value::Bool(true),
             );
         }
 
         // Get performance metrics from the universal optimizer
         // TODO: Add performance metrics collection when available
-        metrics.insert("optimizer_status".to_string(), serde_json::Value::String("active".to_string()));
+        metrics.insert(
+            "optimizer_status".to_string(),
+            serde_json::Value::String("active".to_string()),
+        );
 
         Ok(metrics)
     }
@@ -162,7 +176,9 @@ impl UnifiedStorageEngine for SstEngine {
 /// Additional trait implementations for SST engine optimization
 #[async_trait]
 impl crate::storage::engines::core::ops::UniversallyOptimized for SstEngine {
-    fn universal_optimizer(&self) -> &crate::storage::engines::core::ops::UniversalPerformanceOptimizer {
+    fn universal_optimizer(
+        &self,
+    ) -> &crate::storage::engines::core::ops::UniversalPerformanceOptimizer {
         self.universal_optimizer()
     }
 
@@ -170,14 +186,10 @@ impl crate::storage::engines::core::ops::UniversallyOptimized for SstEngine {
         info!("🔧 SST: Setting up engine-specific optimizations");
 
         // Enable prefetching for SSTable files based on access patterns
-        self.universal_optimizer()
-            .prefetch_data(&[])
-            .await?;
+        self.universal_optimizer().prefetch_data(&[]).await?;
 
         // Setup SSTable-specific cache eviction if needed
-        self.universal_optimizer()
-            .evict_cache_if_needed()
-            .await?;
+        self.universal_optimizer().evict_cache_if_needed().await?;
 
         info!("✅ SST: Engine-specific optimizations setup complete");
         Ok(())
@@ -219,9 +231,9 @@ impl crate::storage::engines::core::ops::UniversallyOptimized for SstEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -241,16 +253,22 @@ mod tests {
         let engine = create_test_engine().await;
         let metrics = engine.collect_engine_metrics().await.unwrap();
 
-        assert_eq!(metrics["engine"], serde_json::Value::String("sst".to_string()));
+        assert_eq!(
+            metrics["engine"],
+            serde_json::Value::String("sst".to_string())
+        );
         assert!(metrics.contains_key("version"));
     }
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 }

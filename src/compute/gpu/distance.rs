@@ -21,9 +21,9 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 // Import DistanceMetric from proto module
-use crate::proto::proximadb_v1::DistanceMetric;
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};
 use crate::core::hardware_capabilities::GpuBackend;
+use crate::proto::proximadb_v1::DistanceMetric;
 
 // Using central GpuBackend enum from hardware_capabilities module
 
@@ -406,7 +406,9 @@ impl GpuDistanceCompute {
 
         // TODO: Create distance.metal shader and compile to .metallib
         // For now, return error - this is separate from ProximaCodec GPU work
-        return Err(anyhow!("Metal distance shaders not yet implemented - use CPU fallback"));
+        return Err(anyhow!(
+            "Metal distance shaders not yet implemented - use CPU fallback"
+        ));
 
         /* TODO: Uncomment when Metal distance shaders are implemented
         // Select function based on metric

@@ -18,7 +18,7 @@ fn json_to_sql_value(value: serde_json::Value) -> SqlValue {
             } else {
                 Value::NumberValue(n.as_f64().unwrap_or(0.0))
             }
-        },
+        }
         serde_json::Value::String(s) => Value::StringValue(s),
         _ => Value::StringValue(value.to_string()),
     };
@@ -26,7 +26,12 @@ fn json_to_sql_value(value: serde_json::Value) -> SqlValue {
 }
 
 /// Test helper to create a OptimizedSearchRecord with specific ID, version, and timestamp
-fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> OptimizedSearchRecord {
+fn create_search_result(
+    id: &str,
+    version: u32,
+    timestamp: u32,
+    score: f32,
+) -> OptimizedSearchRecord {
     use std::sync::Arc;
     OptimizedSearchRecord {
         id: id.to_string(),
@@ -234,7 +239,9 @@ fn test_mvcc_integration_complex_scenario() {
 fn test_mvcc_integration_tombstone_handling() {
     // Create results where doc4 has a tombstone marker
     let mut doc4_v1 = create_search_result("doc4", 1, 100, 0.9);
-    doc4_v1.metadata.insert("active".to_string(), json_to_sql_value(json!(true)));
+    doc4_v1
+        .metadata
+        .insert("active".to_string(), json_to_sql_value(json!(true)));
 
     let mut doc4_v2 = create_search_result("doc4", 2, 200, 0.8);
     doc4_v2
@@ -251,7 +258,10 @@ fn test_mvcc_integration_tombstone_handling() {
     assert_eq!(deduplicated[0].id, "doc4");
     assert_eq!(deduplicated[0].version, Some(2));
     // v2 has the tombstone marker, v1's "active" metadata is not carried forward
-    assert_eq!(deduplicated[0].metadata.get("is_deleted"), Some(&json_to_sql_value(json!(true))));
+    assert_eq!(
+        deduplicated[0].metadata.get("is_deleted"),
+        Some(&json_to_sql_value(json!(true)))
+    );
 
     debug!("✅ MVCC tombstone handling test passed");
 }

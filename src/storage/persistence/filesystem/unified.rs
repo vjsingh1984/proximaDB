@@ -22,14 +22,14 @@ use crate::storage::persistence::filesystem::{
     DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemFile, FsResult,
 };
 
-use super::unified_cache::{UnifiedMetadataCache, CachedMetadata};
-use super::unified_config::{UnifiedCacheConfig, WorkloadType};
-use super::disk_cache::DiskCacheManager;
-use super::range_optimizer::RangeOptimizer;
 use super::access_tracker::AccessPatternTracker;
-use super::prefetch_engine::PrefetchEngine;
 use super::cache_metrics::CacheMetrics;
+use super::disk_cache::DiskCacheManager;
 use super::metadata_traits::{EngineMetadataSerializer, GenericMetadataSerializer};
+use super::prefetch_engine::PrefetchEngine;
+use super::range_optimizer::RangeOptimizer;
+use super::unified_cache::{CachedMetadata, UnifiedMetadataCache};
+use super::unified_config::{UnifiedCacheConfig, WorkloadType};
 
 /// Unified caching filesystem that consolidates all caching layers
 pub struct UnifiedCachingFilesystem {
@@ -140,9 +140,7 @@ impl UnifiedCachingFilesystem {
 
         // Create pattern tracking
         let access_tracker = Arc::new(AccessPatternTracker::new());
-        let prefetch_engine = Arc::new(PrefetchEngine::new(
-            config.io.enable_prefetching,
-        ));
+        let prefetch_engine = Arc::new(PrefetchEngine::new(config.io.enable_prefetching));
 
         // Create metrics collector
         let metrics = Arc::new(CacheMetrics::new());
@@ -207,7 +205,9 @@ impl UnifiedCachingFilesystem {
 
         // Trigger prefetching if enabled
         if self.config.io.enable_prefetching {
-            self.prefetch_engine.maybe_prefetch(path, &self.access_tracker).await;
+            self.prefetch_engine
+                .maybe_prefetch(path, &self.access_tracker)
+                .await;
         }
     }
 
@@ -261,7 +261,9 @@ impl FileSystem for UnifiedCachingFilesystem {
         // Check if we can optimize with range reads
         if self.config.io.enable_range_optimization {
             if let Ok(metadata) = self.metadata(path).await {
-                if metadata.size > (self.config.io.range_optimization_threshold_mb * 1024 * 1024) as u64 {
+                if metadata.size
+                    > (self.config.io.range_optimization_threshold_mb * 1024 * 1024) as u64
+                {
                     // Use range optimization for large files
                     return self.optimized_range_read(path, &metadata).await;
                 }
@@ -275,7 +277,9 @@ impl FileSystem for UnifiedCachingFilesystem {
         match self.engine_type.to_lowercase().as_str() {
             "viper" | "nova" => {
                 // These engines use Parquet format
-                self.metadata_cache.extract_parquet_metadata(&cache_key, &data).await;
+                self.metadata_cache
+                    .extract_parquet_metadata(&cache_key, &data)
+                    .await;
             }
             // Other engines might have different metadata formats
             _ => {
@@ -359,7 +363,9 @@ impl FileSystem for UnifiedCachingFilesystem {
 
         // Cache negative results too (with shorter TTL)
         if !exists {
-            self.metadata_cache.put_negative(&cache_key, Duration::from_secs(60)).await;
+            self.metadata_cache
+                .put_negative(&cache_key, Duration::from_secs(60))
+                .await;
         }
 
         Ok(exists)
@@ -504,13 +510,16 @@ pub struct FilesystemMetrics {
 impl UnifiedCachingFilesystem {
     async fn optimized_range_read(&self, path: &str, metadata: &FileMetadata) -> FsResult<Vec<u8>> {
         // Use engine-aware range optimization
-        let ranges = self.range_optimizer.optimize_engine_ranges(
-            path,
-            metadata.size,
-            &self.engine_type,
-            None,  // column_indices
-            None,  // row_group_indices
-        ).await;
+        let ranges = self
+            .range_optimizer
+            .optimize_engine_ranges(
+                path,
+                metadata.size,
+                &self.engine_type,
+                None, // column_indices
+                None, // row_group_indices
+            )
+            .await;
 
         if ranges.is_empty() {
             // No optimization possible, read full file
@@ -581,14 +590,12 @@ impl UnifiedFilesystemBuilder {
     }
 
     pub fn build(self) -> Result<UnifiedCachingFilesystem, ProximaDBError> {
-        let underlying_fs = self.underlying_fs
+        let underlying_fs = self
+            .underlying_fs
             .ok_or_else(|| ProximaDBError::InvalidInput("Filesystem required".into()))?;
-        let collection_id = self.collection_id
-            .unwrap_or_else(|| "default".to_string());
-        let engine_type = self.engine_type
-            .unwrap_or_else(|| "unknown".to_string());
-        let config = self.config
-            .unwrap_or_default();
+        let collection_id = self.collection_id.unwrap_or_else(|| "default".to_string());
+        let engine_type = self.engine_type.unwrap_or_else(|| "unknown".to_string());
+        let config = self.config.unwrap_or_default();
 
         Ok(UnifiedCachingFilesystem::with_config(
             underlying_fs,

@@ -303,7 +303,9 @@ impl ExecutionOperation {
                     aggs.len()
                 )
             }
-            ExecutionOperation::Join { kind, left_keys, .. } => {
+            ExecutionOperation::Join {
+                kind, left_keys, ..
+            } => {
                 format!("Join ({:?}) keys:{}", kind, left_keys.len())
             }
             ExecutionOperation::Union { all } => {
@@ -313,10 +315,16 @@ impl ExecutionOperation {
                 format!("Set Union ({})", if *distinct { "DISTINCT" } else { "ALL" })
             }
             ExecutionOperation::SetIntersect { distinct, .. } => {
-                format!("Set Intersect ({})", if *distinct { "DISTINCT" } else { "ALL" })
+                format!(
+                    "Set Intersect ({})",
+                    if *distinct { "DISTINCT" } else { "ALL" }
+                )
             }
             ExecutionOperation::SetExcept { distinct, .. } => {
-                format!("Set Except ({})", if *distinct { "DISTINCT" } else { "ALL" })
+                format!(
+                    "Set Except ({})",
+                    if *distinct { "DISTINCT" } else { "ALL" }
+                )
             }
             ExecutionOperation::CteMaterialization { cte_name, .. } => {
                 format!("CTE Materialization ({})", cte_name)
@@ -458,12 +466,12 @@ mod execution_tests {
     }
 
     async fn create_test_engine() -> QueryEngine {
+        use crate::graph::service::GraphOperationsService;
+        use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::graph::service::GraphOperationsService;
         use crate::storage::engines::impls::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-        use crate::index::AxisManager;
         use std::sync::Arc;
 
         // Create temporary directory for storage
@@ -474,35 +482,48 @@ mod execution_tests {
         let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager with default config
-        use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory};
-        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
         let wal_config = WALConfig::default();
         let strategy = WALBatchFactory::create_batch_serialization_strategy(
             wal_config.strategy_type.clone(),
             &wal_config,
-            filesystem
-        ).await.expect("Failed to create WAL strategy");
-        let wal_manager = Arc::new(WriteAheadLogManager::new(
-            strategy,
-            wal_config
-        ).await.expect("Failed to create WAL manager"));
+            filesystem,
+        )
+        .await
+        .expect("Failed to create WAL strategy");
+        let wal_manager = Arc::new(
+            WriteAheadLogManager::new(strategy, wal_config)
+                .await
+                .expect("Failed to create WAL manager"),
+        );
 
         // Create Axis index manager with default config
         use crate::index::axis::AxisConfig;
         let axis_config = AxisConfig::default();
-        let axis_manager = Arc::new(AxisManager::new(
-            axis_config
-        ).await.expect("Failed to create Axis manager"));
+        let axis_manager = Arc::new(
+            AxisManager::new(axis_config)
+                .await
+                .expect("Failed to create Axis manager"),
+        );
 
         // Create collection service with universal metadata backend
+        use crate::core::config::StorageConfig;
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
         use crate::storage::traits::InternalCollectionProvider;
-        use crate::core::config::StorageConfig;
 
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
 
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
         let metadata_config = UniversalMetadataConfig {
@@ -514,18 +535,20 @@ mod execution_tests {
             backup_url: None,
             temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
         };
-        let metadata_backend = Arc::new(UniversalMetadataBackend::new(
-            metadata_config,
-            filesystem
-        ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+        let metadata_backend = Arc::new(
+            UniversalMetadataBackend::new(metadata_config, filesystem)
+                .await
+                .expect("Failed to create metadata backend"),
+        ) as Arc<dyn InternalCollectionProvider>;
         let storage_config = StorageConfig {
             metadata_url: storage_url.clone(),
             ..Default::default()
         };
-        let collection_service = Arc::new(CollectionService::new(
-            metadata_backend,
-            storage_config
-        ).await.expect("Failed to create collection service"));
+        let collection_service = Arc::new(
+            CollectionService::new(metadata_backend, storage_config)
+                .await
+                .expect("Failed to create collection service"),
+        );
 
         // Create vector operations service with all dependencies
         let vector_service = Arc::new(VectorOperationsService::new(
@@ -546,13 +569,15 @@ mod execution_tests {
 
     fn create_test_vector_query() -> Query {
         // Create a simple test query with SksSimilar to trigger vector strategy detection
-        use crate::query::ast::{Select, ProjectionItem, TableRef, Expr, Literal};
+        use crate::query::ast::{Expr, Literal, ProjectionItem, Select, TableRef};
 
         Query::Select(Select {
             projection: vec![ProjectionItem {
                 expr: Expr::SksSimilar {
                     field: "embedding".to_string(),
-                    query: Box::new(Expr::Literal(Literal::String("[0.1, 0.2, 0.3]".to_string()))),
+                    query: Box::new(Expr::Literal(Literal::String(
+                        "[0.1, 0.2, 0.3]".to_string(),
+                    ))),
                     metric: Some("cosine".to_string()),
                     threshold: None,
                 },

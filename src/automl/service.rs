@@ -53,7 +53,7 @@ impl Default for AutoMLConfig {
             enabled: true,
             min_data_points: 1000,
             optimization_interval_secs: 300, // 5 minutes
-            min_improvement_threshold: 5.0, // 5% improvement required
+            min_improvement_threshold: 5.0,  // 5% improvement required
             max_concurrent_optimizations: 4,
             enable_workload_prediction: true,
             enable_hyperparameter_tuning: true,
@@ -121,9 +121,9 @@ pub struct WorkloadCharacteristics {
 /// Query complexity levels
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryComplexity {
-    Simple,   // Point queries
-    Medium,   // Range/filter queries
-    Complex,  // Multi-index/join queries
+    Simple,  // Point queries
+    Medium,  // Range/filter queries
+    Complex, // Multi-index/join queries
 }
 
 /// Data access patterns
@@ -269,7 +269,9 @@ impl AutoMLService {
         // Queue optimization requests
         let mut queue = self.optimization_queue.write().await;
         for (collection_id, urgency) in collections {
-            let request = self.create_optimization_request(collection_id, urgency).await?;
+            let request = self
+                .create_optimization_request(collection_id, urgency)
+                .await?;
             queue.push(request);
         }
 
@@ -291,7 +293,10 @@ impl AutoMLService {
     }
 
     /// Evaluate optimization urgency based on metrics
-    async fn evaluate_optimization_urgency(&self, metrics: &CollectionMetrics) -> Result<OptimizationUrgency> {
+    async fn evaluate_optimization_urgency(
+        &self,
+        metrics: &CollectionMetrics,
+    ) -> Result<OptimizationUrgency> {
         // Simple heuristic based on query latency
         let avg_latency = 100.0; // TODO: Get from actual metrics
 
@@ -330,9 +335,9 @@ impl AutoMLService {
         };
 
         let resources = ResourceUsage {
-            cpu_usage_percent: 0.0, // Would need system metrics
-            memory_usage_mb: 0, // Would need system metrics
-            disk_io_mb_per_sec: 0.0, // Would need system metrics
+            cpu_usage_percent: 0.0,     // Would need system metrics
+            memory_usage_mb: 0,         // Would need system metrics
+            disk_io_mb_per_sec: 0.0,    // Would need system metrics
             network_io_mb_per_sec: 0.0, // Would need system metrics
         };
 
@@ -452,76 +457,79 @@ impl AutoMLService {
 
     // Optimization implementations
 
-    async fn optimize_index_selection(&self, request: &OptimizationRequest) -> Result<Vec<Improvement>> {
+    async fn optimize_index_selection(
+        &self,
+        request: &OptimizationRequest,
+    ) -> Result<Vec<Improvement>> {
         // TODO: Implement index selection optimization
-        Ok(vec![
-            Improvement {
-                metric: "query_latency".to_string(),
-                before: 100.0,
-                after: 80.0,
-                improvement_percent: 20.0,
-            },
-        ])
+        Ok(vec![Improvement {
+            metric: "query_latency".to_string(),
+            before: 100.0,
+            after: 80.0,
+            improvement_percent: 20.0,
+        }])
     }
 
-    async fn optimize_quantization(&self, request: &OptimizationRequest) -> Result<Vec<Improvement>> {
+    async fn optimize_quantization(
+        &self,
+        request: &OptimizationRequest,
+    ) -> Result<Vec<Improvement>> {
         // TODO: Implement quantization optimization
-        Ok(vec![
-            Improvement {
-                metric: "memory_usage".to_string(),
-                before: 1000.0,
-                after: 750.0,
-                improvement_percent: 25.0,
-            },
-        ])
+        Ok(vec![Improvement {
+            metric: "memory_usage".to_string(),
+            before: 1000.0,
+            after: 750.0,
+            improvement_percent: 25.0,
+        }])
     }
 
-    async fn optimize_engine_selection(&self, request: &OptimizationRequest) -> Result<Vec<Improvement>> {
+    async fn optimize_engine_selection(
+        &self,
+        request: &OptimizationRequest,
+    ) -> Result<Vec<Improvement>> {
         // TODO: Implement engine selection optimization
-        Ok(vec![
-            Improvement {
-                metric: "throughput".to_string(),
-                before: 1000.0,
-                after: 1200.0,
-                improvement_percent: 20.0,
-            },
-        ])
+        Ok(vec![Improvement {
+            metric: "throughput".to_string(),
+            before: 1000.0,
+            after: 1200.0,
+            improvement_percent: 20.0,
+        }])
     }
 
-    async fn optimize_cache_config(&self, request: &OptimizationRequest) -> Result<Vec<Improvement>> {
+    async fn optimize_cache_config(
+        &self,
+        request: &OptimizationRequest,
+    ) -> Result<Vec<Improvement>> {
         // TODO: Implement cache configuration optimization
-        Ok(vec![
-            Improvement {
-                metric: "cache_hit_rate".to_string(),
-                before: 0.7,
-                after: 0.85,
-                improvement_percent: 21.4,
-            },
-        ])
+        Ok(vec![Improvement {
+            metric: "cache_hit_rate".to_string(),
+            before: 0.7,
+            after: 0.85,
+            improvement_percent: 21.4,
+        }])
     }
 
-    async fn tune_hyperparameters(&self, request: &OptimizationRequest) -> Result<Vec<Improvement>> {
+    async fn tune_hyperparameters(
+        &self,
+        request: &OptimizationRequest,
+    ) -> Result<Vec<Improvement>> {
         // TODO: Implement hyperparameter tuning
-        Ok(vec![
-            Improvement {
-                metric: "overall_performance".to_string(),
-                before: 100.0,
-                after: 115.0,
-                improvement_percent: 15.0,
-            },
-        ])
+        Ok(vec![Improvement {
+            metric: "overall_performance".to_string(),
+            before: 100.0,
+            after: 115.0,
+            improvement_percent: 15.0,
+        }])
     }
 
     async fn adapt_to_workload(&self, request: &OptimizationRequest) -> Result<Vec<Improvement>> {
         // TODO: Implement workload adaptation
-        Ok(vec![
-            Improvement {
-                metric: "adaptive_performance".to_string(),
-                before: 100.0,
-                after: 110.0,
-                improvement_percent: 10.0,
-            },
-        ])
+        Ok(vec![Improvement {
+            metric: "adaptive_performance".to_string(),
+            before: 100.0,
+            after: 110.0,
+            improvement_percent: 10.0,
+        }])
     }
 }
 

@@ -3,16 +3,16 @@
 //! Implements natural language to SQL translation using LLM providers
 //! with security validation and tenant isolation.
 
-use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMResponse, LLMError};
-use crate::ai::llm_integration::types::LLMRequestContext;
+use super::prompt_builder::{PromptBuilder, PromptTemplate};
 use super::schema_context::SchemaContext;
 use super::sql_validator::SQLValidator;
-use super::prompt_builder::{PromptBuilder, PromptTemplate};
+use crate::ai::llm_integration::types::LLMRequestContext;
+use crate::ai::llm_integration::{LLMError, LLMIntegrationEngine, LLMRequest, LLMResponse};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
 use thiserror::Error;
-use tracing::{debug, warn, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Natural Language Query Translator
 #[derive(Clone)]
@@ -108,11 +108,19 @@ impl NLQueryTranslator {
         llm_engine: Arc<LLMIntegrationEngine>,
         config: TranslatorConfig,
     ) -> Result<Self, TranslationError> {
-        let schema_context = Arc::new(SchemaContext::new().await
-            .map_err(|e| TranslationError::SchemaContextError(format!("Failed to initialize schema context: {}", e)))?);
+        let schema_context = Arc::new(SchemaContext::new().await.map_err(|e| {
+            TranslationError::SchemaContextError(format!(
+                "Failed to initialize schema context: {}",
+                e
+            ))
+        })?);
 
-        let sql_validator = Arc::new(SQLValidator::new().await
-            .map_err(|e| TranslationError::ConfigurationError(format!("Failed to initialize SQL validator: {}", e)))?);
+        let sql_validator = Arc::new(SQLValidator::new().await.map_err(|e| {
+            TranslationError::ConfigurationError(format!(
+                "Failed to initialize SQL validator: {}",
+                e
+            ))
+        })?);
 
         let prompt_builder = Arc::new(PromptBuilder::new());
 
@@ -133,7 +141,11 @@ impl NLQueryTranslator {
     ) -> Result<TranslationResult, TranslationError> {
         let start_time = std::time::Instant::now();
 
-        info!("Starting NL translation for user {}: {}", user_context.user_id, nl_query.chars().take(100).collect::<String>());
+        info!(
+            "Starting NL translation for user {}: {}",
+            user_context.user_id,
+            nl_query.chars().take(100).collect::<String>()
+        );
 
         // Step 1: Validate user permissions
         self.validate_user_permissions(user_context)?;
@@ -152,11 +164,20 @@ impl NLQueryTranslator {
         }
 
         // Step 4: Build schema context for accessible tables only
-        let schema_context = self.schema_context.build_context(&accessible_tables).await
-            .map_err(|e| TranslationError::SchemaContextError(format!("Failed to build schema context: {}", e)))?;
+        let schema_context = self
+            .schema_context
+            .build_context(&accessible_tables)
+            .await
+            .map_err(|e| {
+                TranslationError::SchemaContextError(format!(
+                    "Failed to build schema context: {}",
+                    e
+                ))
+            })?;
 
         // Step 5: Build secure translation prompt
-        let prompt = self.build_secure_translation_prompt(nl_query, &schema_context, user_context)?;
+        let prompt =
+            self.build_secure_translation_prompt(nl_query, &schema_context, user_context)?;
 
         // Step 6: Query LLM with fallback
         let llm_response = self.query_llm_with_retry(&prompt, user_context).await?;
@@ -165,11 +186,18 @@ impl NLQueryTranslator {
         let raw_sql = self.extract_sql_from_response(&llm_response)?;
 
         // Step 8: Validate and sanitize SQL
-        let validated_sql = self.sql_validator.validate_and_sanitize(&raw_sql, user_context).await
-            .map_err(|e| TranslationError::SQLValidationFailed { reason: e.to_string() })?;
+        let validated_sql = self
+            .sql_validator
+            .validate_and_sanitize(&raw_sql, user_context)
+            .await
+            .map_err(|e| TranslationError::SQLValidationFailed {
+                reason: e.to_string(),
+            })?;
 
         // Step 9: Generate explanation
-        let explanation = self.generate_explanation(nl_query, &validated_sql, &llm_response).await?;
+        let explanation = self
+            .generate_explanation(nl_query, &validated_sql, &llm_response)
+            .await?;
 
         let translation_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -211,19 +239,35 @@ impl NLQueryTranslator {
     ) -> Result<String, TranslationError> {
         let template = PromptTemplate::SecureTranslation;
 
-        let accessible_tables_str = user_context.accessible_tables.iter()
+        let accessible_tables_str = user_context
+            .accessible_tables
+            .iter()
             .map(|s| s.as_str())
             .collect::<Vec<&str>>()
             .join(", ");
-        let prompt = self.prompt_builder.build_prompt(template, &[
-            ("user_accessible_tables", &accessible_tables_str),
-            ("schema_context", schema_context),
-            ("natural_language_query", query),
-            ("tenant_id", &user_context.tenant_id.clone().unwrap_or_default()),
-            ("user_id", &user_context.user_id),
-        ]).map_err(|e| TranslationError::ConfigurationError(format!("Failed to build prompt: {}", e)))?;
+        let prompt = self
+            .prompt_builder
+            .build_prompt(
+                template,
+                &[
+                    ("user_accessible_tables", &accessible_tables_str),
+                    ("schema_context", schema_context),
+                    ("natural_language_query", query),
+                    (
+                        "tenant_id",
+                        &user_context.tenant_id.clone().unwrap_or_default(),
+                    ),
+                    ("user_id", &user_context.user_id),
+                ],
+            )
+            .map_err(|e| {
+                TranslationError::ConfigurationError(format!("Failed to build prompt: {}", e))
+            })?;
 
-        debug!("Built secure translation prompt: {} characters", prompt.len());
+        debug!(
+            "Built secure translation prompt: {} characters",
+            prompt.len()
+        );
         Ok(prompt)
     }
 
@@ -248,7 +292,11 @@ impl NLQueryTranslator {
         while attempts < max_attempts {
             attempts += 1;
 
-            match self.llm_engine.query_with_fallback_and_context(&request, &context).await {
+            match self
+                .llm_engine
+                .query_with_fallback_and_context(&request, &context)
+                .await
+            {
                 Ok(response) => {
                     debug!("LLM translation successful on attempt {}", attempts);
                     return Ok(response);
@@ -258,25 +306,37 @@ impl NLQueryTranslator {
 
                     // For certain errors, don't retry
                     match &e {
-                        LLMError::InvalidRequest(_) => return Err(TranslationError::LLMProviderError(e)),
-                        LLMError::AuthenticationFailed { .. } => return Err(TranslationError::LLMProviderError(e)),
+                        LLMError::InvalidRequest(_) => {
+                            return Err(TranslationError::LLMProviderError(e));
+                        }
+                        LLMError::AuthenticationFailed { .. } => {
+                            return Err(TranslationError::LLMProviderError(e));
+                        }
                         _ => {
                             if attempts >= max_attempts {
                                 return Err(TranslationError::LLMProviderError(e));
                             }
                             // Wait before retry
-                            tokio::time::sleep(std::time::Duration::from_millis(1000 * attempts as u64)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                1000 * attempts as u64,
+                            ))
+                            .await;
                         }
                     }
                 }
             }
         }
 
-        Err(TranslationError::InternalError("Max translation attempts exceeded".to_string()))
+        Err(TranslationError::InternalError(
+            "Max translation attempts exceeded".to_string(),
+        ))
     }
 
     /// Extract SQL from LLM response with multiple parsing strategies
-    fn extract_sql_from_response(&self, response: &LLMResponse) -> Result<String, TranslationError> {
+    fn extract_sql_from_response(
+        &self,
+        response: &LLMResponse,
+    ) -> Result<String, TranslationError> {
         let content = &response.content;
 
         // Strategy 1: Look for SQL code blocks
@@ -294,9 +354,10 @@ impl NLQueryTranslator {
             return Ok(content.trim().to_string());
         }
 
-        Err(TranslationError::InternalError(
-            format!("Could not extract SQL from LLM response: {}", content.chars().take(200).collect::<String>())
-        ))
+        Err(TranslationError::InternalError(format!(
+            "Could not extract SQL from LLM response: {}",
+            content.chars().take(200).collect::<String>()
+        )))
     }
 
     /// Extract SQL from markdown code blocks
@@ -325,7 +386,10 @@ impl NLQueryTranslator {
 
         for line in content.lines() {
             let line = line.trim();
-            if sql_keywords.iter().any(|&keyword| line.to_uppercase().starts_with(keyword)) {
+            if sql_keywords
+                .iter()
+                .any(|&keyword| line.to_uppercase().starts_with(keyword))
+            {
                 // Found a line that starts with SQL keyword
                 // Try to extract the complete SQL statement
                 let mut sql_lines = vec![line];
@@ -358,11 +422,13 @@ impl NLQueryTranslator {
     fn looks_like_sql(&self, text: &str) -> bool {
         let text_upper = text.to_uppercase();
         let sql_indicators = [
-            "SELECT", "FROM", "WHERE", "JOIN", "GROUP BY", "ORDER BY",
-            "HAVING", "UNION", "WITH", "INSERT", "UPDATE", "DELETE"
+            "SELECT", "FROM", "WHERE", "JOIN", "GROUP BY", "ORDER BY", "HAVING", "UNION", "WITH",
+            "INSERT", "UPDATE", "DELETE",
         ];
 
-        sql_indicators.iter().any(|&indicator| text_upper.contains(indicator))
+        sql_indicators
+            .iter()
+            .any(|&indicator| text_upper.contains(indicator))
     }
 
     /// Get system prompt for SQL translation
@@ -377,11 +443,15 @@ impl NLQueryTranslator {
 6. Respond with clean SQL code, optionally in a ```sql code block
 7. If the request is unclear or unsafe, explain why and suggest alternatives
 
-Your response should be a valid SQL query that safely retrieves the requested data.".to_string()
+Your response should be a valid SQL query that safely retrieves the requested data."
+            .to_string()
     }
 
     /// Validate user permissions for translation
-    fn validate_user_permissions(&self, user_context: &UserContext) -> Result<(), TranslationError> {
+    fn validate_user_permissions(
+        &self,
+        user_context: &UserContext,
+    ) -> Result<(), TranslationError> {
         if user_context.user_id.is_empty() {
             return Err(TranslationError::SecurityValidationFailed {
                 reason: "User ID is required for query translation".to_string(),
@@ -396,7 +466,11 @@ Your response should be a valid SQL query that safely retrieves the requested da
         }
 
         // Check if user has read permissions
-        if !user_context.permissions.iter().any(|p| p.contains("read") || p.contains("query") || p.contains("select")) {
+        if !user_context
+            .permissions
+            .iter()
+            .any(|p| p.contains("read") || p.contains("query") || p.contains("select"))
+        {
             return Err(TranslationError::PermissionDenied {
                 user_id: user_context.user_id.clone(),
                 reason: "User lacks query permissions".to_string(),
@@ -419,7 +493,10 @@ Your response should be a valid SQL query that safely retrieves the requested da
 
         if complexity_score > self.config.max_query_complexity {
             return Err(TranslationError::QueryTooComplex {
-                reason: format!("Query complexity score {} exceeds maximum {}", complexity_score, self.config.max_query_complexity),
+                reason: format!(
+                    "Query complexity score {} exceeds maximum {}",
+                    complexity_score, self.config.max_query_complexity
+                ),
             });
         }
 
@@ -436,24 +513,39 @@ Your response should be a valid SQL query that safely retrieves the requested da
         // Add points for complex operations
         let query_lower = query.to_lowercase();
 
-        if query_lower.contains("join") { score += 10; }
-        if query_lower.contains("subquery") || query_lower.contains("nested") { score += 15; }
-        if query_lower.contains("aggregate") || query_lower.contains("group") { score += 10; }
-        if query_lower.contains("order") { score += 5; }
-        if query_lower.contains("union") { score += 15; }
-        if query_lower.contains("window") || query_lower.contains("over") { score += 20; }
+        if query_lower.contains("join") {
+            score += 10;
+        }
+        if query_lower.contains("subquery") || query_lower.contains("nested") {
+            score += 15;
+        }
+        if query_lower.contains("aggregate") || query_lower.contains("group") {
+            score += 10;
+        }
+        if query_lower.contains("order") {
+            score += 5;
+        }
+        if query_lower.contains("union") {
+            score += 15;
+        }
+        if query_lower.contains("window") || query_lower.contains("over") {
+            score += 20;
+        }
 
         // Add points for multiple tables
-        let table_mentions = query_lower.matches("table").count() +
-                            query_lower.matches("from").count() +
-                            query_lower.matches("join").count();
+        let table_mentions = query_lower.matches("table").count()
+            + query_lower.matches("from").count()
+            + query_lower.matches("join").count();
         score += (table_mentions * 5) as u32;
 
         score
     }
 
     /// Get user accessible tables
-    async fn get_user_accessible_tables(&self, user_context: &UserContext) -> Result<Vec<String>, TranslationError> {
+    async fn get_user_accessible_tables(
+        &self,
+        user_context: &UserContext,
+    ) -> Result<Vec<String>, TranslationError> {
         // In a real implementation, this would query the RBAC system
         // For now, return the accessible tables from user context
         Ok(user_context.accessible_tables.clone())
@@ -490,11 +582,18 @@ Provide a clear, non-technical explanation of what this query does and what resu
 
         let context = LLMRequestContext::new(uuid::Uuid::new_v4().to_string());
 
-        match self.llm_engine.query_with_fallback_and_context(&explanation_request, &context).await {
+        match self
+            .llm_engine
+            .query_with_fallback_and_context(&explanation_request, &context)
+            .await
+        {
             Ok(response) => Ok(response.content),
             Err(e) => {
                 warn!("Failed to generate explanation: {}", e);
-                Ok(format!("This query retrieves data from the database based on: {}", original_query))
+                Ok(format!(
+                    "This query retrieves data from the database based on: {}",
+                    original_query
+                ))
             }
         }
     }
@@ -537,7 +636,9 @@ mod tests {
             let mut score = query.len() as u32;
 
             // Add complexity for keywords
-            let complex_keywords = ["WITH", "JOIN", "SUBQUERY", "WINDOW", "UNION", "GROUP BY", "HAVING"];
+            let complex_keywords = [
+                "WITH", "JOIN", "SUBQUERY", "WINDOW", "UNION", "GROUP BY", "HAVING",
+            ];
             for keyword in complex_keywords {
                 if query.to_uppercase().contains(keyword) {
                     score += 10;
@@ -553,7 +654,9 @@ mod tests {
         }
 
         fn looks_like_sql(&self, text: &str) -> bool {
-            let sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "FROM", "WHERE"];
+            let sql_keywords = [
+                "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "FROM", "WHERE",
+            ];
             let text_upper = text.to_uppercase();
             sql_keywords.iter().any(|kw| text_upper.contains(kw))
         }
@@ -661,6 +764,10 @@ This query will return the top 10 customers by order count.
             roles: vec!["analyst".to_string()],
         };
 
-        assert!(translator.validate_user_permissions(&no_tables_user).is_err());
+        assert!(
+            translator
+                .validate_user_permissions(&no_tables_user)
+                .is_err()
+        );
     }
 }

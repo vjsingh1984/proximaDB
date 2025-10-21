@@ -5,8 +5,8 @@
 
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
-    StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
-    SqlValue, sql_value, SearchQuery, MetadataFilter, LogicalOp,
+    LogicalOp, MetadataFilter, SearchQuery, SqlValue, StorageEngine, VectorBatchRequest,
+    VectorOperationResponse, VectorRecord, VectorSearchRequest, sql_value,
 };
 use proximadb::utils::uuid::Uuid;
 use std::time::Duration;
@@ -43,14 +43,20 @@ mod comprehensive_api_tests {
                 vector: (0..dim).map(|j| (i as f32 + j as f32) / 100.0).collect(),
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("index".to_string(), SqlValue {
-                        value: Some(sql_value::Value::NumberValue(i as f64)),
-                    });
-                    metadata.insert("category".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(
-                            if i % 2 == 0 { "even" } else { "odd" }.to_string()
-                        )),
-                    });
+                    metadata.insert(
+                        "index".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue(i as f64)),
+                        },
+                    );
+                    metadata.insert(
+                        "category".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(
+                                if i % 2 == 0 { "even" } else { "odd" }.to_string(),
+                            )),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some(0),

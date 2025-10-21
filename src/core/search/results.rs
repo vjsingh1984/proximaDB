@@ -16,14 +16,15 @@ fn convert_sql_value_map_to_json_map(
             let json_value = match &sql_value.value {
                 Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
                 Some(Value::NumberValue(n)) => serde_json::Value::Number(
-                    serde_json::Number::from_f64(*n)
-                        .unwrap_or_else(|| serde_json::Number::from(0)),
+                    serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)),
                 ),
                 Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                Some(Value::Int64Value(i)) => serde_json::Value::Number(
-                    serde_json::Number::from(*i)
-                ),
-                Some(Value::BytesValue(_)) => serde_json::Value::String("[binary data]".to_string()),
+                Some(Value::Int64Value(i)) => {
+                    serde_json::Value::Number(serde_json::Number::from(*i))
+                }
+                Some(Value::BytesValue(_)) => {
+                    serde_json::Value::String("[binary data]".to_string())
+                }
                 Some(Value::NullValue(_)) => serde_json::Value::Null,
                 Some(Value::ArrayValue(_)) => serde_json::Value::String("[array]".to_string()),
                 Some(Value::ObjectValue(_)) => serde_json::Value::String("[object]".to_string()),
@@ -59,7 +60,6 @@ fn convert_json_map_to_sql_value_map(
         })
         .collect()
 }
-
 
 // MIGRATION COMPLETE: InternalSearchResult eliminated entirely
 // All functionality moved to OptimizedSearchRecord for better performance

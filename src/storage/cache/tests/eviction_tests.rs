@@ -1,9 +1,9 @@
 use crate::storage::cache::eviction::{
-    EvictionPolicy, CacheEvictor, AccessTracker, CacheEvictionConfig,
+    AccessTracker, CacheEvictionConfig, CacheEvictor, EvictionPolicy,
 };
-use std::sync::Arc;
-use crate::storage::traits::UnifiedMetricsCollector;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+use crate::storage::traits::UnifiedMetricsCollector;
+use std::sync::Arc;
 
 #[test]
 fn test_lru_policy() {
@@ -15,7 +15,10 @@ fn test_lru_policy() {
     };
 
     match policy {
-        EvictionPolicy::LRU { max_items, batch_size } => {
+        EvictionPolicy::LRU {
+            max_items,
+            batch_size,
+        } => {
             assert_eq!(max_items, 1000);
             assert_eq!(batch_size, 10);
         }
@@ -34,7 +37,11 @@ fn test_lfu_policy() {
     };
 
     match policy {
-        EvictionPolicy::LFU { max_items, min_access_count, frequency_window_hours } => {
+        EvictionPolicy::LFU {
+            max_items,
+            min_access_count,
+            frequency_window_hours,
+        } => {
             assert_eq!(max_items, 1000);
             assert_eq!(min_access_count, 2);
             assert_eq!(frequency_window_hours, 24);
@@ -54,7 +61,11 @@ fn test_arc_policy() {
     };
 
     match policy {
-        EvictionPolicy::ARC { target_size, recent_size, frequent_size } => {
+        EvictionPolicy::ARC {
+            target_size,
+            recent_size,
+            frequent_size,
+        } => {
             assert_eq!(target_size, 1000);
             assert_eq!(recent_size, 500);
             assert_eq!(frequent_size, 500);
@@ -73,7 +84,10 @@ fn test_ttl_policy() {
     };
 
     match policy {
-        EvictionPolicy::TTL { max_age_seconds, cleanup_interval_seconds } => {
+        EvictionPolicy::TTL {
+            max_age_seconds,
+            cleanup_interval_seconds,
+        } => {
             assert_eq!(max_age_seconds, 3600);
             assert_eq!(cleanup_interval_seconds, 60);
         }
@@ -92,7 +106,11 @@ fn test_pattern_based_policy() {
     };
 
     match policy {
-        EvictionPolicy::PatternBased { use_ml_predictions, pattern_window_hours, eviction_threshold } => {
+        EvictionPolicy::PatternBased {
+            use_ml_predictions,
+            pattern_window_hours,
+            eviction_threshold,
+        } => {
             assert!(use_ml_predictions);
             assert_eq!(pattern_window_hours, 48);
             assert_eq!(eviction_threshold, 0.7);

@@ -6,7 +6,7 @@
  */
 
 //! SST Manifest for SSTable Tracking
-//! 
+//!
 //! The manifest provides a centralized record of all SSTable files in the SST storage,
 //! tracking their levels, sizes, key ranges, and metadata for efficient query planning
 //! and compaction scheduling.
@@ -14,14 +14,16 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::fmt;
 use tracing::{debug, info};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
+use crate::storage::transaction_coordinator::{
+    StagingConfig, TransactionCoordinator, TransactionStageType,
+};
 
 /// SSTable file metadata in the manifest
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,7 +100,8 @@ impl SstManifest {
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Self {
         // Construct manifest URL by appending filename to storage URL
-        let manifest_url = format!("{}/{}_manifest.json",
+        let manifest_url = format!(
+            "{}/{}_manifest.json",
             storage_url.trim_end_matches('/'),
             collection_id
         );
@@ -117,107 +120,133 @@ impl SstManifest {
             max_history_versions: 10,
         }
     }
-    
+
     /// Load manifest from disk
     pub async fn load(&self) -> Result<()> {
         info!("🔍 Loading manifest from {}", self.manifest_url);
-        
+
         // Get filesystem based on the URL scheme
         let fs = self.filesystem.get_filesystem(&self.manifest_url)?;
-        
+
         match fs.read(&self.manifest_url).await {
             Ok(data) => {
                 let manifest: ManifestVersion = serde_json::from_slice(&data)?;
-                info!("✅ Loaded SST manifest version {} with {} files", 
-                      manifest.version, manifest.files.len());
-                
+                info!(
+                    "✅ Loaded SST manifest version {} with {} files",
+                    manifest.version,
+                    manifest.files.len()
+                );
+
                 // Debug: print loaded files
                 for (file_id, info) in &manifest.files {
-                    debug!("  Loaded file: {} (level={}, records={})", 
-                          file_id, info.level, info.record_count);
+                    debug!(
+                        "  Loaded file: {} (level={}, records={})",
+                        file_id, info.level, info.record_count
+                    );
                 }
-                
+
                 let mut current = self.current_version.write().await;
                 *current = manifest;
                 Ok(())
             }
             Err(e) => {
-                info!("📋 No existing manifest found at {}, starting fresh: {}", 
-                     self.manifest_url, e);
+                info!(
+                    "📋 No existing manifest found at {}, starting fresh: {}",
+                    self.manifest_url, e
+                );
                 Ok(())
             }
         }
     }
-    
+
     /// Save manifest to disk atomically
     pub async fn save(&self) -> Result<()> {
         let current = self.current_version.read().await;
-        info!("💾 Saving manifest v{} with {} files to {}", 
-              current.version, current.files.len(), self.manifest_url);
-        
+        info!(
+            "💾 Saving manifest v{} with {} files to {}",
+            current.version,
+            current.files.len(),
+            self.manifest_url
+        );
+
         // Debug: print all files in manifest
         for (file_id, info) in &current.files {
-            debug!("  - {}: level={}, records={}", file_id, info.level, info.record_count);
+            debug!(
+                "  - {}: level={}, records={}",
+                file_id, info.level, info.record_count
+            );
         }
-        
+
         let data = serde_json::to_vec_pretty(&*current)?;
-        
+
         // Get filesystem based on the URL scheme
         let fs = self.filesystem.get_filesystem(&self.manifest_url)?;
-        
+
         // Always allow overwrite for manifest updates
         let write_options = crate::storage::persistence::filesystem::FileOptions {
             overwrite: true,
             ..Default::default()
         };
-        
+
         // Write to manifest URL with overwrite enabled
-        fs.write(&self.manifest_url, &data, Some(write_options)).await?;
-        
-        debug!("Saved manifest version {} to {} (overwrite mode)", current.version, self.manifest_url);
+        fs.write(&self.manifest_url, &data, Some(write_options))
+            .await?;
+
+        debug!(
+            "Saved manifest version {} to {} (overwrite mode)",
+            current.version, self.manifest_url
+        );
         Ok(())
     }
-    
+
     /// Add a new SSTable file to the manifest
     pub async fn add_sstable(&self, file_info: SstableFileInfo) -> Result<()> {
-        tracing::info!("📋 Adding SSTable to manifest: file_id={}, path={}, records={}", 
-                      file_info.file_id, file_info.file_path, file_info.record_count);
+        tracing::info!(
+            "📋 Adding SSTable to manifest: file_id={}, path={}, records={}",
+            file_info.file_id,
+            file_info.file_path,
+            file_info.record_count
+        );
         let mut current = self.current_version.write().await;
         let mut history = self.version_history.write().await;
-        
+
         // Save current version to history
         history.push(current.clone());
         if history.len() > self.max_history_versions {
             history.remove(0);
         }
-        
+
         // Update version
         current.version += 1;
         current.timestamp = chrono::Utc::now().timestamp();
-        current.files.insert(file_info.file_id.clone(), file_info.clone());
-        
-        info!("Added SSTable {} to manifest (version {})", 
-              file_info.file_id, current.version);
-        
+        current
+            .files
+            .insert(file_info.file_id.clone(), file_info.clone());
+
+        info!(
+            "Added SSTable {} to manifest (version {})",
+            file_info.file_id, current.version
+        );
+
         drop(current);
         drop(history);
-        
+
         // Save to disk
         self.save().await?;
         Ok(())
     }
-    
+
     /// Remove SSTable files from the manifest (after compaction)
     pub async fn remove_sstables(&self, file_ids: &[String]) -> Result<()> {
         let mut current = self.current_version.write().await;
         let mut history = self.version_history.write().await;
-        
+
         // Save current version to history
         history.push(current.clone());
         if history.len() > self.max_history_versions {
             history.remove(0);
         }
-        
+
         // Update version
         current.version += 1;
         current.timestamp = chrono::Utc::now().timestamp();
@@ -227,61 +256,62 @@ impl SstManifest {
                 debug!("Removed SSTable {} from manifest", removed.file_id);
             }
         }
-        
-        info!("Removed {} SSTables from manifest (version {})", 
-              file_ids.len(), current.version);
-        
+
+        info!(
+            "Removed {} SSTables from manifest (version {})",
+            file_ids.len(),
+            current.version
+        );
+
         drop(current);
         drop(history);
-        
+
         // Save to disk
         self.save().await?;
         Ok(())
     }
-    
+
     /// Mark files for deletion (soft delete)
     pub async fn mark_for_deletion(&self, file_ids: &[String]) -> Result<()> {
         let mut current = self.current_version.write().await;
-        
+
         for file_id in file_ids {
             if let Some(file_info) = current.files.get_mut(file_id) {
                 file_info.marked_for_deletion = true;
                 debug!("Marked SSTable {} for deletion_info", file_id);
             }
         }
-        
+
         drop(current);
         self.save().await?;
         Ok(())
     }
-    
+
     /// Get all SSTable files at a specific level
     pub async fn files_at_level(&self, level: u8) -> Vec<SstableFileInfo> {
         let current = self.current_version.read().await;
-        current.files
+        current
+            .files
             .values()
             .filter(|f| f.level == level && !f.marked_for_deletion)
             .cloned()
             .collect()
     }
-    
+
     /// Get SSTable files that overlap with a key range
-    pub async fn overlapping_files(
-        &self, 
-        min_key: &str, 
-        max_key: &str
-    ) -> Vec<SstableFileInfo> {
+    pub async fn overlapping_files(&self, min_key: &str, max_key: &str) -> Vec<SstableFileInfo> {
         let current = self.current_version.read().await;
-        current.files
+        current
+            .files
             .values()
             .filter(|f| {
-                !f.marked_for_deletion &&
-                !(f.max_key < min_key.to_string() || f.min_key > max_key.to_string())
+                !f.marked_for_deletion
+                    && !(f.max_key < min_key.to_string() || f.min_key > max_key.to_string())
             })
             .cloned()
             .collect()
     }
-    
+
     /// Get files that might contain specific metadata values
     pub async fn files_with_metadata(
         &self,
@@ -289,13 +319,14 @@ impl SstManifest {
         value: &serde_json::Value,
     ) -> Vec<SstableFileInfo> {
         let current = self.current_version.read().await;
-        current.files
+        current
+            .files
             .values()
             .filter(|f| {
                 if f.marked_for_deletion {
                     return false;
                 }
-                
+
                 if let Some(stats) = f.metadata_columns.get(column) {
                     // Check if value falls within the range
                     Self::value_in_range(value, &stats.min_value, &stats.max_value)
@@ -307,21 +338,25 @@ impl SstManifest {
             .cloned()
             .collect()
     }
-    
+
     /// Get compaction candidates based on level and size
-    pub async fn compaction_candidates(&self, level: u8, threshold: usize) -> Vec<Vec<SstableFileInfo>> {
+    pub async fn compaction_candidates(
+        &self,
+        level: u8,
+        threshold: usize,
+    ) -> Vec<Vec<SstableFileInfo>> {
         let files = self.files_at_level(level).await;
-        
+
         if files.len() < threshold {
             return vec![];
         }
-        
+
         // Group files that can be compacted together
         // Simple // strategy removed -  group by overlapping key ranges
         let mut groups = Vec::new();
         let mut current_group = Vec::new();
         let mut current_max_key = String::new();
-        
+
         for file in files {
             if current_group.is_empty() || file.min_key <= current_max_key {
                 // File overlaps with current group
@@ -329,7 +364,7 @@ impl SstManifest {
                     current_max_key = file.max_key.clone();
                 }
                 current_group.push(file);
-                
+
                 if current_group.len() >= threshold {
                     groups.push(current_group);
                     current_group = Vec::new();
@@ -344,45 +379,47 @@ impl SstManifest {
                 current_max_key = file.max_key.clone();
             }
         }
-        
+
         // Don't forget the last group
         if current_group.len() >= 2 {
             groups.push(current_group);
         }
-        
+
         groups
     }
-    
+
     /// Get manifest statistics
     pub async fn stats(&self) -> ManifestStats {
         let current = self.current_version.read().await;
         let mut stats = ManifestStats::default();
-        
+
         for file in current.files.values() {
             if file.marked_for_deletion {
                 stats.files_marked_for_deletion += 1;
                 continue;
             }
-            
+
             stats.total_files += 1;
             stats.total_size_bytes += file.size_bytes;
             stats.total_records += file.record_count;
-            
-            stats.files_per_level
+
+            stats
+                .files_per_level
                 .entry(file.level)
                 .and_modify(|e| *e += 1)
                 .or_insert(1);
-            
-            stats.size_per_level
+
+            stats
+                .size_per_level
                 .entry(file.level)
                 .and_modify(|e| *e += file.size_bytes)
                 .or_insert(file.size_bytes);
         }
-        
+
         stats.manifest_version = current.version;
         stats
     }
-    
+
     /// Check if a value falls within a range
     fn value_in_range(
         value: &serde_json::Value,
@@ -421,28 +458,22 @@ pub struct ManifestStats {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     async fn create_test_manifest() -> (SstManifest, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(
-            FilesystemFactory::create(Default::default()).await.unwrap()
-        );
-        
+        let filesystem = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+
         let storage_url = format!("file://{}", temp_dir.path().display());
-        let manifest = SstManifest::new(
-            "test_collection".to_string(),
-            storage_url,
-            filesystem,
-            None,
-        );
-        
+        let manifest =
+            SstManifest::new("test_collection".to_string(), storage_url, filesystem, None);
+
         (manifest, temp_dir)
     }
-    
+
     #[tokio::test]
     async fn test_manifest_basic_operations() {
         let (manifest, _temp_dir) = create_test_manifest().await;
-        
+
         // Add an SSTable
         let file_info = SstableFileInfo {
             file_id: "sst_001".to_string(),
@@ -460,21 +491,24 @@ mod tests {
             min_sequence: 1,
             max_sequence: 1000,
         };
-        
+
         manifest.add_sstable(file_info).await.unwrap();
-        
+
         // Check stats
         let stats = manifest.stats().await;
         assert_eq!(stats.total_files, 1);
         assert_eq!(stats.total_records, 1000);
-        
+
         // Get files at level 0
         let level0_files = manifest.files_at_level(0).await;
         assert_eq!(level0_files.len(), 1);
-        
+
         // Remove the file
-        manifest.remove_sstables(&["sst_001".to_string()]).await.unwrap();
-        
+        manifest
+            .remove_sstables(&["sst_001".to_string()])
+            .await
+            .unwrap();
+
         let stats_after = manifest.stats().await;
         assert_eq!(stats_after.total_files, 0);
     }

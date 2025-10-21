@@ -1,35 +1,34 @@
 //! Executive Intelligence Platform - C-Level Strategic Analytics
-//! 
+//!
 //! TODO 2: Complete Executive Intelligence Dashboard Platform
 //! Business Driver: 92% of executives want real-time strategic intelligence
 //! Market Impact: C-level adoption driving enterprise deployment
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::sync::Arc;
 use tracing::info;
-use std::fmt;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-
 
 /// Executive Intelligence Platform for C-level strategic analytics
 pub struct ExecutiveIntelligencePlatform {
     /// Role-specific dashboard generators
     executive_dashboard_generators: Arc<DashMap<ExecutiveRole, Arc<ExecutiveDashboardGenerator>>>,
-    
+
     /// Real-time strategic analytics engine
     strategic_analytics_engine: Arc<RealTimeStrategicAnalyticsEngine>,
-    
+
     /// Automated board reporting system
     board_reporting_system: Arc<AutomatedBoardReportingSystem>,
-    
+
     /// Executive mobile intelligence interface
     mobile_intelligence_interface: Arc<ExecutiveMobileIntelligenceInterface>,
-    
+
     /// Strategic scenario modeling engine
     scenario_modeling_engine: Arc<StrategicScenarioModelingEngine>,
-    
+
     /// Competitive intelligence system
     competitive_intelligence_system: Arc<CompetitiveIntelligenceSystem>,
 }
@@ -38,13 +37,13 @@ pub struct ExecutiveIntelligencePlatform {
 pub struct RealTimeStrategicAnalyticsEngine {
     /// Strategic KPI calculators by executive role
     strategic_kpi_calculators: Arc<DashMap<ExecutiveRole, Arc<StrategicKPICalculator>>>,
-    
+
     /// Real-time business intelligence aggregator
     business_intelligence_aggregator: Arc<BusinessIntelligenceAggregator>,
-    
+
     /// Strategic trend analyzer
     strategic_trend_analyzer: Arc<StrategicTrendAnalyzer>,
-    
+
     /// Executive alert system
     executive_alert_system: Arc<ExecutiveAlertSystem>,
 }
@@ -75,13 +74,13 @@ impl RealTimeStrategicAnalyticsEngine {
 pub struct AutomatedBoardReportingSystem {
     /// Board report templates by industry
     board_report_templates: Arc<DashMap<String, BoardReportTemplate>>,
-    
+
     /// Governance analytics engine
     governance_analytics_engine: Arc<GovernanceAnalyticsEngine>,
-    
+
     /// Regulatory compliance reporter
     regulatory_compliance_reporter: Arc<RegulatoryComplianceReporter>,
-    
+
     /// Executive summary generator
     executive_summary_generator: Arc<ExecutiveSummaryGenerator>,
 }
@@ -104,12 +103,14 @@ impl ExecutiveIntelligencePlatform {
             executive_dashboard_generators: Arc::new(DashMap::new()),
             strategic_analytics_engine: Arc::new(RealTimeStrategicAnalyticsEngine::new().await?),
             board_reporting_system: Arc::new(AutomatedBoardReportingSystem::new().await?),
-            mobile_intelligence_interface: Arc::new(ExecutiveMobileIntelligenceInterface::new().await?),
+            mobile_intelligence_interface: Arc::new(
+                ExecutiveMobileIntelligenceInterface::new().await?,
+            ),
             scenario_modeling_engine: Arc::new(StrategicScenarioModelingEngine::new().await?),
             competitive_intelligence_system: Arc::new(CompetitiveIntelligenceSystem::new().await?),
         })
     }
-    
+
     /// Create executive dashboard for specific C-level role
     pub async fn create_executive_dashboard(
         &self,
@@ -118,27 +119,32 @@ impl ExecutiveIntelligencePlatform {
         dashboard_requirements: &ExecutiveDashboardRequirements,
         executive_context: &ExecutiveUserContext,
     ) -> Result<ExecutiveIntelligenceDashboard> {
-        info!("Creating executive dashboard for {} role in tenant {}", 
-              executive_role, tenant_id);
-        
+        info!(
+            "Creating executive dashboard for {} role in tenant {}",
+            executive_role, tenant_id
+        );
+
         // Get or create role-specific dashboard generator
-        let dashboard_generator = self.get_or_create_dashboard_generator(&executive_role).await?;
-        
+        let dashboard_generator = self
+            .get_or_create_dashboard_generator(&executive_role)
+            .await?;
+
         // Generate real-time strategic analytics
-        let strategic_analytics = self.strategic_analytics_engine.generate_real_time_analytics(
-            tenant_id,
-            &executive_role,
-            executive_context,
-        ).await?;
-        
+        let strategic_analytics = self
+            .strategic_analytics_engine
+            .generate_real_time_analytics(tenant_id, &executive_role, executive_context)
+            .await?;
+
         // Create role-specific dashboard
-        let dashboard = dashboard_generator.generate_executive_dashboard(
-            tenant_id,
-            &strategic_analytics,
-            dashboard_requirements,
-            executive_context,
-        ).await?;
-        
+        let dashboard = dashboard_generator
+            .generate_executive_dashboard(
+                tenant_id,
+                &strategic_analytics,
+                dashboard_requirements,
+                executive_context,
+            )
+            .await?;
+
         Ok(ExecutiveIntelligenceDashboard {
             tenant_id: tenant_id.to_string(),
             executive_role: executive_role.clone(),
@@ -154,7 +160,7 @@ impl ExecutiveIntelligencePlatform {
             created_for: executive_context.user_id.clone(),
         })
     }
-    
+
     /// Generate automated board report with governance intelligence
     pub async fn generate_automated_board_report(
         &self,
@@ -164,31 +170,41 @@ impl ExecutiveIntelligencePlatform {
         executive_context: &ExecutiveUserContext,
     ) -> Result<AutomatedBoardReport> {
         // Generate governance analytics
-        let governance_analytics = self.board_reporting_system.governance_analytics_engine.generate_governance_analytics(
-            tenant_id,
-            reporting_period,
-            executive_context,
-        ).await?;
-        
+        let governance_analytics = self
+            .board_reporting_system
+            .governance_analytics_engine
+            .generate_governance_analytics(tenant_id, reporting_period, executive_context)
+            .await?;
+
         // Generate regulatory compliance summary
-        let compliance_summary = self.board_reporting_system.regulatory_compliance_reporter.generate_compliance_summary(
-            tenant_id,
-            reporting_period,
-            &board_requirements.compliance_frameworks,
-        ).await?;
-        
+        let compliance_summary = self
+            .board_reporting_system
+            .regulatory_compliance_reporter
+            .generate_compliance_summary(
+                tenant_id,
+                reporting_period,
+                &board_requirements.compliance_frameworks,
+            )
+            .await?;
+
         // Generate executive summary with strategic insights
-        let executive_summary = self.board_reporting_system.executive_summary_generator.generate_executive_summary(
-            &governance_analytics,
-            &compliance_summary,
-            board_requirements,
-        ).await?;
-        
-        let strategic_recommendations = self.generate_board_strategic_recommendations(
-            tenant_id,
-            &governance_analytics,
-            executive_context,
-        ).await?;
+        let executive_summary = self
+            .board_reporting_system
+            .executive_summary_generator
+            .generate_executive_summary(
+                &governance_analytics,
+                &compliance_summary,
+                board_requirements,
+            )
+            .await?;
+
+        let strategic_recommendations = self
+            .generate_board_strategic_recommendations(
+                tenant_id,
+                &governance_analytics,
+                executive_context,
+            )
+            .await?;
 
         Ok(AutomatedBoardReport {
             tenant_id: tenant_id.to_string(),
@@ -206,7 +222,7 @@ impl ExecutiveIntelligencePlatform {
             },
         })
     }
-    
+
     /// Execute strategic scenario modeling for executive planning
     pub async fn execute_strategic_scenario_modeling(
         &self,
@@ -216,23 +232,25 @@ impl ExecutiveIntelligencePlatform {
         executive_context: &ExecutiveUserContext,
     ) -> Result<StrategicScenarioAnalysis> {
         // Execute scenario modeling with AI-powered analysis
-        let scenario_results = self.scenario_modeling_engine.model_business_scenarios(
-            tenant_id,
-            scenarios,
-            modeling_requirements,
-            executive_context,
-        ).await?;
-        
+        let scenario_results = self
+            .scenario_modeling_engine
+            .model_business_scenarios(
+                tenant_id,
+                scenarios,
+                modeling_requirements,
+                executive_context,
+            )
+            .await?;
+
         // Analyze competitive implications
-        let competitive_analysis = self.competitive_intelligence_system.analyze_competitive_implications(
-            &scenario_results,
-            modeling_requirements,
-        ).await?;
-        
-        let strategic_recommendations = self.generate_scenario_based_recommendations(
-            &scenario_results,
-            executive_context,
-        ).await?;
+        let competitive_analysis = self
+            .competitive_intelligence_system
+            .analyze_competitive_implications(&scenario_results, modeling_requirements)
+            .await?;
+
+        let strategic_recommendations = self
+            .generate_scenario_based_recommendations(&scenario_results, executive_context)
+            .await?;
         let risk_assessment = self.assess_scenario_risks(&scenario_results).await?;
 
         Ok(StrategicScenarioAnalysis {
@@ -242,30 +260,34 @@ impl ExecutiveIntelligencePlatform {
             risk_assessment,
         })
     }
-    
+
     // Helper methods
-    async fn get_or_create_dashboard_generator(&self, role: &ExecutiveRole) -> Result<Arc<ExecutiveDashboardGenerator>> {
+    async fn get_or_create_dashboard_generator(
+        &self,
+        role: &ExecutiveRole,
+    ) -> Result<Arc<ExecutiveDashboardGenerator>> {
         if let Some(generator) = self.executive_dashboard_generators.get(role) {
             Ok(generator.clone())
         } else {
             let generator = ExecutiveDashboardGenerator::new_for_role(role.clone()).await?;
             let generator_arc = Arc::new(generator);
-            self.executive_dashboard_generators.insert(role.clone(), generator_arc.clone());
+            self.executive_dashboard_generators
+                .insert(role.clone(), generator_arc.clone());
             Ok(generator_arc)
         }
     }
-    
+
     fn get_update_frequency_for_role(&self, role: &ExecutiveRole) -> u32 {
         match role {
-            ExecutiveRole::CEO => 300,    // 5 minutes for CEO
-            ExecutiveRole::CFO => 600,    // 10 minutes for CFO
-            ExecutiveRole::CRO => 180,    // 3 minutes for CRO (risk needs frequency)
-            ExecutiveRole::CTO => 900,    // 15 minutes for CTO
-            ExecutiveRole::COO => 300,    // 5 minutes for COO
+            ExecutiveRole::CEO => 300,          // 5 minutes for CEO
+            ExecutiveRole::CFO => 600,          // 10 minutes for CFO
+            ExecutiveRole::CRO => 180,          // 3 minutes for CRO (risk needs frequency)
+            ExecutiveRole::CTO => 900,          // 15 minutes for CTO
+            ExecutiveRole::COO => 300,          // 5 minutes for COO
             ExecutiveRole::BoardMember => 1800, // 30 minutes for board members
         }
     }
-    
+
     async fn generate_board_strategic_recommendations(
         &self,
         tenant_id: &str,
@@ -304,10 +326,7 @@ impl ExecutiveIntelligencePlatform {
         Ok(vec!["Strategic recommendation".to_string()])
     }
 
-    async fn assess_scenario_risks(
-        &self,
-        _results: &ScenarioResults,
-    ) -> Result<RiskAssessment> {
+    async fn assess_scenario_risks(&self, _results: &ScenarioResults) -> Result<RiskAssessment> {
         Ok(RiskAssessment {
             assessment_id: String::new(),
         })
@@ -641,7 +660,7 @@ mod tests {
         let ceo = ExecutiveRole::CEO;
         let cfo = ExecutiveRole::CFO;
         let cro = ExecutiveRole::CRO;
-        
+
         assert_ne!(ceo, cfo);
         assert_ne!(cfo, cro);
         assert_eq!(ceo, ExecutiveRole::CEO);
@@ -655,7 +674,7 @@ mod tests {
             operational_impact: 0.15,
             competitive_impact: 0.30,
         };
-        
+
         assert_eq!(business_impact.revenue_impact, 0.25);
         assert_eq!(business_impact.risk_impact, -0.10); // Negative indicates risk reduction
         assert!(business_impact.competitive_impact > business_impact.operational_impact);

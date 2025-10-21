@@ -3,14 +3,20 @@
 //! Main engine for managing multiple LLM providers with fallback support,
 //! implementing the design from task_1_ai_implementation_design.adoc
 
-use super::types::{LLMConfig, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason};
-use super::providers::{LLMClient, OpenAIClient, AnthropicClient, CohereClient, OllamaClient, AWSBedrockClient, AzureOpenAIClient, HuggingFaceClient, VLLMClient};
 use super::metrics::LLMMetrics;
+use super::providers::{
+    AWSBedrockClient, AnthropicClient, AzureOpenAIClient, CohereClient, HuggingFaceClient,
+    LLMClient, OllamaClient, OpenAIClient, VLLMClient,
+};
+use super::types::{
+    FinishReason, LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse,
+    TokenUsage,
+};
+use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
-use chrono::Utc;
+use tracing::{error, info, warn};
 
 /// Main LLM Integration Engine that manages multiple providers
 #[derive(Clone)]
@@ -152,7 +158,7 @@ impl LLMIntegrationEngine {
         // Ensure at least one provider is available
         if providers.is_empty() {
             return Err(LLMError::ConfigurationError(
-                "No LLM providers could be initialized. Check API keys.".to_string()
+                "No LLM providers could be initialized. Check API keys.".to_string(),
             ));
         }
 
@@ -172,7 +178,8 @@ impl LLMIntegrationEngine {
         let request = LLMRequest::new(prompt.to_string());
         let context = LLMRequestContext::new(uuid::Uuid::new_v4().to_string());
 
-        self.query_with_fallback_and_context(&request, &context).await
+        self.query_with_fallback_and_context(&request, &context)
+            .await
     }
 
     /// Query LLM with fallback and full context support
@@ -232,7 +239,10 @@ impl LLMIntegrationEngine {
         }
 
         // All providers failed
-        error!("All LLM providers failed for request: {}", request.prompt.chars().take(100).collect::<String>());
+        error!(
+            "All LLM providers failed for request: {}",
+            request.prompt.chars().take(100).collect::<String>()
+        );
         self.metrics.record_all_providers_failed().await;
 
         match last_error {
@@ -248,21 +258,30 @@ impl LLMIntegrationEngine {
         request: &LLMRequest,
         context: &LLMRequestContext,
     ) -> Result<LLMResponse, LLMError> {
-        let client = self.providers.get(provider)
-            .ok_or(LLMError::ProviderNotAvailable { provider: provider.clone() })?;
+        let client = self
+            .providers
+            .get(provider)
+            .ok_or(LLMError::ProviderNotAvailable {
+                provider: provider.clone(),
+            })?;
 
         // Apply timeout
-        let timeout_duration = context.timeout_override
+        let timeout_duration = context
+            .timeout_override
             .unwrap_or(self.config.timeout_seconds);
 
         let query_future = client.query(request, context);
 
         match tokio::time::timeout(
             std::time::Duration::from_secs(timeout_duration),
-            query_future
-        ).await {
+            query_future,
+        )
+        .await
+        {
             Ok(result) => result,
-            Err(_) => Err(LLMError::Timeout { timeout_seconds: timeout_duration }),
+            Err(_) => Err(LLMError::Timeout {
+                timeout_seconds: timeout_duration,
+            }),
         }
     }
 
@@ -289,8 +308,8 @@ impl LLMIntegrationEngine {
 
         for provider in &self.config.provider_priority {
             if let Some(client) = self.providers.get(provider) {
-                let test_request = LLMRequest::new("Test connectivity".to_string())
-                    .with_max_tokens(5);
+                let test_request =
+                    LLMRequest::new("Test connectivity".to_string()).with_max_tokens(5);
                 let test_context = LLMRequestContext::new("connectivity_test".to_string());
 
                 match client.query(&test_request, &test_context).await {
@@ -300,13 +319,18 @@ impl LLMIntegrationEngine {
                     }
                     Err(e) => {
                         results.insert(provider.clone(), Err(e.clone()));
-                        warn!("Connectivity test failed for provider {:?}: {}", provider, e);
+                        warn!(
+                            "Connectivity test failed for provider {:?}: {}",
+                            provider, e
+                        );
                     }
                 }
             } else {
                 results.insert(
                     provider.clone(),
-                    Err(LLMError::ProviderNotAvailable { provider: provider.clone() })
+                    Err(LLMError::ProviderNotAvailable {
+                        provider: provider.clone(),
+                    }),
                 );
             }
         }
@@ -320,11 +344,14 @@ impl RateLimiter {
         let mut provider_limits = HashMap::new();
 
         for provider in &config.provider_priority {
-            provider_limits.insert(provider.clone(), ProviderRateLimit {
-                requests_per_minute: config.rate_limit_per_minute,
-                current_requests: 0,
-                window_start: std::time::Instant::now(),
-            });
+            provider_limits.insert(
+                provider.clone(),
+                ProviderRateLimit {
+                    requests_per_minute: config.rate_limit_per_minute,
+                    current_requests: 0,
+                    window_start: std::time::Instant::now(),
+                },
+            );
         }
 
         Self {
@@ -397,7 +424,6 @@ impl std::fmt::Display for LLMProvider {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_llm_request_creation() {
         let request = LLMRequest::new("Test prompt".to_string())
@@ -408,7 +434,10 @@ mod tests {
         assert_eq!(request.prompt, "Test prompt");
         assert_eq!(request.max_tokens, Some(100));
         assert_eq!(request.temperature, Some(0.7));
-        assert_eq!(request.metadata.get("test_key"), Some(&"test_value".to_string()));
+        assert_eq!(
+            request.metadata.get("test_key"),
+            Some(&"test_value".to_string())
+        );
     }
 
     #[test]
@@ -443,13 +472,28 @@ mod tests {
         let rate_limiter = RateLimiter::new(&config);
 
         // First two requests should succeed
-        assert!(rate_limiter.check_rate_limit(&LLMProvider::OpenAI).await.is_ok());
+        assert!(
+            rate_limiter
+                .check_rate_limit(&LLMProvider::OpenAI)
+                .await
+                .is_ok()
+        );
         rate_limiter.record_request(&LLMProvider::OpenAI).await;
 
-        assert!(rate_limiter.check_rate_limit(&LLMProvider::OpenAI).await.is_ok());
+        assert!(
+            rate_limiter
+                .check_rate_limit(&LLMProvider::OpenAI)
+                .await
+                .is_ok()
+        );
         rate_limiter.record_request(&LLMProvider::OpenAI).await;
 
         // Third request should fail
-        assert!(rate_limiter.check_rate_limit(&LLMProvider::OpenAI).await.is_err());
+        assert!(
+            rate_limiter
+                .check_rate_limit(&LLMProvider::OpenAI)
+                .await
+                .is_err()
+        );
     }
 }

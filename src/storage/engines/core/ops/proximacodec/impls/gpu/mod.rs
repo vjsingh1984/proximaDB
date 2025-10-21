@@ -52,12 +52,12 @@
 //! 5. Integrate with VectorMemoryPool for GPU memory management
 //! 6. Implement GPU batching with optimal batch sizes per backend
 
-pub mod encoder;
-pub mod decoder;
-pub mod kernels;
 pub mod batching;
+pub mod decoder;
+pub mod encoder;
 pub mod examples;
+pub mod kernels;
 
-pub use encoder::GpuEncoder;
+pub use batching::{BatchPerformanceEstimator, BatchingStrategy, GpuBatchIterator, GpuBatchSizer};
 pub use decoder::GpuDecoder;
-pub use batching::{GpuBatchSizer, GpuBatchIterator, BatchingStrategy, BatchPerformanceEstimator};
+pub use encoder::GpuEncoder;

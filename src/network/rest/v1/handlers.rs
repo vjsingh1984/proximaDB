@@ -8,7 +8,7 @@
 use axum::{
     extract::{Json, Path, Query, State},
     http::StatusCode,
-    response::{Json as JsonResponse, IntoResponse},
+    response::{IntoResponse, Json as JsonResponse},
 };
 use std::sync::Arc;
 use tracing::{error, info};
@@ -19,10 +19,7 @@ use crate::network::rest::health;
 use crate::network::rest::proto_json::ProtoApiResponse;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
-use crate::proto::proximadb_v1::{
-    VectorBatchRequest,
-    VectorSearchRequest,
-};
+use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
 use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
 use crate::utils::uuid::Uuid;
@@ -44,7 +41,9 @@ pub async fn vector_search(
         .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
 
     match state
@@ -58,11 +57,20 @@ pub async fn vector_search(
                 "❌ Vector search failed for collection '{}': {:?}",
                 request.collection_id, e
             );
-            error!("Search request details: num_queries={}, top_k={}, has_filters={}, has_advanced_filter={}, has_search_params={}",
+            error!(
+                "Search request details: num_queries={}, top_k={}, has_filters={}, has_advanced_filter={}, has_search_params={}",
                 request.queries.len(),
                 request.top_k,
-                request.queries.first().map(|q| !q.filters.is_empty()).unwrap_or(false),
-                request.queries.first().and_then(|q| q.advanced_filter.as_ref()).is_some(),
+                request
+                    .queries
+                    .first()
+                    .map(|q| !q.filters.is_empty())
+                    .unwrap_or(false),
+                request
+                    .queries
+                    .first()
+                    .and_then(|q| q.advanced_filter.as_ref())
+                    .is_some(),
                 request.search_params.is_some()
             );
             Err(ApiError::Internal(format!("Search failed: {}", e)))
@@ -87,19 +95,19 @@ pub async fn vector_batch(
 
     // Validate request
     if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
 
     if request.vectors.is_empty() {
-        return Err(ApiError::InvalidArgument("At least one record is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "At least one record is required".to_string(),
+        ));
     }
 
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
-    match state
-        .unified_handlers
-        .handle_vector_batch_v1(request)
-        .await
-    {
+    match state.unified_handlers.handle_vector_batch_v1(request).await {
         Ok(v1_resp) => Ok(JsonResponse(v1_resp)),
         Err(e) => {
             error!("Vector batch operation failed: {}", e);
@@ -140,7 +148,10 @@ pub async fn get_vector(
     {
         Ok(response) => Ok(JsonResponse(response)),
         Err(e) => {
-            error!("Failed to get vector {}/{}: {}", collection_id, vector_id, e);
+            error!(
+                "Failed to get vector {}/{}: {}",
+                collection_id, vector_id, e
+            );
             Err(ApiError::Internal(e.to_string()))
         }
     }
@@ -210,18 +221,27 @@ pub async fn collection_operation(
     State(state): State<AppState>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::CollectionResponse>> {
-    info!("🔵 REST API: collection_operation called with payload: {}", serde_json::to_string_pretty(&value).unwrap_or_else(|_| "invalid json".to_string()));
+    info!(
+        "🔵 REST API: collection_operation called with payload: {}",
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "invalid json".to_string())
+    );
 
     // Parse the JSON value into CollectionRequest
-    let request: CollectionRequest = serde_json::from_value(value.clone())
-        .map_err(|e| {
-            error!("🔴 REST API: Failed to parse CollectionRequest from payload: {:?}. Error: {}", value, e);
-            ApiError::InvalidArgument(format!("Invalid request format: {}", e))
-        })?;
+    let request: CollectionRequest = serde_json::from_value(value.clone()).map_err(|e| {
+        error!(
+            "🔴 REST API: Failed to parse CollectionRequest from payload: {:?}. Error: {}",
+            value, e
+        );
+        ApiError::InvalidArgument(format!("Invalid request format: {}", e))
+    })?;
 
     let operation = match CollectionOperation::try_from(request.operation) {
         Ok(op) => op,
-        Err(_) => return Err(ApiError::InvalidArgument("Invalid collection operation".to_string())),
+        Err(_) => {
+            return Err(ApiError::InvalidArgument(
+                "Invalid collection operation".to_string(),
+            ));
+        }
     };
 
     info!(
@@ -288,7 +308,11 @@ pub async fn get_collection(
         Ok(response) => JsonResponse(response).into_response(),
         Err(e) => {
             if e.to_string().contains("not found") {
-                (StatusCode::NOT_FOUND, format!("Collection not found: {}", collection_id)).into_response()
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("Collection not found: {}", collection_id),
+                )
+                    .into_response()
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
             }
@@ -367,7 +391,11 @@ pub async fn delete_collection(
         Ok(response) => JsonResponse(response).into_response(),
         Err(e) => {
             if e.to_string().contains("not found") {
-                (StatusCode::NOT_FOUND, format!("Collection not found: {}", collection_id)).into_response()
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("Collection not found: {}", collection_id),
+                )
+                    .into_response()
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
             }
@@ -402,7 +430,8 @@ pub async fn vector_search_with_metadata(
             let elapsed = start_time.elapsed();
             info!(
                 "Vector search {} completed in {}ms",
-                request_id, elapsed.as_millis()
+                request_id,
+                elapsed.as_millis()
             );
 
             Ok(JsonResponse(response))
@@ -610,7 +639,8 @@ pub async fn explain_sql(
     // Parse SQL and explain using frontend
     use crate::query::sql_frontend::parser::SqlFrontendParser;
     let parser = SqlFrontendParser::new();
-    let parsed = parser.parse(&request.query)
+    let parsed = parser
+        .parse(&request.query)
         .map_err(|e| ApiError::Internal(format!("Failed to parse SQL: {}", e)))?;
 
     let explain_result = qe
@@ -648,8 +678,10 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Initialize SKS in-memory store (v1) using the same storage engine as vector operations
     let entities_router = {
-        use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
         use crate::network::rest::v1::entities::{self, EntityApiState};
+        use crate::storage::entity_store::{
+            CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
+        };
         let engine = state
             .unified_handlers
             .vector_operations_service
@@ -717,7 +749,7 @@ pub fn create_router(state: AppState) -> axum::Router {
 }
 
 /// Comprehensive health check handler
-/// 
+///
 /// Wraps the health module's health_check function with our AppState
 pub async fn comprehensive_health_check(
     State(state): State<AppState>,
@@ -730,7 +762,7 @@ pub async fn comprehensive_health_check(
 }
 
 /// Liveness check handler
-/// 
+///
 /// Simple liveness check for load balancers
 pub async fn liveness_check(
     State(state): State<AppState>,
@@ -742,7 +774,7 @@ pub async fn liveness_check(
 }
 
 /// Readiness check handler
-/// 
+///
 /// Returns 200 when ready, 503 when not ready
 pub async fn readiness_check(
     State(state): State<AppState>,

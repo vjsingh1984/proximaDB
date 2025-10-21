@@ -25,9 +25,9 @@
 //! assert_eq!(tree.len(), 2);
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::{Arc, RwLock};
-use serde::{Deserialize, Serialize};
 
 /// Information about a node stored on disk
 #[derive(Debug, Clone)]
@@ -326,7 +326,9 @@ impl NodeRef {
                     size: 4096, // Default page size
                 };
                 // For now, return an error for disk-based nodes since we can't return references to temporaries
-                Err(BTreeError::TreeCorrupted("Disk-based nodes not fully implemented".to_string()))
+                Err(BTreeError::TreeCorrupted(
+                    "Disk-based nodes not fully implemented".to_string(),
+                ))
             }
         }
     }
@@ -343,28 +345,33 @@ impl NodeRef {
                     size: 4096, // Default page size
                 };
                 // For now, return an error for disk-based nodes since we can't return references to temporaries
-                Err(BTreeError::TreeCorrupted("Disk-based nodes not fully implemented".to_string()))
+                Err(BTreeError::TreeCorrupted(
+                    "Disk-based nodes not fully implemented".to_string(),
+                ))
             }
         }
     }
-    
+
     /// Load a node from disk storage
-    fn load_disk_node(&self, disk_info: &DiskNodeInfo) -> Result<Arc<std::sync::RwLock<Node>>, BTreeError> {
+    fn load_disk_node(
+        &self,
+        disk_info: &DiskNodeInfo,
+    ) -> Result<Arc<std::sync::RwLock<Node>>, BTreeError> {
         // Use ProximaDB's filesystem infrastructure for disk I/O
         use std::fs::File;
         use std::io::Read;
-        
+
         let mut file = File::open(&disk_info.file_path)
             .map_err(|e| BTreeError::TreeCorrupted(format!("Cannot open node file: {}", e)))?;
-        
+
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)
             .map_err(|e| BTreeError::TreeCorrupted(format!("Cannot read node data: {}", e)))?;
-        
+
         // Deserialize node from disk using bincode
         let node: Node = bincode::deserialize(&buffer)
             .map_err(|e| BTreeError::TreeCorrupted(format!("Cannot deserialize node: {}", e)))?;
-        
+
         Ok(Arc::new(std::sync::RwLock::new(node)))
     }
 }
@@ -408,7 +415,12 @@ impl BTreeIterator {
         }
     }
 
-    fn new_with_start(leaf: Option<NodeRef>, start_key: Option<Vec<u8>>, end_key: Option<Vec<u8>>, forward: bool) -> Self {
+    fn new_with_start(
+        leaf: Option<NodeRef>,
+        start_key: Option<Vec<u8>>,
+        end_key: Option<Vec<u8>>,
+        forward: bool,
+    ) -> Self {
         let mut iterator = BTreeIterator {
             current_leaf: leaf,
             current_index: 0,
@@ -728,7 +740,7 @@ impl BPlusTree {
             start_leaf,
             start.map(|k| k.to_vec()),
             end.map(|k| k.to_vec()),
-            true
+            true,
         )
     }
 

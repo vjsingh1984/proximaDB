@@ -1,12 +1,12 @@
 use crate::core::{SstConfig, StorageConfig, String, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
-use crate::utils::StoragePath;
 use crate::storage::{
     engines::impls::sst::{Compaction, SstEngine},
     persistence::disk_manager::DiskManager,
     traits::InternalCollectionProvider,
 };
+use crate::utils::StoragePath;
 // Import CollectionMetadata from the appropriate location
 use crate::storage::engines::core::formats::proximablocks::header_metadata::CollectionMetadata;
 use dashmap::DashMap;
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// Calculate cosine similarity between two vectors
 fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -163,8 +163,12 @@ impl StorageEngine {
 
         // Attach metadata provider to WAL manager for recovery
         if let Some(provider) = metadata_provider.as_ref() {
-            write_ahead_log_manager.set_metadata_provider(provider.clone()).await;
-            tracing::info!("📋 Metadata provider attached to WAL manager for collection config access during recovery");
+            write_ahead_log_manager
+                .set_metadata_provider(provider.clone())
+                .await;
+            tracing::info!(
+                "📋 Metadata provider attached to WAL manager for collection config access during recovery"
+            );
         }
 
         // StorageEngine focuses on pure storage operations (LSM, WAL, MMAP)
@@ -191,16 +195,12 @@ impl StorageEngine {
             .sst_config
             .clone()
             .unwrap_or_else(|| SstConfig::default());
-        let _sst_storage = Arc::new(
-            SstEngine::new()
-            .await
-            .map_err(|e| {
-                crate::core::error::StorageError::SstEngine(format!(
-                    "Failed to create SST storage: {}",
-                    e
-                ))
-            })?,
-        );
+        let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
+            crate::core::error::StorageError::SstEngine(format!(
+                "Failed to create SST storage: {}",
+                e
+            ))
+        })?);
 
         Ok(Self {
             config,
@@ -321,7 +321,9 @@ impl StorageEngine {
             let engine_type = if let Some(assignment) = &collection.storage_assignment {
                 assignment.engine
             } else if let Some(config) = &collection.config {
-                config.storage_engine.unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32)
+                config
+                    .storage_engine
+                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32)
             } else {
                 crate::proto::proximadb_v1::StorageEngine::Sst as i32
             };
@@ -351,7 +353,11 @@ impl StorageEngine {
                             "✅ Registered {} engine for collection {} (from {})",
                             proto_engine.as_str_name(),
                             collection.id,
-                            if collection.storage_assignment.is_some() { "storage_assignment" } else { "config" }
+                            if collection.storage_assignment.is_some() {
+                                "storage_assignment"
+                            } else {
+                                "config"
+                            }
                         );
                     }
                 }
@@ -488,7 +494,10 @@ impl StorageEngine {
             // Use SST bloom filters for fast existence check
             match sst_storage.value().contains_vector(collection_id, id).await {
                 Ok(exists) => {
-                    debug!("SST existence check for {}/{}: {}", collection_id, id, exists);
+                    debug!(
+                        "SST existence check for {}/{}: {}",
+                        collection_id, id, exists
+                    );
                     return Ok(exists);
                 }
                 Err(e) => {
@@ -497,7 +506,7 @@ impl StorageEngine {
                 }
             }
         }
-        
+
         tracing::debug!("Vector {}/{} not found in any storage", collection_id, id);
         Ok(false)
     }
@@ -848,9 +857,10 @@ impl StorageEngine {
                                         Some(crate::proto::proximadb_v1::CollectionConfig {
                                             name: collection_id.to_string(),
                                             dimension: record.vector.len() as u32,
-                                            distance_metric:
-                                                Some(crate::proto::proximadb_v1::DistanceMetric::Cosine
-                                                    as i32),
+                                            distance_metric: Some(
+                                                crate::proto::proximadb_v1::DistanceMetric::Cosine
+                                                    as i32,
+                                            ),
                                             ..Default::default()
                                         });
                                     collection.stats =
@@ -928,12 +938,19 @@ impl StorageEngine {
 
             // Clean up SST files for the dropped collection
             if let Some(sst_storage) = self.sst_storages.get(collection_id) {
-                match sst_storage.value().cleanup_collection_files(collection_id).await {
+                match sst_storage
+                    .value()
+                    .cleanup_collection_files(collection_id)
+                    .await
+                {
                     Ok(()) => {
                         info!("Cleaned up SST files for collection {}", collection_id);
                     }
                     Err(e) => {
-                        warn!("Failed to cleanup SST files for collection {}: {}", collection_id, e);
+                        warn!(
+                            "Failed to cleanup SST files for collection {}: {}",
+                            collection_id, e
+                        );
                     }
                 }
             }
@@ -1063,18 +1080,19 @@ impl StorageEngine {
         tracing::debug!("🧹 Starting storage cleanup for test scenarios");
 
         // Get list of all collections from metadata provider
-        let collections: Vec<CollectionMetadata> = match self.metadata_provider.read().await.as_ref() {
-            Some(provider) => {
-                // TODO: Add list_collections method to InternalCollectionProvider trait
-                // For now, return empty list to allow compilation
-                warn!("Collection listing not yet implemented for test cleanup");
-                Vec::new()
-            }
-            None => {
-                warn!("SharedServices not available for collection listing");
-                Vec::new()
-            }
-        };
+        let collections: Vec<CollectionMetadata> =
+            match self.metadata_provider.read().await.as_ref() {
+                Some(provider) => {
+                    // TODO: Add list_collections method to InternalCollectionProvider trait
+                    // For now, return empty list to allow compilation
+                    warn!("Collection listing not yet implemented for test cleanup");
+                    Vec::new()
+                }
+                None => {
+                    warn!("SharedServices not available for collection listing");
+                    Vec::new()
+                }
+            };
 
         // Collect collection IDs
         let collection_ids: Vec<String> = collections
@@ -1116,7 +1134,10 @@ impl StorageEngine {
             // Use metadata provider for collection deletion
             if let Some(provider) = self.metadata_provider.read().await.as_ref() {
                 // TODO: Add delete_collection method to InternalCollectionProvider trait
-                tracing::debug!("Collection deletion would happen through metadata provider for {}", collection.collection_id);
+                tracing::debug!(
+                    "Collection deletion would happen through metadata provider for {}",
+                    collection.collection_id
+                );
             }
         }
 
@@ -1147,12 +1168,20 @@ impl StorageEngine {
         // Get vectors from SST storage (if available)
         if let Some(sst_storage) = self.sst_storages.get(collection_id) {
             // Implement SST iteration for get_all_vectors
-            match sst_storage.value().scan_all_vectors(collection_id, 0, None).await {
+            match sst_storage
+                .value()
+                .scan_all_vectors(collection_id, 0, None)
+                .await
+            {
                 Ok(sst_vectors) => {
-                    debug!("Retrieved {} vectors from SST storage for collection {}",
-                           sst_vectors.len(), collection_id);
+                    debug!(
+                        "Retrieved {} vectors from SST storage for collection {}",
+                        sst_vectors.len(),
+                        collection_id
+                    );
                     // Convert service_types::VectorRecord to proximadb_v1::VectorRecord
-                    let converted_vectors: Vec<VectorRecord> = sst_vectors.into_iter()
+                    let converted_vectors: Vec<VectorRecord> = sst_vectors
+                        .into_iter()
                         .map(|v| {
                             // Manual conversion since Into trait is not implemented
                             VectorRecord {
@@ -1170,10 +1199,16 @@ impl StorageEngine {
                     vectors.extend(converted_vectors);
                 }
                 Err(e) => {
-                    warn!("Failed to scan SST vectors for collection {}: {}", collection_id, e);
+                    warn!(
+                        "Failed to scan SST vectors for collection {}: {}",
+                        collection_id, e
+                    );
                 }
             }
-            debug!("SST storage scan completed for collection {}", collection_id);
+            debug!(
+                "SST storage scan completed for collection {}",
+                collection_id
+            );
         }
 
         tracing::info!(

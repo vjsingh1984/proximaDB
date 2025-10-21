@@ -3,13 +3,13 @@
 //! Comprehensive metrics collection for LLM operations including performance,
 //! cost tracking, error rates, and provider health monitoring.
 
-use crate::ai::llm_integration::types::{LLMProvider, LLMError};
+use crate::ai::llm_integration::types::{LLMError, LLMProvider};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
 
 /// Comprehensive metrics for LLM operations
 #[derive(Debug)]
@@ -98,7 +98,9 @@ impl LLMMetrics {
     /// Record a successful LLM query
     pub async fn record_success(&self, provider: &LLMProvider, response_time_ms: u64) {
         // Update global metrics
-        self.global_metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+        self.global_metrics
+            .total_requests
+            .fetch_add(1, Ordering::Relaxed);
 
         // Update provider-specific metrics
         let mut provider_metrics = self.provider_metrics.write().await;
@@ -106,7 +108,9 @@ impl LLMMetrics {
 
         metrics.total_requests.fetch_add(1, Ordering::Relaxed);
         metrics.successful_requests.fetch_add(1, Ordering::Relaxed);
-        metrics.total_response_time_ms.fetch_add(response_time_ms, Ordering::Relaxed);
+        metrics
+            .total_response_time_ms
+            .fetch_add(response_time_ms, Ordering::Relaxed);
 
         // Update last success timestamp
         let mut last_success = metrics.last_success.write().await;
@@ -116,7 +120,9 @@ impl LLMMetrics {
     /// Record a failed LLM query
     pub async fn record_failure(&self, provider: &LLMProvider, error: &LLMError) {
         // Update global metrics
-        self.global_metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+        self.global_metrics
+            .total_requests
+            .fetch_add(1, Ordering::Relaxed);
 
         // Update provider-specific metrics
         let mut provider_metrics = self.provider_metrics.write().await;
@@ -140,7 +146,9 @@ impl LLMMetrics {
                 metrics.rate_limit_hits.fetch_add(1, Ordering::Relaxed);
             }
             LLMError::AuthenticationFailed { .. } => {
-                metrics.authentication_failures.fetch_add(1, Ordering::Relaxed);
+                metrics
+                    .authentication_failures
+                    .fetch_add(1, Ordering::Relaxed);
             }
             _ => {}
         }
@@ -151,10 +159,14 @@ impl LLMMetrics {
         let mut provider_metrics = self.provider_metrics.write().await;
         let metrics = provider_metrics.entry(provider.clone()).or_default();
 
-        metrics.total_tokens_used.fetch_add(tokens, Ordering::Relaxed);
+        metrics
+            .total_tokens_used
+            .fetch_add(tokens, Ordering::Relaxed);
         // Store cost in millicents (0.001 cents) for atomic operations to preserve precision
         let cost_millicents = (cost_usd * 100000.0) as u64;
-        metrics.total_cost_usd.fetch_add(cost_millicents, Ordering::Relaxed);
+        metrics
+            .total_cost_usd
+            .fetch_add(cost_millicents, Ordering::Relaxed);
     }
 
     /// Record rate limit exceeded
@@ -166,22 +178,30 @@ impl LLMMetrics {
 
     /// Record cache hit
     pub async fn record_cache_hit(&self) {
-        self.global_metrics.cache_hits.fetch_add(1, Ordering::Relaxed);
+        self.global_metrics
+            .cache_hits
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record cache miss
     pub async fn record_cache_miss(&self) {
-        self.global_metrics.cache_misses.fetch_add(1, Ordering::Relaxed);
+        self.global_metrics
+            .cache_misses
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record fallback activation
     pub async fn record_fallback_activation(&self) {
-        self.global_metrics.fallback_activations.fetch_add(1, Ordering::Relaxed);
+        self.global_metrics
+            .fallback_activations
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record all providers failed scenario
     pub async fn record_all_providers_failed(&self) {
-        self.global_metrics.all_providers_failures.fetch_add(1, Ordering::Relaxed);
+        self.global_metrics
+            .all_providers_failures
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get comprehensive metrics snapshot
@@ -222,31 +242,41 @@ impl LLMMetrics {
 
             // Get top 5 error types
             let error_breakdown = metrics.error_breakdown.read().await;
-            let mut common_errors: Vec<(String, u32)> = error_breakdown.iter()
+            let mut common_errors: Vec<(String, u32)> = error_breakdown
+                .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect();
             common_errors.sort_by(|a, b| b.1.cmp(&a.1));
             common_errors.truncate(5);
 
-            provider_stats.insert(provider.clone(), ProviderStats {
-                total_requests,
-                success_rate,
-                average_response_time_ms: average_response_time,
-                total_tokens_used: metrics.total_tokens_used.load(Ordering::Relaxed),
-                estimated_cost_usd,
-                rate_limit_hit_rate,
-                last_success,
-                last_failure,
-                common_errors,
-            });
+            provider_stats.insert(
+                provider.clone(),
+                ProviderStats {
+                    total_requests,
+                    success_rate,
+                    average_response_time_ms: average_response_time,
+                    total_tokens_used: metrics.total_tokens_used.load(Ordering::Relaxed),
+                    estimated_cost_usd,
+                    rate_limit_hit_rate,
+                    last_success,
+                    last_failure,
+                    common_errors,
+                },
+            );
         }
 
         // Calculate global stats
         let global_total_requests = self.global_metrics.total_requests.load(Ordering::Relaxed);
         let cache_hits = self.global_metrics.cache_hits.load(Ordering::Relaxed);
         let cache_misses = self.global_metrics.cache_misses.load(Ordering::Relaxed);
-        let fallback_activations = self.global_metrics.fallback_activations.load(Ordering::Relaxed);
-        let all_providers_failures = self.global_metrics.all_providers_failures.load(Ordering::Relaxed);
+        let fallback_activations = self
+            .global_metrics
+            .fallback_activations
+            .load(Ordering::Relaxed);
+        let all_providers_failures = self
+            .global_metrics
+            .all_providers_failures
+            .load(Ordering::Relaxed);
 
         let cache_hit_rate = if cache_hits + cache_misses > 0 {
             (cache_hits as f64) / ((cache_hits + cache_misses) as f64) * 100.0
@@ -260,7 +290,8 @@ impl LLMMetrics {
             0.0
         };
 
-        let total_successful_requests: u64 = provider_stats.values()
+        let total_successful_requests: u64 = provider_stats
+            .values()
             .map(|stats| (stats.total_requests as f64 * stats.success_rate / 100.0) as u64)
             .sum();
 
@@ -296,7 +327,10 @@ impl LLMMetrics {
     }
 
     /// Calculate performance summary and recommendations
-    fn calculate_performance_summary(&self, provider_stats: &HashMap<LLMProvider, ProviderStats>) -> PerformanceSummary {
+    fn calculate_performance_summary(
+        &self,
+        provider_stats: &HashMap<LLMProvider, ProviderStats>,
+    ) -> PerformanceSummary {
         let mut fastest_provider = None;
         let mut fastest_time = f64::INFINITY;
 
@@ -330,7 +364,8 @@ impl LLMMetrics {
         }
 
         // Determine recommended primary provider (balance of speed, reliability, cost)
-        let recommended_primary_provider = provider_stats.iter()
+        let recommended_primary_provider = provider_stats
+            .iter()
             .filter(|(_, stats)| stats.total_requests > 10 && stats.success_rate > 90.0)
             .max_by(|(_, a), (_, b)| {
                 // Score = success_rate * speed_factor * cost_factor
@@ -350,7 +385,9 @@ impl LLMMetrics {
                 };
                 let b_score = b.success_rate * b_speed_factor * b_cost_factor;
 
-                a_score.partial_cmp(&b_score).unwrap_or(std::cmp::Ordering::Equal)
+                a_score
+                    .partial_cmp(&b_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(provider, _)| provider.clone());
 
@@ -368,27 +405,60 @@ impl LLMMetrics {
 
         let mut report = String::new();
         report.push_str("=== LLM Integration Metrics Report ===\n");
-        report.push_str(&format!("Generated: {}\n\n", snapshot.timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+        report.push_str(&format!(
+            "Generated: {}\n\n",
+            snapshot.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
 
         // Global statistics
         report.push_str("GLOBAL STATISTICS:\n");
-        report.push_str(&format!("  Total Requests: {}\n", snapshot.global_stats.total_requests));
-        report.push_str(&format!("  Overall Success Rate: {:.1}%\n", snapshot.global_stats.overall_success_rate));
-        report.push_str(&format!("  Cache Hit Rate: {:.1}%\n", snapshot.global_stats.cache_hit_rate));
-        report.push_str(&format!("  Fallback Rate: {:.1}%\n", snapshot.global_stats.fallback_rate));
-        report.push_str(&format!("  All Providers Failure Rate: {:.1}%\n\n", snapshot.global_stats.all_providers_failure_rate));
+        report.push_str(&format!(
+            "  Total Requests: {}\n",
+            snapshot.global_stats.total_requests
+        ));
+        report.push_str(&format!(
+            "  Overall Success Rate: {:.1}%\n",
+            snapshot.global_stats.overall_success_rate
+        ));
+        report.push_str(&format!(
+            "  Cache Hit Rate: {:.1}%\n",
+            snapshot.global_stats.cache_hit_rate
+        ));
+        report.push_str(&format!(
+            "  Fallback Rate: {:.1}%\n",
+            snapshot.global_stats.fallback_rate
+        ));
+        report.push_str(&format!(
+            "  All Providers Failure Rate: {:.1}%\n\n",
+            snapshot.global_stats.all_providers_failure_rate
+        ));
 
         // Provider-specific statistics
         report.push_str("PROVIDER STATISTICS:\n");
         for (provider, stats) in &snapshot.provider_stats {
             report.push_str(&format!("  {}:\n", provider));
-            report.push_str(&format!("    Requests: {} (Success: {:.1}%)\n", stats.total_requests, stats.success_rate));
-            report.push_str(&format!("    Avg Response Time: {:.1}ms\n", stats.average_response_time_ms));
-            report.push_str(&format!("    Tokens Used: {} (Cost: ${:.4})\n", stats.total_tokens_used, stats.estimated_cost_usd));
-            report.push_str(&format!("    Rate Limit Hits: {:.1}%\n", stats.rate_limit_hit_rate));
+            report.push_str(&format!(
+                "    Requests: {} (Success: {:.1}%)\n",
+                stats.total_requests, stats.success_rate
+            ));
+            report.push_str(&format!(
+                "    Avg Response Time: {:.1}ms\n",
+                stats.average_response_time_ms
+            ));
+            report.push_str(&format!(
+                "    Tokens Used: {} (Cost: ${:.4})\n",
+                stats.total_tokens_used, stats.estimated_cost_usd
+            ));
+            report.push_str(&format!(
+                "    Rate Limit Hits: {:.1}%\n",
+                stats.rate_limit_hit_rate
+            ));
 
             if let Some(last_success) = stats.last_success {
-                report.push_str(&format!("    Last Success: {}\n", last_success.format("%Y-%m-%d %H:%M:%S UTC")));
+                report.push_str(&format!(
+                    "    Last Success: {}\n",
+                    last_success.format("%Y-%m-%d %H:%M:%S UTC")
+                ));
             }
 
             if !stats.common_errors.is_empty() {
@@ -408,11 +478,19 @@ impl LLMMetrics {
         if let Some(most_reliable) = &snapshot.performance_summary.most_reliable_provider {
             report.push_str(&format!("  Most Reliable Provider: {}\n", most_reliable));
         }
-        if let Some(most_cost_effective) = &snapshot.performance_summary.most_cost_effective_provider {
-            report.push_str(&format!("  Most Cost-Effective Provider: {}\n", most_cost_effective));
+        if let Some(most_cost_effective) =
+            &snapshot.performance_summary.most_cost_effective_provider
+        {
+            report.push_str(&format!(
+                "  Most Cost-Effective Provider: {}\n",
+                most_cost_effective
+            ));
         }
         if let Some(recommended) = &snapshot.performance_summary.recommended_primary_provider {
-            report.push_str(&format!("  Recommended Primary Provider: {}\n", recommended));
+            report.push_str(&format!(
+                "  Recommended Primary Provider: {}\n",
+                recommended
+            ));
         }
 
         report
@@ -430,11 +508,17 @@ impl LLMMetrics {
         provider_metrics.clear();
 
         // Reset global metrics
-        self.global_metrics.total_requests.store(0, Ordering::Relaxed);
+        self.global_metrics
+            .total_requests
+            .store(0, Ordering::Relaxed);
         self.global_metrics.cache_hits.store(0, Ordering::Relaxed);
         self.global_metrics.cache_misses.store(0, Ordering::Relaxed);
-        self.global_metrics.fallback_activations.store(0, Ordering::Relaxed);
-        self.global_metrics.all_providers_failures.store(0, Ordering::Relaxed);
+        self.global_metrics
+            .fallback_activations
+            .store(0, Ordering::Relaxed);
+        self.global_metrics
+            .all_providers_failures
+            .store(0, Ordering::Relaxed);
     }
 }
 
@@ -469,7 +553,9 @@ mod tests {
             // Record some successful operations
             metrics.record_success(&LLMProvider::OpenAI, 1500).await;
             metrics.record_success(&LLMProvider::OpenAI, 2000).await;
-            metrics.record_token_usage(&LLMProvider::OpenAI, 100, 0.002).await;
+            metrics
+                .record_token_usage(&LLMProvider::OpenAI, 100, 0.002)
+                .await;
 
             // Record a failure
             let error = LLMError::RateLimitExceeded {
@@ -503,13 +589,23 @@ mod tests {
             metrics.record_success(&LLMProvider::Anthropic, 2000).await; // Slower
         }
 
-        metrics.record_token_usage(&LLMProvider::OpenAI, 1000, 0.10).await; // More expensive
-        metrics.record_token_usage(&LLMProvider::Anthropic, 1000, 0.05).await; // Cheaper
+        metrics
+            .record_token_usage(&LLMProvider::OpenAI, 1000, 0.10)
+            .await; // More expensive
+        metrics
+            .record_token_usage(&LLMProvider::Anthropic, 1000, 0.05)
+            .await; // Cheaper
 
         let snapshot = metrics.get_snapshot().await;
 
-        assert_eq!(snapshot.performance_summary.fastest_provider, Some(LLMProvider::OpenAI));
-        assert_eq!(snapshot.performance_summary.most_cost_effective_provider, Some(LLMProvider::Anthropic));
+        assert_eq!(
+            snapshot.performance_summary.fastest_provider,
+            Some(LLMProvider::OpenAI)
+        );
+        assert_eq!(
+            snapshot.performance_summary.most_cost_effective_provider,
+            Some(LLMProvider::Anthropic)
+        );
     }
 
     #[tokio::test]
@@ -517,7 +613,9 @@ mod tests {
         let metrics = LLMMetrics::new();
 
         metrics.record_success(&LLMProvider::OpenAI, 1500).await;
-        metrics.record_token_usage(&LLMProvider::OpenAI, 150, 0.003).await;
+        metrics
+            .record_token_usage(&LLMProvider::OpenAI, 150, 0.003)
+            .await;
 
         let report = metrics.generate_report().await;
 

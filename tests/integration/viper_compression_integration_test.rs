@@ -14,8 +14,6 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-
-
 use common::ensure_test_directories;
 use common::integration_test_helpers::{
     UnifiedTestEnvironment, create_metadata_store_config, create_test_collection_with_storage,
@@ -49,8 +47,10 @@ fn find_parquet_files_recursive(dir: &str) -> Vec<std::path::PathBuf> {
 
 use arrow_array::{Array, BinaryArray, RecordBatch};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, DistanceMetric, SqlValue, sql_value};
 use proximadb::core::search::{FilterExpression, SearchParams};
+use proximadb::proto::proximadb_v1::{
+    Collection, CollectionConfig, DistanceMetric, SqlValue, StorageEngine, VectorRecord, sql_value,
+};
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataStore;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -162,26 +162,32 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
                 vector,
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("category".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(
-                            format!("cat_{}", i % 5)
-                        )),
-                    });
-                    metadata.insert("pattern".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(
-                            match i % 4 {
-                                0 => "sparse",
-                                1 => "sequential",
-                                2 => "sine",
-                                _ => "random",
-                            }.to_string()
-                        )),
-                    });
-                    metadata.insert("value".to_string(), SqlValue {
-                        value: Some(sql_value::Value::NumberValue(
-                            i as f64
-                        )),
-                    });
+                    metadata.insert(
+                        "category".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 5))),
+                        },
+                    );
+                    metadata.insert(
+                        "pattern".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(
+                                match i % 4 {
+                                    0 => "sparse",
+                                    1 => "sequential",
+                                    2 => "sine",
+                                    _ => "random",
+                                }
+                                .to_string(),
+                            )),
+                        },
+                    );
+                    metadata.insert(
+                        "value".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue(i as f64)),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some((1000 + i) as i64),
@@ -459,12 +465,20 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
         // Debug: Log the dimension in collection_config
         if let Some(ref config) = flush_params.collection_config {
             if let Some(ref cfg) = config.config {
-                info!("🔍 Batch {}: Collection config dimension = {}", batch + 1, cfg.dimension);
+                info!(
+                    "🔍 Batch {}: Collection config dimension = {}",
+                    batch + 1,
+                    cfg.dimension
+                );
             }
         }
 
         // Direct call to production code
-        info!("🚀 Batch {}: Calling engine.flush() with {} vectors", batch + 1, vector_count);
+        info!(
+            "🚀 Batch {}: Calling engine.flush() with {} vectors",
+            batch + 1,
+            vector_count
+        );
         let result = engine.flush(flush_params).await?;
         assert!(result.success, "Batch {} flush should succeed", batch + 1);
 
@@ -489,7 +503,8 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
 
     // Build correct CompactionParameters and call production code directly
     info!("🔄 Starting VIPER compaction with correct configuration");
-    let compact_params = operations::build_compaction_params_with_dimension(&env, StorageEngine::Viper, 128);
+    let compact_params =
+        operations::build_compaction_params_with_dimension(&env, StorageEngine::Viper, 128);
     let compaction_result = engine.compact(compact_params).await?;
 
     info!("✅ VIPER COMPACTION COMPLETED:");
@@ -533,7 +548,8 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
 
     // Create a simple test to verify the engine still works
     let test_vectors = env.create_test_vectors_with_dimension(10, 128);
-    let collection_config = env.create_test_collection_with_settings(StorageEngine::Viper, 128, None);
+    let collection_config =
+        env.create_test_collection_with_settings(StorageEngine::Viper, 128, None);
     let test_flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some(format!("{}_post_compact", env.collection_id())),
         vector_records: test_vectors,
@@ -758,7 +774,7 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
                 index_configs: vec![],
                 quantization: None,
                 primary_index: Some("default".to_string()),
-            auto_index_selection: Some(true),
+                auto_index_selection: Some(true),
                 owner: Some("test_user".to_string()),
                 embedding_models: vec!["test_model".to_string()],
                 ..Default::default()
@@ -894,7 +910,7 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
                 index_configs: vec![],
                 quantization: None,
                 primary_index: Some("default".to_string()),
-            auto_index_selection: Some(true),
+                auto_index_selection: Some(true),
                 owner: Some("test_user".to_string()),
                 embedding_models: vec!["test_model".to_string()],
                 ..Default::default()
@@ -1052,15 +1068,20 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
     let vectors = env.create_test_vectors_with_dimension(100, dimension);
 
     // Flush vectors
-    let flush_params = operations::build_flush_params(&env, vectors.clone(), StorageEngine::Viper).await?;
+    let flush_params =
+        operations::build_flush_params(&env, vectors.clone(), StorageEngine::Viper).await?;
     let flush_result = engine.flush(flush_params).await?;
 
     assert!(flush_result.success, "Flush should succeed");
-    println!("✓ Flushed {} vectors", flush_result.entries_flushed.unwrap_or(0));
+    println!(
+        "✓ Flushed {} vectors",
+        flush_result.entries_flushed.unwrap_or(0)
+    );
 
     // Search for vec_0 (first vector)
     let query_vector = vectors[0].vector.clone();
-    let collection = env.create_test_collection_with_settings(StorageEngine::Viper, dimension as i32, None);
+    let collection =
+        env.create_test_collection_with_settings(StorageEngine::Viper, dimension as i32, None);
     let collection_arc = Arc::new(collection.clone());
 
     let search_params = Arc::new(SearchParams {
@@ -1089,17 +1110,39 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
         // Debug: Check if files were created
         let storage_path = env.persistent_dir.to_str().unwrap();
         let parquet_files = find_parquet_files_recursive(storage_path);
-        println!("📁 Found {} parquet files in storage at: {}", parquet_files.len(), storage_path);
+        println!(
+            "📁 Found {} parquet files in storage at: {}",
+            parquet_files.len(),
+            storage_path
+        );
         for file in &parquet_files {
-            println!("   - {:?} (size: {} bytes)", file, std::fs::metadata(file).map(|m| m.len()).unwrap_or(0));
+            println!(
+                "   - {:?} (size: {} bytes)",
+                file,
+                std::fs::metadata(file).map(|m| m.len()).unwrap_or(0)
+            );
         }
 
         // Debug: Check what the search is looking for
         println!("🔍 Collection ID: {}", env.collection_id());
-        println!("🔍 Storage assignment primary_path: {:?}", collection.storage_assignment.as_ref().map(|sa| &sa.primary_path));
-        println!("🔍 Storage assignment base_location: {:?}", collection.storage_assignment.as_ref().map(|sa| &sa.base_location));
+        println!(
+            "🔍 Storage assignment primary_path: {:?}",
+            collection
+                .storage_assignment
+                .as_ref()
+                .map(|sa| &sa.primary_path)
+        );
+        println!(
+            "🔍 Storage assignment base_location: {:?}",
+            collection
+                .storage_assignment
+                .as_ref()
+                .map(|sa| &sa.base_location)
+        );
 
-        return Err(anyhow::anyhow!("Search returned no results with 'none' compression"));
+        return Err(anyhow::anyhow!(
+            "Search returned no results with 'none' compression"
+        ));
     }
 
     // Verify vec_0 is in results (should be top result since we're searching for itself)
@@ -1108,7 +1151,10 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
 
     if !found_vec_0 {
         info!("❌ ISSUE: {} not found in results", vec_0_id);
-        info!("Results IDs: {:?}", results.iter().map(|r| &r.id).collect::<Vec<_>>());
+        info!(
+            "Results IDs: {:?}",
+            results.iter().map(|r| &r.id).collect::<Vec<_>>()
+        );
     } else {
         info!("✓ {} found in results (as expected)", vec_0_id);
     }
@@ -1122,9 +1168,9 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "NOVA engine needs additional setup"]
 async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
-    use proximadb::storage::engines::impls::nova::NovaEngine;
-    use proximadb::proto::proximadb_v1::StorageEngine;
     use proximadb::core::search::SearchParams;
+    use proximadb::proto::proximadb_v1::StorageEngine;
+    use proximadb::storage::engines::impls::nova::NovaEngine;
     use std::sync::Arc;
 
     // Initialize
@@ -1142,7 +1188,8 @@ async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
     let vectors = env.create_test_vectors_with_dimension(100, dimension);
 
     // Flush vectors using the wrapper function
-    let storage_url = format!("{}/{}/data",
+    let storage_url = format!(
+        "{}/{}/data",
         env.persistent_dir.to_str().unwrap(),
         env.collection_id()
     );
@@ -1152,12 +1199,9 @@ async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
     let query_vector = vectors[0].vector.clone();
 
     // Test the wrapper function that benchmarks use
-    let results = engine.search_vectors(
-        env.collection_id(),
-        &storage_url,
-        &query_vector,
-        10,
-    ).await?;
+    let results = engine
+        .search_vectors(env.collection_id(), &storage_url, &query_vector, 10)
+        .await?;
 
     println!("📊 Search returned {} result groups", results.len());
     let total_results: usize = results.iter().map(|r| r.results.len()).sum();

@@ -3,11 +3,11 @@
 //! Provides SSO authentication using Google Cloud Platform Identity and Access Management (IAM)
 //! and Google Workspace identity federation.
 
-use super::types::{EnterpriseUserContext, SecurityClearance, ProviderUserContext};
+use super::types::{EnterpriseUserContext, ProviderUserContext, SecurityClearance};
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use chrono::Utc;
 use tracing::debug;
 
 /// Google Cloud Platform IAM integration configuration
@@ -65,9 +65,7 @@ impl GoogleCloudIntegration {
             return Err(anyhow!("Google Cloud service account key is required"));
         }
 
-        Ok(Self {
-            config,
-        })
+        Ok(Self { config })
     }
 
     /// Validate Google Cloud ID token and resolve user context
@@ -81,7 +79,10 @@ impl GoogleCloudIntegration {
         // 6. Create enterprise user context
 
         // Placeholder implementation
-        debug!("Validating Google Cloud ID token: {}", &id_token[..std::cmp::min(20, id_token.len())]);
+        debug!(
+            "Validating Google Cloud ID token: {}",
+            &id_token[..std::cmp::min(20, id_token.len())]
+        );
 
         // For now, return a simulated validation
         // TODO: Replace with actual Google Cloud authentication
@@ -89,7 +90,10 @@ impl GoogleCloudIntegration {
     }
 
     /// Simulate Google token validation (placeholder)
-    async fn simulate_google_token_validation(&self, id_token: &str) -> Result<EnterpriseUserContext> {
+    async fn simulate_google_token_validation(
+        &self,
+        id_token: &str,
+    ) -> Result<EnterpriseUserContext> {
         // This is a placeholder implementation
         // Real implementation would use Google Cloud authentication libraries
 
@@ -98,10 +102,17 @@ impl GoogleCloudIntegration {
         }
 
         // Simulate token parsing
-        let simulated_user_email = format!("user@{}",
-            self.config.allowed_domains.first().unwrap_or(&"example.com".to_string()));
+        let simulated_user_email = format!(
+            "user@{}",
+            self.config
+                .allowed_domains
+                .first()
+                .unwrap_or(&"example.com".to_string())
+        );
 
-        let tenant_id = self.config.default_tenant_mapping
+        let tenant_id = self
+            .config
+            .default_tenant_mapping
             .clone()
             .unwrap_or_else(|| "google_workspace".to_string());
 
@@ -140,7 +151,10 @@ impl GoogleCloudIntegration {
         // Return default groups based on email domain
         let domain = user_email.split('@').nth(1).unwrap_or("unknown");
         if self.config.allowed_domains.contains(&domain.to_string()) {
-            Ok(vec!["workspace_users".to_string(), "default_access".to_string()])
+            Ok(vec![
+                "workspace_users".to_string(),
+                "default_access".to_string(),
+            ])
         } else {
             Ok(vec![])
         }
@@ -236,7 +250,10 @@ mod tests {
         assert!(result.is_ok());
 
         let user_context = result.unwrap();
-        assert!(matches!(user_context.provider_context, ProviderUserContext::Generic { .. }));
+        assert!(matches!(
+            user_context.provider_context,
+            ProviderUserContext::Generic { .. }
+        ));
         assert_eq!(user_context.tenant_id, "test_tenant");
         assert!(user_context.roles.contains(&"workspace_user".to_string()));
 

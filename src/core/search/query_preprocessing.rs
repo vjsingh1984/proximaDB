@@ -5,11 +5,11 @@
 //!
 //! Expected Performance Improvement: 15-25% reduction in repeated computation
 
-use crate::proto::proximadb_v1::DistanceMetric;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::QuantizationLevel;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
+use crate::proto::proximadb_v1::DistanceMetric;
 use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::utils::cache::LruCache;
 use parking_lot::RwLock;
@@ -76,7 +76,10 @@ struct CacheStats {
 impl QueryPreprocessor {
     /// Create a new query preprocessor with specified cache size
     pub fn new(cache_size: usize) -> Self {
-        trace!("QueryPreprocessor::new called with cache_size: {}", cache_size);
+        trace!(
+            "QueryPreprocessor::new called with cache_size: {}",
+            cache_size
+        );
         let cache_size = NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(100).unwrap());
 
         // Initialize quantization engine with default configuration
@@ -124,8 +127,16 @@ impl QueryPreprocessor {
         distance_metric: DistanceMetric,
         quantization_config: Option<&QuantizationConfig>,
     ) -> Arc<QueryVectorCache> {
-        debug!("Starting preprocess function - vector len: {}, metric: {:?}", query.len(), distance_metric);
-        trace!("preprocess called - vector len: {}, metric: {:?}", query.len(), distance_metric);
+        debug!(
+            "Starting preprocess function - vector len: {}, metric: {:?}",
+            query.len(),
+            distance_metric
+        );
+        trace!(
+            "preprocess called - vector len: {}, metric: {:?}",
+            query.len(),
+            distance_metric
+        );
 
         // Compute hash of query vector
         debug!("Computing hash for vector len: {}", query.len());
@@ -177,8 +188,14 @@ impl QueryPreprocessor {
         trace!("Normalization step completed");
 
         // Quantize to all levels if config provided
-        debug!("Checking quantization config: {}", quantization_config.is_some());
-        trace!("Checking quantization config: {:?}", quantization_config.is_some());
+        debug!(
+            "Checking quantization config: {}",
+            quantization_config.is_some()
+        );
+        trace!(
+            "Checking quantization config: {:?}",
+            quantization_config.is_some()
+        );
         let (binary, int8, pq4, pq8) = if let Some(config) = quantization_config {
             debug!("Quantizing with config");
             trace!("Quantizing with config");
@@ -234,15 +251,19 @@ impl QueryPreprocessor {
 
     /// Normalize vector using SIMD operations
     fn normalize_vector_simd(&self, vector: &[f32]) -> Arc<Vec<f32>> {
-        trace!("normalize_vector_simd called with vector len: {}", vector.len());
+        trace!(
+            "normalize_vector_simd called with vector len: {}",
+            vector.len()
+        );
         self.stats.write().simd_operations += 1;
 
         // Use hardware-accelerated normalization if available
         #[cfg(target_arch = "x86_64")]
         {
-            trace!("On x86_64 - AVX2: {}, SSE42: {}",
-                self.hardware.cpu.features.avx2_support,
-                self.hardware.cpu.features.sse42_support);
+            trace!(
+                "On x86_64 - AVX2: {}, SSE42: {}",
+                self.hardware.cpu.features.avx2_support, self.hardware.cpu.features.sse42_support
+            );
             if self.hardware.cpu.features.avx2_support {
                 trace!("Using AVX2 normalization");
                 return Arc::new(self.normalize_avx2(vector));
@@ -254,7 +275,10 @@ impl QueryPreprocessor {
 
         #[cfg(target_arch = "aarch64")]
         {
-            trace!("On aarch64 - NEON: {}", self.hardware.cpu.features.neon_support);
+            trace!(
+                "On aarch64 - NEON: {}",
+                self.hardware.cpu.features.neon_support
+            );
             if self.hardware.cpu.features.neon_support {
                 trace!("Using NEON normalization");
                 return Arc::new(self.normalize_neon(vector));

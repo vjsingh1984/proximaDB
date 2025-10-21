@@ -357,12 +357,13 @@ impl StorageSystemBuilder {
     /// Configure WAL compression
     pub fn with_wal_compression(mut self, algorithm: CompressionAlgorithm) -> Self {
         // Configure WAL compression using the existing compression field
-        self.config.wal_system.compression = crate::storage::persistence::write_ahead_log::config::CompressionConfig {
-            algorithm,
-            compress_memory: true,
-            compress_disk: true,
-            min_compress_size: 1024, // Compress entries larger than 1KB
-        };
+        self.config.wal_system.compression =
+            crate::storage::persistence::write_ahead_log::config::CompressionConfig {
+                algorithm,
+                compress_memory: true,
+                compress_disk: true,
+                min_compress_size: 1024, // Compress entries larger than 1KB
+            };
         self
     }
 
@@ -634,8 +635,17 @@ impl StorageSystemBuilder {
             level0_threshold: 4,
             level_threshold: 10,
             max_level: 7,
-            max_concurrent_per_collection: self.config.data_storage.compaction_config.compaction_threads as usize,
-            global_max_concurrent: (self.config.data_storage.compaction_config.compaction_threads * 2) as usize,
+            max_concurrent_per_collection: self
+                .config
+                .data_storage
+                .compaction_config
+                .compaction_threads as usize,
+            global_max_concurrent: (self
+                .config
+                .data_storage
+                .compaction_config
+                .compaction_threads
+                * 2) as usize,
             operation_timeout: std::time::Duration::from_secs(3600), // 1 hour
             queue_aware_compaction: true,
             max_queue_wait: std::time::Duration::from_secs(300), // 5 minutes
@@ -644,13 +654,13 @@ impl StorageSystemBuilder {
         let compaction_orchestrator = Arc::new(
             crate::storage::common::compaction_orchestrator::CompactionOrchestrator::new(
                 filesystem.clone(),
-                compaction_config
-            )
+                compaction_config,
+            ),
         );
-        
+
         // Initialize data storage engines based on layout strategy
         let storage_engines = self.initialize_storage_engines().await?;
-        
+
         // Initialize tiered storage coordination
         let tiered_coordinator = self.initialize_tiered_storage().await?;
 
@@ -664,25 +674,31 @@ impl StorageSystemBuilder {
 
         Ok(system)
     }
-    
+
     /// Initialize storage engines based on layout strategy
-    async fn initialize_storage_engines(&self) -> Result<Vec<Arc<dyn crate::storage::engines::UnifiedStorageEngine>>> {
+    async fn initialize_storage_engines(
+        &self,
+    ) -> Result<Vec<Arc<dyn crate::storage::engines::UnifiedStorageEngine>>> {
         let mut engines = Vec::new();
-        
+
         match self.config.data_storage.layout_strategy {
             StorageLayoutStrategy::Viper => {
                 // Initialize VIPER engine
-                if let Ok(viper_engine) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
-                    crate::storage::traits::StorageEngineStrategy::Viper
-                ) {
+                if let Ok(viper_engine) =
+                    crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+                        crate::storage::traits::StorageEngineStrategy::Viper,
+                    )
+                {
                     engines.push(viper_engine);
                 }
             }
             StorageLayoutStrategy::Regular => {
                 // Initialize SST engine for traditional LSM-tree storage
-                if let Ok(sst_engine) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
-                    crate::storage::traits::StorageEngineStrategy::Sst
-                ) {
+                if let Ok(sst_engine) =
+                    crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+                        crate::storage::traits::StorageEngineStrategy::Sst,
+                    )
+                {
                     engines.push(sst_engine);
                 }
             }
@@ -692,38 +708,44 @@ impl StorageSystemBuilder {
                 engines.extend(self.initialize_multi_engine_layout().await?);
             }
         }
-        
+
         Ok(engines)
     }
-    
+
     /// Initialize tiered storage coordination
     async fn initialize_tiered_storage(&self) -> Result<Arc<dyn Send + Sync>> {
         // Initialize tiered storage coordinator for hot/cold data management
         // This would typically involve setting up policies for data movement
         // between different storage tiers based on access patterns
-        
+
         // For now, return a placeholder that can be expanded
         Ok(Arc::new(()))
     }
-    
+
     /// Initialize multiple engines for hybrid workloads
-    async fn initialize_multi_engine_layout(&self) -> Result<Vec<Arc<dyn crate::storage::engines::UnifiedStorageEngine>>> {
+    async fn initialize_multi_engine_layout(
+        &self,
+    ) -> Result<Vec<Arc<dyn crate::storage::engines::UnifiedStorageEngine>>> {
         let mut engines = Vec::new();
-        
+
         // Add VIPER for analytics workloads
-        if let Ok(viper) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
-            crate::storage::traits::StorageEngineStrategy::Viper
-        ) {
+        if let Ok(viper) =
+            crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+                crate::storage::traits::StorageEngineStrategy::Viper,
+            )
+        {
             engines.push(viper);
         }
-        
+
         // Add SST for high-throughput writes
-        if let Ok(sst) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
-            crate::storage::traits::StorageEngineStrategy::Sst
-        ) {
+        if let Ok(sst) =
+            crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+                crate::storage::traits::StorageEngineStrategy::Sst,
+            )
+        {
             engines.push(sst);
         }
-        
+
         Ok(engines)
     }
 

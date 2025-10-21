@@ -8,7 +8,7 @@
 //! - Stats tracking
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -47,12 +47,18 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         id: id.to_string(),
         vector: vec![0.1; dimension],
         metadata: std::collections::HashMap::from([
-            ("category".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue("test".to_string())),
-            }),
-            ("priority".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue("1".to_string())),
-            }),
+            (
+                "category".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue("test".to_string())),
+                },
+            ),
+            (
+                "priority".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue("1".to_string())),
+                },
+            ),
         ]),
         timestamp: Some(1234567890i64),
         updated_at: Some(1234567890i64),
@@ -133,10 +139,7 @@ async fn test_avro_write_and_read_batch() {
     assert_eq!(retrieved.len(), 3);
 
     // Collect IDs and verify all are present (order not guaranteed)
-    let mut ids: Vec<String> = retrieved
-        .iter()
-        .map(|v| v.id.clone())
-        .collect();
+    let mut ids: Vec<String> = retrieved.iter().map(|v| v.id.clone()).collect();
     ids.sort();
     assert_eq!(ids, vec!["vec1", "vec2", "vec3"]);
 }
@@ -419,16 +422,8 @@ async fn test_avro_multiple_collections() {
             .expect("Failed to get vectors");
 
         assert_eq!(vectors.len(), 2);
-        assert!(
-            vectors[0]
-                .id
-                .contains(&format!("col{}_", i))
-        );
-        assert!(
-            vectors[1]
-                .id
-                .contains(&format!("col{}_", i))
-        );
+        assert!(vectors[0].id.contains(&format!("col{}_", i)));
+        assert!(vectors[1].id.contains(&format!("col{}_", i)));
     }
 }
 

@@ -570,8 +570,14 @@ impl UniversalMetadataBackend {
 
     /// Atomic write operation using TransactionCoordinator for ACID guarantees
     async fn atomic_persist_operation(&self, operation: &IncrementalOperation) -> Result<()> {
-        eprintln!("🔍 DEBUG: atomic_persist_operation() called for seq={}", operation.sequence);
-        eprintln!("🔍 DEBUG: atomic_operations_enabled = {}", self.atomic_operations_enabled);
+        eprintln!(
+            "🔍 DEBUG: atomic_persist_operation() called for seq={}",
+            operation.sequence
+        );
+        eprintln!(
+            "🔍 DEBUG: atomic_operations_enabled = {}",
+            self.atomic_operations_enabled
+        );
 
         if !self.atomic_operations_enabled {
             eprintln!("🔍 DEBUG: Using simple persist (atomic disabled)");
@@ -637,7 +643,10 @@ impl UniversalMetadataBackend {
         // Begin atomic operation
         eprintln!("🔍 DEBUG: About to call begin_atomic_operation()");
         let op_metadata = coordinator.begin_atomic_operation(&staging_config).await?;
-        eprintln!("🔍 DEBUG: begin_atomic_operation() SUCCESS - operation_id={}", op_metadata.operation_id);
+        eprintln!(
+            "🔍 DEBUG: begin_atomic_operation() SUCCESS - operation_id={}",
+            op_metadata.operation_id
+        );
 
         // Write to staging
         info!("📝 Writing to staging:");
@@ -673,7 +682,10 @@ impl UniversalMetadataBackend {
 
                 // Finalize the atomic operation (moves from staging to final)
                 info!("🔄 Starting finalize operation...");
-                eprintln!("🔍 DEBUG: About to call finalize_atomic_operation() with operation_id={}", op_metadata.operation_id);
+                eprintln!(
+                    "🔍 DEBUG: About to call finalize_atomic_operation() with operation_id={}",
+                    op_metadata.operation_id
+                );
                 match coordinator
                     .finalize_atomic_operation(&op_metadata.operation_id)
                     .await
@@ -685,7 +697,10 @@ impl UniversalMetadataBackend {
                             "✅ Atomic operation completed for seq={}",
                             operation.sequence
                         );
-                        eprintln!("🔍 DEBUG: Atomic operation FULLY COMPLETED for seq={}", operation.sequence);
+                        eprintln!(
+                            "🔍 DEBUG: Atomic operation FULLY COMPLETED for seq={}",
+                            operation.sequence
+                        );
                         Ok(())
                     }
                     Err(e) => {
@@ -1741,8 +1756,8 @@ mod tests {
         let collection_config = CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 128,
-            distance_metric: Some(1),            // Cosine
-            storage_engine: Some(1),             // Viper
+            distance_metric: Some(1), // Cosine
+            storage_engine: Some(1),  // Viper
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,

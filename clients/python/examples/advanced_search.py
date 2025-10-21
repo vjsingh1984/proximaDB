@@ -10,7 +10,7 @@ This example demonstrates advanced search features:
 - Pagination and streaming
 """
 
-import asyncio
+# import asyncio
 import json
 import time
 import numpy as np
@@ -66,7 +66,7 @@ def generate_product_embeddings(num_products: int) -> List[Dict[str, Any]]:
     return products
 
 
-async def setup_collection(client: ProximaDBClient, collection_name: str) -> None:
+def setup_collection(client: ProximaDBClient, collection_name: str) -> None:
     """Set up collection with product data"""
     print(f"📦 Setting up collection '{collection_name}'...")
     
@@ -84,11 +84,11 @@ async def setup_collection(client: ProximaDBClient, collection_name: str) -> Non
     )
     
     try:
-        await client.adelete_collection(collection_name)
+        client.adelete_collection(collection_name)
     except:
         pass  # Collection might not exist
     
-    collection = await client.acreate_collection(config)
+    collection = client.acreate_collection(config)
     print(f"✅ Collection created: {collection.id}")
     
     # Insert product data
@@ -108,14 +108,14 @@ async def setup_collection(client: ProximaDBClient, collection_name: str) -> Non
     batch_size = 100
     for i in range(0, len(vectors), batch_size):
         batch = vectors[i:i + batch_size]
-        response = await client.ainsert_vectors(collection_name, batch)
+        response = client.ainsert_vectors(collection_name, batch)
         print(f"   Inserted batch {i//batch_size + 1}/{len(vectors)//batch_size + 1}")
     
     print("✅ Product data inserted successfully")
     return products
 
 
-async def demo_basic_filtering(client: ProximaDBClient, collection_name: str, 
+def demo_basic_filtering(client: ProximaDBClient, collection_name: str, 
                               query_vector: List[float]) -> None:
     """Demonstrate basic metadata filtering"""
     print("\n🔍 Example 1: Basic Metadata Filtering")
@@ -139,7 +139,7 @@ async def demo_basic_filtering(client: ProximaDBClient, collection_name: str,
         include_metadata=True
     )
     
-    results = await client.asearch_vectors(
+    results = client.search(
         collection_name,
         query_vector,
         options=options
@@ -151,7 +151,7 @@ async def demo_basic_filtering(client: ProximaDBClient, collection_name: str,
         print(f"   Brand: {result.metadata['brand']}, Rating: ⭐ {result.metadata['rating']}")
 
 
-async def demo_complex_filtering(client: ProximaDBClient, collection_name: str,
+def demo_complex_filtering(client: ProximaDBClient, collection_name: str,
                                 query_vector: List[float]) -> None:
     """Demonstrate complex compound filters"""
     print("\n🔍 Example 2: Complex Compound Filtering")
@@ -180,7 +180,7 @@ async def demo_complex_filtering(client: ProximaDBClient, collection_name: str,
         include_metadata=True
     )
     
-    results = await client.asearch_vectors(
+    results = client.search(
         collection_name,
         query_vector,
         options=options
@@ -193,7 +193,7 @@ async def demo_complex_filtering(client: ProximaDBClient, collection_name: str,
         print(f"   Price: ${result.metadata['price']}, Tags: {result.metadata.get('tags', [])}")
 
 
-async def demo_sql_search(client: ProximaDBClient, collection_name: str,
+def demo_sql_search(client: ProximaDBClient, collection_name: str,
                          query_vector: List[float]) -> None:
     """Demonstrate SQL-based vector search"""
     print("\n🔍 Example 3: SQL-based Vector Search")
@@ -212,7 +212,7 @@ async def demo_sql_search(client: ProximaDBClient, collection_name: str,
     """
     
     try:
-        results = await client.aexecute_sql(
+        results = client.aexecute_sql(
             sql_query,
             parameters={"query_vector": query_vector}
         )
@@ -229,7 +229,7 @@ async def demo_sql_search(client: ProximaDBClient, collection_name: str,
         print("   Make sure ProximaDB server supports SQL queries")
 
 
-async def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> None:
+def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> None:
     """Demonstrate hybrid search combining multiple signals"""
     print("\n🔍 Example 4: Hybrid Search (Text + Vector + Filters)")
     print("=" * 50)
@@ -248,7 +248,7 @@ async def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> N
     print(f"🔎 Searching for: '{text_query}'")
     
     # Stage 1: Broad vector search
-    broad_results = await client.asearch_vectors(
+    broad_results = client.search(
         collection_name,
         query_embedding.tolist(),
         top_k=50  # Get more candidates
@@ -277,7 +277,7 @@ async def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> N
         include_metadata=True
     )
     
-    refined_results = await client.asearch_vectors(
+    refined_results = client.search(
         collection_name,
         query_embedding.tolist(),
         options=refined_options
@@ -289,7 +289,7 @@ async def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> N
         print(f"   Similarity: {result.score:.3f}, Rating: ⭐ {result.metadata['rating']}")
 
 
-async def demo_search_caching(client: ProximaDBClient, collection_name: str,
+def demo_search_caching(client: ProximaDBClient, collection_name: str,
                              query_vector: List[float]) -> None:
     """Demonstrate search result caching"""
     print("\n🔍 Example 5: Search Result Caching")
@@ -311,7 +311,7 @@ async def demo_search_caching(client: ProximaDBClient, collection_name: str,
     
     # First search (cache miss)
     start = time.time()
-    results1 = await client.asearch_vectors(
+    results1 = client.search(
         collection_name,
         query_vector,
         options=search_options
@@ -321,7 +321,7 @@ async def demo_search_caching(client: ProximaDBClient, collection_name: str,
     
     # Immediate second search (potential cache hit)
     start = time.time()
-    results2 = await client.asearch_vectors(
+    results2 = client.search(
         collection_name,
         query_vector,
         options=search_options
@@ -335,7 +335,7 @@ async def demo_search_caching(client: ProximaDBClient, collection_name: str,
         print("ℹ️  No significant caching detected (enable with ResilientProximaDBClient)")
 
 
-async def demo_streaming_search(client: ProximaDBClient, collection_name: str,
+def demo_streaming_search(client: ProximaDBClient, collection_name: str,
                                query_vector: List[float]) -> None:
     """Demonstrate streaming search for large result sets"""
     print("\n🔍 Example 6: Streaming Search Results")
@@ -346,8 +346,8 @@ async def demo_streaming_search(client: ProximaDBClient, collection_name: str,
     # Create search stream
     search_stream = SearchStream(
         client,
-        collection_name=collection_name,
-        query_vector=query_vector,
+        collection_id=collection_name,
+        vector=query_vector,
         page_size=20,      # Results per page
         max_results=100    # Total results to retrieve
     )
@@ -371,7 +371,7 @@ async def demo_streaming_search(client: ProximaDBClient, collection_name: str,
         print(f"   - {category}: {count} products")
 
 
-async def demo_optimization_hints(client: ProximaDBClient, collection_name: str,
+def demo_optimization_hints(client: ProximaDBClient, collection_name: str,
                                  query_vector: List[float]) -> None:
     """Demonstrate search optimization hints"""
     print("\n🔍 Example 7: Search Optimization Hints")
@@ -400,7 +400,7 @@ async def demo_optimization_hints(client: ProximaDBClient, collection_name: str,
     )
     
     start = time.time()
-    results = await client.asearch_vectors(
+    results = client.search(
         collection_name,
         query_vector,
         options=options
@@ -419,7 +419,7 @@ async def demo_optimization_hints(client: ProximaDBClient, collection_name: str,
         print(f"   - Cache hit: {stats.get('cache_hit', False)}")
 
 
-async def main():
+def main():
     # Initialize client
     print("🚀 Advanced Search Example for ProximaDB")
     print("=" * 50)
@@ -435,19 +435,19 @@ async def main():
     
     try:
         # Set up collection with data
-        products = await setup_collection(client, collection_name)
+        products = setup_collection(client, collection_name)
         
         # Use first product's embedding as query
         query_vector = products[0]["embedding"]
         
         # Run all demos
-        await demo_basic_filtering(client, collection_name, query_vector)
-        await demo_complex_filtering(client, collection_name, query_vector)
-        await demo_sql_search(client, collection_name, query_vector)
-        await demo_hybrid_search(client, collection_name)
-        await demo_search_caching(client, collection_name, query_vector)
-        await demo_streaming_search(client, collection_name, query_vector)
-        await demo_optimization_hints(client, collection_name, query_vector)
+        demo_basic_filtering(client, collection_name, query_vector)
+        demo_complex_filtering(client, collection_name, query_vector)
+        demo_sql_search(client, collection_name, query_vector)
+        demo_hybrid_search(client, collection_name)
+        demo_search_caching(client, collection_name, query_vector)
+        demo_streaming_search(client, collection_name, query_vector)
+        demo_optimization_hints(client, collection_name, query_vector)
         
         print("\n✅ All advanced search examples completed!")
         
@@ -455,11 +455,11 @@ async def main():
         # Cleanup
         print("\n🧹 Cleaning up...")
         try:
-            await client.adelete_collection(collection_name)
+            client.adelete_collection(collection_name)
             print("✅ Demo collection deleted")
         except Exception as e:
             print(f"⚠️  Cleanup failed: {e}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

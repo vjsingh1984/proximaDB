@@ -32,17 +32,17 @@ pub mod coordinator;
 pub mod operations;
 pub mod optimizer;
 
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::{Result, Context};
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
+use crate::compute::distance_computation::DistanceMetric;
+use crate::core::search::FilterExpression;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::impls::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
-use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::core::search::FilterExpression;
-use crate::compute::distance_computation::DistanceMetric;
 
 pub use coordinator::SearchCoordinator;
 pub use operations::SearchOperations;
@@ -90,10 +90,28 @@ impl SstEngine {
 
         if use_orchestration {
             // Use advanced orchestration when available
-            self.execute_orchestrated_search(ctx, collection_id, &storage_url, query_vector, k, distance_metric, filter_expression).await
+            self.execute_orchestrated_search(
+                ctx,
+                collection_id,
+                &storage_url,
+                query_vector,
+                k,
+                distance_metric,
+                filter_expression,
+            )
+            .await
         } else {
             // Use direct search for simple queries
-            self.execute_direct_search(ctx, collection_id, &storage_url, query_vector, k, distance_metric, filter_expression).await
+            self.execute_direct_search(
+                ctx,
+                collection_id,
+                &storage_url,
+                query_vector,
+                k,
+                distance_metric,
+                filter_expression,
+            )
+            .await
         }
     }
 
@@ -112,7 +130,9 @@ impl SstEngine {
 
         // For now, fall back to direct search since full orchestration requires
         // integration with AdvancedSearchOptimizer which is not yet available
-        warn!("🔄 SST: Orchestration requested but falling back to direct search until integration complete");
+        warn!(
+            "🔄 SST: Orchestration requested but falling back to direct search until integration complete"
+        );
 
         self.fallback_to_direct_search(
             ctx,
@@ -124,7 +144,8 @@ impl SstEngine {
             filter_expression,
             true, // include_vectors
             true, // include_metadata
-        ).await
+        )
+        .await
     }
 
     /// Execute direct search without orchestration
@@ -150,7 +171,8 @@ impl SstEngine {
             filter_expression,
             true, // include_vectors
             true, // include_metadata
-        ).await
+        )
+        .await
     }
 
     /// Fallback direct search implementation
@@ -171,7 +193,11 @@ impl SstEngine {
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        tracing::debug!("[SST] Starting direct search for collection {}, storage_url: {}", collection_id, storage_url);
+        tracing::debug!(
+            "[SST] Starting direct search for collection {}, storage_url: {}",
+            collection_id,
+            storage_url
+        );
 
         let mut all_candidates = Vec::new();
 
@@ -193,14 +219,18 @@ impl SstEngine {
         for sstable_path in &sstable_files {
             debug!("🔍 SST: Searching SSTable: {}", sstable_path);
 
-            match self.sstable_reader().search_with_filter(
-                sstable_path,
-                query_vector,
-                filter_expression.cloned(),
-                k * 2, // Get more candidates for better accuracy
-                distance_metric,
-                Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
-            ).await {
+            match self
+                .sstable_reader()
+                .search_with_filter(
+                    sstable_path,
+                    query_vector,
+                    filter_expression.cloned(),
+                    k * 2, // Get more candidates for better accuracy
+                    distance_metric,
+                    Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                )
+                .await
+            {
                 Ok(results) => {
                     debug!("📊 Found {} candidates in {}", results.len(), sstable_path);
                     all_candidates.extend(results);
@@ -240,7 +270,10 @@ impl SstEngine {
 
     /// Discover SSTable files for a collection
     async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
-        tracing::debug!("[SST] discover_sstable_files called with storage_url: {}", storage_url);
+        tracing::debug!(
+            "[SST] discover_sstable_files called with storage_url: {}",
+            storage_url
+        );
 
         let mut files = Vec::new();
 
@@ -257,26 +290,39 @@ impl SstEngine {
             Ok(entries) => {
                 tracing::debug!("[SST] Found {} entries in {}", entries.len(), data_url);
                 entries
-            },
+            }
             Err(e) if e.to_string().contains("No such file or directory") => {
                 tracing::warn!("[SST] Directory doesn't exist yet: {}", data_url);
                 return Ok(files);
             }
             Err(e) => {
                 tracing::error!("[SST] Failed to list directory {}: {:?}", data_url, e);
-                return Err(anyhow::anyhow!("Failed to list directory {}: {}", data_url, e));
+                return Err(anyhow::anyhow!(
+                    "Failed to list directory {}: {}",
+                    data_url,
+                    e
+                ));
             }
         };
 
         for entry in entries {
-            tracing::trace!("[SST] Examining entry: name={}, url={}, is_dir={}", entry.name, entry.url, entry.metadata.is_directory);
+            tracing::trace!(
+                "[SST] Examining entry: name={}, url={}, is_dir={}",
+                entry.name,
+                entry.url,
+                entry.metadata.is_directory
+            );
             if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
                 files.push(entry.url);
                 tracing::debug!("[SST] Found .sst file: {}", entry.name);
             }
         }
 
-        tracing::debug!("[SST] Discovered {} .sst files in {}", files.len(), data_url);
+        tracing::debug!(
+            "[SST] Discovered {} .sst files in {}",
+            files.len(),
+            data_url
+        );
         Ok(files)
     }
 
@@ -288,7 +334,10 @@ impl SstEngine {
             let collection = &storage_url[last_slash + 1..];
             Ok((base.to_string(), collection.to_string()))
         } else {
-            Err(SstError::InvalidArgument(format!("Invalid storage URL format: {}", storage_url)).into())
+            Err(
+                SstError::InvalidArgument(format!("Invalid storage URL format: {}", storage_url))
+                    .into(),
+            )
         }
     }
 
@@ -327,7 +376,11 @@ impl SstEngine {
             }
         }
 
-        debug!("📋 Listed {} SSTable files in {}", sstable_files.len(), data_dir);
+        debug!(
+            "📋 Listed {} SSTable files in {}",
+            sstable_files.len(),
+            data_dir
+        );
         Ok(sstable_files)
     }
 }
@@ -335,16 +388,18 @@ impl SstEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
     #[tokio::test]
     async fn test_parse_storage_url() {
         let engine = create_test_engine().await;
 
         // Test valid storage URL
-        let (base, collection) = engine.parse_storage_url("file:///data/collections/test_collection").unwrap();
+        let (base, collection) = engine
+            .parse_storage_url("file:///data/collections/test_collection")
+            .unwrap();
         assert_eq!(base, "file:///data/collections");
         assert_eq!(collection, "test_collection");
 
@@ -373,11 +428,14 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 
     fn create_test_search_result(id: &str, values: Vec<f32>, score: f32) -> OptimizedSearchRecord {
@@ -389,7 +447,9 @@ mod tests {
             let mut metadata = HashMap::new();
             // Convert to SqlValue for proper metadata type
             let sql_value = crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string())),
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "test_value".to_string(),
+                )),
             };
             metadata.insert("test_key".to_string(), sql_value);
             metadata

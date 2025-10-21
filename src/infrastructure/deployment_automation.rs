@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 
 //! # Deployment Automation Module
-//! 
+//!
 //! Provides automated deployment utilities for ProximaDB including environment setup,
 //! configuration validation, health checks, and rollback mechanisms.
 
@@ -233,7 +233,10 @@ impl DeploymentManager {
 
     /// Initialize deployment environment
     pub async fn initialize(&self) -> Result<()> {
-        info!("Initializing deployment environment: {:?}", self.config.environment);
+        info!(
+            "Initializing deployment environment: {:?}",
+            self.config.environment
+        );
 
         // Create working directory
         if !self.work_dir.exists() {
@@ -260,7 +263,10 @@ impl DeploymentManager {
 
         // Validate resource requirements
         if self.config.service.resources.memory_limit_mb < 512 {
-            warn!("Memory limit is very low: {} MB", self.config.service.resources.memory_limit_mb);
+            warn!(
+                "Memory limit is very low: {} MB",
+                self.config.service.resources.memory_limit_mb
+            );
         }
 
         // Validate environment-specific requirements
@@ -270,16 +276,21 @@ impl DeploymentManager {
                     return Err(anyhow!("TLS must be enabled in production"));
                 }
                 if self.config.service.resources.cpu_limit < 1.0 {
-                    warn!("CPU limit is low for production: {}", self.config.service.resources.cpu_limit);
+                    warn!(
+                        "CPU limit is low for production: {}",
+                        self.config.service.resources.cpu_limit
+                    );
                 }
-            },
+            }
             Environment::Development => {
                 // Development-specific validations
                 if self.config.service.resources.memory_limit_mb > 8192 {
-                    warn!("High memory allocation for development: {} MB", 
-                          self.config.service.resources.memory_limit_mb);
+                    warn!(
+                        "High memory allocation for development: {} MB",
+                        self.config.service.resources.memory_limit_mb
+                    );
                 }
-            },
+            }
             _ => {}
         }
 
@@ -312,7 +323,10 @@ impl DeploymentManager {
         let network_config_path = self.work_dir.join("network-config.yaml");
         fs::write(&network_config_path, network_config).await?;
 
-        info!("Network configuration written to: {:?}", network_config_path);
+        info!(
+            "Network configuration written to: {:?}",
+            network_config_path
+        );
         Ok(())
     }
 
@@ -340,14 +354,19 @@ impl DeploymentManager {
         let monitoring_config_path = self.work_dir.join("monitoring-config.yaml");
         fs::write(&monitoring_config_path, monitoring_config).await?;
 
-        info!("Monitoring configuration written: {:?}", monitoring_config_path);
+        info!(
+            "Monitoring configuration written: {:?}",
+            monitoring_config_path
+        );
         Ok(())
     }
 
     /// Deploy the service
     pub async fn deploy(&self) -> Result<DeploymentStatus> {
-        info!("Starting deployment of {} v{}", 
-              self.config.service.name, self.config.service.version);
+        info!(
+            "Starting deployment of {} v{}",
+            self.config.service.name, self.config.service.version
+        );
 
         // Generate deployment manifests
         self.generate_deployment_manifests().await?;
@@ -409,11 +428,14 @@ impl DeploymentManager {
     /// Check if deployment is ready
     async fn check_deployment_ready(&self) -> Result<bool> {
         // Check if health endpoints are responding
-        let health_url = format!("http://localhost:{}/health", self.config.service.ports.rest_port);
-        
+        let health_url = format!(
+            "http://localhost:{}/health",
+            self.config.service.ports.rest_port
+        );
+
         // Simple health check - in production, use proper HTTP client
         info!("Checking health endpoint: {}", health_url);
-        
+
         // For demonstration, we'll return true after initial delay
         Ok(true)
     }
@@ -462,10 +484,10 @@ impl DeploymentManager {
 
         if let Some(ref previous_version) = self.config.rollback.previous_version {
             info!("Rolling back to version: {}", previous_version);
-            
+
             // Implement rollback logic
             // This would involve deploying the previous version
-            
+
             info!("Rollback completed to version: {}", previous_version);
             Ok(DeploymentStatus::RolledBack)
         } else {
@@ -485,9 +507,7 @@ impl DeploymentManager {
                podSelector:\n\
                  matchLabels:\n\
                    app: {}\n",
-            self.config.service.name,
-            self.config.service.name,
-            self.config.service.name
+            self.config.service.name, self.config.service.name, self.config.service.name
         );
         Ok(config)
     }
@@ -506,9 +526,7 @@ impl DeploymentManager {
                resources:\n\
                  requests:\n\
                    storage: {}Gi\n",
-            volume.name,
-            volume.name,
-            volume.size_gb
+            volume.name, volume.name, volume.size_gb
         );
         Ok(config)
     }
@@ -538,9 +556,10 @@ impl DeploymentManager {
 
     /// Generate deployment manifest
     fn generate_deployment_manifest(&self) -> Result<String> {
-        let image = format!("{}:{}", 
-                           self.config.infrastructure.container.image,
-                           self.config.infrastructure.container.tag);
+        let image = format!(
+            "{}:{}",
+            self.config.infrastructure.container.image, self.config.infrastructure.container.tag
+        );
 
         let manifest = format!(
             "# Deployment Manifest for {}\n\
@@ -582,7 +601,7 @@ impl DeploymentManager {
             self.config.service.resources.cpu_limit,
             self.config.service.resources.memory_limit_mb,
             self.config.service.resources.cpu_limit / 2.0, // Request half of limit
-            self.config.service.resources.memory_limit_mb / 2 // Request half of limit
+            self.config.service.resources.memory_limit_mb / 2  // Request half of limit
         );
         Ok(manifest)
     }
@@ -625,14 +644,12 @@ pub mod utils {
                     tls_enabled: false,
                 },
                 storage: StorageDeploymentConfig {
-                    persistent_volumes: vec![
-                        VolumeConfig {
-                            name: "proximadb-data".to_string(),
-                            mount_path: PathBuf::from("/data"),
-                            size_gb: 10,
-                            storage_class: None,
-                        },
-                    ],
+                    persistent_volumes: vec![VolumeConfig {
+                        name: "proximadb-data".to_string(),
+                        mount_path: PathBuf::from("/data"),
+                        size_gb: 10,
+                        storage_class: None,
+                    }],
                     backup: BackupDeploymentConfig {
                         enabled: false,
                         schedule: "0 2 * * *".to_string(),

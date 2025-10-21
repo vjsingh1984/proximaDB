@@ -6,7 +6,7 @@
 
 //! DEPRECATED: SKS SQL Extensions - Use AST/Lowering Instead
 //!
-//! **DEPRECATION NOTICE**: This module is deprecated. SKS function parsing 
+//! **DEPRECATION NOTICE**: This module is deprecated. SKS function parsing
 //! is now properly handled in:
 //! - `query/ast/nodes.rs` - AST node definitions  
 //! - `query/sql_frontend/lowering.rs` - SQL lowering to internal AST
@@ -302,8 +302,8 @@ impl SksExecutor {
     fn parse_assemble_function(&self, name: &str, args: &[Expr]) -> Result<SksFunction> {
         // TODO: Extract assembly parameters and options
         Ok(SksFunction::Assemble {
-            graph_id: "default".to_string(),     // TODO: Extract from args
-            context_items: vec![], // TODO: Extract from args
+            graph_id: "default".to_string(), // TODO: Extract from args
+            context_items: vec![],           // TODO: Extract from args
             assembly_strategy: AssemblyStrategy::RelevanceRanking,
             max_context_size: Some(100), // TODO: Extract from options
         })
@@ -437,7 +437,7 @@ impl SksFunction {
                         graph_id: graph_id.clone(),
                         start_nodes: context_items.clone(),
                         edge_types: vec![], // All edge types
-                        max_depth: 2, // Context radius
+                        max_depth: 2,       // Context radius
                         filters: None,
                         vector_target_collection: None,
                     },
@@ -457,16 +457,17 @@ impl SksFunction {
     fn resolve_collection_from_field(&self, field: &str) -> Result<String> {
         // Implement field → collection resolution
         let collection_id = match field.split('.').next() {
-            Some(prefix) if prefix.ends_with("_collection") => {
-                prefix.strip_suffix("_collection").unwrap_or("default").to_string()
-            }
+            Some(prefix) if prefix.ends_with("_collection") => prefix
+                .strip_suffix("_collection")
+                .unwrap_or("default")
+                .to_string(),
             _ => "default".to_string(), // Default collection fallback
         };
         // This would query the schema registry to find which collection
         // contains the specified embedding field
         Ok(collection_id)
     }
-    
+
     // DEPRECATED: Assembly strategies moved to sql_frontend/lowering.rs
 
     /// Create threshold filter for similarity scoring
@@ -600,34 +601,34 @@ pub struct SksSqlParser;
 
 impl SksSqlParser {
     /// Parse a SIMILAR clause - DEPRECATED: Use sql_frontend/lowering.rs instead
-    /// 
+    ///
     /// This method is kept for backward compatibility but should not be used.
     /// SKS function parsing is now handled properly in the SQL lowering phase.
     pub fn parse_similar(input: &str) -> Result<SimilarOperator> {
         Err(anyhow!(
-            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}", 
+            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}",
             input
         ))
     }
 
     /// Parse a FOLLOW clause - DEPRECATED: Use sql_frontend/lowering.rs instead
-    /// 
+    ///
     /// This method is kept for backward compatibility but should not be used.
     /// SKS function parsing is now handled properly in the SQL lowering phase.
     pub fn parse_follow(input: &str) -> Result<FollowOperator> {
         Err(anyhow!(
-            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}", 
+            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}",
             input
         ))
     }
 
     /// Parse an ASSEMBLE clause - DEPRECATED: Use sql_frontend/lowering.rs instead
-    /// 
+    ///
     /// This method is kept for backward compatibility but should not be used.
     /// SKS function parsing is now handled properly in the SQL lowering phase.
     pub fn parse_assemble(input: &str) -> Result<AssembleOperator> {
         Err(anyhow!(
-            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}", 
+            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}",
             input
         ))
     }

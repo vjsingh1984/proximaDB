@@ -9,11 +9,13 @@
 //! - Cross-engine consistency
 
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
+use proximadb::core::SstConfig;
 use proximadb::core::memory::{PoolConfig, VectorMemoryPool};
 use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
-use proximadb::core::SstConfig;
-use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, DistanceMetric, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{
+    Collection, CollectionConfig, DistanceMetric, SqlValue, StorageEngine, VectorRecord, sql_value,
+};
 use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
@@ -111,21 +113,24 @@ fn create_optimization_test_vectors(count: usize) -> Vec<VectorRecord> {
                 vector,
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("pattern".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(
-                            pattern.to_string()
-                        ))
-                    });
-                    metadata.insert("dimension".to_string(), SqlValue {
-                        value: Some(sql_value::Value::NumberValue(
-                            dimension as f64
-                        ))
-                    });
-                    metadata.insert("index".to_string(), SqlValue {
-                        value: Some(sql_value::Value::NumberValue(
-                            i as f64
-                        ))
-                    });
+                    metadata.insert(
+                        "pattern".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(pattern.to_string())),
+                        },
+                    );
+                    metadata.insert(
+                        "dimension".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue(dimension as f64)),
+                        },
+                    );
+                    metadata.insert(
+                        "index".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue(i as f64)),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some((1000 + i) as i64),
@@ -277,9 +282,9 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     );
 
     // Split vectors for both engines
-    let (sst_vectors, viper_vectors): (Vec<_>, Vec<_>) = vectors.into_iter().partition(|v| {
-        v.id.contains("sparse") || v.id.contains("sequential")
-    });
+    let (sst_vectors, viper_vectors): (Vec<_>, Vec<_>) = vectors
+        .into_iter()
+        .partition(|v| v.id.contains("sparse") || v.id.contains("sequential"));
 
     // Flush to SST with compression - pass collection config through flush params
     info!(
@@ -299,7 +304,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 
     info!(
         "SST flush: {} records in {:?}",
-        sst_flush_result.entries_flushed.unwrap_or(0), sst_flush_time
+        sst_flush_result.entries_flushed.unwrap_or(0),
+        sst_flush_time
     );
 
     // Flush to VIPER with compression - pass collection config through flush params
@@ -316,7 +322,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 
     info!(
         "VIPER flush: {} records in {:?}",
-        viper_flush_result.entries_flushed.unwrap_or(0), viper_flush_time
+        viper_flush_result.entries_flushed.unwrap_or(0),
+        viper_flush_time
     );
 
     // Test search on compressed SST data
@@ -423,7 +430,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             metadata: proximadb::storage::traits::StorageQueryMetadata {
                 collection_id: "optimization_test".to_string(),
                 use_axis_indexes: false,
-                    ..Default::default()
+                ..Default::default()
             },
         };
 
@@ -529,7 +536,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let sst_size = calculate_directory_size(&format!("{}/sst", temp_dir.path().display()));
     let viper_size = calculate_directory_size(&format!("{}/viper", temp_dir.path().display()));
 
-    let total_vectors = sst_vectors.len() + viper_flush_result.entries_flushed.unwrap_or(0) as usize;
+    let total_vectors =
+        sst_vectors.len() + viper_flush_result.entries_flushed.unwrap_or(0) as usize;
     let avg_vector_size = 512; // Average dimension
     let uncompressed_estimate = total_vectors * avg_vector_size * 4; // 4 bytes per f32
 
@@ -541,7 +549,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     );
     info!(
         "  VIPER: {} bytes for {} vectors",
-        viper_size, viper_flush_result.entries_flushed.unwrap_or(0)
+        viper_size,
+        viper_flush_result.entries_flushed.unwrap_or(0)
     );
     info!("  Estimated uncompressed: {} bytes", uncompressed_estimate);
     info!(

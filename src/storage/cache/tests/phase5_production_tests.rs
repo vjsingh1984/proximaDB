@@ -69,7 +69,9 @@ async fn test_monitoring_dashboard() {
     // Verify state components
     assert!(!state.active_alerts.is_empty() || state.active_alerts.is_empty());
     assert!(!state.cache_status.is_empty());
-    assert!(!state.optimization_suggestions.is_empty() || state.optimization_suggestions.is_empty());
+    assert!(
+        !state.optimization_suggestions.is_empty() || state.optimization_suggestions.is_empty()
+    );
 
     // Check cache status
     assert!(state.cache_status.contains_key("vector_data"));

@@ -5,14 +5,14 @@ use crate::storage::engines::core::ops::compression_common::CompressionStrategy;
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::storage::engines::core::ops::compression_common::{
-    AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
-};
 use crate::core::compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
+use crate::storage::engines::core::ops::compression_common::{
+    AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
+};
 
 /// Compression adapter that bridges Universal config with Unified implementation
 #[derive(Debug, Clone)]
@@ -531,8 +531,8 @@ impl CompressionPerformanceStats {
 mod tests {
     use super::*;
     use crate::storage::engines::core::ops::compression_common::{
-        AdaptiveCompressionSettings, ContextAwareCompressionConfig,
-        UniversalCompressionConfig, AdaptationCriteria,
+        AdaptationCriteria, AdaptiveCompressionSettings, ContextAwareCompressionConfig,
+        UniversalCompressionConfig,
     };
 
     #[test]
@@ -1089,7 +1089,10 @@ mod tests {
         // Make timing assertions more lenient - timing may be 0 on fast systems
         assert!(stats.total_compression_time_ms >= 0);
         assert!(stats.total_decompression_time_ms >= 0);
-        assert_eq!(stats.algorithm_usage.get(&CompressionAlgorithm::Lz4), Some(&5));
+        assert_eq!(
+            stats.algorithm_usage.get(&CompressionAlgorithm::Lz4),
+            Some(&5)
+        );
 
         // Test throughput calculation
         // Throughput may be 0.0 on very fast systems where compression time rounds to 0ms

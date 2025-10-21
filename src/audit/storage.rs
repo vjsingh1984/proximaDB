@@ -4,11 +4,11 @@
 //! including file-based, database, and cloud storage options.
 
 use super::types::{AuditEvent, AuditEventType};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use chrono::{DateTime, Utc};
-use anyhow::{Result, anyhow};
 use tracing::{debug, info, warn};
 
 /// Trait for audit storage backends
@@ -56,7 +56,8 @@ pub struct FileAuditStorage {
 impl FileAuditStorage {
     pub async fn new(directory: String) -> Result<Self> {
         // Ensure directory exists
-        tokio::fs::create_dir_all(&directory).await
+        tokio::fs::create_dir_all(&directory)
+            .await
             .map_err(|e| anyhow!("Failed to create audit directory {}: {}", directory, e))?;
 
         info!("✅ File audit storage initialized: {}", directory);
@@ -105,7 +106,8 @@ impl AuditStorage for FileAuditStorage {
         let log_line = format!("{}\n", event_json);
 
         // Append to audit log file
-        tokio::fs::write(&file_path, &log_line).await
+        tokio::fs::write(&file_path, &log_line)
+            .await
             .map_err(|e| anyhow!("Failed to write audit event to {}: {}", file_path, e))?;
 
         debug!("📝 Stored audit event {} to {}", event.event_id, file_path);
@@ -129,7 +131,15 @@ impl AuditStorage for FileAuditStorage {
             let file_path = entry.path();
 
             if file_path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
-                let file_events = self.read_events_from_file(&file_path, event_type.clone(), user_id.clone(), since, until).await?;
+                let file_events = self
+                    .read_events_from_file(
+                        &file_path,
+                        event_type.clone(),
+                        user_id.clone(),
+                        since,
+                        until,
+                    )
+                    .await?;
                 events.extend(file_events);
 
                 // Apply limit if specified
@@ -150,7 +160,9 @@ impl AuditStorage for FileAuditStorage {
     }
 
     async fn get_audit_statistics(&self, since: DateTime<Utc>) -> Result<AuditStatistics> {
-        let events = self.query_events(None, None, Some(since), None, None).await?;
+        let events = self
+            .query_events(None, None, Some(since), None, None)
+            .await?;
 
         let mut events_by_type = std::collections::HashMap::new();
         let mut unique_users = std::collections::HashSet::new();
@@ -207,7 +219,11 @@ impl AuditStorage for FileAuditStorage {
 
                     if modified_dt < cutoff_date {
                         if let Err(e) = tokio::fs::remove_file(&file_path).await {
-                            warn!("Failed to delete old audit log {}: {}", file_path.display(), e);
+                            warn!(
+                                "Failed to delete old audit log {}: {}",
+                                file_path.display(),
+                                e
+                            );
                         } else {
                             deleted_files += 1;
                             info!("🗑️ Deleted old audit log: {}", file_path.display());
@@ -217,7 +233,10 @@ impl AuditStorage for FileAuditStorage {
             }
         }
 
-        info!("🧹 Cleanup complete: deleted {} old audit log files", deleted_files);
+        info!(
+            "🧹 Cleanup complete: deleted {} old audit log files",
+            deleted_files
+        );
         Ok(deleted_files)
     }
 }
@@ -234,7 +253,8 @@ impl FileAuditStorage {
     ) -> Result<Vec<AuditEvent>> {
         let mut events = Vec::new();
 
-        let content = tokio::fs::read_to_string(file_path).await
+        let content = tokio::fs::read_to_string(file_path)
+            .await
             .map_err(|e| anyhow!("Failed to read audit file {}: {}", file_path.display(), e))?;
 
         for line in content.lines() {
@@ -272,7 +292,11 @@ impl FileAuditStorage {
                     events.push(event);
                 }
                 Err(e) => {
-                    warn!("Failed to parse audit event from {}: {}", file_path.display(), e);
+                    warn!(
+                        "Failed to parse audit event from {}: {}",
+                        file_path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -294,11 +318,12 @@ impl DatabaseAuditStorage {
         // - Create audit tables if they don't exist
         // - Set up indexes for efficient querying
 
-        info!("✅ Database audit storage initialized: {}", connection_string);
+        info!(
+            "✅ Database audit storage initialized: {}",
+            connection_string
+        );
 
-        Ok(Self {
-            connection_string,
-        })
+        Ok(Self { connection_string })
     }
 }
 

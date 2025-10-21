@@ -333,7 +333,7 @@ pub enum HashAlgorithm {
 
 impl Default for HashAlgorithm {
     fn default() -> Self {
-        Self::XXHash  // Default to fastest algorithm
+        Self::XXHash // Default to fastest algorithm
     }
 }
 
@@ -535,7 +535,12 @@ pub mod hash {
     /// Double hashing to generate multiple hash values
     pub fn double_hash(key: &[u8], num_hashes: u32, bit_count: usize) -> Vec<usize> {
         // Default to XXHash for speed
-        double_hash_with_algorithm(key, num_hashes, bit_count, crate::core::bloom::HashAlgorithm::XXHash)
+        double_hash_with_algorithm(
+            key,
+            num_hashes,
+            bit_count,
+            crate::core::bloom::HashAlgorithm::XXHash,
+        )
     }
 
     /// Double hashing with configurable algorithm
@@ -543,7 +548,7 @@ pub mod hash {
         key: &[u8],
         num_hashes: u32,
         bit_count: usize,
-        algorithm: crate::core::bloom::HashAlgorithm
+        algorithm: crate::core::bloom::HashAlgorithm,
     ) -> Vec<usize> {
         if bit_count == 0 {
             return vec![0; num_hashes as usize];
@@ -551,7 +556,7 @@ pub mod hash {
 
         let (h1, h2) = match algorithm {
             crate::core::bloom::HashAlgorithm::XXHash => {
-                use crate::utils::hash::{XxHasher, FastHash};
+                use crate::utils::hash::{FastHash, XxHasher};
                 // Two independent hashes using XXHash
                 let h1 = XxHasher::hash_bytes(key) as u32;
                 let h2 = XxHasher::hash_bytes(&[key, b"_salt"].concat()) as u32;
@@ -564,7 +569,7 @@ pub mod hash {
             }
             crate::core::bloom::HashAlgorithm::Fnv1a => {
                 // Use FNV-1a from our internal utils module
-                use crate::utils::hash::{FnvHasher, FastHash};
+                use crate::utils::hash::{FastHash, FnvHasher};
 
                 // First hash
                 let h1 = FnvHasher::hash_bytes(key) as u32;
@@ -673,7 +678,7 @@ impl SstableBloomFilter {
         // Deserialize the bloom filter strategy based on configuration
         let bloom_strategy = factory::BloomFilterFactory::deserialize(
             &self.key_filter_config,
-            &self.key_filter_data
+            &self.key_filter_data,
         )?;
 
         // Use the unified bloom filter's might_contain method

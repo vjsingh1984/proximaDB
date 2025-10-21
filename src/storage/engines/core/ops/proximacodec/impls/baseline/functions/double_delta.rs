@@ -270,12 +270,13 @@ fn decode_double_delta_i32_base_i64_deltas(data: &[u8], count: usize) -> Result<
     }
 
     if data.len() < 13 {
-        return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data for first delta"));
+        return Err(anyhow::anyhow!(
+            "DoubleDelta decode: insufficient data for first delta"
+        ));
     }
 
     let first_delta = i64::from_le_bytes([
-        data[4], data[5], data[6], data[7],
-        data[8], data[9], data[10], data[11],
+        data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11],
     ]);
 
     if count == 2 {
@@ -341,7 +342,9 @@ fn decode_double_delta_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     }
 
     if data.len() < 9 {
-        return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data for first delta"));
+        return Err(anyhow::anyhow!(
+            "DoubleDelta decode: insufficient data for first delta"
+        ));
     }
 
     let first_delta = i32::from_le_bytes([data[4], data[5], data[6], data[7]]);
@@ -402,8 +405,7 @@ fn decode_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     }
 
     let base = i64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 
     if count == 1 {
@@ -411,12 +413,13 @@ fn decode_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     }
 
     if data.len() < 17 {
-        return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data for first delta"));
+        return Err(anyhow::anyhow!(
+            "DoubleDelta decode: insufficient data for first delta"
+        ));
     }
 
     let first_delta = i64::from_le_bytes([
-        data[8], data[9], data[10], data[11],
-        data[12], data[13], data[14], data[15],
+        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
     ]);
 
     if count == 2 {
@@ -598,10 +601,8 @@ mod tests {
     fn test_double_delta_random() {
         // Random data - worst case for double delta (32+ values)
         let values: Vec<i32> = vec![
-            100, 50, 200, 75, 150, 25, 180, 90, 120, 160,
-            80, 140, 60, 190, 110, 130, 170, 40, 210, 95,
-            125, 155, 85, 145, 65, 185, 105, 135, 165, 45,
-            195, 115
+            100, 50, 200, 75, 150, 25, 180, 90, 120, 160, 80, 140, 60, 190, 110, 130, 170, 40, 210,
+            95, 125, 155, 85, 145, 65, 185, 105, 135, 165, 45, 195, 115,
         ];
 
         let encoded = encode_i32(&values).unwrap();
@@ -664,10 +665,10 @@ mod tests {
     fn test_overflow_f32_extreme_bit_patterns() {
         // Test f32 values with extreme bit patterns that would cause i32 delta overflow
         let values = vec![
-            f32::from_bits(i32::MAX as u32),  // Positive extreme
-            f32::from_bits(i32::MIN as u32),  // Negative extreme
-            f32::from_bits(0),                // Zero
-            f32::from_bits(i32::MAX as u32),  // Back to positive
+            f32::from_bits(i32::MAX as u32), // Positive extreme
+            f32::from_bits(i32::MIN as u32), // Negative extreme
+            f32::from_bits(0),               // Zero
+            f32::from_bits(i32::MAX as u32), // Back to positive
         ];
 
         let encoded = encode_f32(&values).unwrap();
@@ -675,9 +676,13 @@ mod tests {
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
-            assert_eq!(orig.to_bits(), dec.to_bits(),
+            assert_eq!(
+                orig.to_bits(),
+                dec.to_bits(),
                 "Failed to roundtrip extreme f32 bit pattern: orig={:08x}, dec={:08x}",
-                orig.to_bits(), dec.to_bits());
+                orig.to_bits(),
+                dec.to_bits()
+            );
         }
     }
 
@@ -719,23 +724,20 @@ mod tests {
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
             // Compare bit patterns since NAN != NAN
-            assert_eq!(orig.to_bits(), dec.to_bits(),
+            assert_eq!(
+                orig.to_bits(),
+                dec.to_bits(),
                 "Failed to roundtrip special f32 value: orig={:08x}, dec={:08x}",
-                orig.to_bits(), dec.to_bits());
+                orig.to_bits(),
+                dec.to_bits()
+            );
         }
     }
 
     #[test]
     fn test_overflow_i64_full_range() {
         // Test i64 values across full range
-        let values = vec![
-            i64::MIN,
-            i64::MIN / 2,
-            0i64,
-            i64::MAX / 2,
-            i64::MAX,
-            0,
-        ];
+        let values = vec![i64::MIN, i64::MIN / 2, 0i64, i64::MAX / 2, i64::MAX, 0];
 
         let encoded = encode_i64(&values).unwrap();
         let decoded = decode_i64(&encoded, values.len()).unwrap();
@@ -748,8 +750,14 @@ mod tests {
         // Worst case: alternating between extremes
         // Each delta is maximum possible value
         let values = vec![
-            i32::MIN, i32::MAX, i32::MIN, i32::MAX,
-            i32::MIN, i32::MAX, i32::MIN, i32::MAX,
+            i32::MIN,
+            i32::MAX,
+            i32::MIN,
+            i32::MAX,
+            i32::MIN,
+            i32::MAX,
+            i32::MIN,
+            i32::MAX,
         ];
 
         let encoded = encode_i32(&values).unwrap();

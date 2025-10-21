@@ -61,7 +61,10 @@ async fn test_search_optimization_hints_parsing() -> Result<()> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let candidate_multiplier = hints_json.get("candidate_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let candidate_multiplier = hints_json
+        .get("candidate_multiplier")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
 
     let quantization_hint = hints_json
         .get("quantization_hint")
@@ -93,7 +96,10 @@ async fn test_rest_search_request_with_optimization_hints() -> Result<()> {
 
     // Validate the structure
     assert!(search_request.get("optimization_hints").is_some());
-    assert_eq!(search_request.get("k"), Some(&serde_json::Value::Number(serde_json::Number::from(10))));
+    assert_eq!(
+        search_request.get("k"),
+        Some(&serde_json::Value::Number(serde_json::Number::from(10)))
+    );
 
     let hints = search_request.get("optimization_hints").unwrap();
     assert_eq!(hints["enable_two_stage_search"], true);

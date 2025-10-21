@@ -55,6 +55,8 @@
 //! ```
 
 pub mod engines;
+// Generic, engine-agnostic traversal utilities
+pub use engines::generic_traversal;
 pub mod hybrid;
 pub mod monitoring;
 pub mod query;
@@ -136,6 +138,10 @@ pub struct GraphMemoryPool {
 
     /// Unique constraints registry: (graph_id, label, property) -> (value -> node_id)
     pub unique_constraints: Arc<DashMap<(String, String, String), DashMap<String, NodeId>>>,
+    /// Multi-property unique constraints per graph:
+    /// Key: (graph_id, labels_key, props_key) where labels_key and props_key are joined, normalized strings
+    /// Value: composite_key -> node_id
+    pub unique_constraints_multi: Arc<DashMap<(String, String, String), DashMap<String, NodeId>>>,
 }
 
 impl GraphMemoryPool {
@@ -154,6 +160,7 @@ impl GraphMemoryPool {
             edge_type_indexes: Arc::new(DashMap::new()),
             edge_composite_index: Arc::new(DashMap::new()),
             unique_constraints: Arc::new(DashMap::new()),
+            unique_constraints_multi: Arc::new(DashMap::new()),
         }
     }
 
@@ -258,10 +265,10 @@ impl GraphMemoryPool {
 
             // Numeric index (convert doubles to i64 for indexing)
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
-                    Some(*i)
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                    Some(*d as i64)
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } {
                 let map_lock = self
@@ -311,10 +318,10 @@ impl GraphMemoryPool {
 
             // Ordered numeric index (for int/double)
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
-                    Some(*i)
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                    Some(*d as i64)
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } {
                 let map_lock = self
@@ -375,10 +382,10 @@ impl GraphMemoryPool {
 
             // Remove from ordered numeric index
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
-                    Some(*i)
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                    Some(*d as i64)
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } {
                 if let Some(map_lock) = self.node_property_num_indexes.get(key) {
@@ -428,10 +435,10 @@ impl GraphMemoryPool {
 
             // Remove from ordered numeric index
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
-                    Some(*i)
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                    Some(*d as i64)
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } {
                 if let Some(map_lock) = self.edge_property_num_indexes.get(key) {

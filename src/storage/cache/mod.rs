@@ -189,12 +189,12 @@ pub mod config;
 pub mod eviction;
 pub mod health_monitor;
 pub mod metrics;
+pub mod metrics_integration;
 pub mod orchestrator;
 pub mod performance_optimizer;
 pub mod specialized;
 pub mod traits;
 pub mod warming;
-pub mod metrics_integration;
 
 #[cfg(test)]
 mod tests;
@@ -203,7 +203,7 @@ mod tests;
 pub use backend::{CacheTier, StorageBackend};
 pub use base::BaseCacheImpl;
 pub use config::{CacheConfig, GlobalCacheConfig};
-pub use eviction::{CacheEvictor, EvictionPolicy, AccessTracker, CacheEvictionConfig};
+pub use eviction::{AccessTracker, CacheEvictionConfig, CacheEvictor, EvictionPolicy};
 pub use health_monitor::{CacheMonitoringDashboard, DashboardState};
 pub use metrics::CacheMetrics;
 pub use orchestrator::{
@@ -216,8 +216,8 @@ pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache};
 
 // Re-export new cache modules
-pub use warming::{CacheWarmer, WarmingStrategy, CacheWarmingConfig};
-pub use metrics_integration::{CacheMetricsCollector, CachePerformanceMetrics, CacheMetricsConfig};
+pub use metrics_integration::{CacheMetricsCollector, CacheMetricsConfig, CachePerformanceMetrics};
+pub use warming::{CacheWarmer, CacheWarmingConfig, WarmingStrategy};
 
 // Implement CacheValue for VectorRecord to enable caching
 impl CacheValue for crate::proto::proximadb_v1::VectorRecord {

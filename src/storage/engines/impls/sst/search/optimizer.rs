@@ -19,13 +19,13 @@
 //! Optimizes search operations for the SST engine by analyzing query patterns,
 //! managing bloom filter strategies, and implementing intelligent caching.
 
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::Result;
 use tracing::{debug, info, warn};
 
-use crate::core::search::FilterExpression;
 use crate::compute::distance_computation::DistanceMetric;
+use crate::core::search::FilterExpression;
 
 /// Search optimization strategies
 #[derive(Debug, Clone)]
@@ -36,9 +36,7 @@ pub enum OptimizationStrategy {
         estimated_selectivity: f64,
     },
     /// Direct search all files (when bloom filters are not effective)
-    DirectSearch {
-        reason: String,
-    },
+    DirectSearch { reason: String },
     /// Adaptive strategy that switches based on query patterns
     Adaptive {
         primary_strategy: Box<OptimizationStrategy>,
@@ -81,25 +79,22 @@ impl SearchOptimizer {
         filter_expression: Option<&FilterExpression>,
         file_count: usize,
     ) -> Result<OptimizationStrategy> {
-        debug!("🔧 SearchOptimizer: Optimizing search for {} files", file_count);
+        debug!(
+            "🔧 SearchOptimizer: Optimizing search for {} files",
+            file_count
+        );
 
         // Analyze query characteristics
-        let query_signature = self.generate_query_signature(
-            query_vector,
-            k,
-            distance_metric,
-            filter_expression,
-        );
+        let query_signature =
+            self.generate_query_signature(query_vector, k, distance_metric, filter_expression);
 
         // Update statistics
         self.update_query_statistics(&query_signature);
 
         // Select optimization strategy
-        let strategy = self.select_optimization_strategy(
-            &query_signature,
-            file_count,
-            filter_expression.is_some(),
-        ).await?;
+        let strategy = self
+            .select_optimization_strategy(&query_signature, file_count, filter_expression.is_some())
+            .await?;
 
         info!("🎯 SearchOptimizer: Selected strategy: {:?}", strategy);
         Ok(strategy)
@@ -118,13 +113,16 @@ impl SearchOptimizer {
         let metric_str = format!("{:?}", distance_metric);
 
         // Create a signature based on query characteristics
-        format!("dim:{}_k:{}_metric:{}_filtered:{}",
-                dimension, k, metric_str, has_filter)
+        format!(
+            "dim:{}_k:{}_metric:{}_filtered:{}",
+            dimension, k, metric_str, has_filter
+        )
     }
 
     /// Update query statistics for pattern learning
     fn update_query_statistics(&mut self, query_signature: &str) {
-        let stats = self.query_stats
+        let stats = self
+            .query_stats
             .entry(query_signature.to_string())
             .or_insert_with(QueryStatistics::default);
 
@@ -148,7 +146,10 @@ impl SearchOptimizer {
         if file_count <= self.config.direct_search_file_threshold {
             // For small file counts, direct search is often faster
             Ok(OptimizationStrategy::DirectSearch {
-                reason: format!("Small file count ({}), direct search is optimal", file_count),
+                reason: format!(
+                    "Small file count ({}), direct search is optimal",
+                    file_count
+                ),
             })
         } else if has_filters {
             // Filters benefit from bloom filter pre-filtering
@@ -211,14 +212,20 @@ impl SearchOptimizer {
             // Update running averages
             let weight = 0.1; // Weight for exponential moving average
             stats.avg_latency_ms = stats.avg_latency_ms * (1.0 - weight) + latency_ms * weight;
-            stats.avg_results_count = stats.avg_results_count * (1.0 - weight) + results_count as f64 * weight;
+            stats.avg_results_count =
+                stats.avg_results_count * (1.0 - weight) + results_count as f64 * weight;
 
             // Track strategy effectiveness
             let strategy_key = format!("{:?}", strategy_used);
-            *stats.strategy_performance.entry(strategy_key).or_insert(0.0) += latency_ms;
+            *stats
+                .strategy_performance
+                .entry(strategy_key)
+                .or_insert(0.0) += latency_ms;
 
-            debug!("📊 Recorded performance: {} ms, {} results for pattern: {}",
-                   latency_ms, results_count, query_signature);
+            debug!(
+                "📊 Recorded performance: {} ms, {} results for pattern: {}",
+                latency_ms, results_count, query_signature
+            );
         }
 
         Ok(())
@@ -228,7 +235,10 @@ impl SearchOptimizer {
     pub async fn get_optimization_stats(&self) -> Result<OptimizationStats> {
         let total_queries = self.query_stats.values().map(|s| s.count).sum();
         let avg_latency = if !self.query_stats.is_empty() {
-            self.query_stats.values().map(|s| s.avg_latency_ms).sum::<f64>()
+            self.query_stats
+                .values()
+                .map(|s| s.avg_latency_ms)
+                .sum::<f64>()
                 / self.query_stats.len() as f64
         } else {
             0.0
@@ -335,12 +345,8 @@ mod tests {
         let optimizer = SearchOptimizer::new();
         let query_vector = vec![1.0, 2.0, 3.0];
 
-        let signature = optimizer.generate_query_signature(
-            &query_vector,
-            10,
-            DistanceMetric::Cosine,
-            None,
-        );
+        let signature =
+            optimizer.generate_query_signature(&query_vector, 10, DistanceMetric::Cosine, None);
 
         assert!(signature.contains("dim:3"));
         assert!(signature.contains("k:10"));
@@ -350,14 +356,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_strategy_selection() {
-        let mut optimizer = SearchOptimizer::new();
+        let optimizer = SearchOptimizer::new();
 
         // Test small file count
-        let strategy = optimizer.select_optimization_strategy(
-            "test_signature",
-            3,
-            false,
-        ).await.unwrap();
+        let strategy = optimizer
+            .select_optimization_strategy("test_signature", 3, false)
+            .await
+            .unwrap();
 
         match strategy {
             OptimizationStrategy::DirectSearch { .. } => {
@@ -380,12 +385,9 @@ mod tests {
         };
 
         // Record performance
-        let result = optimizer.record_search_performance(
-            &query_signature,
-            50.0,
-            10,
-            &strategy,
-        ).await;
+        let result = optimizer
+            .record_search_performance(&query_signature, 50.0, 10, &strategy)
+            .await;
 
         assert!(result.is_ok());
     }

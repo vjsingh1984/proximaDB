@@ -496,7 +496,7 @@ tags = []
 
         // Relative paths should be resolved
         assert!(config.server.data_dir.is_absolute());
-        assert!(config.storage.sst_config.is_some());  // sst_config should exist
+        assert!(config.storage.sst_config.is_some()); // sst_config should exist
         assert!(
             config.storage.storage_locations[1]
                 .url

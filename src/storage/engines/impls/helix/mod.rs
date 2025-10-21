@@ -103,23 +103,22 @@ use tracing::{debug, info, trace, warn};
 pub mod clustering;
 pub mod compaction;
 pub mod eventlog_integration;
-pub mod proxima;
 pub mod hilbert_curve;
 pub mod liquid_clustering;
 pub mod pca_impl;
 pub mod pca_manager;
 pub mod progressive_search;
+pub mod proxima;
 pub mod query_optimization;
 pub mod readers;
 pub mod unified_metadata_serializer;
 pub mod unified_strategy_reader;
 pub mod zone_maps;
 
-
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::EventLog;
-use crate::utils::StoragePath;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::constants::{ENGINE_HELIX, HELIX_FILE_EXT, HELIX_MAGIC};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
@@ -127,7 +126,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::utils::StoragePath;
 
 use self::clustering::{HilbertKey, PCAModel};
 
@@ -193,7 +192,7 @@ impl Default for HelixConfig {
             parallel_search_enabled: true,  // Enable parallel search by default
             parallel_search_threshold: 3,   // Use parallel for 3+ files
             max_search_threads: num_cpus::get().max(2) / 2, // Half of CPU cores, min 1
-            pca_skip_threshold: 100,       // Skip PCA for flushes < 100 vectors
+            pca_skip_threshold: 100,        // Skip PCA for flushes < 100 vectors
             pca_min_training_vectors: 1000, // Need at least 1000 vectors to train
             use_fast_approximation: true,   // Use fast path for small batches
         }
@@ -316,7 +315,8 @@ pub struct HelixEngine {
     /// - Codebooks stored in SSTable headers
     ///
     /// None if quantization disabled, Some for optimized queries
-    storage_quantization_engine: Option<Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
+    storage_quantization_engine:
+        Option<Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
 
     /// **Fallback Quantization Engine** (Stateless)
     ///
@@ -327,7 +327,8 @@ pub struct HelixEngine {
     /// - Faster for temporary quantization
     ///
     /// Always available as fallback
-    fallback_quantization_engine: Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
+    fallback_quantization_engine:
+        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
     /// **Cache Orchestrator** (Optional)
     ///
@@ -432,7 +433,11 @@ struct EngineMetrics {
 
 impl HelixEngine {
     /// Smart quantization selection using shared logic
-    fn should_use_persistent_quantization(&self, operation_context: &str, collection_size: Option<usize>) -> bool {
+    fn should_use_persistent_quantization(
+        &self,
+        operation_context: &str,
+        collection_size: Option<usize>,
+    ) -> bool {
         crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
             operation_context,
             collection_size,
@@ -440,11 +445,21 @@ impl HelixEngine {
     }
 
     /// Get the appropriate quantization engine based on operation context
-    async fn get_quantization_engine(&self, operation_context: &str, collection_size: Option<usize>) -> Option<Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>> {
+    async fn get_quantization_engine(
+        &self,
+        operation_context: &str,
+        collection_size: Option<usize>,
+    ) -> Option<Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>> {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
-            if let Some(global_cache) = crate::compute::quantization::global_cache::GlobalQuantizationCache::instance() {
-                Some(global_cache.get_or_create_engine("default_collection".to_string()).await)
+            if let Some(global_cache) =
+                crate::compute::quantization::global_cache::GlobalQuantizationCache::instance()
+            {
+                Some(
+                    global_cache
+                        .get_or_create_engine("default_collection".to_string())
+                        .await,
+                )
             } else {
                 // Fallback to fallback engine since we need UnifiedQuantizationEngine type
                 Some(self.fallback_quantization_engine.clone())
@@ -456,11 +471,7 @@ impl HelixEngine {
     }
 
     /// Write a simplified SSTable without PCA or Hilbert ordering (fast path for small batches)
-    async fn write_sstable_simple(
-        &self,
-        path: &Path,
-        records: &[VectorRecord],
-    ) -> Result<u64> {
+    async fn write_sstable_simple(&self, path: &Path, records: &[VectorRecord]) -> Result<u64> {
         // Use unified SIMD-optimized writer for optimal compression
         // SIMD provides 2-8x speedup and 25-50% compression via ProximaDataBlock
         let bytes_written = proxima::write_helix_sstable(
@@ -469,7 +480,7 @@ impl HelixEngine {
             records,
             self.config.proxima_block_size,
             HELIX_MAGIC,
-            None, // No Hilbert keys for fast path
+            None,      // No Hilbert keys for fast path
             Some(256), // Default curve size for spatial optimization
         )
         .await?;
@@ -482,7 +493,7 @@ impl HelixEngine {
             num_vectors: records.len(),
             size_bytes: bytes_written,
             created_at: chrono::Utc::now(),
-            blocks: vec![], // Will be populated if needed during reads
+            blocks: vec![],     // Will be populated if needed during reads
             bloom_filter: None, // Skip bloom filter for fast path
         };
 
@@ -504,12 +515,13 @@ impl HelixEngine {
     pub async fn new() -> Result<Self> {
         let config = HelixConfig::default();
         Self::new_with_orchestrator(
-            "placeholder".to_string(),  // collection_id (ignored)
+            "placeholder".to_string(), // collection_id (ignored)
             config,
             std::path::PathBuf::from("/tmp"), // data_dir (ignored)
-            None,  // event_log
-            None   // orchestrator
-        ).await
+            None,                             // event_log
+            None,                             // orchestrator
+        )
+        .await
     }
 
     /// Create HELIX engine with specific config and filesystem (for testing)
@@ -519,16 +531,18 @@ impl HelixEngine {
         distance_compute: Arc<UnifiedDistanceCompute>,
     ) -> Result<Self> {
         // Use a unique temp directory for each test instance to avoid cross-test contamination
-        let test_data_dir = std::env::temp_dir().join(format!("helix_test_{}", uuid::Uuid::new_v4()));
+        let test_data_dir =
+            std::env::temp_dir().join(format!("helix_test_{}", uuid::Uuid::new_v4()));
         Self::new_with_orchestrator_and_filesystem(
-            "placeholder".to_string(),  // collection_id (ignored in test mode)
+            "placeholder".to_string(), // collection_id (ignored in test mode)
             config,
             test_data_dir, // Unique test data directory
-            None,  // event_log
-            None,  // orchestrator
+            None,          // event_log
+            None,          // orchestrator
             Some(filesystem_factory),
             Some(distance_compute),
-        ).await
+        )
+        .await
     }
 
     /// Create a new HELIX engine instance with an explicit Cross-Cache Orchestrator
@@ -547,7 +561,8 @@ impl HelixEngine {
             orchestrator,
             None,
             None,
-        ).await
+        )
+        .await
     }
 
     /// Create a new HELIX engine instance with explicit filesystem and distance compute
@@ -628,7 +643,7 @@ impl HelixEngine {
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
-            )
+            ),
         );
 
         // Initialize cache orchestrator (prefer explicit, else config-driven)
@@ -682,7 +697,8 @@ impl HelixEngine {
         // PCA model will be loaded at runtime from collection-specific paths
         // Skip loading here since we don't have collection context yet
         // Model will be loaded on first flush/search when we have the actual collection_id
-        if false { // Placeholder - will be loaded at runtime
+        if false {
+            // Placeholder - will be loaded at runtime
             if let Ok(_model) = bincode::deserialize::<PCAModel>(&vec![]) {
                 // Model loading happens at runtime
                 info!("Loaded existing PCA model for HELIX engine");
@@ -690,39 +706,43 @@ impl HelixEngine {
         }
 
         // Register HELIX cache providers with global orchestrator
-        if let Some(ref orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+        if let Some(ref orch) =
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+        {
             use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, UsageStats};
-            
+
             // Create HELIX-specific stats provider for zone map caching
             struct HelixZoneMapCacheProvider;
             impl CacheStatsProvider for HelixZoneMapCacheProvider {
                 fn snapshot(&self) -> UsageStats {
                     UsageStats {
-                        hit_rate: 0.90,  // HELIX has excellent zone map hit rate due to locality
-                        avg_entry_size: 512,  // Zone maps are small ~512B
-                        access_frequency: 8.0,  // High access due to pruning
+                        hit_rate: 0.90,        // HELIX has excellent zone map hit rate due to locality
+                        avg_entry_size: 512,   // Zone maps are small ~512B
+                        access_frequency: 8.0, // High access due to pruning
                         last_rebalance: std::time::SystemTime::now(),
                     }
                 }
             }
-            
+
             // Register HELIX-specific cache providers
-            let zone_provider: Arc<dyn CacheStatsProvider + Send + Sync> = Arc::new(HelixZoneMapCacheProvider);
+            let zone_provider: Arc<dyn CacheStatsProvider + Send + Sync> =
+                Arc::new(HelixZoneMapCacheProvider);
             orch.register_cache_provider(CacheType::FilterBitmap, zone_provider);
-            
+
             // Register for PCA model caching
             struct HelixPcaCacheProvider;
             impl CacheStatsProvider for HelixPcaCacheProvider {
                 fn snapshot(&self) -> UsageStats {
                     UsageStats {
-                        hit_rate: 1.0,  // PCA models are always cached once loaded
-                        avg_entry_size: 8192,  // PCA models ~8KB
-                        access_frequency: 10.0,  // Very frequent access during clustering
+                        hit_rate: 1.0,          // PCA models are always cached once loaded
+                        avg_entry_size: 8192,   // PCA models ~8KB
+                        access_frequency: 10.0, // Very frequent access during clustering
                         last_rebalance: std::time::SystemTime::now(),
                     }
                 }
             }
-            let pca_provider: Arc<dyn CacheStatsProvider + Send + Sync> = Arc::new(HelixPcaCacheProvider);
+            let pca_provider: Arc<dyn CacheStatsProvider + Send + Sync> =
+                Arc::new(HelixPcaCacheProvider);
             orch.register_cache_provider(CacheType::IndexStructure, pca_provider);
         }
 
@@ -731,13 +751,16 @@ impl HelixEngine {
 
     /// Load existing SSTable levels from disk
     async fn load_levels(
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         data_dir: &Path,
     ) -> Result<HashMap<usize, Vec<SStableMetadata>>> {
         let mut levels = HashMap::new();
 
         // List all files in directory
-        let dir_path = data_dir.to_str()
+        let dir_path = data_dir
+            .to_str()
             .ok_or_else(|| anyhow::anyhow!("HELIX: Invalid data directory path"))?;
         let files = filesystem.list(dir_path).await?;
 
@@ -812,12 +835,19 @@ impl HelixEngine {
 
         match PCAModel::load_from_file(&self.filesystem, &model_path).await {
             Ok(model) => {
-                tracing::info!("[HELIX] Loaded persisted PCA model for collection (version: {})", model.version);
+                tracing::info!(
+                    "[HELIX] Loaded persisted PCA model for collection (version: {})",
+                    model.version
+                );
                 Ok(Some(model))
             }
             Err(e) => {
                 // Model file doesn't exist yet - this is normal for new collections
-                tracing::debug!("[HELIX] No persisted PCA model found at {}: {}", model_path, e);
+                tracing::debug!(
+                    "[HELIX] No persisted PCA model found at {}: {}",
+                    model_path,
+                    e
+                );
                 Ok(None)
             }
         }
@@ -829,11 +859,16 @@ impl HelixEngine {
 
         // Ensure __model directory exists
         let model_dir = format!("{}/__model", collection_data_dir);
-        self.filesystem.create_dir_all(&model_dir).await
+        self.filesystem
+            .create_dir_all(&model_dir)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to create __model directory: {}", e))?;
 
         model.save_to_file(&self.filesystem, &model_path).await?;
-        tracing::info!("[HELIX] Persisted PCA model for collection at {}", model_path);
+        tracing::info!(
+            "[HELIX] Persisted PCA model for collection at {}",
+            model_path
+        );
         Ok(())
     }
 
@@ -854,8 +889,14 @@ impl HelixEngine {
 
     /// Discover SSTables from filesystem and read metadata including Hilbert ranges
     /// This enables proper pruning by reading footer metadata from each file
-    async fn discover_sstables_from_directory(&self, data_dir: &str) -> Result<Vec<SStableMetadata>> {
-        tracing::debug!("[HELIX] discover_sstables_from_directory called with data_dir: {}", data_dir);
+    async fn discover_sstables_from_directory(
+        &self,
+        data_dir: &str,
+    ) -> Result<Vec<SStableMetadata>> {
+        tracing::debug!(
+            "[HELIX] discover_sstables_from_directory called with data_dir: {}",
+            data_dir
+        );
 
         let filesystem = self.filesystem_factory.get_filesystem(data_dir)?;
         tracing::debug!("[HELIX] Got filesystem for data_dir: {}", data_dir);
@@ -865,7 +906,7 @@ impl HelixEngine {
             Ok(entries) => {
                 tracing::debug!("[HELIX] Found {} entries in {}", entries.len(), data_dir);
                 entries
-            },
+            }
             Err(e) => {
                 tracing::warn!("[HELIX] Failed to list directory {}: {:?}", data_dir, e);
                 // Directory might not exist yet (first query before any flushes)
@@ -876,10 +917,14 @@ impl HelixEngine {
         let mut sstables = Vec::new();
 
         for entry in dir_entries {
-            let file_path = &entry.url;  // Use url (full path) instead of path
-            let filename = &entry.name;   // Filename for parsing
+            let file_path = &entry.url; // Use url (full path) instead of path
+            let filename = &entry.name; // Filename for parsing
 
-            tracing::debug!("[HELIX] Examining entry: name={}, url={}", filename, file_path);
+            tracing::debug!(
+                "[HELIX] Examining entry: name={}, url={}",
+                filename,
+                file_path
+            );
 
             // Only process .helix files
             if !filename.ends_with(".helix") {
@@ -909,9 +954,14 @@ impl HelixEngine {
             let hilbert_range = self.read_hilbert_range_from_file(file_path).await.ok();
 
             // CRITICAL: Read num_vectors from header for accurate search performance
-            let num_vectors = self.read_num_vectors_from_file(file_path).await
+            let num_vectors = self
+                .read_num_vectors_from_file(file_path)
+                .await
                 .unwrap_or_else(|e| {
-                    warn!("Failed to read num_vectors from {}: {}, using 0", file_path, e);
+                    warn!(
+                        "Failed to read num_vectors from {}: {}, using 0",
+                        file_path, e
+                    );
                     0
                 });
 
@@ -920,7 +970,7 @@ impl HelixEngine {
                 path: std::path::PathBuf::from(file_path),
                 level,
                 hilbert_range, // Now populated from file footer
-                num_vectors, // Now populated from file header!
+                num_vectors,   // Now populated from file header!
                 size_bytes,
                 created_at: chrono::Utc::now(),
                 blocks: Vec::new(),
@@ -930,7 +980,11 @@ impl HelixEngine {
             sstables.push(metadata);
         }
 
-        tracing::debug!("[HELIX] Discovered {} .helix files in {}", sstables.len(), data_dir);
+        tracing::debug!(
+            "[HELIX] Discovered {} .helix files in {}",
+            sstables.len(),
+            data_dir
+        );
         Ok(sstables)
     }
 
@@ -948,11 +1002,10 @@ impl HelixEngine {
         // Read last 16 bytes (8 bytes for min, 8 bytes for max)
         use crate::storage::persistence::filesystem::FileSystem;
 
-        let footer_bytes = self.filesystem.read_range(
-            file_path,
-            file_size - 16,
-            16,
-        ).await?;
+        let footer_bytes = self
+            .filesystem
+            .read_range(file_path, file_size - 16, 16)
+            .await?;
 
         if footer_bytes.len() < 16 {
             return Err(anyhow::anyhow!("Failed to read Hilbert range from footer"));
@@ -961,7 +1014,10 @@ impl HelixEngine {
         let min_key = u64::from_le_bytes(footer_bytes[0..8].try_into()?);
         let max_key = u64::from_le_bytes(footer_bytes[8..16].try_into()?);
 
-        debug!("Read Hilbert range from {}: [{}, {}]", file_path, min_key, max_key);
+        debug!(
+            "Read Hilbert range from {}: [{}, {}]",
+            file_path, min_key, max_key
+        );
 
         Ok((min_key, max_key))
     }
@@ -987,8 +1043,10 @@ impl HelixEngine {
         // In production, this should read the exact count from footer or count blocks
         let estimated_vectors = num_blocks * self.config.proxima_block_size;
 
-        trace!("Read num_vectors estimate from {}: {} blocks × {} = {} vectors",
-               file_path, num_blocks, self.config.proxima_block_size, estimated_vectors);
+        trace!(
+            "Read num_vectors estimate from {}: {} blocks × {} = {} vectors",
+            file_path, num_blocks, self.config.proxima_block_size, estimated_vectors
+        );
 
         Ok(estimated_vectors)
     }
@@ -1010,11 +1068,14 @@ impl UnifiedStorageEngine for HelixEngine {
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         // Check if quantization is enabled in collection config
-        let quantization_enabled = params.collection_config.as_ref()
+        let quantization_enabled = params
+            .collection_config
+            .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
-            .flatten().unwrap_or(false);
+            .flatten()
+            .unwrap_or(false);
 
         if quantization_enabled {
             debug!("🔄 HELIX FLUSH: Quantization enabled, processing with quantization support");
@@ -1065,13 +1126,16 @@ impl UnifiedStorageEngine for HelixEngine {
             filesystem.create_dir_all(&data_dir).await?;
 
             // Just write the records directly without complex ordering
-            let file_path = format!("{}/L0_{:016x}.helix",
+            let file_path = format!(
+                "{}/L0_{:016x}.helix",
                 data_dir,
                 chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64
             );
 
             // Write using simplified format with filesystem
-            let bytes_written = self.write_sstable_simple(&std::path::Path::new(&file_path), &records).await?;
+            let bytes_written = self
+                .write_sstable_simple(&std::path::Path::new(&file_path), &records)
+                .await?;
 
             return Ok(FlushResult {
                 success: true,
@@ -1094,18 +1158,25 @@ impl UnifiedStorageEngine for HelixEngine {
             // Only update PCA if:
             // 1. No model exists yet AND we have enough training data
             // 2. We have enough samples AND haven't updated recently
-            (model_guard.is_none() && records.len() >= self.config.pca_min_training_vectors) ||
-            (records.len() >= self.config.pca_min_training_vectors &&
-             metrics.total_vectors % 10000 == 0)
+            (model_guard.is_none() && records.len() >= self.config.pca_min_training_vectors)
+                || (records.len() >= self.config.pca_min_training_vectors
+                    && metrics.total_vectors % 10000 == 0)
         };
 
         let pca_model = if should_update_pca {
             // Train new model only when necessary
-            info!("Training new PCA model with {} samples", records.len().min(1000));
+            info!(
+                "Training new PCA model with {} samples",
+                records.len().min(1000)
+            );
             // Use a sample for training to speed up
             let training_sample: Vec<VectorRecord> = if records.len() > 1000 {
                 // Sample 1000 vectors for training
-                records.iter().step_by(records.len() / 1000).cloned().collect()
+                records
+                    .iter()
+                    .step_by(records.len() / 1000)
+                    .cloned()
+                    .collect()
             } else {
                 records.clone()
             };
@@ -1117,8 +1188,14 @@ impl UnifiedStorageEngine for HelixEngine {
                 // Save model asynchronously (best-effort, don't fail flush if save fails)
                 let model_path = self.get_pca_model_path(&data_dir);
                 match self.save_pca_model(&data_dir, model).await {
-                    Ok(_) => info!("[HELIX] ✅ PCA model persisted: version={}, path={}", model.version, model_path),
-                    Err(e) => warn!("[HELIX] ❌ Failed to persist PCA model to {}: {}", model_path, e),
+                    Ok(_) => info!(
+                        "[HELIX] ✅ PCA model persisted: version={}, path={}",
+                        model.version, model_path
+                    ),
+                    Err(e) => warn!(
+                        "[HELIX] ❌ Failed to persist PCA model to {}: {}",
+                        model_path, e
+                    ),
                 }
             } else {
                 warn!("[HELIX] ⚠️  PCA model training completed but model is None!");
@@ -1140,7 +1217,9 @@ impl UnifiedStorageEngine for HelixEngine {
                 let hash_dims = record.vector.len().min(8);
                 let mut hash = 0u64;
                 for j in 0..hash_dims {
-                    hash = hash.wrapping_mul(31).wrapping_add((record.vector[j] * 1000.0) as u64);
+                    hash = hash
+                        .wrapping_mul(31)
+                        .wrapping_add((record.vector[j] * 1000.0) as u64);
                 }
                 hilbert_keys.push(hash);
             }
@@ -1230,7 +1309,10 @@ impl UnifiedStorageEngine for HelixEngine {
                 .collect(),
                 bloom_filter: None,
             };
-            levels.entry(0).or_insert_with(Vec::new).push(metadata.clone());
+            levels
+                .entry(0)
+                .or_insert_with(Vec::new)
+                .push(metadata.clone());
         }
 
         // Notify EventLog for AXIS indexing
@@ -1320,7 +1402,9 @@ impl UnifiedStorageEngine for HelixEngine {
         // to force rediscovery and ensure Hilbert ranges are populated
         {
             let mut levels_write = self.levels.write().await;
-            debug!("HELIX: Clearing SSTable metadata cache after compaction to ensure fresh discovery");
+            debug!(
+                "HELIX: Clearing SSTable metadata cache after compaction to ensure fresh discovery"
+            );
 
             // Clear only L0 and L1 metadata to force rediscovery with Hilbert ranges
             levels_write.remove(&0);
@@ -1400,15 +1484,24 @@ impl UnifiedStorageEngine for HelixEngine {
                 debug!("[HELIX] PCA model not in memory, attempting to load from disk...");
                 // Try to load persisted model for this collection
                 if let Some(loaded_model) = self.load_pca_model(&collection_data_dir).await? {
-                    info!("[HELIX] ✅ PCA model loaded from disk: version={}, collection={}", loaded_model.version, collection_id);
+                    info!(
+                        "[HELIX] ✅ PCA model loaded from disk: version={}, collection={}",
+                        loaded_model.version, collection_id
+                    );
                     *self.pca_model.write().await = Some(loaded_model.clone());
                     Some(loaded_model)
                 } else {
-                    warn!("[HELIX] ⚠️  No PCA model found on disk for collection: {}", collection_id);
+                    warn!(
+                        "[HELIX] ⚠️  No PCA model found on disk for collection: {}",
+                        collection_id
+                    );
                     None
                 }
             } else {
-                debug!("[HELIX] ✅ Using cached PCA model from memory: version={}", model_guard.as_ref().unwrap().version);
+                debug!(
+                    "[HELIX] ✅ Using cached PCA model from memory: version={}",
+                    model_guard.as_ref().unwrap().version
+                );
                 model_guard.clone()
             }
         };
@@ -1419,7 +1512,10 @@ impl UnifiedStorageEngine for HelixEngine {
                 query_vector,
                 self.config.hilbert_bits_per_dimension,
             )?;
-            debug!("[HELIX] ✅ Query Hilbert key calculated: {} (PCA model version: {})", hilbert_key, model.version);
+            debug!(
+                "[HELIX] ✅ Query Hilbert key calculated: {} (PCA model version: {})",
+                hilbert_key, model.version
+            );
             Some(hilbert_key)
         } else {
             warn!("[HELIX] ⚠️  No PCA model available - Hilbert pruning DISABLED!");
@@ -1438,7 +1534,11 @@ impl UnifiedStorageEngine for HelixEngine {
             return Ok(cached_results);
         }
 
-        tracing::debug!("[HELIX] search_vectors_unified: collection_id={}, collection_data_dir={}", collection_id, collection_data_dir);
+        tracing::debug!(
+            "[HELIX] search_vectors_unified: collection_id={}, collection_data_dir={}",
+            collection_id,
+            collection_data_dir
+        );
 
         // Try to get SSTables from cache first (per-collection)
         let discovered_sstables = {
@@ -1448,39 +1548,67 @@ impl UnifiedStorageEngine for HelixEngine {
             // Collect all SSTables from all levels for this collection
             for (_level, sstables) in levels_read.iter() {
                 for sstable in sstables {
-                    tracing::trace!("[HELIX] Checking cached sstable: path={:?}, collection_data_dir={}", sstable.path, collection_data_dir);
+                    tracing::trace!(
+                        "[HELIX] Checking cached sstable: path={:?}, collection_data_dir={}",
+                        sstable.path,
+                        collection_data_dir
+                    );
                     // Filter by collection directory to ensure collection isolation
                     // Handle both file:// URLs and plain paths
                     let sstable_path_str = sstable.path.to_string_lossy();
-                    let normalized_path = sstable_path_str.strip_prefix("file://").unwrap_or(&sstable_path_str);
+                    let normalized_path = sstable_path_str
+                        .strip_prefix("file://")
+                        .unwrap_or(&sstable_path_str);
 
                     if normalized_path.starts_with(&collection_data_dir) {
                         tracing::trace!("[HELIX] Matched! Adding to cached_sstables");
                         cached_sstables.push(sstable.clone());
                     } else {
-                        tracing::trace!("[HELIX] Not matched - path doesn't start with collection_data_dir");
+                        tracing::trace!(
+                            "[HELIX] Not matched - path doesn't start with collection_data_dir"
+                        );
                     }
                 }
             }
 
             if !cached_sstables.is_empty() {
                 // Cache hit - use cached metadata
-                tracing::debug!("[HELIX] Cache hit: {} SSTables for collection {}", cached_sstables.len(), collection_id);
+                tracing::debug!(
+                    "[HELIX] Cache hit: {} SSTables for collection {}",
+                    cached_sstables.len(),
+                    collection_id
+                );
                 cached_sstables
             } else {
                 // Cache miss - discover from filesystem and populate cache
-                tracing::debug!("[HELIX] Cache miss: discovering SSTables for collection {} from dir: {}", collection_id, collection_data_dir);
+                tracing::debug!(
+                    "[HELIX] Cache miss: discovering SSTables for collection {} from dir: {}",
+                    collection_id,
+                    collection_data_dir
+                );
                 drop(levels_read); // Release read lock before write
 
-                let discovered = self.discover_sstables_from_directory(&collection_data_dir).await?;
-                tracing::debug!("[HELIX] Discovered {} SSTables from filesystem", discovered.len());
+                let discovered = self
+                    .discover_sstables_from_directory(&collection_data_dir)
+                    .await?;
+                tracing::debug!(
+                    "[HELIX] Discovered {} SSTables from filesystem",
+                    discovered.len()
+                );
 
                 // Populate cache
                 let mut levels_write = self.levels.write().await;
                 for sstable in &discovered {
                     let level = sstable.level;
-                    tracing::debug!("[HELIX] Caching sstable: level={}, path={:?}", level, sstable.path);
-                    levels_write.entry(level).or_insert_with(Vec::new).push(sstable.clone());
+                    tracing::debug!(
+                        "[HELIX] Caching sstable: level={}, path={:?}",
+                        level,
+                        sstable.path
+                    );
+                    levels_write
+                        .entry(level)
+                        .or_insert_with(Vec::new)
+                        .push(sstable.clone());
                 }
                 tracing::debug!("[HELIX] Cache populated with {} SSTables", discovered.len());
 
@@ -1491,49 +1619,74 @@ impl UnifiedStorageEngine for HelixEngine {
         // Prune and select SSTables to search
         let mut sstables_to_search = Vec::new();
 
-        tracing::debug!("[HELIX] Pruning phase: {} discovered SSTables, query_hilbert={:?}", discovered_sstables.len(), query_hilbert);
+        tracing::debug!(
+            "[HELIX] Pruning phase: {} discovered SSTables, query_hilbert={:?}",
+            discovered_sstables.len(),
+            query_hilbert
+        );
         for (idx, sstable) in discovered_sstables.iter().enumerate() {
-            tracing::debug!("[HELIX] SSTable {}: hilbert_range={:?}", idx, sstable.hilbert_range);
+            tracing::debug!(
+                "[HELIX] SSTable {}: hilbert_range={:?}",
+                idx,
+                sstable.hilbert_range
+            );
             // Pruning logic based on Hilbert range
-                if let (Some(query_key), Some((min_key, max_key))) =
-                    (query_hilbert, sstable.hilbert_range)
-                {
-                    // Simple range check (could be more sophisticated)
-                    let distance_to_range = if query_key < min_key {
-                        min_key - query_key
-                    } else if query_key > max_key {
-                        query_key - max_key
+            if let (Some(query_key), Some((min_key, max_key))) =
+                (query_hilbert, sstable.hilbert_range)
+            {
+                // Simple range check (could be more sophisticated)
+                let distance_to_range = if query_key < min_key {
+                    min_key - query_key
+                } else if query_key > max_key {
+                    query_key - max_key
+                } else {
+                    0 // Query is within range
+                };
+
+                tracing::debug!(
+                    "[HELIX] SSTable hilbert_range=({}, {}), query_key={}, distance={}",
+                    min_key,
+                    max_key,
+                    query_key,
+                    distance_to_range
+                );
+
+                // Skip pruning if distance is absurdly large compared to the range
+                // This handles cases where Hilbert encodings are incompatible (e.g., tests with different PCA models)
+                let range_span = max_key.saturating_sub(min_key);
+                if distance_to_range > range_span.saturating_mul(1000) {
+                    // Distance is >1000x the range - likely incompatible encodings, don't prune
+                    tracing::debug!(
+                        "[HELIX] Distance {} is >1000x range span {} - likely incompatible Hilbert encodings, including SSTable",
+                        distance_to_range,
+                        range_span
+                    );
+                } else {
+                    // Use 10x the range span as threshold for normal cases
+                    let threshold = if range_span > 0 {
+                        range_span.saturating_mul(10)
                     } else {
-                        0 // Query is within range
+                        1000 // Fallback for zero-span ranges
                     };
 
-                    tracing::debug!("[HELIX] SSTable hilbert_range=({}, {}), query_key={}, distance={}", min_key, max_key, query_key, distance_to_range);
-
-                    // Skip pruning if distance is absurdly large compared to the range
-                    // This handles cases where Hilbert encodings are incompatible (e.g., tests with different PCA models)
-                    let range_span = max_key.saturating_sub(min_key);
-                    if distance_to_range > range_span.saturating_mul(1000) {
-                        // Distance is >1000x the range - likely incompatible encodings, don't prune
-                        tracing::debug!("[HELIX] Distance {} is >1000x range span {} - likely incompatible Hilbert encodings, including SSTable", distance_to_range, range_span);
-                    } else {
-                        // Use 10x the range span as threshold for normal cases
-                        let threshold = if range_span > 0 {
-                            range_span.saturating_mul(10)
-                        } else {
-                            1000  // Fallback for zero-span ranges
-                        };
-
-                        if distance_to_range > threshold {
-                            tracing::debug!("[HELIX] Pruning SSTable (distance {} > threshold {})", distance_to_range, threshold);
-                            continue;
-                        }
+                    if distance_to_range > threshold {
+                        tracing::debug!(
+                            "[HELIX] Pruning SSTable (distance {} > threshold {})",
+                            distance_to_range,
+                            threshold
+                        );
+                        continue;
                     }
                 }
+            }
 
-                tracing::debug!("[HELIX] Including SSTable in search");
-                sstables_to_search.push(sstable.clone());
+            tracing::debug!("[HELIX] Including SSTable in search");
+            sstables_to_search.push(sstable.clone());
         }
-        tracing::debug!("[HELIX] After pruning: {} SSTables to search", sstables_to_search.len());
+        tracing::debug!(
+            "[HELIX] After pruning: {} SSTables to search",
+            sstables_to_search.len()
+        );
 
         // Update pruning metrics
         let total_sstables = discovered_sstables.len().max(1);
@@ -1601,11 +1754,11 @@ impl UnifiedStorageEngine for HelixEngine {
                     &sstable,
                     query_vector,
                     query_hilbert, // CRITICAL: Pass Hilbert key for 80-90% block pruning!
-                    k * 2, // Get more candidates for better quality
+                    k * 2,         // Get more candidates for better quality
                     &distance_metric,
                     &self.distance_compute,
                     filter_expression, // Pass FilterExpression for type-safe filtering
-                    None, // No specific IDs to check
+                    None,              // No specific IDs to check
                     Some(&*ctx.collection), // Pass collection for type-safe metadata
                 )
                 .await?;
@@ -1644,7 +1797,9 @@ impl UnifiedStorageEngine for HelixEngine {
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
         // Access global unified cache through CrossCacheOrchestrator
-        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+        if let Some(orchestrator) =
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+        {
             // Create cache key for vector lookup (collection_id is globally unique)
             let cache_key = format!("vector:{}:{}", collection_id, vector_id);
 
@@ -1693,11 +1848,11 @@ impl UnifiedStorageEngine for HelixEngine {
                     bloom_filter: None,
                 };
 
-                if let Some(vector) =
-                    readers::find_vector_by_id(&fs, &metadata, vector_id).await?
-                {
+                if let Some(vector) = readers::find_vector_by_id(&fs, &metadata, vector_id).await? {
                     // Update global cache with found vector
-                    if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                    if let Some(orchestrator) =
+                        crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+                    {
                         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
                         if let Some(vector_cache) = orchestrator.get_vector_cache() {
                             let _ = vector_cache.put(cache_key, vector.clone()).await;
@@ -1758,6 +1913,4 @@ impl UnifiedStorageEngine for HelixEngine {
 }
 
 // Re-export unified strategy readers
-pub use unified_strategy_reader::{
-    UnifiedHELIXReader, DirectHELIXReader, CachedHELIXReader
-};
+pub use unified_strategy_reader::{CachedHELIXReader, DirectHELIXReader, UnifiedHELIXReader};

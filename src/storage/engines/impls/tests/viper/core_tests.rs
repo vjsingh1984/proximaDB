@@ -8,11 +8,11 @@ use super::helpers::*;
 
 #[tokio::test]
 async fn test_viper_predicate_pushdown() {
-    use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let mut evaluator = VIPERColumnFilterEvaluator::new();
+    let mut evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Simple equality filter
     let filter = FilterExpression::Comparison {
@@ -29,11 +29,11 @@ async fn test_viper_predicate_pushdown() {
 
 #[tokio::test]
 async fn test_parallel_column_evaluation() {
-    use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let mut evaluator = VIPERColumnFilterEvaluator::new();
+    let mut evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Complex AND/OR filter
     let filter = FilterExpression::And(vec![
@@ -75,7 +75,7 @@ fn test_reconstructor_creation() {
 #[ignore = "accesses private method `detect_compression`"]
 fn test_compression_detection() {
     use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
-        ParquetReconstructor, ReconstructorConfig, FileSeekRange, CompressionType,
+        CompressionType, FileSeekRange, ParquetReconstructor, ReconstructorConfig,
     };
 
     let _reconstructor = ParquetReconstructor::new(ReconstructorConfig::default());
@@ -95,7 +95,7 @@ fn test_compression_detection() {
 #[ignore = "accesses private method `group_seek_data_by_row_group`"]
 fn test_group_seek_data() {
     use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
-        ParquetReconstructor, ReconstructorConfig, FileSeekRange, SeekData,
+        FileSeekRange, ParquetReconstructor, ReconstructorConfig, SeekData,
     };
 
     let _reconstructor = ParquetReconstructor::new(ReconstructorConfig::default());

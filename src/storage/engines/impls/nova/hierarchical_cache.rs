@@ -131,7 +131,8 @@ pub struct NovaHierarchicalCache {
     block_cache: Arc<RwLock<crate::utils::cache::LruCache<String, Arc<BlockStats>>>>,
 
     /// RowGroup stats - on-demand loading with TTL
-    rowgroup_cache: Arc<RwLock<HashMap<String, (Arc<RowGroupStats>, chrono::DateTime<chrono::Utc>)>>>,
+    rowgroup_cache:
+        Arc<RwLock<HashMap<String, (Arc<RowGroupStats>, chrono::DateTime<chrono::Utc>)>>>,
     rowgroup_ttl_sec: u64,
 
     /// Zone maps - always cached for fast pruning
@@ -276,7 +277,9 @@ impl NovaHierarchicalCache {
         {
             let cache = self.rowgroup_cache.read().await;
             if let Some((stats, timestamp)) = cache.get(rowgroup_id) {
-                let elapsed_secs = chrono::Utc::now().signed_duration_since(*timestamp).num_seconds();
+                let elapsed_secs = chrono::Utc::now()
+                    .signed_duration_since(*timestamp)
+                    .num_seconds();
                 if elapsed_secs >= 0 && (elapsed_secs as u64) < self.rowgroup_ttl_sec {
                     self.cache_stats
                         .rowgroup_hits
@@ -293,7 +296,10 @@ impl NovaHierarchicalCache {
         // Update cache
         {
             let mut cache = self.rowgroup_cache.write().await;
-            cache.insert(rowgroup_id.to_string(), (stats_arc.clone(), chrono::Utc::now()));
+            cache.insert(
+                rowgroup_id.to_string(),
+                (stats_arc.clone(), chrono::Utc::now()),
+            );
 
             // Clean expired entries
             let now = chrono::Utc::now();

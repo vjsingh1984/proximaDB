@@ -4,13 +4,13 @@
 // you may not use this file except in compliance with the License.
 
 //! # TLS Configuration Module
-//! 
+//!
 //! Provides TLS configuration and certificate management for ProximaDB servers.
 
 pub mod certificate_manager;
 
 pub use certificate_manager::{
-    CertificateConfig, CertificateManager, CertificateStatus, CertificateSubject
+    CertificateConfig, CertificateManager, CertificateStatus, CertificateSubject,
 };
 
 use anyhow::Result;
@@ -60,8 +60,8 @@ impl TlsConfig {
 
     /// Get certificate paths
     pub fn get_certificate_paths(&self) -> Option<(PathBuf, PathBuf)> {
-        self.certificate_manager.as_ref().map(|cm| {
-            (cm.get_cert_path(), cm.get_key_path())
-        })
+        self.certificate_manager
+            .as_ref()
+            .map(|cm| (cm.get_cert_path(), cm.get_key_path()))
     }
 }

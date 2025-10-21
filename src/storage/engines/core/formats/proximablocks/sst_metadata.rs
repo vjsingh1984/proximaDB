@@ -2,9 +2,9 @@
 // Hierarchical structure: Global Info → DataBlock Info
 // Enables filtering at global level without reading datablocks
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::error::ProximaDBError;

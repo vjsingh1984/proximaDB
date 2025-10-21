@@ -8,10 +8,8 @@
 
 use super::*;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::cache::specialized::{
-    BitmapFilterCache, IndexNodeCache, MetadataStore,
-};
 use crate::storage::cache::base::BaseCacheImpl;
+use crate::storage::cache::specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -28,7 +26,11 @@ struct SstBlockKey {
 
 impl SstBlockKey {
     fn new(file_path: String, offset: usize, size: usize) -> Self {
-        Self { file_path, offset, size }
+        Self {
+            file_path,
+            offset,
+            size,
+        }
     }
 }
 
@@ -55,7 +57,10 @@ mod sst_cache_integration {
         let _block_key = SstBlockKey::new("test_file.sstable".to_string(), 1024, 4096);
 
         // Placeholder assertion for compilation
-        assert!(true, "Cache integration test needs to be implemented with proper cache methods");
+        assert!(
+            true,
+            "Cache integration test needs to be implemented with proper cache methods"
+        );
     }
 
     #[tokio::test]
@@ -114,27 +119,39 @@ mod cross_engine_cache_tests {
         // TODO: Test shared cache coordination between SST and VIPER engines
         let _cache_size = 1024 * 1024; // Mock cache size
         let _metadata_cache = Arc::new(MetadataStore::new(1024 * 1024));
-        assert!(true, "Cross-engine cache coordination test needs to be implemented");
+        assert!(
+            true,
+            "Cross-engine cache coordination test needs to be implemented"
+        );
     }
 
     #[tokio::test]
     async fn test_cache_invalidation_coordination() {
         // TODO: Test cache invalidation coordination
         let _cache_size = 1024 * 1024; // Mock cache size
-        assert!(true, "Cache invalidation coordination test needs to be implemented");
+        assert!(
+            true,
+            "Cache invalidation coordination test needs to be implemented"
+        );
     }
 
     #[tokio::test]
     async fn test_eviction_pressure_management() {
         // TODO: Test eviction pressure management across engines
         let _small_cache = 1024 * 1024; // Mock cache size - 1MB cache - very small
-        assert!(true, "Eviction pressure management test needs to be implemented");
+        assert!(
+            true,
+            "Eviction pressure management test needs to be implemented"
+        );
     }
 
     #[tokio::test]
     async fn test_compression_algorithm_coordination() {
         // TODO: Test compression algorithm coordination
         let _cache_size = 1024 * 1024; // Mock cache size
-        assert!(true, "Compression algorithm coordination test needs to be implemented");
+        assert!(
+            true,
+            "Compression algorithm coordination test needs to be implemented"
+        );
     }
 }

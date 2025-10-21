@@ -47,7 +47,11 @@ impl StoragePath {
     /// Constructs a file path within the data directory
     /// Format: {base_url}/{collection_id}/data/{filename}
     pub fn data_file_path(base_url: &str, collection_id: &str, filename: &str) -> String {
-        format!("{}/{}", Self::collection_data_path(base_url, collection_id), filename)
+        format!(
+            "{}/{}",
+            Self::collection_data_path(base_url, collection_id),
+            filename
+        )
     }
 
     /// Parses a full path to extract the base URL and collection ID
@@ -100,9 +104,9 @@ mod tests {
 
     #[test]
     fn test_parse_collection_path() {
-        let (base, collection) = StoragePath::parse_collection_path(
-            "file:///storage/test_collection/data/file.sst"
-        ).unwrap();
+        let (base, collection) =
+            StoragePath::parse_collection_path("file:///storage/test_collection/data/file.sst")
+                .unwrap();
         assert_eq!(base, "file:///storage");
         assert_eq!(collection, "test_collection");
     }

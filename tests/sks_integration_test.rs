@@ -9,20 +9,23 @@
 
 #[cfg(test)]
 mod sks_integration_tests {
-    use proximadb::proto::proximadb_v1::{
-        EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField,
-        TypedMetadata
-    };
-    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore, RelationsStore, ProvenanceRegistry};
-    use proximadb::storage::relations::InMemoryRelationsStore;
-    use proximadb::storage::provenance::InMemoryProvenanceRegistry;
-    use proximadb::storage::traits::{StorageEngineStrategy, PerformanceTier};
-    use proximadb::core::{VectorRecord};
-    use proximadb::storage::traits::{FlushParameters, FlushResult, CompactionParameters, CompactionResult};
-    use std::collections::HashMap;
     use anyhow::Result;
-    use std::sync::Arc;
     use chrono::{DateTime, Utc};
+    use proximadb::core::VectorRecord;
+    use proximadb::proto::proximadb_v1::{
+        EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
+    };
+    use proximadb::storage::entity_store::{
+        EntityStore, ProvenanceRegistry, ProximaEntityStore, RelationsStore,
+    };
+    use proximadb::storage::provenance::InMemoryProvenanceRegistry;
+    use proximadb::storage::relations::InMemoryRelationsStore;
+    use proximadb::storage::traits::{
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult,
+    };
+    use proximadb::storage::traits::{PerformanceTier, StorageEngineStrategy};
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     /// Create a test entity store
     async fn create_test_store() -> Arc<ProximaEntityStore> {
@@ -49,9 +52,15 @@ mod sks_integration_tests {
 
         #[async_trait::async_trait]
         impl proximadb::storage::traits::UnifiedStorageEngine for MockStorageEngine {
-            fn engine_name(&self) -> &'static str { "mock" }
-            fn engine_version(&self) -> &'static str { "1.0.0" }
-            fn strategy(&self) -> StorageEngineStrategy { StorageEngineStrategy::Viper }
+            fn engine_name(&self) -> &'static str {
+                "mock"
+            }
+            fn engine_version(&self) -> &'static str {
+                "1.0.0"
+            }
+            fn strategy(&self) -> StorageEngineStrategy {
+                StorageEngineStrategy::Viper
+            }
 
             async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {
                 Ok(FlushResult {
@@ -104,7 +113,9 @@ mod sks_integration_tests {
                 Ok(vec![])
             }
 
-            fn get_filesystem_factory(&self) -> &proximadb::storage::persistence::filesystem::FilesystemFactory {
+            fn get_filesystem_factory(
+                &self,
+            ) -> &proximadb::storage::persistence::filesystem::FilesystemFactory {
                 // For testing, create a minimal filesystem factory
                 use proximadb::storage::persistence::filesystem::FilesystemFactory;
                 use std::sync::OnceLock;

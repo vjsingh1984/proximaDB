@@ -153,25 +153,43 @@ impl PCAModel {
     /// Save PCA model to filesystem
     pub async fn save_to_file(
         &self,
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         model_path: &str,
     ) -> Result<()> {
         let bytes = self.to_bytes()?;
-        filesystem.write(model_path, &bytes, None).await
+        filesystem
+            .write(model_path, &bytes, None)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to write PCA model to {}: {}", model_path, e))?;
-        tracing::info!("[HELIX] Saved PCA model to {} (version: {}, {} bytes)", model_path, self.version, bytes.len());
+        tracing::info!(
+            "[HELIX] Saved PCA model to {} (version: {}, {} bytes)",
+            model_path,
+            self.version,
+            bytes.len()
+        );
         Ok(())
     }
 
     /// Load PCA model from filesystem
     pub async fn load_from_file(
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         model_path: &str,
     ) -> Result<Self> {
-        let bytes = filesystem.read(model_path).await
+        let bytes = filesystem
+            .read(model_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read PCA model from {}: {}", model_path, e))?;
         let model = Self::from_bytes(&bytes)?;
-        tracing::info!("[HELIX] Loaded PCA model from {} (version: {}, {} components)", model_path, model.version, model.n_components);
+        tracing::info!(
+            "[HELIX] Loaded PCA model from {} (version: {}, {} components)",
+            model_path,
+            model.version,
+            model.n_components
+        );
         Ok(model)
     }
 }
@@ -336,8 +354,8 @@ pub fn sort_by_hilbert(records: &mut [VectorRecord], hilbert_keys: &[HilbertKey]
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
     use super::*;
+    use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
 
     #[test]
     fn test_hilbert_2d() {

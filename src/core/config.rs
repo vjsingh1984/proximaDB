@@ -212,13 +212,15 @@ pub struct CacheRuntimeConfig {
     pub warming: CacheWarmingConfig,
 }
 
-fn default_orchestrator_budget_mb() -> u64 { 512 }
+fn default_orchestrator_budget_mb() -> u64 {
+    512
+}
 
 impl Default for CacheRuntimeConfig {
     fn default() -> Self {
         Self {
             total_memory_mb: default_orchestrator_budget_mb(),
-            enable_warming: false,  // Disabled by default
+            enable_warming: false, // Disabled by default
             rebalancing: CacheRebalancingConfig::default(),
             eviction: CacheEvictionConfig::default(),
             types: CacheTypesConfig::default(),
@@ -238,8 +240,8 @@ impl Default for CacheRebalancingConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            interval_seconds: 300,  // 5 minutes
-            min_hit_rate_threshold: 0.1,  // 10% minimum hit rate
+            interval_seconds: 300,       // 5 minutes
+            min_hit_rate_threshold: 0.1, // 10% minimum hit rate
         }
     }
 }
@@ -372,11 +374,17 @@ pub struct GraphRuntimeConfig {
 
 impl Default for GraphRuntimeConfig {
     fn default() -> Self {
-        Self { enable_prefetch: true, prefetch_budget: 8, engine: default_graph_engine() }
+        Self {
+            enable_prefetch: true,
+            prefetch_budget: 8,
+            engine: default_graph_engine(),
+        }
     }
 }
 
-fn default_graph_engine() -> String { "ORION".to_string() }
+fn default_graph_engine() -> String {
+    "ORION".to_string()
+}
 
 /// Hybrid query runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -389,7 +397,10 @@ pub struct HybridRuntimeConfig {
 
 impl Default for HybridRuntimeConfig {
     fn default() -> Self {
-        Self { seeding_strategy: "AVERAGE".to_string(), fusion_weights: Some(vec![0.6, 0.4]) }
+        Self {
+            seeding_strategy: "AVERAGE".to_string(),
+            fusion_weights: Some(vec![0.6, 0.4]),
+        }
     }
 }
 
@@ -992,7 +1003,7 @@ impl Default for SstConfig {
             block_size_kb: 1024, // 1MB default - balanced for random access and sequential scans
             compaction_strategy: "leveled".to_string(),
             compression: "lz4".to_string(), // LZ4 default - 7% faster than no compression (measured)
-            compression_level: 3,            // LZ4 compression level
+            compression_level: 3,           // LZ4 compression level
             bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,
             max_files_per_level: 10,
@@ -1052,9 +1063,7 @@ impl SstConfig {
             }
             1024 => {
                 // 1MB - New default for balanced workloads
-                info!(
-                    "block_size_kb=1024KB (1MB) - Default balanced configuration"
-                );
+                info!("block_size_kb=1024KB (1MB) - Default balanced configuration");
             }
             1025..=2047 => {
                 // 1-2MB range
@@ -1251,7 +1260,7 @@ impl Default for WalDistributionStrategy {
 impl Default for WalStorageConfig {
     fn default() -> Self {
         Self {
-            global_manifest_url: None,  // Defaults to {storage_locations[0]}/wal
+            global_manifest_url: None, // Defaults to {storage_locations[0]}/wal
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
             memory_flush_size_bytes: 10 * 1024 * 1024, // 10MB - recommended for collection-level flush

@@ -83,7 +83,7 @@ pub fn get_distance_metric_from_config(
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
-// 
+//
 //     #[test]
 //     fn test_proto_to_internal_conversion() {
 //         assert_eq!(
@@ -134,11 +134,11 @@ pub fn get_distance_metric_from_config(
 //             proto_distance_to_internal(ProtoDistanceMetric::Hellinger as i32),
 //             DistanceMetric::Hellinger
 //         );
-// 
+//
 //         // Test unknown value defaults to Cosine
 //         assert_eq!(proto_distance_to_internal(999), DistanceMetric::Cosine);
 //     }
-// 
+//
 //     #[test]
 //     fn test_internal_to_proto_conversion() {
 //         assert_eq!(
@@ -155,7 +155,7 @@ pub fn get_distance_metric_from_config(
 //         );
 //         // Test all metrics for completeness
 //     }
-// 
+//
 //     #[test]
 //     fn test_get_from_config() {
 //         // Test with config
@@ -167,7 +167,7 @@ pub fn get_distance_metric_from_config(
 //             get_distance_metric_from_config(Some(&config)),
 //             DistanceMetric::Euclidean
 //         );
-// 
+//
 //         // Test without config
 //         assert_eq!(
 //             get_distance_metric_from_config(None),

@@ -49,13 +49,13 @@
 //! assert_eq!(values, decoded);
 //! ```
 
+pub mod analysis;
+pub mod codec;
 pub mod registry;
+pub mod simd_analysis;
 pub mod traits;
 pub mod types;
 pub mod wire_format;
-pub mod codec;
-pub mod analysis;
-pub mod simd_analysis;
 
 // Hardware-accelerated implementations (SIMD + GPU)
 pub mod simd;
@@ -64,11 +64,11 @@ pub mod simd;
 pub mod batching;
 
 // Re-export main types
-pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
-pub use traits::{RawDecoder, RawEncoder};
-pub use wire_format::{WireFormatManager, WireHeader, WIRE_FORMAT_VERSION};
-pub use registry::ImplementationRegistry;
 pub use codec::ProximaCodec;
+pub use registry::ImplementationRegistry;
+pub use traits::{RawDecoder, RawEncoder};
+pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
+pub use wire_format::{WIRE_FORMAT_VERSION, WireFormatManager, WireHeader};
 
 // Implementations (will be added in next phases)
 pub mod impls;

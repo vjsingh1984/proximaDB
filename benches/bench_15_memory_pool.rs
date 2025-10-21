@@ -7,9 +7,9 @@
 // Run specific benchmark group:
 //   cargo bench --bench bench_15_memory_pool -- pool_config_matrix
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use proximadb::core::memory::pool::{Pool, PoolConfig, VectorMemoryPool};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use proximadb::core::memory::pool::{Pool, PoolConfig, VectorMemoryPool};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,7 +38,11 @@ impl PoolTestConfig {
     }
 
     fn label(&self) -> String {
-        format!("size{}_stats{}", self.pool_size, if self.enable_stats { "on" } else { "off" })
+        format!(
+            "size{}_stats{}",
+            self.pool_size,
+            if self.enable_stats { "on" } else { "off" }
+        )
     }
 }
 
@@ -131,13 +135,18 @@ fn benchmark_pool_config_matrix(c: &mut Criterion) {
     }
 
     println!("\n📊 Pool Size Calculation:");
-    println!("  Workload: {} vectors × {} dimensions = {} f32 elements",
-        batch_size, dimension, base_requirement);
+    println!(
+        "  Workload: {} vectors × {} dimensions = {} f32 elements",
+        batch_size, dimension, base_requirement
+    );
     println!("  Buffer capacity: {} f32 elements", elements_per_buffer);
     println!("\n  Multiplier → Required elements → Pool size (buffers):");
     for (mult, &pool_size) in multipliers.iter().zip(pool_sizes.iter()) {
         let required = (base_requirement as f64 * mult) as usize;
-        println!("    {:.2}x → {} elements → {} buffers", mult, required, pool_size);
+        println!(
+            "    {:.2}x → {} elements → {} buffers",
+            mult, required, pool_size
+        );
     }
     println!();
 
@@ -147,7 +156,10 @@ fn benchmark_pool_config_matrix(c: &mut Criterion) {
     let mut configs = Vec::new();
     for &pool_size in &pool_sizes {
         for &enable_stats in &stats_options {
-            configs.push(PoolTestConfig { pool_size, enable_stats });
+            configs.push(PoolTestConfig {
+                pool_size,
+                enable_stats,
+            });
         }
     }
 
@@ -224,9 +236,8 @@ fn benchmark_stats_overhead(c: &mut Criterion) {
             BenchmarkId::new("no_stats", pool_size),
             &pool_size,
             |b, _| {
-                let pool: Pool<Vec<u8>> = Pool::new(config_no_stats.clone(), || {
-                    Vec::with_capacity(64 * 1024)
-                });
+                let pool: Pool<Vec<u8>> =
+                    Pool::new(config_no_stats.clone(), || Vec::with_capacity(64 * 1024));
 
                 b.iter(|| {
                     // Simulate 1000 acquisitions
@@ -243,9 +254,8 @@ fn benchmark_stats_overhead(c: &mut Criterion) {
             BenchmarkId::new("with_stats", pool_size),
             &pool_size,
             |b, _| {
-                let pool: Pool<Vec<u8>> = Pool::new(config_with_stats.clone(), || {
-                    Vec::with_capacity(64 * 1024)
-                });
+                let pool: Pool<Vec<u8>> =
+                    Pool::new(config_with_stats.clone(), || Vec::with_capacity(64 * 1024));
 
                 b.iter(|| {
                     // Simulate 1000 acquisitions
@@ -383,7 +393,8 @@ fn benchmark_hit_rates(c: &mut Criterion) {
                     for _ in 0..release_count {
                         seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
                         // Vary acquisition timing to simulate real workload
-                        if (seed % 3) != 0 {  // ~66% acquire rate
+                        if (seed % 3) != 0 {
+                            // ~66% acquire rate
                             items.push(pool.acquire());
                         }
                     }
@@ -407,8 +418,13 @@ fn benchmark_hit_rates(c: &mut Criterion) {
                 // Print hit rate after benchmark
                 let stats = pool.stats();
                 if pool_size == 16 || pool_size == 64 || pool_size == 256 {
-                    println!("\n  Pool size {}: Hit rate {:.1}%, Cache misses: {}, Current size: {}",
-                        pool_size, stats.hit_rate() * 100.0, stats.cache_misses, stats.current_size);
+                    println!(
+                        "\n  Pool size {}: Hit rate {:.1}%, Cache misses: {}, Current size: {}",
+                        pool_size,
+                        stats.hit_rate() * 100.0,
+                        stats.cache_misses,
+                        stats.current_size
+                    );
                 }
             },
         );
@@ -543,8 +559,10 @@ fn benchmark_growth_strategies(c: &mut Criterion) {
 
                 // Print growth stats
                 let stats = pool.stats();
-                println!("\n  Growth factor {:.2}: {} total grows, peak size {}, cache misses: {}",
-                    growth_factor, stats.pool_grows, stats.peak_size, stats.cache_misses);
+                println!(
+                    "\n  Growth factor {:.2}: {} total grows, peak size {}, cache misses: {}",
+                    growth_factor, stats.pool_grows, stats.peak_size, stats.cache_misses
+                );
             },
         );
     }
@@ -580,16 +598,18 @@ fn benchmark_memory_footprint(c: &mut Criterion) {
         let buffer_size = 64 * 1024; // 64KB per buffer
         let total_memory = pool_size * buffer_size;
 
-        println!("  Pool size {:4}: {} buffers × 64KB = {:.2} MB",
-            pool_size, pool_size, total_memory as f64 / (1024.0 * 1024.0));
+        println!(
+            "  Pool size {:4}: {} buffers × 64KB = {:.2} MB",
+            pool_size,
+            pool_size,
+            total_memory as f64 / (1024.0 * 1024.0)
+        );
 
         group.bench_with_input(
             BenchmarkId::new("footprint", pool_size),
             &pool_size,
             |b, _| {
-                let pool = Pool::new(config.clone(), || {
-                    Vec::<u8>::with_capacity(64 * 1024)
-                });
+                let pool = Pool::new(config.clone(), || Vec::<u8>::with_capacity(64 * 1024));
 
                 b.iter(|| {
                     // Keep all buffers in memory to measure true footprint

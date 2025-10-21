@@ -1,16 +1,14 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
-};
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
+};
 use std::collections::HashMap;
 use tracing::{debug, info, trace};
 
 fn main() -> anyhow::Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("debug")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("debug").init();
 
     info!("Starting encoding debug test");
 
@@ -62,7 +60,10 @@ fn main() -> anyhow::Result<()> {
     info!("Encoded size: {} bytes", encoded.len());
 
     // Print first few bytes
-    debug!("First 32 bytes of encoded data: {:02X?}", &encoded[..encoded.len().min(32)]);
+    debug!(
+        "First 32 bytes of encoded data: {:02X?}",
+        &encoded[..encoded.len().min(32)]
+    );
 
     info!("Deserializing block");
     let decoded_block = ProximaDataBlock::deserialize(&encoded, None)?;

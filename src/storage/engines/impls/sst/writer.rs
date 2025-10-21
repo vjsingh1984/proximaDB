@@ -60,9 +60,11 @@ use crate::storage::persistence::filesystem::{
 };
 
 use super::IndexEntry;
-use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
-use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, ProximaBlockMetadata};
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::storage::engines::core::formats::proximablocks::{
+    ProximaBlockMetadata, ProximaDataBlock,
+};
 
 // UnifiedProximaSIMD functionality is now in ProximaCodec
 
@@ -98,23 +100,23 @@ pub struct SstSpecificData {
 use crate::proto::proximadb_v1::CompressionConfig;
 
 // Use core compression directly instead of adapter
-use crate::core::compression::{
-    CompressionContext, CompressionProvider, StandardCompression,
-};
+use crate::core::compression::{CompressionContext, CompressionProvider, StandardCompression};
 
 // ProximaCodec system for encoding/decoding
-use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, types::ProximaScheme};
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
+use crate::storage::engines::core::ops::proximacodec::{
+    ProximaCodec, analysis, types::ProximaScheme,
+};
 
 /// Proxima encoding markers as constants
 mod encoding_markers {
-    pub const RAW: u8 = 0x00;           // Raw/Uncompressed
-    pub const BITPACKED: u8 = 0x10;     // Proxima BitPacked
-    pub const DELTA: u8 = 0x20;         // Proxima Delta encoding
-    pub const FRAME_OF_REF: u8 = 0x30;  // Proxima FrameOfReference
-    pub const PATCHED_BASE: u8 = 0x40;  // Proxima PatchedBase
-    pub const DICTIONARY: u8 = 0x50;    // Proxima Dictionary
-    pub const RUN_LENGTH: u8 = 0x60;    // Proxima RunLength
+    pub const RAW: u8 = 0x00; // Raw/Uncompressed
+    pub const BITPACKED: u8 = 0x10; // Proxima BitPacked
+    pub const DELTA: u8 = 0x20; // Proxima Delta encoding
+    pub const FRAME_OF_REF: u8 = 0x30; // Proxima FrameOfReference
+    pub const PATCHED_BASE: u8 = 0x40; // Proxima PatchedBase
+    pub const DICTIONARY: u8 = 0x50; // Proxima Dictionary
+    pub const RUN_LENGTH: u8 = 0x60; // Proxima RunLength
 }
 
 /// Cache alignment constant
@@ -378,7 +380,10 @@ impl SstableWriter {
     where
         I: Iterator<Item = (String, VectorRecord)>,
     {
-        debug!("SST Writer: write_sorted_vector_records called with {} records", record_count);
+        debug!(
+            "SST Writer: write_sorted_vector_records called with {} records",
+            record_count
+        );
         info!(
             "🚀 SST STREAMING PATH: Writing {} pre-sorted VectorRecords directly",
             record_count
@@ -422,8 +427,14 @@ impl SstableWriter {
 
         // Collect records to get min/max keys
         let sorted_records_vec: Vec<(String, VectorRecord)> = sorted_records.collect();
-        let min_key = sorted_records_vec.first().map(|(k, _)| k.clone()).unwrap_or_default();
-        let max_key = sorted_records_vec.last().map(|(k, _)| k.clone()).unwrap_or_default();
+        let min_key = sorted_records_vec
+            .first()
+            .map(|(k, _)| k.clone())
+            .unwrap_or_default();
+        let max_key = sorted_records_vec
+            .last()
+            .map(|(k, _)| k.clone())
+            .unwrap_or_default();
 
         // ✅ STEP 2: Process VectorRecords in streaming fashion - Proxima handles bloom filters!
         for (key, vector_record) in sorted_records_vec.into_iter() {
@@ -494,7 +505,9 @@ impl SstableWriter {
         // ✅ STEP 3: Use unified bloom filter module for consistency
         // Create bloom filter using the factory with proper configuration
         let combined_bloom_filter = {
-            use crate::core::bloom::{BloomFilterBuilder, BloomFilterConfig, BloomStrategy, HashAlgorithm};
+            use crate::core::bloom::{
+                BloomFilterBuilder, BloomFilterConfig, BloomStrategy, HashAlgorithm,
+            };
 
             // Use XXHash for speed - configured in bloom config
             let mut bloom_config = self.bloom_config.clone();
@@ -510,11 +523,14 @@ impl SstableWriter {
             let bloom_strategy = builder.build();
 
             // Serialize the bloom filter
-            let bloom_data = bloom_strategy.serialize()
-                .unwrap_or_else(|_| Vec::new());
+            let bloom_data = bloom_strategy.serialize().unwrap_or_else(|_| Vec::new());
 
-            debug!("📊 Generated bloom filter: {} records, {} bytes using {:?}",
-                   vector_records.len(), bloom_data.len(), bloom_config.hash_algorithm);
+            debug!(
+                "📊 Generated bloom filter: {} records, {} bytes using {:?}",
+                vector_records.len(),
+                bloom_data.len(),
+                bloom_config.hash_algorithm
+            );
 
             super::bloom_filter::SstableBloomFilter::new(
                 bloom_config,
@@ -651,7 +667,8 @@ impl SstableWriter {
             let block_total_size = 4 + serialized_block.len(); // length prefix + data
 
             // Account for cache line padding
-            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE)
+                * CACHE_LINE_SIZE;
             let padding = aligned_size - serialized_block.len();
             let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {
                 block_total_size + padding
@@ -672,15 +689,23 @@ impl SstableWriter {
         }
         output_data.extend_from_slice(&(index_data.len() as u32).to_le_bytes());
         output_data.extend_from_slice(&index_data);
-        debug!("✅ Wrote index: {} bytes for {} entries", index_data.len(), index_entries.len());
+        debug!(
+            "✅ Wrote index: {} bytes for {} entries",
+            index_data.len(),
+            index_entries.len()
+        );
         // Use shared Proxima serialization for data blocks with optimizations
-        debug!("📦 Writing {} data blocks using Proxima serialization", data_blocks.len());
+        debug!(
+            "📦 Writing {} data blocks using Proxima serialization",
+            data_blocks.len()
+        );
 
         // Use the constant defined at module level
 
         for (i, serialized_block) in serialized_blocks.iter().enumerate() {
             // Align to cache line boundaries for better CPU performance
-            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE)
+                * CACHE_LINE_SIZE;
             let padding = aligned_size - serialized_block.len();
 
             // Write block length prefix (actual data size, not padded)
@@ -690,15 +715,24 @@ impl SstableWriter {
             // Add cache line padding for alignment
             if padding > 0 && padding < CACHE_LINE_SIZE {
                 output_data.extend(vec![0u8; padding]);
-                debug!("  📐 Block {}: {} bytes + {} padding (cache-aligned to {})",
-                       i, serialized_block.len(), padding, aligned_size);
+                debug!(
+                    "  📐 Block {}: {} bytes + {} padding (cache-aligned to {})",
+                    i,
+                    serialized_block.len(),
+                    padding,
+                    aligned_size
+                );
             }
         }
         debug!("✅ Wrote {} bytes of total SSTable data", output_data.len());
 
         // Write all data atomically
         let write_path = self.path.to_string_lossy();
-        debug!("SST Writer: Atomic write of {} bytes to: {}", output_data.len(), write_path);
+        debug!(
+            "SST Writer: Atomic write of {} bytes to: {}",
+            output_data.len(),
+            write_path
+        );
         let result = atomic_writer
             .write_atomic(&*fs, &write_path, &output_data, None)
             .await;
@@ -726,7 +760,10 @@ impl SstableWriter {
         // Use centralized compression config conversion from Proxima
         use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
 
-        let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(self.compression_config.as_ref());
+        let mut block_compression_config =
+            RowBasedCompressionConfig::create_block_config_from_proto(
+                self.compression_config.as_ref(),
+            );
 
         // Enable SIMD optimization for SST (maximum compression focus)
         block_compression_config.vector_layout =
@@ -744,7 +781,7 @@ impl SstableWriter {
         let mut data_block = ProximaDataBlock::new_with_engine_profile(
             current_block.to_vec(),
             block_compression_config,
-            EngineProfile::SST
+            EngineProfile::SST,
         );
         data_block.block_id = block_id;
 
@@ -778,18 +815,40 @@ impl SstableWriter {
                 block_offset: 0,
                 compressed: false,
                 // ✅ Use Proxima auto-generated column stats instead of manual calculation!
-                metadata_min_values: proxima_metadata.column_stats.iter()
-                    .map(|(k, stats)| (k.clone(), stats.min_value.clone().unwrap_or(serde_json::Value::Null)))
+                metadata_min_values: proxima_metadata
+                    .column_stats
+                    .iter()
+                    .map(|(k, stats)| {
+                        (
+                            k.clone(),
+                            stats.min_value.clone().unwrap_or(serde_json::Value::Null),
+                        )
+                    })
                     .collect(),
-                metadata_max_values: proxima_metadata.column_stats.iter()
-                    .map(|(k, stats)| (k.clone(), stats.max_value.clone().unwrap_or(serde_json::Value::Null)))
+                metadata_max_values: proxima_metadata
+                    .column_stats
+                    .iter()
+                    .map(|(k, stats)| {
+                        (
+                            k.clone(),
+                            stats.max_value.clone().unwrap_or(serde_json::Value::Null),
+                        )
+                    })
                     .collect(),
-                metadata_null_counts: proxima_metadata.column_stats.iter()
+                metadata_null_counts: proxima_metadata
+                    .column_stats
+                    .iter()
                     .map(|(k, stats)| (k.clone(), stats.null_count))
                     .collect(),
                 // ✅ Use Proxima auto-generated bloom filters!
-                block_key_bloom: data_block.bloom_filter.as_ref().map(|f| f.serialize().unwrap_or_default()),
-                block_metadata_bloom: data_block.block_bloom_filter.as_ref().and_then(|f| f.serialize().ok()),
+                block_key_bloom: data_block
+                    .bloom_filter
+                    .as_ref()
+                    .map(|f| f.serialize().unwrap_or_default()),
+                block_metadata_bloom: data_block
+                    .block_bloom_filter
+                    .as_ref()
+                    .and_then(|f| f.serialize().ok()),
                 vector_format,
             });
         }
@@ -896,8 +955,14 @@ impl SstableWriter {
             version: 1,
             level: 0, // L0 for new SSTable
             entry_count: sorted_records.len() as u64,
-            min_key: sorted_records.first().map(|(k, _)| k.clone()).unwrap_or_default(),
-            max_key: sorted_records.last().map(|(k, _)| k.clone()).unwrap_or_default(),
+            min_key: sorted_records
+                .first()
+                .map(|(k, _)| k.clone())
+                .unwrap_or_default(),
+            max_key: sorted_records
+                .last()
+                .map(|(k, _)| k.clone())
+                .unwrap_or_default(),
             timestamp: chrono::Utc::now().timestamp(),
             compression_algorithm: super::CompressionAlgorithm::None,
             compression_level: 0,
@@ -909,8 +974,8 @@ impl SstableWriter {
             batch_size: 100,
             block_count: 1,
             header_size: 0, // Will be updated
-            index_size: 0, // Will be updated
-            data_size: 0, // Will be updated
+            index_size: 0,  // Will be updated
+            data_size: 0,   // Will be updated
             global_bloom_offset: 0,
             global_bloom_size: 0,
             block_index_offset: 0,
@@ -961,7 +1026,11 @@ impl SstableWriter {
 
         // Write to file using filesystem
         let write_path = self.path.to_str().unwrap();
-        debug!("SST Writer: Writing {} bytes to path: {}", file_content.len(), write_path);
+        debug!(
+            "SST Writer: Writing {} bytes to path: {}",
+            file_content.len(),
+            write_path
+        );
         let fs = self.filesystem.get_filesystem("file://")?;
         let result = fs.write(write_path, &file_content, None).await;
         match result {
@@ -1136,10 +1205,7 @@ impl SstableWriter {
     }
 
     /// Encode ProximaDataBlock using Proxima with intelligent scheme selection
-    fn encode_block_with_proxima(
-        &self,
-        data_block: &ProximaDataBlock,
-    ) -> Result<ProximaDataBlock> {
+    fn encode_block_with_proxima(&self, data_block: &ProximaDataBlock) -> Result<ProximaDataBlock> {
         if data_block.records.is_empty() {
             return Ok(data_block.clone());
         }

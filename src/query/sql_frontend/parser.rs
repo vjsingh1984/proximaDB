@@ -2,10 +2,10 @@
 
 use anyhow::{Result, anyhow};
 use sqlparser::ast::{
-    BinaryOperator, Cte as SqlCte, Expr as SqlExpr, FunctionArg, FunctionArgExpr,
-    Join as SqlJoin, JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr,
-    Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator,
-    Statement, TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
+    BinaryOperator, Cte as SqlCte, Expr as SqlExpr, FunctionArg, FunctionArgExpr, Join as SqlJoin,
+    JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr, Query as SqlQuery,
+    Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator, Statement,
+    TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -72,11 +72,25 @@ impl SqlFrontendParser {
     fn convert_query_no_with(&self, query: &SqlQuery) -> Result<Query> {
         match &*query.body {
             SetExpr::Select(select) => Ok(Query::Select(self.convert_select(select, query)?)),
-            SetExpr::SetOperation { left, op, right, set_quantifier } => {
+            SetExpr::SetOperation {
+                left,
+                op,
+                right,
+                set_quantifier,
+            } => {
                 let (set_op, all) = match op {
-                    SqlSetOperator::Union => (SetOp::Union, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
-                    SqlSetOperator::Intersect => (SetOp::Intersect, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
-                    SqlSetOperator::Except => (SetOp::Except, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
+                    SqlSetOperator::Union => (
+                        SetOp::Union,
+                        matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
+                    ),
+                    SqlSetOperator::Intersect => (
+                        SetOp::Intersect,
+                        matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
+                    ),
+                    SqlSetOperator::Except => (
+                        SetOp::Except,
+                        matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
+                    ),
                 };
                 let left_q = self.convert_setexpr(left)?;
                 let right_q = self.convert_setexpr(right)?;
@@ -110,11 +124,25 @@ impl SqlFrontendParser {
                     },
                 )?))
             }
-            SetExpr::SetOperation { left, op, right, set_quantifier } => {
+            SetExpr::SetOperation {
+                left,
+                op,
+                right,
+                set_quantifier,
+            } => {
                 let (set_op, all) = match op {
-                    SqlSetOperator::Union => (SetOp::Union, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
-                    SqlSetOperator::Intersect => (SetOp::Intersect, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
-                    SqlSetOperator::Except => (SetOp::Except, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
+                    SqlSetOperator::Union => (
+                        SetOp::Union,
+                        matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
+                    ),
+                    SqlSetOperator::Intersect => (
+                        SetOp::Intersect,
+                        matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
+                    ),
+                    SqlSetOperator::Except => (
+                        SetOp::Except,
+                        matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
+                    ),
                 };
                 let left_q = self.convert_setexpr(left)?;
                 let right_q = self.convert_setexpr(right)?;
@@ -176,7 +204,7 @@ impl SqlFrontendParser {
 
         // Convert GROUP BY
         let group_by = match &select.group_by {
-            sqlparser::ast::GroupByExpr::All => vec![],  // Handle GROUP BY ALL (PostgreSQL extension)
+            sqlparser::ast::GroupByExpr::All => vec![], // Handle GROUP BY ALL (PostgreSQL extension)
             sqlparser::ast::GroupByExpr::Expressions(exprs) => exprs
                 .iter()
                 .map(|expr| self.convert_expr(expr))
@@ -558,22 +586,25 @@ impl SqlFrontendParser {
             } => {
                 // Convert IN (SELECT ...) expression as a binary operation
                 let left_expr = Box::new(self.convert_expr(expr)?);
-                let subquery_expr = Box::new(Expr::Subquery(Box::new(self.convert_query(subquery)?)));
+                let subquery_expr =
+                    Box::new(Expr::Subquery(Box::new(self.convert_query(subquery)?)));
 
                 // Create a binary expression with IN operator
                 Ok(Expr::Binary {
                     left: left_expr,
-                    op: if *negated { BinaryOp::NotIn } else { BinaryOp::In },
+                    op: if *negated {
+                        BinaryOp::NotIn
+                    } else {
+                        BinaryOp::In
+                    },
                     right: subquery_expr,
                 })
             }
 
             SqlExpr::Array(sqlparser::ast::Array { elem, named }) => {
                 // Convert array literal [0.1, 0.2, ...] to Expr::Array
-                let converted_elements: Result<Vec<Expr>> = elem
-                    .iter()
-                    .map(|e| self.convert_expr(e))
-                    .collect();
+                let converted_elements: Result<Vec<Expr>> =
+                    elem.iter().map(|e| self.convert_expr(e)).collect();
 
                 Ok(Expr::Array {
                     elem: converted_elements?,

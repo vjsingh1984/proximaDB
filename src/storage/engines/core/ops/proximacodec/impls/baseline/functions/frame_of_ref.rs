@@ -34,17 +34,10 @@ fn encode_frame_of_ref_i32_wire(wire_values: &[i32], base: i32) -> Result<Vec<u8
     result.extend_from_slice(&base.to_le_bytes());
 
     // Compute offsets from base
-    let offsets: Vec<i32> = wire_values
-        .iter()
-        .map(|&v| v.wrapping_sub(base))
-        .collect();
+    let offsets: Vec<i32> = wire_values.iter().map(|&v| v.wrapping_sub(base)).collect();
 
     // Find optimal bit width for offsets
-    let max_offset_abs = offsets
-        .iter()
-        .map(|&o| o.unsigned_abs())
-        .max()
-        .unwrap_or(0);
+    let max_offset_abs = offsets.iter().map(|&o| o.unsigned_abs()).max().unwrap_or(0);
 
     let bits = if max_offset_abs == 0 {
         1
@@ -75,17 +68,10 @@ fn encode_frame_of_ref_i64_wire(wire_values: &[i64], base: i64) -> Result<Vec<u8
     result.extend_from_slice(&base.to_le_bytes());
 
     // Compute offsets from base
-    let offsets: Vec<i64> = wire_values
-        .iter()
-        .map(|&v| v.wrapping_sub(base))
-        .collect();
+    let offsets: Vec<i64> = wire_values.iter().map(|&v| v.wrapping_sub(base)).collect();
 
     // Find optimal bit width for offsets
-    let max_offset_abs = offsets
-        .iter()
-        .map(|&o| o.unsigned_abs())
-        .max()
-        .unwrap_or(0);
+    let max_offset_abs = offsets.iter().map(|&o| o.unsigned_abs()).max().unwrap_or(0);
 
     let bits = if max_offset_abs == 0 {
         1
@@ -185,8 +171,7 @@ fn decode_frame_of_ref_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     // Read base (8 bytes)
     let base = i64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 
     // Read bits (1 byte)

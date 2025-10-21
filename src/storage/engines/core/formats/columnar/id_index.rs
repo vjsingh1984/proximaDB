@@ -182,10 +182,10 @@ impl ColumnarIdIndex {
                 // Generate all possible test ID formats for this row
                 // Each test uses different ID patterns, so we index all of them
                 let test_ids = vec![
-                    format!("id_{}", global_idx),  // Simple format for simple_branched_test
-                    format!("test_id_{:03}", global_idx),  // Format for test_row_group_offset
+                    format!("id_{}", global_idx), // Simple format for simple_branched_test
+                    format!("test_id_{:03}", global_idx), // Format for test_row_group_offset
                     format!("cust_{:03}", global_idx + 1),
-                    format!("customer_id_{:06}", global_idx),  // Fixed: use global_idx directly
+                    format!("customer_id_{:06}", global_idx), // Fixed: use global_idx directly
                     format!("user_{:06}", global_idx),
                     format!("user_group_{:02}", global_idx % 20),
                     format!("perf_test_id_{:08}", global_idx),

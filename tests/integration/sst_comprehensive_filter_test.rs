@@ -3,16 +3,16 @@
 //! Tests all filtering scenarios with typed metadata to ensure SST engine
 //! properly preserves and filters on all data types (String, Integer, Float, Boolean).
 
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::{
-    Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType,
-    sql_value::Value, VectorRecord, SqlValue,
+    Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue, VectorRecord,
+    sql_value::Value,
 };
-use serde_json::json;
 use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
-use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
+use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -158,7 +158,9 @@ async fn test_sst_string_equals_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     // Insert test data
     let vectors = create_test_vectors("test_sst_filter", 100);
@@ -203,7 +205,9 @@ async fn test_sst_number_less_than_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_sst_filter", 100);
     let params = FlushParameters {
@@ -243,7 +247,9 @@ async fn test_sst_boolean_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_sst_filter", 100);
     let params = FlushParameters {
@@ -283,7 +289,9 @@ async fn test_sst_integer_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_sst_filter", 100);
     let params = FlushParameters {
@@ -323,7 +331,9 @@ async fn test_sst_and_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_sst_filter", 100);
     let params = FlushParameters {
@@ -363,7 +373,11 @@ async fn test_sst_and_filter() {
     // cat_5: indices 5,15,25,35,45,55,65,75,85,95 (all odd)
     // enabled=true: even indices
     // Intersection: NONE (mutually exclusive)
-    assert_eq!(results.len(), 0, "Expected 0 results for mutually exclusive AND");
+    assert_eq!(
+        results.len(),
+        0,
+        "Expected 0 results for mutually exclusive AND"
+    );
 }
 
 #[tokio::test]
@@ -372,7 +386,9 @@ async fn test_sst_or_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_sst_filter", 100);
     let params = FlushParameters {
@@ -421,7 +437,9 @@ async fn test_sst_not_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_sst_filter", 50); // Smaller dataset for NOT
     let params = FlushParameters {
@@ -461,7 +479,9 @@ async fn test_sst_complex_nested_filter() {
     let collection = create_test_collection(&temp_dir);
     let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute).await.unwrap();
+    let engine = SstEngine::new_with_config(Default::default(), filesystem, distance_compute)
+        .await
+        .unwrap();
 
     let vectors = create_test_vectors("test_sst_filter", 100);
     let params = FlushParameters {

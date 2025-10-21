@@ -29,8 +29,8 @@
 use anyhow::Result;
 use tracing::{debug, trace};
 
-use crate::core::hardware_capabilities::HardwareBackend;
 use super::kernels::utils::GpuBatchConfig;
+use crate::core::hardware_capabilities::HardwareBackend;
 
 /// Batching strategy for GPU operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +45,10 @@ pub enum BatchingStrategy {
     Dynamic,
 
     /// Pipelined batches with async transfers (best for large datasets)
-    Pipelined { batch_size: usize, pipeline_depth: usize },
+    Pipelined {
+        batch_size: usize,
+        pipeline_depth: usize,
+    },
 }
 
 /// Batch size calculator for GPU operations
@@ -60,14 +63,20 @@ impl GpuBatchSizer {
         // Select default strategy based on backend
         let strategy = Self::default_strategy_for_backend(&backend);
 
-        debug!("🎯 [GPU Batcher] Created for {:?}, strategy: {:?}", backend, strategy);
+        debug!(
+            "🎯 [GPU Batcher] Created for {:?}, strategy: {:?}",
+            backend, strategy
+        );
 
         Self { backend, strategy }
     }
 
     /// Create with explicit strategy
     pub fn with_strategy(backend: HardwareBackend, strategy: BatchingStrategy) -> Self {
-        debug!("🎯 [GPU Batcher] Created for {:?}, custom strategy: {:?}", backend, strategy);
+        debug!(
+            "🎯 [GPU Batcher] Created for {:?}, custom strategy: {:?}",
+            backend, strategy
+        );
         Self { backend, strategy }
     }
 
@@ -86,9 +95,7 @@ impl GpuBatchSizer {
                 self.calculate_dynamic_batch_size(total_vectors, vector_dimension)
             }
 
-            BatchingStrategy::Pipelined { batch_size, .. } => {
-                batch_size.min(total_vectors)
-            }
+            BatchingStrategy::Pipelined { batch_size, .. } => batch_size.min(total_vectors),
         }
     }
 
@@ -108,11 +115,7 @@ impl GpuBatchSizer {
     }
 
     /// Calculate number of batches needed
-    pub fn calculate_batch_count(
-        &self,
-        total_vectors: usize,
-        batch_size: usize,
-    ) -> usize {
+    pub fn calculate_batch_count(&self, total_vectors: usize, batch_size: usize) -> usize {
         (total_vectors + batch_size - 1) / batch_size
     }
 
@@ -126,12 +129,12 @@ impl GpuBatchSizer {
     }
 
     /// Split data into batches
-    pub fn create_batches<'a, T>(
-        &self,
-        data: &'a [T],
-        batch_size: usize,
-    ) -> Vec<&'a [T]> {
-        trace!("🔪 [GPU Batcher] Splitting {} items into batches of {}", data.len(), batch_size);
+    pub fn create_batches<'a, T>(&self, data: &'a [T], batch_size: usize) -> Vec<&'a [T]> {
+        trace!(
+            "🔪 [GPU Batcher] Splitting {} items into batches of {}",
+            data.len(),
+            batch_size
+        );
 
         data.chunks(batch_size).collect()
     }
@@ -167,11 +170,7 @@ impl GpuBatchSizer {
     }
 
     /// Calculate dynamic batch size based on hardware and data characteristics
-    fn calculate_dynamic_batch_size(
-        &self,
-        total_vectors: usize,
-        vector_dimension: usize,
-    ) -> usize {
+    fn calculate_dynamic_batch_size(&self, total_vectors: usize, vector_dimension: usize) -> usize {
         // Base batch size on backend characteristics
         let base_batch = match self.backend {
             HardwareBackend::CUDA => 16384,
@@ -220,13 +219,12 @@ pub struct GpuBatchIterator<'a, T> {
 
 impl<'a, T> GpuBatchIterator<'a, T> {
     /// Create a new batch iterator
-    pub fn new(
-        data: &'a [T],
-        batch_size: usize,
-        backend: HardwareBackend,
-    ) -> Self {
-        trace!("🔄 [GPU BatchIterator] Created for {} items, batch_size={}",
-               data.len(), batch_size);
+    pub fn new(data: &'a [T], batch_size: usize, backend: HardwareBackend) -> Self {
+        trace!(
+            "🔄 [GPU BatchIterator] Created for {} items, batch_size={}",
+            data.len(),
+            batch_size
+        );
 
         Self {
             data,
@@ -267,14 +265,20 @@ impl<'a, T> Iterator for GpuBatchIterator<'a, T> {
 
         self.current_offset = end;
 
-        trace!("📦 [GPU BatchIterator] Batch {}: {} items [{}-{}]",
-               batch_index, batch.len(), start, end - 1);
+        trace!(
+            "📦 [GPU BatchIterator] Batch {}: {} items [{}-{}]",
+            batch_index,
+            batch.len(),
+            start,
+            end - 1
+        );
 
         Some((batch_index, batch))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = (self.data.len() - self.current_offset + self.batch_size - 1) / self.batch_size;
+        let remaining =
+            (self.data.len() - self.current_offset + self.batch_size - 1) / self.batch_size;
         (remaining, Some(remaining))
     }
 }
@@ -300,17 +304,13 @@ impl BatchPerformanceEstimator {
     }
 
     /// Estimate throughput (vectors/second) for a given batch size
-    pub fn estimate_throughput(
-        &self,
-        batch_size: usize,
-        vector_dimension: usize,
-    ) -> f64 {
+    pub fn estimate_throughput(&self, batch_size: usize, vector_dimension: usize) -> f64 {
         // Theoretical peak throughput per backend (vectors/second)
         let peak_throughput = match self.backend {
-            HardwareBackend::CUDA => 1_000_000.0,      // 1M vectors/sec
-            HardwareBackend::ROCm => 800_000.0,        // 800K vectors/sec
-            HardwareBackend::MPS => 500_000.0,         // 500K vectors/sec (unified memory)
-            HardwareBackend::OpenCL => 400_000.0,      // 400K vectors/sec
+            HardwareBackend::CUDA => 1_000_000.0, // 1M vectors/sec
+            HardwareBackend::ROCm => 800_000.0,   // 800K vectors/sec
+            HardwareBackend::MPS => 500_000.0,    // 500K vectors/sec (unified memory)
+            HardwareBackend::OpenCL => 400_000.0, // 400K vectors/sec
             _ => 100_000.0,
         };
 
@@ -342,11 +342,7 @@ impl BatchPerformanceEstimator {
     }
 
     /// Estimate latency (milliseconds) for processing a batch
-    pub fn estimate_latency(
-        &self,
-        batch_size: usize,
-        vector_dimension: usize,
-    ) -> f64 {
+    pub fn estimate_latency(&self, batch_size: usize, vector_dimension: usize) -> f64 {
         let throughput = self.estimate_throughput(batch_size, vector_dimension);
 
         // Latency = batch_size / throughput (in seconds) * 1000 (to ms)
@@ -389,7 +385,10 @@ mod tests {
         let sizer = GpuBatchSizer::new(HardwareBackend::CUDA);
 
         match sizer.strategy {
-            BatchingStrategy::Pipelined { batch_size, pipeline_depth } => {
+            BatchingStrategy::Pipelined {
+                batch_size,
+                pipeline_depth,
+            } => {
                 assert_eq!(batch_size, 16384);
                 assert_eq!(pipeline_depth, 4);
             }
@@ -406,10 +405,8 @@ mod tests {
         assert_eq!(batch_size, 16384); // Pipeline batch size
 
         // Large dimension vectors should use dynamic sizing
-        let sizer_dynamic = GpuBatchSizer::with_strategy(
-            HardwareBackend::CUDA,
-            BatchingStrategy::Dynamic,
-        );
+        let sizer_dynamic =
+            GpuBatchSizer::with_strategy(HardwareBackend::CUDA, BatchingStrategy::Dynamic);
         let batch_size = sizer_dynamic.optimal_encode_batch_size(100000, 2048);
         assert!(batch_size < 16384); // Should be smaller for large vectors
     }
@@ -495,11 +492,17 @@ mod tests {
     fn test_backend_specific_strategies() {
         // CUDA: Pipelined
         let cuda_sizer = GpuBatchSizer::new(HardwareBackend::CUDA);
-        assert!(matches!(cuda_sizer.strategy, BatchingStrategy::Pipelined { .. }));
+        assert!(matches!(
+            cuda_sizer.strategy,
+            BatchingStrategy::Pipelined { .. }
+        ));
 
         // ROCm: Pipelined
         let rocm_sizer = GpuBatchSizer::new(HardwareBackend::ROCm);
-        assert!(matches!(rocm_sizer.strategy, BatchingStrategy::Pipelined { .. }));
+        assert!(matches!(
+            rocm_sizer.strategy,
+            BatchingStrategy::Pipelined { .. }
+        ));
 
         // MPS: Fixed
         let mps_sizer = GpuBatchSizer::new(HardwareBackend::MPS);

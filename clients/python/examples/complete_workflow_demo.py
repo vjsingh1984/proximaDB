@@ -18,9 +18,8 @@ import requests
 # Add SDK to path
 sys.path.insert(0, 'clients/python/src')
 
-from proximadb.models import DistanceMetricType, StorageEngineType
-
-from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+from proximadb import ProximaDBClient, Protocol
+from proximadb.models import DistanceMetric, StorageEngine
 
 
 def generate_random_vector(dimension: int) -> list:
@@ -39,11 +38,11 @@ def main():
     # Step 1: Connect to ProximaDB
     print("\n📡 Step 1: Connecting to ProximaDB...")
     try:
-        client = ProximaDBSyncGrpcClient(
-            "localhost:5679",
-            enable_compression=False  # Disable compression for compatibility
+        client = ProximaDBClient(
+            url="http://localhost:5678",
+            protocol=Protocol.REST
         )
-        print("   ✅ Connected to gRPC server (localhost:5679)")
+        print("   ✅ Connected to ProximaDB server (localhost:5678)")
     except Exception as e:
         print(f"   ❌ Failed to connect: {e}")
         print("\n💡 Please ensure ProximaDB server is running:")
@@ -56,12 +55,14 @@ def main():
     dimension = 128
 
     try:
-        result = client.create_collection(
+        from proximadb.models import CollectionConfig
+        config = CollectionConfig(
             name=collection_name,
             dimension=dimension,
-            distance_metric=DistanceMetricType.COSINE,
-            storage_engine=StorageEngineType.UNSPECIFIED  # Auto-select best engine
+            distance_metric=DistanceMetric.COSINE,
+            storage_engine=StorageEngine.SST  # Use SST for OLTP workload
         )
+        collection = client.create_collection(collection_name, config)
         print(f"   ✅ Collection created: {collection_name}")
         print(f"      - Dimension: {dimension}")
         print(f"      - Distance Metric: COSINE")
@@ -75,12 +76,14 @@ def main():
     total_vectors = 500
 
     try:
+        from proximadb.models import VectorRecord
         for batch_idx in range(0, total_vectors, batch_size):
             vectors = [
-                {
-                    "id": f"vec_{i}",
-                    "vector": generate_random_vector(dimension)
-                }
+                VectorRecord(
+                    id=f"vec_{i}",
+                    vector=generate_random_vector(dimension),
+                    metadata={"batch": batch_idx // batch_size + 1}
+                )
                 for i in range(batch_idx, min(batch_idx + batch_size, total_vectors))
             ]
 
@@ -91,7 +94,6 @@ def main():
         print(f"\n   🎉 Total vectors inserted: {total_vectors}")
     except Exception as e:
         print(f"   ❌ Failed to insert vectors: {e}")
-        client.close()
         return 1
 
     # Step 4: Search Vectors (demonstrating two-stage search)
@@ -101,22 +103,21 @@ def main():
         top_k = 10
 
         print(f"   🎯 Executing search with top_k={top_k}...")
-        search_results = client.search_vectors(
+        search_results = client.search(
             collection_id=collection_name,
-            query_vector=query_vector,
+            vector=query_vector,
             top_k=top_k
         )
 
         print(f"   ✅ Search complete: Found {len(search_results)} results")
         print(f"\n   📊 Top {min(5, len(search_results))} Results:")
         for i, result in enumerate(search_results[:5], 1):
-            score = result.get('score', 0)
-            vec_id = result.get('id', 'unknown')
+            score = result.score
+            vec_id = result.id
             print(f"      {i}. ID: {vec_id}, Score: {score:.6f}")
 
     except Exception as e:
         print(f"   ❌ Search failed: {e}")
-        client.close()
         return 1
 
     # Step 5: Check Dashboard and Metrics
@@ -139,13 +140,20 @@ def main():
         response = requests.get(f"{base_url}/api/v1/collections", timeout=5)
         if response.status_code == 200:
             collections = response.json()
-            our_collection = next((c for c in collections if c.get('name') == collection_name), None)
+            # Collections are Collection objects with config.name
+            our_collection = next((c for c in collections if isinstance(c, dict) and c.get('name') == collection_name or
+                                  hasattr(c, 'name') and c.name == collection_name), None)
 
             if our_collection:
                 print(f"\n   ✅ Collection visible in dashboard API:")
-                print(f"      - Name: {our_collection.get('name')}")
-                print(f"      - Vectors: {our_collection.get('vector_count', 0)}")
-                print(f"      - Engine: {our_collection.get('engine', 'unknown')}")
+                if isinstance(our_collection, dict):
+                    print(f"      - Name: {our_collection.get('name')}")
+                    print(f"      - Vectors: {our_collection.get('vector_count', 0)}")
+                    print(f"      - Engine: {our_collection.get('engine', 'unknown')}")
+                else:
+                    print(f"      - Name: {our_collection.name}")
+                    print(f"      - Vectors: {our_collection.vector_count}")
+                    print(f"      - Engine: {our_collection.storage_engine}")
 
     except Exception as e:
         print(f"   ⚠️  Metrics check failed: {e}")
@@ -155,11 +163,11 @@ def main():
     try:
         info = client.get_collection(collection_name)
         print(f"   ✅ Collection Info:")
-        print(f"      - Name: {info.get('name')}")
-        print(f"      - ID: {info.get('collection_id')}")
-        print(f"      - Dimension: {info.get('dimension')}")
-        print(f"      - Distance Metric: {info.get('distance_metric')}")
-        print(f"      - Vector Count: {info.get('vector_count', 0)}")
+        print(f"      - Name: {info.name}")
+        print(f"      - ID: {info.id}")
+        print(f"      - Dimension: {info.dimension}")
+        print(f"      - Distance Metric: {info.distance_metric}")
+        print(f"      - Vector Count: {info.vector_count}")
     except Exception as e:
         print(f"   ⚠️  Failed to get collection info: {e}")
 
@@ -183,7 +191,6 @@ def main():
     print(f"   Collection '{collection_name}' left for dashboard inspection")
     print(f"   To delete: client.delete_collection('{collection_name}')")
 
-    client.close()
     return 0
 
 

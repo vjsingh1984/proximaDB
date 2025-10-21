@@ -28,8 +28,8 @@ use anyhow::Result;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, DistanceMetric, IndexingAlgorithm, MetadataItem,
-    SearchQuery, SearchResult as ProtoSearchResult, SearchVectorRecord, SqlValue,
-    StorageEngine, VectorOperation, VectorSearchRequest,
+    SearchQuery, SearchResult as ProtoSearchResult, SearchVectorRecord, SqlValue, StorageEngine,
+    VectorOperation, VectorSearchRequest,
 };
 use std::collections::HashMap;
 
@@ -208,7 +208,11 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
         SearchVectorRecord {
             id: native.id,
             score: native.score as f64,
-            vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
+            vector: native
+                .vector
+                .as_ref()
+                .map(|v| (**v).clone())
+                .unwrap_or_default(),
             metadata: native.metadata,
             version: native.version,
             similarity: native.similarity,
@@ -254,7 +258,10 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|stats| {
                     std::collections::HashMap::from_iter([
-                        ("vectors_scanned".to_string(), stats.vectors_scanned.to_string()),
+                        (
+                            "vectors_scanned".to_string(),
+                            stats.vectors_scanned.to_string(),
+                        ),
                         ("io_operations".to_string(), stats.io_operations.to_string()),
                         ("cache_hits".to_string(), stats.cache_hits.to_string()),
                     ])
@@ -270,7 +277,11 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
         SearchVectorRecord {
             id: native.id.clone(),
             score: native.score as f64,
-            vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
+            vector: native
+                .vector
+                .as_ref()
+                .map(|v| (**v).clone())
+                .unwrap_or_default(),
             metadata: native.metadata.clone(),
             version: native.version,
             similarity: native.similarity,
@@ -316,7 +327,10 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|stats| {
                     std::collections::HashMap::from_iter([
-                        ("vectors_scanned".to_string(), stats.vectors_scanned.to_string()),
+                        (
+                            "vectors_scanned".to_string(),
+                            stats.vectors_scanned.to_string(),
+                        ),
                         ("io_operations".to_string(), stats.io_operations.to_string()),
                         ("cache_hits".to_string(), stats.cache_hits.to_string()),
                     ])

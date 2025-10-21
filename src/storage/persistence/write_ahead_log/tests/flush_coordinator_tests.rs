@@ -6,7 +6,7 @@
 //! - Handling memory vs disk WAL modes
 //! - Cleanup instructions after successful flushes
 
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::persistence::write_ahead_log::{
     FlushDataSource, WALFlushCoordinator, config::SyncMode,
 };
@@ -112,9 +112,12 @@ impl UnifiedStorageEngine for MockStorageEngine {
 /// Create test vector
 fn create_test_vector(id: &str) -> VectorRecord {
     let mut metadata = std::collections::HashMap::new();
-    metadata.insert("test".to_string(), SqlValue {
-        value: Some(sql_value::Value::StringValue("true".to_string())),
-    });
+    metadata.insert(
+        "test".to_string(),
+        SqlValue {
+            value: Some(sql_value::Value::StringValue("true".to_string())),
+        },
+    );
 
     VectorRecord {
         id: id.to_string(),
@@ -339,12 +342,7 @@ async fn test_execute_coordinated_flush_engine_not_found() {
 
     // Should fail
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("not registered")
-    );
+    assert!(result.unwrap_err().to_string().contains("not registered"));
 }
 
 #[tokio::test]

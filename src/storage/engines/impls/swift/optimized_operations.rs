@@ -6,12 +6,12 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::{
     VectorRecord,
     hardware_capabilities::{HardwareBackend, HardwareCapabilities},
     memory::pool::VectorMemoryPool,
 };
-use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::engines::core::search::search_modes::{
     CandidateRecord, CandidateState, SearchCandidate,
 };
@@ -295,7 +295,10 @@ impl OptimizedSwiftOperations {
             .into_iter()
             .map(|search_record| VectorRecord {
                 id: search_record.id,
-                vector: search_record.vector.map(|v| (*v).clone()).unwrap_or_default(),
+                vector: search_record
+                    .vector
+                    .map(|v| (*v).clone())
+                    .unwrap_or_default(),
                 metadata: search_record.metadata,
                 version: None,
                 timestamp: Some(0),

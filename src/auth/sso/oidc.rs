@@ -3,11 +3,11 @@
 //! Provides SSO authentication using OpenID Connect standard
 //! Compatible with providers like Auth0, Keycloak, Okta, and custom OIDC implementations.
 
-use super::types::{EnterpriseUserContext, SecurityClearance, ProviderUserContext};
+use super::types::{EnterpriseUserContext, ProviderUserContext, SecurityClearance};
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use chrono::Utc;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -80,7 +80,11 @@ impl Default for OIDCConfig {
             client_id: String::new(),
             client_secret: String::new(),
             redirect_uri: "https://proximadb.example.com/auth/oidc/callback".to_string(),
-            scopes: vec!["openid".to_string(), "profile".to_string(), "email".to_string()],
+            scopes: vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "email".to_string(),
+            ],
             claims_mappings: OIDCClaimsMappings::default(),
             jwks_uri: None,
             allowed_issuers: vec![],
@@ -130,9 +134,7 @@ impl OIDCIntegration {
             return Err(anyhow!("OIDC client secret is required"));
         }
 
-        Ok(Self {
-            config,
-        })
+        Ok(Self { config })
     }
 
     /// Validate OIDC ID token and resolve user context
@@ -145,7 +147,10 @@ impl OIDCIntegration {
         // 5. Map claims to ProximaDB user context
         // 6. Apply role mappings based on groups claim
 
-        debug!("Validating OIDC ID token: {}", &id_token[..std::cmp::min(20, id_token.len())]);
+        debug!(
+            "Validating OIDC ID token: {}",
+            &id_token[..std::cmp::min(20, id_token.len())]
+        );
 
         // Placeholder implementation
         self.simulate_oidc_validation(id_token).await
@@ -176,13 +181,20 @@ impl OIDCIntegration {
     }
 
     /// Exchange authorization code for tokens
-    pub async fn exchange_code_for_tokens(&self, code: &str, state: Option<&str>) -> Result<OIDCTokenResponse> {
+    pub async fn exchange_code_for_tokens(
+        &self,
+        code: &str,
+        state: Option<&str>,
+    ) -> Result<OIDCTokenResponse> {
         // In a real implementation, this would:
         // 1. POST to token endpoint with authorization code
         // 2. Validate state parameter if provided
         // 3. Return access token, ID token, and refresh token
 
-        debug!("Exchanging authorization code: {}", &code[..std::cmp::min(10, code.len())]);
+        debug!(
+            "Exchanging authorization code: {}",
+            &code[..std::cmp::min(10, code.len())]
+        );
 
         // Placeholder token response
         Ok(OIDCTokenResponse {
@@ -232,7 +244,10 @@ impl OIDCIntegration {
     }
 
     /// Extract claims from ID token
-    fn extract_id_token_claims(&self, _id_token: &str) -> Result<HashMap<String, serde_json::Value>> {
+    fn extract_id_token_claims(
+        &self,
+        _id_token: &str,
+    ) -> Result<HashMap<String, serde_json::Value>> {
         // Placeholder for JWT parsing and claims extraction
         // Real implementation would decode and validate JWT
         Ok(HashMap::new())
@@ -260,11 +275,17 @@ mod tests {
         role_mapping.insert("users".to_string(), vec!["user".to_string()]);
 
         OIDCConfig {
-            discovery_url: "https://provider.example.com/.well-known/openid_configuration".to_string(),
+            discovery_url: "https://provider.example.com/.well-known/openid_configuration"
+                .to_string(),
             client_id: "test-client-id".to_string(),
             client_secret: "test-client-secret".to_string(),
             redirect_uri: "https://proximadb.test.com/auth/oidc/callback".to_string(),
-            scopes: vec!["openid".to_string(), "profile".to_string(), "email".to_string(), "groups".to_string()],
+            scopes: vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "email".to_string(),
+                "groups".to_string(),
+            ],
             claims_mappings: OIDCClaimsMappings::default(),
             jwks_uri: Some("https://provider.example.com/.well-known/jwks.json".to_string()),
             allowed_issuers: vec!["https://provider.example.com".to_string()],
@@ -301,7 +322,9 @@ mod tests {
         let config = create_test_config();
         let integration = OIDCIntegration::new(config).unwrap();
 
-        let token_response = integration.exchange_code_for_tokens("test-code", Some("test-state")).await;
+        let token_response = integration
+            .exchange_code_for_tokens("test-code", Some("test-state"))
+            .await;
         assert!(token_response.is_ok());
 
         let tokens = token_response.unwrap();
@@ -320,7 +343,10 @@ mod tests {
         assert!(result.is_ok());
 
         let user_context = result.unwrap();
-        assert!(matches!(user_context.provider_context, ProviderUserContext::Generic { .. }));
+        assert!(matches!(
+            user_context.provider_context,
+            ProviderUserContext::Generic { .. }
+        ));
         assert_eq!(user_context.tenant_id, "oidc_tenant");
         assert!(user_context.roles.contains(&"oidc_user".to_string()));
 

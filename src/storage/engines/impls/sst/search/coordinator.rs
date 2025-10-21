@@ -20,25 +20,22 @@
 //! for the SST engine. Provides intelligent routing between different search
 //! approaches based on query characteristics.
 
-use std::sync::Arc;
 use anyhow::Result;
-use tracing::{info, debug, warn};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
+use crate::compute::distance_computation::DistanceMetric;
+use crate::core::search::FilterExpression;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::impls::sst::SstEngine;
 use crate::storage::traits::StorageQueryContext;
-use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::core::search::FilterExpression;
-use crate::compute::distance_computation::DistanceMetric;
 
 /// Search strategy enumeration
 #[derive(Debug, Clone)]
 pub enum SearchStrategy {
     /// Direct search through SSTable files
-    Direct {
-        reason: String,
-        estimated_cost: f64,
-    },
+    Direct { reason: String, estimated_cost: f64 },
     /// Orchestrated search with advanced optimization
     Orchestrated {
         reason: String,
@@ -123,21 +120,35 @@ impl SearchCoordinator {
         &'a self,
         ctx: &'a StorageQueryContext,
         strategy: SearchStrategy,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<OptimizedSearchRecord>>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<OptimizedSearchRecord>>> + Send + 'a>,
+    > {
         Box::pin(async move {
             match strategy {
                 SearchStrategy::Direct { reason, .. } => {
                     info!("🔍 Executing direct search: {}", reason);
                     self.engine.search_vectors_unified(ctx).await
                 }
-                SearchStrategy::Orchestrated { reason, use_indexes, .. } => {
-                    info!("🎯 Executing orchestrated search: {}, use_indexes: {}", reason, use_indexes);
+                SearchStrategy::Orchestrated {
+                    reason,
+                    use_indexes,
+                    ..
+                } => {
+                    info!(
+                        "🎯 Executing orchestrated search: {}, use_indexes: {}",
+                        reason, use_indexes
+                    );
                     // For now, fall back to unified search since full orchestration is not yet implemented
-                    warn!("🔄 Orchestrated search not fully implemented, falling back to unified search");
+                    warn!(
+                        "🔄 Orchestrated search not fully implemented, falling back to unified search"
+                    );
                     self.engine.search_vectors_unified(ctx).await
                 }
                 SearchStrategy::Hybrid { strategies, .. } => {
-                    info!("🔀 Executing hybrid search with {} strategies", strategies.len());
+                    info!(
+                        "🔀 Executing hybrid search with {} strategies",
+                        strategies.len()
+                    );
                     // Execute the first strategy for now
                     if let Some(first_strategy) = strategies.into_iter().next() {
                         self.execute_search_strategy(ctx, first_strategy).await
@@ -168,11 +179,15 @@ impl SearchCoordinator {
 
         // Get sorted results from bounded queue
         let mut results = priority_queue.into_sorted_vec();
-        debug!("📊 Selected top-{} results from bounded queue", results.len());
+        debug!(
+            "📊 Selected top-{} results from bounded queue",
+            results.len()
+        );
 
         // Apply score normalization if needed
         if !results.is_empty() {
-            let max_score = results.iter()
+            let max_score = results
+                .iter()
                 .map(|r| r.score)
                 .fold(f32::NEG_INFINITY, f32::max);
 
@@ -184,7 +199,10 @@ impl SearchCoordinator {
             }
         }
 
-        debug!("✅ Post-processing completed, returning {} results", results.len());
+        debug!(
+            "✅ Post-processing completed, returning {} results",
+            results.len()
+        );
         Ok(results)
     }
 
@@ -224,10 +242,10 @@ pub struct SearchStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::impls::sst::SstConfig;
-    use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::query::unified_query_optimizer::SearchParams;
+    use crate::storage::engines::impls::sst::SstConfig;
+    use crate::storage::persistence::filesystem::FilesystemFactory;
 
     #[tokio::test]
     async fn test_search_strategy_selection() {
@@ -257,17 +275,23 @@ mod tests {
         };
 
         let ctx = create_test_context(false, false);
-        let cost = coordinator.estimate_search_cost(&ctx, &strategy).await.unwrap();
+        let cost = coordinator
+            .estimate_search_cost(&ctx, &strategy)
+            .await
+            .unwrap();
         assert_eq!(cost, 100.0);
     }
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 
     fn create_test_context(use_indexes: bool, has_quantization: bool) -> StorageQueryContext {

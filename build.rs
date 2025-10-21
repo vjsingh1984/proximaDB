@@ -41,141 +41,436 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .protoc_arg("--experimental_allow_proto3_optional") // Allow proto3 optional fields
         // ULTRA-MINIMAL: Only add serde to simple enum types that need REST API serialization
         // Custom serde implementations handle oneof types and their nested components
-        .type_attribute("DistanceMetric", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("StorageEngine", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("IndexingAlgorithm", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CompressionAlgorithm", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CollectionOperation", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("PropertyFilterOperator", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("QuantizationLevel", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "DistanceMetric",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "StorageEngine",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "IndexingAlgorithm",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CompressionAlgorithm",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CollectionOperation",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PropertyFilterOperator",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "QuantizationLevel",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to array/object types needed by custom serde implementations
-        .type_attribute("SqlArray", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("SqlObject", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("PropertyArray", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("PropertyObject", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "SqlArray",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SqlObject",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PropertyArray",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PropertyObject",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to config types needed for JSON serialization
-        .type_attribute("IndexConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("QuantizationConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "IndexConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "QuantizationConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to specific config types used by IndexConfig
-        .type_attribute("HnswConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("IvfConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("LshConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "HnswConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "IvfConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "LshConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to embedding types needed for graph serialization
-        .type_attribute("EmbeddingVersion", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "EmbeddingVersion",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // IMPORTANT: Graph types (Node, Edge) have PropertyValue which uses custom serde
         // These will be handled in serde_impls.rs, NOT here
-
         // Graph collection message types - most can use auto-generated serde
         // Only PropertyConstraint has oneof and needs custom impl
-        .type_attribute("GraphSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("NodeLabelSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("EdgeTypeSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("PropertySchema", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("StringConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("NumericConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("ArrayConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("RegexConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("UniqueConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("GraphStorageConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("GraphEngineConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("AccessControl", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("Permission", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("UpdateSchemaRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("SchemaValidationResult", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("ValidationError", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("ValidationWarning", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("GraphIndex", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("GraphCollection", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CreateGraphRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-
+        .type_attribute(
+            "GraphSchema",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "NodeLabelSchema",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "EdgeTypeSchema",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PropertySchema",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "StringConstraint",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "NumericConstraint",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ArrayConstraint",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "RegexConstraint",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "UniqueConstraint",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "GraphStorageConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "GraphEngineConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "AccessControl",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Permission",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "UpdateSchemaRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SchemaValidationResult",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ValidationError",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ValidationWarning",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "GraphIndex",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "GraphCollection",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CreateGraphRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Enum types for graph collection
-        .type_attribute("PropertyType", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("Cardinality", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("PermissionType", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "PropertyType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Cardinality",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PermissionType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde ONLY to simple request types (responses have custom implementations in serde_impls.rs)
-        .type_attribute("VectorSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("VectorBatchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CollectionRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "VectorSearchRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "VectorBatchRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CollectionRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Make map fields in CollectionRequest optional (default to empty map)
         .field_attribute("CollectionRequest.query_params", "#[serde(default)]")
         .field_attribute("CollectionRequest.options", "#[serde(default)]")
         .field_attribute("CollectionRequest.migration_config", "#[serde(default)]")
         // Now add the simple response types that were removed from serde_impls.rs
-        .type_attribute("VectorOperationResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CollectionResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("VectorRecord", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "VectorOperationResponse",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CollectionResponse",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "VectorRecord",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Make map field in VectorRecord optional (default to empty map)
         .field_attribute("VectorRecord.metadata", "#[serde(default)]")
-        .type_attribute("Collection", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CollectionConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "Collection",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CollectionConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Make repeated fields in CollectionConfig optional (default to empty vec)
         .field_attribute("CollectionConfig.tags", "#[serde(default)]")
         .field_attribute("CollectionConfig.filterable_columns", "#[serde(default)]")
         .field_attribute("CollectionConfig.index_configs", "#[serde(default)]")
         .field_attribute("CollectionConfig.embedding_models", "#[serde(default)]")
-        .type_attribute("CollectionStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "CollectionStats",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         .type_attribute("Entity", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("EntityResult", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "EntityResult",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to missing simple types used by Entity and other complex types
-        .type_attribute("TypedMetadata", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("Provenance", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("Relation", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("TemporalInfo", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("MetadataFilter", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "TypedMetadata",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Provenance",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Relation",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TemporalInfo",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "MetadataFilter",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to SQL request/response types for gRPC/REST API
-        .type_attribute("ExecuteSqlRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("ExecuteSqlResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "ExecuteSqlRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ExecuteSqlResponse",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         .type_attribute("SqlRow", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("SqlRowField", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "SqlRowField",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to graph request/response types for gRPC/REST API
-        .type_attribute("TraversalRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("TraversalResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("HybridSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("HybridSearchResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CreateNodeRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CreateEdgeRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("NodeQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("EdgeQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "TraversalRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TraversalResponse",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "HybridSearchRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "HybridSearchResponse",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CreateNodeRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CreateEdgeRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "NodeQuery",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "EdgeQuery",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add missing simple types found in error analysis
-        .type_attribute("SearchQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "SearchQuery",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Make map field in SearchQuery optional (default to empty map)
         .field_attribute("SearchQuery.filters", "#[serde(default)]")
-        .type_attribute("IncludeFields", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "IncludeFields",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Make optional fields in IncludeFields use defaults
         .field_attribute("IncludeFields.source", "#[serde(default)]")
         .field_attribute("IncludeFields.source_options", "#[serde(default)]")
-        .type_attribute("SearchParams", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("SearchOptimization", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("OperationMetrics", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("SearchResult", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("SearchVectorRecord", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("PropertyFilter", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("GraphPath", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("TraversalStats", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("HybridSearchStats", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("FilterableColumnSpec", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("StorageConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("StorageAssignment", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("TemporalVersion", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("VectorData", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("StringArray", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("TimeRange", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("PageInfo", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("ProgressInfo", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("Component", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("LabelStats", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("EdgeTypeStats", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("GraphStats", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CompressionConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("FilterCondition", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "SearchParams",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SearchOptimization",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "OperationMetrics",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SearchResult",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SearchVectorRecord",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PropertyFilter",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "GraphPath",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TraversalStats",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "HybridSearchStats",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "FilterableColumnSpec",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "StorageConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "StorageAssignment",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TemporalVersion",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "VectorData",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "StringArray",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TimeRange",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PageInfo",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ProgressInfo",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Component",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "LabelStats",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "EdgeTypeStats",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "GraphStats",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CompressionConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "FilterCondition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to oneof variant enums (needed by custom serde implementations)
-        .type_attribute("sql_value::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("filter_clause::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("property_value::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("metadata_item::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("metadata_value::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("source_content::Data", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("typed_field::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(
+            "sql_value::Value",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "filter_clause::Value",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "property_value::Value",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "metadata_item::Value",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "metadata_value::Value",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "source_content::Data",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "typed_field::Value",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // oneof types (SqlValue, PropertyValue, etc.) get custom serde from serde_impls.rs
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
@@ -213,9 +508,7 @@ fn compile_cuda_kernels() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("🚀 Compiling CUDA kernels for GPU acceleration");
 
     // Check if nvcc is available
-    let nvcc_check = Command::new("nvcc")
-        .arg("--version")
-        .output();
+    let nvcc_check = Command::new("nvcc").arg("--version").output();
 
     if nvcc_check.is_err() {
         tracing::warn!("⚠️  nvcc not found - CUDA kernels will not be compiled");
@@ -227,9 +520,8 @@ fn compile_cuda_kernels() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("✅ Found nvcc compiler");
 
     // CUDA source files
-    let cuda_sources = vec![
-        "src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/cuda/kernels.cu",
-    ];
+    let cuda_sources =
+        vec!["src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/cuda/kernels.cu"];
 
     // Output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
@@ -254,20 +546,20 @@ fn compile_cuda_kernels() -> Result<(), Box<dyn std::error::Error>> {
         // Compile with nvcc
         let status = Command::new("nvcc")
             .args(&[
-                "-c",                           // Compile only (don't link)
-                "-O3",                          // Optimization level 3
-                "--compiler-options",           // Pass options to host compiler
-                "-fPIC",                        // Position-independent code
-                "-arch=sm_60",                  // Target compute capability 6.0+ (Pascal and newer)
-                "-gencode=arch=compute_60,code=sm_60",  // Pascal (GTX 10xx)
-                "-gencode=arch=compute_70,code=sm_70",  // Volta (V100)
-                "-gencode=arch=compute_75,code=sm_75",  // Turing (RTX 20xx)
-                "-gencode=arch=compute_80,code=sm_80",  // Ampere (RTX 30xx, A100)
-                "-gencode=arch=compute_86,code=sm_86",  // Ampere (RTX 30xx mobile)
-                "-gencode=arch=compute_89,code=sm_89",  // Ada Lovelace (RTX 40xx)
-                "-gencode=arch=compute_90,code=sm_90",  // Hopper (H100)
-                "--use_fast_math",              // Use fast math optimizations
-                "-Xptxas=-v",                   // Verbose PTX assembly (for debugging)
+                "-c",                                  // Compile only (don't link)
+                "-O3",                                 // Optimization level 3
+                "--compiler-options",                  // Pass options to host compiler
+                "-fPIC",                               // Position-independent code
+                "-arch=sm_60", // Target compute capability 6.0+ (Pascal and newer)
+                "-gencode=arch=compute_60,code=sm_60", // Pascal (GTX 10xx)
+                "-gencode=arch=compute_70,code=sm_70", // Volta (V100)
+                "-gencode=arch=compute_75,code=sm_75", // Turing (RTX 20xx)
+                "-gencode=arch=compute_80,code=sm_80", // Ampere (RTX 30xx, A100)
+                "-gencode=arch=compute_86,code=sm_86", // Ampere (RTX 30xx mobile)
+                "-gencode=arch=compute_89,code=sm_89", // Ada Lovelace (RTX 40xx)
+                "-gencode=arch=compute_90,code=sm_90", // Hopper (H100)
+                "--use_fast_math", // Use fast math optimizations
+                "-Xptxas=-v",  // Verbose PTX assembly (for debugging)
                 source,
                 "-o",
                 obj_file.to_str().unwrap(),
@@ -318,7 +610,10 @@ fn compile_cuda_kernels() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("   ✅ Created: {}", lib_file.display());
 
     // Tell cargo to link against CUDA runtime and our library
-    println!("cargo:rustc-link-search=native={}", cuda_build_dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        cuda_build_dir.display()
+    );
     println!("cargo:rustc-link-lib=static=proximadb_cuda");
     println!("cargo:rustc-link-lib=cudart");
 
@@ -343,9 +638,7 @@ fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("🚀 Compiling Metal shaders for GPU acceleration on Apple Silicon");
 
     // Check if xcrun is available
-    let xcrun_check = Command::new("xcrun")
-        .arg("--version")
-        .output();
+    let xcrun_check = Command::new("xcrun").arg("--version").output();
 
     if xcrun_check.is_err() {
         tracing::warn!("⚠️  xcrun not found - Metal shaders will not be precompiled");
@@ -357,9 +650,8 @@ fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("✅ Found xcrun compiler");
 
     // Metal shader source files
-    let metal_sources = vec![
-        "src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/kernels.metal",
-    ];
+    let metal_sources =
+        vec!["src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/kernels.metal"];
 
     // Output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
@@ -388,12 +680,13 @@ fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
         // Step 1: Compile .metal to .air (Apple Intermediate Representation)
         let status = Command::new("xcrun")
             .args(&[
-                "-sdk", "macosx",
+                "-sdk",
+                "macosx",
                 "metal",
-                "-c",                           // Compile only
-                "-O3",                          // Optimization level 3
-                "-std=metal3.1",                // Metal 3.1 standard (macOS 14+)
-                "-mmacosx-version-min=12.0",    // Minimum macOS 12 (M1 launch)
+                "-c",                        // Compile only
+                "-O3",                       // Optimization level 3
+                "-std=metal3.1",             // Metal 3.1 standard (macOS 14+)
+                "-mmacosx-version-min=12.0", // Minimum macOS 12 (M1 launch)
                 source,
                 "-o",
                 air_file.to_str().unwrap(),
@@ -406,7 +699,9 @@ fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(_) | Err(_) => {
                 // Metal toolchain not available - fall back to runtime compilation
-                tracing::warn!("⚠️  Metal shader compilation failed - falling back to runtime compilation");
+                tracing::warn!(
+                    "⚠️  Metal shader compilation failed - falling back to runtime compilation"
+                );
                 tracing::warn!("   To enable precompiled shaders, run:");
                 tracing::warn!("   xcodebuild -downloadPlatform iOS");
                 tracing::warn!("   or install full Xcode from App Store");
@@ -460,7 +755,10 @@ fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("   ✅ Copied to: {}", target_lib_file.display());
 
     // Set environment variable for runtime to find the library
-    println!("cargo:rustc-env=METAL_LIBRARY_PATH={}", target_lib_file.display());
+    println!(
+        "cargo:rustc-env=METAL_LIBRARY_PATH={}",
+        target_lib_file.display()
+    );
 
     tracing::info!("✅ Metal shader compilation complete");
 

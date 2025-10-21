@@ -8,7 +8,7 @@ pub mod insight_generator;
 pub mod report_generator;
 pub mod trend_analyzer;
 
-pub use engine::{BusinessIntelligenceEngine, BIError};
-pub use insight_generator::{InsightGenerator, BusinessInsight, InsightType};
-pub use report_generator::{ReportGenerator, ExecutiveReport, ReportFormat};
-pub use trend_analyzer::{TrendAnalyzer, TrendAnalysis, TrendDirection};
+pub use engine::{BIError, BusinessIntelligenceEngine};
+pub use insight_generator::{BusinessInsight, InsightGenerator, InsightType};
+pub use report_generator::{ExecutiveReport, ReportFormat, ReportGenerator};
+pub use trend_analyzer::{TrendAnalysis, TrendAnalyzer, TrendDirection};

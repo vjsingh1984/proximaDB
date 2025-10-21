@@ -16,28 +16,28 @@
 //! - Proxima integration
 //! - Metrics collection
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::collections::HashMap;
 use tempfile::{TempDir, tempdir};
 use tokio;
 use tokio::sync::RwLock;
 
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::distance_computation::DistanceMetric as ComputeDistanceMetric;
+use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::proto::proximadb_v1::Collection;
-use crate::proto::proximadb_v1::{
-    CollectionConfig, CollectionStats, DistanceMetric as ProtoDistanceMetric,
-    StorageEngine, StorageAssignment,
-};
 use crate::core::search::SearchParams;
+use crate::proto::proximadb_v1::Collection;
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::{
+    CollectionConfig, CollectionStats, DistanceMetric as ProtoDistanceMetric, StorageAssignment,
+    StorageEngine,
+};
 use crate::storage::engines::impls::helix::*;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::traits::{
-    CompactionParameters, FlushParameters, OperationPriority,
-    StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine
+    CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
+    StorageQueryMetadata, UnifiedStorageEngine,
 };
 
 // Import helpers from consolidated helpers module
@@ -84,7 +84,13 @@ async fn test_helix_engine_initialization() {
 
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::create(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(
+        FilesystemFactory::create(
+            crate::storage::persistence::filesystem::FilesystemConfig::default(),
+        )
+        .await
+        .unwrap(),
+    );
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new().await.unwrap();
@@ -236,8 +242,20 @@ async fn test_flush_and_compaction() {
 
     // Verify metrics
     let metrics = engine.collect_engine_metrics().await.unwrap();
-    assert!(metrics.get("total_vectors").and_then(|v| v.as_u64()).unwrap_or(0) > 0);
-    assert!(metrics.get("total_sstables").and_then(|v| v.as_u64()).unwrap_or(0) > 0);
+    assert!(
+        metrics
+            .get("total_vectors")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 0
+    );
+    assert!(
+        metrics
+            .get("total_sstables")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 0
+    );
 }
 
 /// Test liquid clustering with query patterns
@@ -379,12 +397,19 @@ async fn test_progressive_search() {
     let query_hilbert = Some(500u64); // Close to first SSTable
 
     let temp_dir = TempDir::new().unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::create(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(
+        FilesystemFactory::create(
+            crate::storage::persistence::filesystem::FilesystemConfig::default(),
+        )
+        .await
+        .unwrap(),
+    );
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     // Note: This would fail in real execution as files don't exist,
     // but we're testing the pruning logic
-    let pruned_sstables = sstables.iter()
+    let pruned_sstables = sstables
+        .iter()
         .filter(|sst| {
             if let (Some((start, end)), Some(query)) = (sst.hilbert_range, query_hilbert) {
                 query >= start && query <= end
@@ -452,7 +477,13 @@ async fn test_end_to_end_search() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let filesystem_factory = Arc::new(FilesystemFactory::create(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
+    let filesystem_factory = Arc::new(
+        FilesystemFactory::create(
+            crate::storage::persistence::filesystem::FilesystemConfig::default(),
+        )
+        .await
+        .unwrap(),
+    );
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new().await.unwrap();
@@ -683,8 +714,22 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
             id: format!("vec_{}", i),
             vector: (0..dims).map(|d| (i * dims + d) as f32 / 100.0).collect(),
             metadata: HashMap::from([
-                ("type".to_string(), crate::proto::proximadb_v1::SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string())) }),
-                ("index".to_string(), crate::proto::proximadb_v1::SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string())) }),
+                (
+                    "type".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "test".to_string(),
+                        )),
+                    },
+                ),
+                (
+                    "index".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            i.to_string(),
+                        )),
+                    },
+                ),
             ]),
             timestamp: Some(i as i64),
             expires_at: None,
@@ -699,9 +744,7 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
 async fn test_helix_engine_creation() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let engine = HelixEngine::new()
-    .await
-    .unwrap();
+    let engine = HelixEngine::new().await.unwrap();
 
     assert_eq!(engine.engine_name(), "helix");
     assert_eq!(engine.engine_version(), "1.0.0");
@@ -720,11 +763,10 @@ async fn test_flush_operation() {
     let filesystem_factory = Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
-            .unwrap()
+            .unwrap(),
     );
-    let distance_compute = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-    );
+    let distance_compute =
+        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
@@ -794,11 +836,10 @@ async fn test_vector_search() {
     let filesystem_factory = Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
-            .unwrap()
+            .unwrap(),
     );
-    let distance_compute = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-    );
+    let distance_compute =
+        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
@@ -894,11 +935,10 @@ async fn test_vector_by_id() {
     let filesystem_factory = Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
-            .unwrap()
+            .unwrap(),
     );
-    let distance_compute = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-    );
+    let distance_compute =
+        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
@@ -938,7 +978,7 @@ async fn test_vector_by_id() {
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: records,
-        force: true,  // Force flush to ensure data is written
+        force: true, // Force flush to ensure data is written
         synchronous: true,
         collection_config: Some(collection.clone()),
         ..Default::default()
@@ -970,11 +1010,10 @@ async fn test_compaction() {
     let filesystem_factory = Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
-            .unwrap()
+            .unwrap(),
     );
-    let distance_compute = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-    );
+    let distance_compute =
+        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
 
     let mut config = HelixConfig::default();
     config.level0_file_num_compaction_trigger = 2;
@@ -1018,13 +1057,13 @@ async fn test_compaction() {
             collection_id: Some("test_collection".to_string()),
             vector_records: records,
             collection_config: Some(collection.clone()),
-            force: true,  // Force flush to ensure files are created
-            synchronous: true,  // Wait for completion
+            force: true,       // Force flush to ensure files are created
+            synchronous: true, // Wait for completion
             hints: HashMap::new(),
             timeout_ms: Some(5000),
-            trigger_compaction: false,  // Don't trigger compaction yet
+            trigger_compaction: false, // Don't trigger compaction yet
             batch_ids: vec![],
-            estimated_size: 50 * 128 * 4,  // 50 vectors * 128 dims * 4 bytes
+            estimated_size: 50 * 128 * 4, // 50 vectors * 128 dims * 4 bytes
         };
 
         let result = engine.do_flush(&params).await.unwrap();
@@ -1038,12 +1077,12 @@ async fn test_compaction() {
     let compact_params = CompactionParameters {
         collection_id: Some("test_collection".to_string()),
         collection_config: Some(collection),
-        force: true,  // Force compaction
-        synchronous: true,  // Wait for completion
+        force: true,       // Force compaction
+        synchronous: true, // Wait for completion
         hints: HashMap::new(),
         timeout_ms: Some(5000),
         priority: OperationPriority::Medium,
-        estimated_input_size: 3 * 50 * 128 * 4,  // 3 flushes * 50 vectors * 128 dims * 4 bytes
+        estimated_input_size: 3 * 50 * 128 * 4, // 3 flushes * 50 vectors * 128 dims * 4 bytes
     };
 
     let result = engine.do_compact(&compact_params).await.unwrap();
@@ -1120,15 +1159,23 @@ async fn test_proxima_integration() {
     // Create filesystem factory with proper config
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     fs_config.default_fs = Some(format!("file://{}", temp_path));
-    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await.unwrap());
-    let base_filesystem = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
+    let factory = Arc::new(
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
+            .await
+            .unwrap(),
+    );
+    let base_filesystem = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
 
     // Wrap in UnifiedCachingFilesystem for production-like behavior
-    let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-        base_filesystem,
-        "test_collection".to_string(),
-        "helix".to_string(),
-    ));
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_filesystem,
+            "test_collection".to_string(),
+            "helix".to_string(),
+        ),
+    );
 
     let records = create_test_records(100, 128);
     let path = temp_dir.path().join("test.helix");
@@ -1150,9 +1197,11 @@ async fn test_proxima_integration() {
 
     // Search SSTable
     let query = vec![0.5; 128];
-    let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-        ComputeDistanceMetric::Euclidean
-    ));
+    let distance_compute = Arc::new(
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            ComputeDistanceMetric::Euclidean,
+        ),
+    );
     let results = proxima::search_helix_sstable(
         &filesystem,
         &path,
@@ -1184,11 +1233,10 @@ async fn test_metrics_collection() {
     let filesystem_factory = Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
-            .unwrap()
+            .unwrap(),
     );
-    let distance_compute = Arc::new(
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-    );
+    let distance_compute =
+        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
     let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
@@ -1280,617 +1328,737 @@ mod clustering_tests {
 /// Test block sizes are correctly written and read from header
 #[tokio::test]
 async fn test_block_sizes_serialization_roundtrip() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
 
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
-        ));
+        ),
+    );
 
-        // Create test vectors with known size
-        let records = create_test_records(256, 768); // 256 vectors × 768D
-        let path = temp_dir.path().join("test_block_sizes.helix");
+    // Create test vectors with known size
+    let records = create_test_records(256, 768); // 256 vectors × 768D
+    let path = temp_dir.path().join("test_block_sizes.helix");
 
-        // Write SSTable with 64 vectors per block = 4 blocks
-        let bytes_written = proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            64, // block size
-            crate::storage::engines::constants::HELIX_MAGIC,
-            None,
-            Some(256),
-        )
+    // Write SSTable with 64 vectors per block = 4 blocks
+    let bytes_written = proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        64, // block size
+        crate::storage::engines::constants::HELIX_MAGIC,
+        None,
+        Some(256),
+    )
+    .await
+    .unwrap();
+
+    assert!(bytes_written > 0, "Should write data");
+
+    // Read header and verify block_sizes
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
         .await
         .unwrap();
 
-        assert!(bytes_written > 0, "Should write data");
-
-        // Read header and verify block_sizes
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
-
-        assert_eq!(header.version, 1, "Should be version 1");
-        assert_eq!(header.block_offsets.len(), 4, "Should have 4 blocks");
-        assert_eq!(header.block_sizes.len(), 4, "Should have 4 block sizes");
-        assert_eq!(header.block_metadata.len(), 4, "Should have 4 metadata entries");
-
-        // Verify all block sizes are > 0 and reasonable
-        for (i, &size) in header.block_sizes.iter().enumerate() {
-            assert!(size > 0, "Block {} size should be > 0", i);
-            // With compression, blocks can be quite small (100B-10MB range)
-            // Note: Small blocks with highly compressible data can be < 1KB
-            assert!(size >= 100, "Block {} size {} should be >= 100B", i, size);
-            // Should be < 20MB per block even for large dimensions
-            assert!(size < 20_000_000, "Block {} size {} should be < 20MB", i, size);
-        }
-
-        // Verify block_sizes matches offsets length
-        assert_eq!(
-            header.block_sizes.len(),
-            header.block_offsets.len(),
-            "Block sizes and offsets must match"
-        );
-    }
-
-    /// Test large dimension blocks (1536D - OpenAI embeddings)
-    #[tokio::test]
-    async fn test_large_dimension_blocks_1536d() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
-
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
-
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-            base_fs,
-            "test_collection".to_string(),
-            "helix".to_string(),
-        ));
-
-        // Test OpenAI text-embedding-3-large dimension (1536D)
-        let records = create_test_records(1024, 1536);
-        let path = temp_dir.path().join("test_1536d.helix");
-
-        // Write with 1024 vectors per block (large block test)
-        let bytes_written = proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            1024,
-            crate::storage::engines::constants::HELIX_MAGIC,
-            None,
-            Some(256),
-        )
-        .await
-        .unwrap();
-
-        assert!(bytes_written > 0);
-
-        // Read and verify
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
-
-        assert_eq!(header.block_sizes.len(), 1, "Should have 1 large block");
-        let block_size = header.block_sizes[0];
-
-        // 1024 vectors × 1536D × 4 bytes = 6,291,456 bytes (~6MB) raw
-        // With compression and overhead, should be 2-8MB
-        assert!(block_size >= 2_000_000, "Block should be >= 2MB, got {}", block_size);
-        assert!(block_size <= 10_000_000, "Block should be <= 10MB, got {}", block_size);
-        assert!(block_size < u32::MAX as u32, "Block size fits in u32");
-
-        // Verify we can search this file
-        let query = vec![0.5; 1536];
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(ComputeDistanceMetric::Euclidean));
-
-        let results = proxima::search_helix_sstable(
-            &filesystem,
-            &path,
-            &query,
-            None,
-            10,
-            &ComputeDistanceMetric::Euclidean,
-            &distance_compute,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert!(!results.is_empty(), "Should find results in large dimension file");
-        assert!(results.len() <= 10);
-    }
-
-    /// Test extreme dimension blocks (4096D - Cohere embeddings)
-    #[tokio::test]
-    async fn test_extreme_dimension_blocks_4096d() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
-
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
-
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-            base_fs,
-            "test_collection".to_string(),
-            "helix".to_string(),
-        ));
-
-        // Test Cohere embed-v3 dimension (4096D) - extreme case
-        let records = create_test_records(512, 4096);
-        let path = temp_dir.path().join("test_4096d.helix");
-
-        // Write with 512 vectors per block
-        let bytes_written = proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            512,
-            crate::storage::engines::constants::HELIX_MAGIC,
-            None,
-            Some(256),
-        )
-        .await
-        .unwrap();
-
-        assert!(bytes_written > 0);
-
-        // Read and verify
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
-
-        assert_eq!(header.block_sizes.len(), 1, "Should have 1 block");
-        let block_size = header.block_sizes[0];
-
-        // 512 vectors × 4096D × 4 bytes = 8,388,608 bytes (~8MB) raw
-        // With compression and overhead, should be 3-12MB
-        assert!(block_size >= 3_000_000, "Block should be >= 3MB for 4096D, got {}", block_size);
-        assert!(block_size <= 15_000_000, "Block should be <= 15MB, got {}", block_size);
-        assert!(block_size < u32::MAX as u32, "Block size fits in u32");
-    }
-
-    /// Test exact size reads eliminate re-reads
-    #[tokio::test]
-    async fn test_exact_size_eliminates_rereads() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
-
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
-
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-            base_fs,
-            "test_collection".to_string(),
-            "helix".to_string(),
-        ));
-
-        // Create various sized blocks to test exact reads
-        let records = create_test_records(300, 1024); // 300 vectors × 1024D
-        let path = temp_dir.path().join("test_exact_reads.helix");
-
-        // Write with 100 vectors per block = 3 blocks of different compression
-        let bytes_written = proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            100,
-            crate::storage::engines::constants::HELIX_MAGIC,
-            None,
-            Some(256),
-        )
-        .await
-        .unwrap();
-
-        assert!(bytes_written > 0);
-
-        // Read header
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
-
-        assert_eq!(header.block_sizes.len(), 3, "Should have 3 blocks");
-
-        // Each block should have exact size
-        for (i, &size) in header.block_sizes.iter().enumerate() {
-            assert!(size > 0, "Block {} must have size > 0", i);
-            // With compression, can be much smaller than raw size
-            // Highly compressible test data can compress to < 1KB
-            assert!(size >= 100, "Block {} size should be >= 100B", i);
-        }
-
-        // Now search - should use exact sizes (no re-reads)
-        let query = vec![0.5; 1024];
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(ComputeDistanceMetric::Euclidean));
-
-        let results = proxima::search_helix_sstable(
-            &filesystem,
-            &path,
-            &query,
-            None,
-            5,
-            &ComputeDistanceMetric::Euclidean,
-            &distance_compute,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Should successfully read all blocks with exact sizes
-        assert!(!results.is_empty(), "Should find results using exact block sizes");
-    }
-
-    /// Test header integrity validation (size mismatch detection)
-    #[tokio::test]
-    async fn test_header_size_mismatch_detection() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
-
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
-
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-            base_fs,
-            "test_collection".to_string(),
-            "helix".to_string(),
-        ));
-
-        // Write valid file
-        let records = create_test_records(128, 384);
-        let path = temp_dir.path().join("test_integrity.helix");
-
-        proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            64,
-            crate::storage::engines::constants::HELIX_MAGIC,
-            None,
-            Some(256),
-        )
-        .await
-        .unwrap();
-
-        // Read header - should succeed
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
-
-        // Verify integrity checks
-        assert_eq!(header.block_offsets.len(), header.block_sizes.len(),
-            "Offsets and sizes must match");
-        assert_eq!(header.block_metadata.len(), header.block_sizes.len(),
-            "Metadata and sizes must match");
-
-        // Verify each size is reasonable
-        for (i, &size) in header.block_sizes.iter().enumerate() {
-            // With compression, sizes vary widely
-            assert!(size >= 1_000, "Block {} too small: {}", i, size);
-            assert!(size < 20_000_000, "Block {} too large: {}", i, size);
-        }
-    }
-
-    /// Test block sizes with no compression (worst case)
-    #[tokio::test]
-    async fn test_block_sizes_no_compression() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
-
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
-
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-            base_fs,
-            "test_collection".to_string(),
-            "helix".to_string(),
-        ));
-
-        // Test with larger blocks and no compression
-        let records = create_test_records(1024, 1536); // OpenAI dimensions
-        let path = temp_dir.path().join("test_no_compression.helix");
-
-        let bytes_written = proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            1024, // Full block
-            crate::storage::engines::constants::HELIX_MAGIC,
-            None,
-            Some(256),
-        )
-        .await
-        .unwrap();
-
-        assert!(bytes_written > 0);
-
-        // Read header
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
-
-        assert_eq!(header.block_sizes.len(), 1);
-        let block_size = header.block_sizes[0];
-
-        // 1024 vectors × 1536D × 4 bytes = 6,291,456 bytes (~6MB) raw
-        // Even with no compression, should be < 10MB with metadata
-        assert!(block_size >= 4_000_000, "Block should be >= 4MB, got {}", block_size);
-        assert!(block_size <= 10_000_000, "Block should be <= 10MB, got {}", block_size);
-
-        // Verify u32 is sufficient
-        assert!(block_size < u32::MAX as u32, "Block size {} fits in u32", block_size);
-    }
-
-    /// Test multiple blocks with varying sizes
-    #[tokio::test]
-    async fn test_varying_block_sizes() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
-
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
-
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
-            base_fs,
-            "test_collection".to_string(),
-            "helix".to_string(),
-        ));
-
-        // Create 500 vectors to get partial last block
-        let records = create_test_records(500, 768);
-        let path = temp_dir.path().join("test_varying.helix");
-
-        // 128 vectors per block = 3 full blocks (128 each) + 1 partial block (116)
-        let bytes_written = proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            128,
-            crate::storage::engines::constants::HELIX_MAGIC,
-            None,
-            Some(256),
-        )
-        .await
-        .unwrap();
-
-        assert!(bytes_written > 0);
-
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
-
-        assert_eq!(header.block_sizes.len(), 4, "Should have 4 blocks (3 full + 1 partial)");
-
-        // First 3 blocks should be roughly same size (all have 128 vectors)
-        // Note: With compression, variance can be significant due to data patterns
-        let first_three_sizes: Vec<u32> = header.block_sizes[0..3].to_vec();
-        let avg_size = first_three_sizes.iter().sum::<u32>() / 3;
-
-        for (i, &size) in first_three_sizes.iter().enumerate() {
-            let diff_percent = ((size as i32 - avg_size as i32).abs() * 100) / avg_size as i32;
-            // Allow up to 300% variance due to compression and test data patterns
-            assert!(diff_percent < 300, "Block {} size variance should be < 300%, got {}%", i, diff_percent);
-        }
-
-        // Last block (116 vectors) should generally be smaller or similar size
-        // Note: With compression, smaller blocks can compress disproportionately better
-        let last_size = header.block_sizes[3];
-        let expected_ratio = 116.0 / 128.0; // ~90%
-        let actual_ratio = last_size as f32 / avg_size as f32;
-
-        // Allow very wide range (0.1% to 200%) due to compression variability
-        // Smaller blocks with test data patterns can compress to near-zero
+    assert_eq!(header.version, 1, "Should be version 1");
+    assert_eq!(header.block_offsets.len(), 4, "Should have 4 blocks");
+    assert_eq!(header.block_sizes.len(), 4, "Should have 4 block sizes");
+    assert_eq!(
+        header.block_metadata.len(),
+        4,
+        "Should have 4 metadata entries"
+    );
+
+    // Verify all block sizes are > 0 and reasonable
+    for (i, &size) in header.block_sizes.iter().enumerate() {
+        assert!(size > 0, "Block {} size should be > 0", i);
+        // With compression, blocks can be quite small (100B-10MB range)
+        // Note: Small blocks with highly compressible data can be < 1KB
+        assert!(size >= 100, "Block {} size {} should be >= 100B", i, size);
+        // Should be < 20MB per block even for large dimensions
         assert!(
-            actual_ratio >= 0.001 && actual_ratio <= 2.0,
-            "Last block size ratio should be between 0.1% and 200%, got {:.2}%",
-            actual_ratio * 100.0
+            size < 20_000_000,
+            "Block {} size {} should be < 20MB",
+            i,
+            size
         );
     }
 
-    /// Test hilbert_range is available in header for pruning
-    #[tokio::test]
-    async fn test_hilbert_range_in_header() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Verify block_sizes matches offsets length
+    assert_eq!(
+        header.block_sizes.len(),
+        header.block_offsets.len(),
+        "Block sizes and offsets must match"
+    );
+}
 
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+/// Test large dimension blocks (1536D - OpenAI embeddings)
+#[tokio::test]
+async fn test_large_dimension_blocks_1536d() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
+
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
-        ));
+        ),
+    );
 
-        let records = create_test_records(256, 384);
+    // Test OpenAI text-embedding-3-large dimension (1536D)
+    let records = create_test_records(1024, 1536);
+    let path = temp_dir.path().join("test_1536d.helix");
 
-        // Generate Hilbert keys for spatial indexing
-        let hilbert_keys: Vec<u64> = (0..256).map(|i| i as u64 * 1000).collect();
+    // Write with 1024 vectors per block (large block test)
+    let bytes_written = proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        1024,
+        crate::storage::engines::constants::HELIX_MAGIC,
+        None,
+        Some(256),
+    )
+    .await
+    .unwrap();
 
-        let path = temp_dir.path().join("test_hilbert.helix");
+    assert!(bytes_written > 0);
 
-        let bytes_written = proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            64, // 4 blocks
-            crate::storage::engines::constants::HELIX_MAGIC,
-            Some(&hilbert_keys),
-            Some(256),
-        )
+    // Read and verify
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
         .await
         .unwrap();
 
-        assert!(bytes_written > 0);
+    assert_eq!(header.block_sizes.len(), 1, "Should have 1 large block");
+    let block_size = header.block_sizes[0];
 
-        // Read header
-        let header = proxima::read_helix_header_optimized(&filesystem, &path).await.unwrap();
+    // 1024 vectors × 1536D × 4 bytes = 6,291,456 bytes (~6MB) raw
+    // With compression and overhead, should be 2-8MB
+    assert!(
+        block_size >= 2_000_000,
+        "Block should be >= 2MB, got {}",
+        block_size
+    );
+    assert!(
+        block_size <= 10_000_000,
+        "Block should be <= 10MB, got {}",
+        block_size
+    );
+    assert!(block_size < u32::MAX as u32, "Block size fits in u32");
 
-        assert_eq!(header.block_metadata.len(), 4);
+    // Verify we can search this file
+    let query = vec![0.5; 1536];
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        ComputeDistanceMetric::Euclidean,
+    ));
 
-        // Verify each block has hilbert_range
-        for (i, meta) in header.block_metadata.iter().enumerate() {
+    let results = proxima::search_helix_sstable(
+        &filesystem,
+        &path,
+        &query,
+        None,
+        10,
+        &ComputeDistanceMetric::Euclidean,
+        &distance_compute,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !results.is_empty(),
+        "Should find results in large dimension file"
+    );
+    assert!(results.len() <= 10);
+}
+
+/// Test extreme dimension blocks (4096D - Cohere embeddings)
+#[tokio::test]
+async fn test_extreme_dimension_blocks_4096d() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
+
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "helix".to_string(),
+        ),
+    );
+
+    // Test Cohere embed-v3 dimension (4096D) - extreme case
+    let records = create_test_records(512, 4096);
+    let path = temp_dir.path().join("test_4096d.helix");
+
+    // Write with 512 vectors per block
+    let bytes_written = proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        512,
+        crate::storage::engines::constants::HELIX_MAGIC,
+        None,
+        Some(256),
+    )
+    .await
+    .unwrap();
+
+    assert!(bytes_written > 0);
+
+    // Read and verify
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
+        .await
+        .unwrap();
+
+    assert_eq!(header.block_sizes.len(), 1, "Should have 1 block");
+    let block_size = header.block_sizes[0];
+
+    // 512 vectors × 4096D × 4 bytes = 8,388,608 bytes (~8MB) raw
+    // With compression and overhead, should be 3-12MB
+    assert!(
+        block_size >= 3_000_000,
+        "Block should be >= 3MB for 4096D, got {}",
+        block_size
+    );
+    assert!(
+        block_size <= 15_000_000,
+        "Block should be <= 15MB, got {}",
+        block_size
+    );
+    assert!(block_size < u32::MAX as u32, "Block size fits in u32");
+}
+
+/// Test exact size reads eliminate re-reads
+#[tokio::test]
+async fn test_exact_size_eliminates_rereads() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
+
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "helix".to_string(),
+        ),
+    );
+
+    // Create various sized blocks to test exact reads
+    let records = create_test_records(300, 1024); // 300 vectors × 1024D
+    let path = temp_dir.path().join("test_exact_reads.helix");
+
+    // Write with 100 vectors per block = 3 blocks of different compression
+    let bytes_written = proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        100,
+        crate::storage::engines::constants::HELIX_MAGIC,
+        None,
+        Some(256),
+    )
+    .await
+    .unwrap();
+
+    assert!(bytes_written > 0);
+
+    // Read header
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
+        .await
+        .unwrap();
+
+    assert_eq!(header.block_sizes.len(), 3, "Should have 3 blocks");
+
+    // Each block should have exact size
+    for (i, &size) in header.block_sizes.iter().enumerate() {
+        assert!(size > 0, "Block {} must have size > 0", i);
+        // With compression, can be much smaller than raw size
+        // Highly compressible test data can compress to < 1KB
+        assert!(size >= 100, "Block {} size should be >= 100B", i);
+    }
+
+    // Now search - should use exact sizes (no re-reads)
+    let query = vec![0.5; 1024];
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        ComputeDistanceMetric::Euclidean,
+    ));
+
+    let results = proxima::search_helix_sstable(
+        &filesystem,
+        &path,
+        &query,
+        None,
+        5,
+        &ComputeDistanceMetric::Euclidean,
+        &distance_compute,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Should successfully read all blocks with exact sizes
+    assert!(
+        !results.is_empty(),
+        "Should find results using exact block sizes"
+    );
+}
+
+/// Test header integrity validation (size mismatch detection)
+#[tokio::test]
+async fn test_header_size_mismatch_detection() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
+
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "helix".to_string(),
+        ),
+    );
+
+    // Write valid file
+    let records = create_test_records(128, 384);
+    let path = temp_dir.path().join("test_integrity.helix");
+
+    proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        64,
+        crate::storage::engines::constants::HELIX_MAGIC,
+        None,
+        Some(256),
+    )
+    .await
+    .unwrap();
+
+    // Read header - should succeed
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
+        .await
+        .unwrap();
+
+    // Verify integrity checks
+    assert_eq!(
+        header.block_offsets.len(),
+        header.block_sizes.len(),
+        "Offsets and sizes must match"
+    );
+    assert_eq!(
+        header.block_metadata.len(),
+        header.block_sizes.len(),
+        "Metadata and sizes must match"
+    );
+
+    // Verify each size is reasonable
+    for (i, &size) in header.block_sizes.iter().enumerate() {
+        // With compression, sizes vary widely
+        assert!(size >= 1_000, "Block {} too small: {}", i, size);
+        assert!(size < 20_000_000, "Block {} too large: {}", i, size);
+    }
+}
+
+/// Test block sizes with no compression (worst case)
+#[tokio::test]
+async fn test_block_sizes_no_compression() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
+
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "helix".to_string(),
+        ),
+    );
+
+    // Test with larger blocks and no compression
+    let records = create_test_records(1024, 1536); // OpenAI dimensions
+    let path = temp_dir.path().join("test_no_compression.helix");
+
+    let bytes_written = proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        1024, // Full block
+        crate::storage::engines::constants::HELIX_MAGIC,
+        None,
+        Some(256),
+    )
+    .await
+    .unwrap();
+
+    assert!(bytes_written > 0);
+
+    // Read header
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
+        .await
+        .unwrap();
+
+    assert_eq!(header.block_sizes.len(), 1);
+    let block_size = header.block_sizes[0];
+
+    // 1024 vectors × 1536D × 4 bytes = 6,291,456 bytes (~6MB) raw
+    // Even with no compression, should be < 10MB with metadata
+    assert!(
+        block_size >= 4_000_000,
+        "Block should be >= 4MB, got {}",
+        block_size
+    );
+    assert!(
+        block_size <= 10_000_000,
+        "Block should be <= 10MB, got {}",
+        block_size
+    );
+
+    // Verify u32 is sufficient
+    assert!(
+        block_size < u32::MAX as u32,
+        "Block size {} fits in u32",
+        block_size
+    );
+}
+
+/// Test multiple blocks with varying sizes
+#[tokio::test]
+async fn test_varying_block_sizes() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
+
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "helix".to_string(),
+        ),
+    );
+
+    // Create 500 vectors to get partial last block
+    let records = create_test_records(500, 768);
+    let path = temp_dir.path().join("test_varying.helix");
+
+    // 128 vectors per block = 3 full blocks (128 each) + 1 partial block (116)
+    let bytes_written = proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        128,
+        crate::storage::engines::constants::HELIX_MAGIC,
+        None,
+        Some(256),
+    )
+    .await
+    .unwrap();
+
+    assert!(bytes_written > 0);
+
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        header.block_sizes.len(),
+        4,
+        "Should have 4 blocks (3 full + 1 partial)"
+    );
+
+    // First 3 blocks should be roughly same size (all have 128 vectors)
+    // Note: With compression, variance can be significant due to data patterns
+    let first_three_sizes: Vec<u32> = header.block_sizes[0..3].to_vec();
+    let avg_size = first_three_sizes.iter().sum::<u32>() / 3;
+
+    for (i, &size) in first_three_sizes.iter().enumerate() {
+        let diff_percent = ((size as i32 - avg_size as i32).abs() * 100) / avg_size as i32;
+        // Allow up to 300% variance due to compression and test data patterns
+        assert!(
+            diff_percent < 300,
+            "Block {} size variance should be < 300%, got {}%",
+            i,
+            diff_percent
+        );
+    }
+
+    // Last block (116 vectors) should generally be smaller or similar size
+    // Note: With compression, smaller blocks can compress disproportionately better
+    let last_size = header.block_sizes[3];
+    let expected_ratio = 116.0 / 128.0; // ~90%
+    let actual_ratio = last_size as f32 / avg_size as f32;
+
+    // Allow very wide range (0.1% to 200%) due to compression variability
+    // Smaller blocks with test data patterns can compress to near-zero
+    assert!(
+        actual_ratio >= 0.001 && actual_ratio <= 2.0,
+        "Last block size ratio should be between 0.1% and 200%, got {:.2}%",
+        actual_ratio * 100.0
+    );
+}
+
+/// Test hilbert_range is available in header for pruning
+#[tokio::test]
+async fn test_hilbert_range_in_header() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
+
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "helix".to_string(),
+        ),
+    );
+
+    let records = create_test_records(256, 384);
+
+    // Generate Hilbert keys for spatial indexing
+    let hilbert_keys: Vec<u64> = (0..256).map(|i| i as u64 * 1000).collect();
+
+    let path = temp_dir.path().join("test_hilbert.helix");
+
+    let bytes_written = proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        64, // 4 blocks
+        crate::storage::engines::constants::HELIX_MAGIC,
+        Some(&hilbert_keys),
+        Some(256),
+    )
+    .await
+    .unwrap();
+
+    assert!(bytes_written > 0);
+
+    // Read header
+    let header = proxima::read_helix_header_optimized(&filesystem, &path)
+        .await
+        .unwrap();
+
+    assert_eq!(header.block_metadata.len(), 4);
+
+    // Verify each block has hilbert_range
+    for (i, meta) in header.block_metadata.iter().enumerate() {
+        assert!(
+            meta.hilbert_range.is_some(),
+            "Block {} should have hilbert_range for pruning",
+            i
+        );
+
+        let (min, max) = meta.hilbert_range.unwrap();
+        assert!(
+            min <= max,
+            "Block {} min {} should be <= max {}",
+            i,
+            min,
+            max
+        );
+
+        // Ranges should be in increasing order
+        if i > 0 {
+            let prev_max = header.block_metadata[i - 1].hilbert_range.unwrap().1;
             assert!(
-                meta.hilbert_range.is_some(),
-                "Block {} should have hilbert_range for pruning",
+                min >= prev_max,
+                "Block {} range should start after previous block",
                 i
             );
-
-            let (min, max) = meta.hilbert_range.unwrap();
-            assert!(min <= max, "Block {} min {} should be <= max {}", i, min, max);
-
-            // Ranges should be in increasing order
-            if i > 0 {
-                let prev_max = header.block_metadata[i - 1].hilbert_range.unwrap().1;
-                assert!(
-                    min >= prev_max,
-                    "Block {} range should start after previous block",
-                    i
-                );
-            }
         }
     }
+}
 
-    /// Test complete query flow: header read → hilbert pruning → exact block reads
-    #[tokio::test]
-    async fn test_complete_query_flow_with_pruning() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+/// Test complete query flow: header read → hilbert pruning → exact block reads
+#[tokio::test]
+async fn test_complete_query_flow_with_pruning() {
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let temp_dir = tempdir().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", temp_path));
-        let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let base_fs = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
+    let factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let base_fs = factory
+        .get_filesystem(&format!("file://{}", temp_path))
+        .unwrap();
 
-        let filesystem = Arc::new(crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+    let filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
-        ));
+        ),
+    );
 
-        // Create well-distributed data
-        let records = create_test_vectors(512, 768);
-        let hilbert_keys: Vec<u64> = (0..512).map(|i| i as u64 * 10000).collect();
+    // Create well-distributed data
+    let records = create_test_vectors(512, 768);
+    let hilbert_keys: Vec<u64> = (0..512).map(|i| i as u64 * 10000).collect();
 
-        let path = temp_dir.path().join("test_complete_flow.helix");
+    let path = temp_dir.path().join("test_complete_flow.helix");
 
-        // Write 8 blocks of 64 vectors each
-        proxima::write_helix_sstable(
-            &filesystem,
-            &path,
-            &records,
-            64,
-            crate::storage::engines::constants::HELIX_MAGIC,
-            Some(&hilbert_keys),
-            Some(256),
-        )
-        .await
-        .unwrap();
+    // Write 8 blocks of 64 vectors each
+    proxima::write_helix_sstable(
+        &filesystem,
+        &path,
+        &records,
+        64,
+        crate::storage::engines::constants::HELIX_MAGIC,
+        Some(&hilbert_keys),
+        Some(256),
+    )
+    .await
+    .unwrap();
 
-        // Query with hilbert key that should match block 4 (keys 192-255)
-        let query = vec![0.5; 768];
-        let query_hilbert_key = Some(200_000u64); // Should be in block 4 range
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(ComputeDistanceMetric::Euclidean));
+    // Query with hilbert key that should match block 4 (keys 192-255)
+    let query = vec![0.5; 768];
+    let query_hilbert_key = Some(200_000u64); // Should be in block 4 range
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        ComputeDistanceMetric::Euclidean,
+    ));
 
-        let results = proxima::search_helix_sstable(
-            &filesystem,
-            &path,
-            &query,
-            query_hilbert_key,
-            10,
-            &ComputeDistanceMetric::Euclidean,
-            &distance_compute,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+    let results = proxima::search_helix_sstable(
+        &filesystem,
+        &path,
+        &query,
+        query_hilbert_key,
+        10,
+        &ComputeDistanceMetric::Euclidean,
+        &distance_compute,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
-        // Should find results (pruning doesn't affect correctness)
-        assert!(!results.is_empty(), "Should find results even with pruning");
-        assert!(results.len() <= 10);
-    }
+    // Should find results (pruning doesn't affect correctness)
+    assert!(!results.is_empty(), "Should find results even with pruning");
+    assert!(results.len() <= 10);
+}
 
-    /// Unit test: block size u32 range validation
-    #[test]
-    fn test_block_size_u32_limits() {
-        // Test that realistic block sizes fit in u32
-        let test_cases = vec![
-            (1024, 768),   // Common: 1K vectors × 768D
-            (1024, 1536),  // OpenAI: 1K vectors × 1536D
-            (1024, 4096),  // Cohere: 1K vectors × 4096D
-            (4096, 1536),  // Large: 4K vectors × 1536D
-        ];
+/// Unit test: block size u32 range validation
+#[test]
+fn test_block_size_u32_limits() {
+    // Test that realistic block sizes fit in u32
+    let test_cases = vec![
+        (1024, 768),  // Common: 1K vectors × 768D
+        (1024, 1536), // OpenAI: 1K vectors × 1536D
+        (1024, 4096), // Cohere: 1K vectors × 4096D
+        (4096, 1536), // Large: 4K vectors × 1536D
+    ];
 
-        for (vectors, dimension) in test_cases {
-            let raw_size = vectors * dimension * 4; // fp32
-            let with_metadata = (raw_size * 13) / 10; // 30% overhead
-
-            assert!(
-                with_metadata < u32::MAX as usize,
-                "{} vectors × {}D = {} bytes fits in u32",
-                vectors,
-                dimension,
-                with_metadata
-            );
-
-            println!(
-                "✓ {} vectors × {}D = {:.2}MB fits in u32",
-                vectors,
-                dimension,
-                with_metadata as f64 / 1_000_000.0
-            );
-        }
-    }
-
-    /// Unit test: block offset u64 necessity
-    #[test]
-    fn test_block_offset_u64_necessity() {
-        // Test that file sizes can exceed u32
-        let blocks = 1000;
-        let avg_block_size_mb = 5; // 5MB per block with 1024 vectors × 1536D
-
-        let total_size_mb = blocks * avg_block_size_mb;
-        let total_size_bytes = total_size_mb * 1_000_000;
+    for (vectors, dimension) in test_cases {
+        let raw_size = vectors * dimension * 4; // fp32
+        let with_metadata = (raw_size * 13) / 10; // 30% overhead
 
         assert!(
-            total_size_bytes > u32::MAX as usize,
-            "Large files ({} MB) exceed u32, require u64 offsets",
-            total_size_mb
+            with_metadata < u32::MAX as usize,
+            "{} vectors × {}D = {} bytes fits in u32",
+            vectors,
+            dimension,
+            with_metadata
         );
 
         println!(
-            "✓ {} blocks × {}MB = {}MB file requires u64 offsets",
-            blocks,
-            avg_block_size_mb,
-            total_size_mb
+            "✓ {} vectors × {}D = {:.2}MB fits in u32",
+            vectors,
+            dimension,
+            with_metadata as f64 / 1_000_000.0
         );
     }
+}
+
+/// Unit test: block offset u64 necessity
+#[test]
+fn test_block_offset_u64_necessity() {
+    // Test that file sizes can exceed u32
+    let blocks = 1000;
+    let avg_block_size_mb = 5; // 5MB per block with 1024 vectors × 1536D
+
+    let total_size_mb = blocks * avg_block_size_mb;
+    let total_size_bytes = total_size_mb * 1_000_000;
+
+    assert!(
+        total_size_bytes > u32::MAX as usize,
+        "Large files ({} MB) exceed u32, require u64 offsets",
+        total_size_mb
+    );
+
+    println!(
+        "✓ {} blocks × {}MB = {}MB file requires u64 offsets",
+        blocks, avg_block_size_mb, total_size_mb
+    );
+}

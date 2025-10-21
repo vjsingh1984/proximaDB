@@ -26,10 +26,10 @@
 //!
 //! Actual data shows Arc speedup INCREASES with dimension (169x at 3072D × 50 clones).
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Strategy for cloning vector data
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,7 +69,7 @@ impl Default for MemorySharingConfig {
             // Default: Arc (82-169x faster, proven optimal at all dimensions)
             strategy: CloneStrategy::Arc,
             track_clone_statistics: true,
-            enable_unified_metrics: true,  // Default: full observability
+            enable_unified_metrics: true, // Default: full observability
         }
     }
 }
@@ -96,8 +96,14 @@ impl std::fmt::Debug for CloneStatistics {
         f.debug_struct("CloneStatistics")
             .field("arc_clones", &self.arc_clones.load(Ordering::Relaxed))
             .field("deep_clones", &self.deep_clones.load(Ordering::Relaxed))
-            .field("strategy_cache_hits", &self.strategy_cache_hits.load(Ordering::Relaxed))
-            .field("strategy_cache_misses", &self.strategy_cache_misses.load(Ordering::Relaxed))
+            .field(
+                "strategy_cache_hits",
+                &self.strategy_cache_hits.load(Ordering::Relaxed),
+            )
+            .field(
+                "strategy_cache_misses",
+                &self.strategy_cache_misses.load(Ordering::Relaxed),
+            )
             .field("dimension_histogram_size", &self.dimension_histogram.len())
             .field("has_unified_metrics", &self.unified_metrics.is_some())
             .finish()
@@ -229,18 +235,15 @@ impl CloneStrategySelector {
     pub fn with_config(config: MemorySharingConfig) -> Self {
         let stats = if config.enable_unified_metrics {
             // Default: use unified metrics for full observability
-            Arc::new(CloneStatistics::with_unified_metrics(
-                Arc::new(crate::metrics::collectors::UnifiedMetricsCollector::new())
-            ))
+            Arc::new(CloneStatistics::with_unified_metrics(Arc::new(
+                crate::metrics::collectors::UnifiedMetricsCollector::new(),
+            )))
         } else {
             // Optional: use local statistics only
             Arc::new(CloneStatistics::new())
         };
 
-        Self {
-            config,
-            stats,
-        }
+        Self { config, stats }
     }
 
     /// Create selector with existing unified metrics collector (for shared observability)
@@ -289,8 +292,6 @@ impl CloneStrategySelector {
         self.config.strategy
     }
 
-
-
     /// Get clone statistics
     pub fn statistics(&self) -> Arc<CloneStatistics> {
         Arc::clone(&self.stats)
@@ -336,7 +337,7 @@ mod tests {
         assert_eq!(selector.get_strategy(384), CloneStrategy::Arc);
         assert_eq!(selector.get_strategy(768), CloneStrategy::Arc);
         assert_eq!(selector.get_strategy(1024), CloneStrategy::Arc);
-        assert_eq!(selector.get_strategy(1536), CloneStrategy::Arc);  // No "inversion"!
+        assert_eq!(selector.get_strategy(1536), CloneStrategy::Arc); // No "inversion"!
         assert_eq!(selector.get_strategy(3072), CloneStrategy::Arc);
         assert_eq!(selector.get_strategy(10000), CloneStrategy::Arc);
     }
@@ -474,7 +475,7 @@ mod tests {
     fn test_with_local_stats() {
         let config = MemorySharingConfig {
             strategy: CloneStrategy::Arc,
-            enable_unified_metrics: false,  // Disable to avoid Tokio runtime requirement
+            enable_unified_metrics: false, // Disable to avoid Tokio runtime requirement
             track_clone_statistics: true,
         };
         let selector = CloneStrategySelector::with_local_stats(config);
@@ -490,7 +491,7 @@ mod tests {
         // Test with local stats only (no unified metrics in test context)
         let config = MemorySharingConfig {
             strategy: CloneStrategy::Arc,
-            enable_unified_metrics: false,  // Disable to avoid Tokio runtime requirement
+            enable_unified_metrics: false, // Disable to avoid Tokio runtime requirement
             track_clone_statistics: true,
         };
 
@@ -512,7 +513,7 @@ mod tests {
         // Arc is proven 82-169x faster at ALL dimensions including 1536D
         let config = MemorySharingConfig {
             strategy: CloneStrategy::Arc,
-            enable_unified_metrics: false,  // Disable to avoid Tokio runtime requirement
+            enable_unified_metrics: false, // Disable to avoid Tokio runtime requirement
             track_clone_statistics: true,
         };
         let selector = CloneStrategySelector::with_config(config);

@@ -3,13 +3,13 @@
 
 use anyhow::Result;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
-use proximadb::proto::proximadb_v1::{MetadataItem, VectorRecord, SqlValue};
-use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata, SstEngine};
-use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use proximadb::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord};
 use proximadb::storage::engines::core::formats::proximablocks::block_structures::{
-    ProximaDataBlock, BlockCompressionConfig,
+    BlockCompressionConfig, ProximaDataBlock,
 };
+use proximadb::storage::engines::impls::sst::{SstEngine, SstEntry, SstMetadata};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
@@ -37,9 +37,9 @@ fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
     metadata.insert(
         "category".to_string(),
         SqlValue {
-            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                "test".to_string(),
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string()),
+            ),
         },
     );
     metadata.insert(
@@ -180,14 +180,21 @@ fn test_sst_record_optimized_serialization() {
         // Verify all fields match
         assert_eq!(record.record.id, deserialized.record.id);
         assert_eq!(record.record.vector.len(), deserialized.record.vector.len());
-        assert_eq!(record.record.metadata.len(), deserialized.record.metadata.len());
+        assert_eq!(
+            record.record.metadata.len(),
+            deserialized.record.metadata.len()
+        );
         assert_eq!(record.record.timestamp, deserialized.record.timestamp);
         assert_eq!(record.record.version, deserialized.record.version);
-        assert_eq!(record.sst_meta.sequence_number, deserialized.sst_meta.sequence_number);
+        assert_eq!(
+            record.sst_meta.sequence_number,
+            deserialized.sst_meta.sequence_number
+        );
 
         // Verify vector values match exactly
         for (i, (&original, &recovered)) in record
-            .record.vector
+            .record
+            .vector
             .iter()
             .zip(deserialized.record.vector.iter())
             .enumerate()
@@ -292,7 +299,10 @@ fn test_data_block_zstd_compression() {
             uncompressed_size,
             serialized.len()
         );
-        assert!(compression_ratio > 0.05, "Compression should be beneficial (>5%)");
+        assert!(
+            compression_ratio > 0.05,
+            "Compression should be beneficial (>5%)"
+        );
     } else {
         debug!(
             "📦 ProximaProximaDataBlock stored uncompressed - {} bytes",
@@ -308,7 +318,8 @@ fn test_compression_performance_benchmark() {
             create_test_sst_record(
                 format!("record_{}", i),
                 create_test_vector(1024, if i % 2 == 0 { 0.9 } else { 0.1 }), // Mix sparse and dense
-            ).record  // Extract the VectorRecord from SstEntry
+            )
+            .record // Extract the VectorRecord from SstEntry
         })
         .collect();
 
@@ -320,7 +331,9 @@ fn test_compression_performance_benchmark() {
     let uncompressed = {
         // Note: ProximaDataBlock may not implement Serialize directly
         // Use its own serialization method instead
-        data_block.serialize_with_config(&BlockCompressionConfig::default()).unwrap()
+        data_block
+            .serialize_with_config(&BlockCompressionConfig::default())
+            .unwrap()
     };
     let uncompressed_time = start.elapsed();
 

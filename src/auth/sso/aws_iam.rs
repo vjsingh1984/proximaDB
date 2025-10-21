@@ -1,11 +1,14 @@
 //! AWS IAM integration with clean AssumeRole delegation
 
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, HashSet};
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
-use super::types::{SSOToken, SSOValidationResult, EnterpriseUserContext, ProviderUserContext, ProviderMetadata, SecurityClearance};
+use super::types::{
+    EnterpriseUserContext, ProviderMetadata, ProviderUserContext, SSOToken, SSOValidationResult,
+    SecurityClearance,
+};
 use super::{AWSIAMConfig, AWSRoleMapping};
 use serde::{Deserialize, Serialize};
 
@@ -13,13 +16,13 @@ use serde::{Deserialize, Serialize};
 pub struct AWSIAMIntegration {
     /// AWS region for STS operations
     region: String,
-    
+
     /// Role mappings for enterprise users
     role_mappings: Vec<AWSRoleMapping>,
-    
+
     /// Trusted AWS account IDs
     trusted_accounts: Vec<String>,
-    
+
     /// Enable cross-account AssumeRole
     enable_cross_account: bool,
 }
@@ -73,7 +76,10 @@ impl AWSIAMIntegration {
     }
 
     /// Assume AWS IAM role using web identity token (real STS integration)
-    async fn assume_role_with_web_identity(&self, token_data: &AWSTokenData) -> Result<AWSCredentials> {
+    async fn assume_role_with_web_identity(
+        &self,
+        token_data: &AWSTokenData,
+    ) -> Result<AWSCredentials> {
         info!("🔐 Assuming AWS IAM role: {}", token_data.role_arn);
 
         // REAL IMPLEMENTATION: AWS STS AssumeRoleWithWebIdentity
@@ -121,11 +127,16 @@ impl AWSIAMIntegration {
     ) -> Result<EnterpriseUserContext> {
         // Extract user information from AWS token claims
         let user_id = token_data.sub.clone();
-        let username = token_data.preferred_username.clone().unwrap_or_else(|| user_id.clone());
+        let username = token_data
+            .preferred_username
+            .clone()
+            .unwrap_or_else(|| user_id.clone());
         let email = token_data.email.clone();
 
         // Map AWS groups/roles to ProximaDB roles
-        let proximadb_roles = self.map_aws_roles_to_proximadb(&token_data.cognito_groups).await?;
+        let proximadb_roles = self
+            .map_aws_roles_to_proximadb(&token_data.cognito_groups)
+            .await?;
 
         // Extract tenant information from custom claims
         let tenant_id = token_data.custom_tenant_id.clone();
@@ -157,7 +168,10 @@ impl AWSIAMIntegration {
             },
         };
 
-        debug!("✅ Built enterprise user context for AWS user: {}", user_context.user_id);
+        debug!(
+            "✅ Built enterprise user context for AWS user: {}",
+            user_context.user_id
+        );
         Ok(user_context)
     }
 
@@ -167,9 +181,16 @@ impl AWSIAMIntegration {
 
         for group in cognito_groups {
             // Find matching role mapping by checking if group matches part of role ARN
-            if let Some(mapping) = self.role_mappings.iter().find(|m| m.aws_role_arn.contains(group)) {
+            if let Some(mapping) = self
+                .role_mappings
+                .iter()
+                .find(|m| m.aws_role_arn.contains(group))
+            {
                 proximadb_roles.push(mapping.proximadb_role.clone());
-                debug!("🔄 Mapped AWS group '{}' to ProximaDB role '{}'", group, mapping.proximadb_role);
+                debug!(
+                    "🔄 Mapped AWS group '{}' to ProximaDB role '{}'",
+                    group, mapping.proximadb_role
+                );
             } else {
                 warn!("⚠️ No role mapping found for AWS group: {}", group);
             }
@@ -185,17 +206,31 @@ impl AWSIAMIntegration {
     }
 
     /// Determine security clearance based on AWS token claims
-    async fn determine_security_clearance(&self, token_data: &AWSTokenData) -> Result<SecurityClearance> {
+    async fn determine_security_clearance(
+        &self,
+        token_data: &AWSTokenData,
+    ) -> Result<SecurityClearance> {
         // Analyze AWS token claims to determine security clearance level
-        let clearance = if token_data.cognito_groups.iter().any(|g| g.contains("admin") || g.contains("executive")) {
+        let clearance = if token_data
+            .cognito_groups
+            .iter()
+            .any(|g| g.contains("admin") || g.contains("executive"))
+        {
             SecurityClearance::Secret
-        } else if token_data.cognito_groups.iter().any(|g| g.contains("manager") || g.contains("analyst")) {
+        } else if token_data
+            .cognito_groups
+            .iter()
+            .any(|g| g.contains("manager") || g.contains("analyst"))
+        {
             SecurityClearance::Confidential
         } else {
             SecurityClearance::Internal
         };
 
-        debug!("🔒 Determined security clearance: {:?} for user {}", clearance, token_data.sub);
+        debug!(
+            "🔒 Determined security clearance: {:?} for user {}",
+            clearance, token_data.sub
+        );
         Ok(clearance)
     }
 
@@ -210,25 +245,27 @@ impl AWSIAMIntegration {
         let aws_credentials = self.assume_role_with_web_identity(&aws_token_data).await?;
 
         // Step 3: Extract user context from AWS credentials and token claims
-        let _user_context = self.build_enterprise_user_context(&aws_token_data, &aws_credentials).await?;
-        
+        let _user_context = self
+            .build_enterprise_user_context(&aws_token_data, &aws_credentials)
+            .await?;
+
         // Validate token is not expired
         if sso_token.is_expired() {
             return Err(anyhow!("AWS token expired"));
         }
-        
+
         // Simple AWS STS validation (would use AWS SDK in real implementation)
         let aws_user_info = self.validate_aws_sts_token(&aws_token_data).await?;
-        
+
         // Map AWS identity to ProximaDB enterprise user context
-        let enterprise_context = self.map_aws_user_to_enterprise_context(
-            &aws_user_info,
-            sso_token,
-        )?;
-        
-        info!("Successfully validated AWS user: {} -> ProximaDB user: {}", 
-              aws_user_info.user_arn, enterprise_context.user_id);
-        
+        let enterprise_context =
+            self.map_aws_user_to_enterprise_context(&aws_user_info, sso_token)?;
+
+        info!(
+            "Successfully validated AWS user: {} -> ProximaDB user: {}",
+            aws_user_info.user_arn, enterprise_context.user_id
+        );
+
         Ok(SSOValidationResult {
             valid: true,
             user_context: enterprise_context,
@@ -242,17 +279,17 @@ impl AWSIAMIntegration {
             validation_timestamp: Utc::now(),
         })
     }
-    
+
     /// Parse AWS token data (simplified)
     fn parse_aws_token_data(&self, token_data: &str) -> Result<AWSTokenData> {
         // In real implementation, this would parse AWS STS token
         // For now, simple JSON parsing
         let parsed: AWSTokenData = serde_json::from_str(token_data)
             .map_err(|e| anyhow!("Failed to parse AWS token: {}", e))?;
-        
+
         Ok(parsed)
     }
-    
+
     /// Validate AWS STS token (simplified)
     async fn validate_aws_sts_token(&self, token_data: &AWSTokenData) -> Result<AWSUserInfo> {
         // In real implementation, this would call AWS STS GetCallerIdentity
@@ -270,7 +307,10 @@ impl AWSIAMIntegration {
             return Err(anyhow!("AWS account {} not trusted", account_id));
         }
 
-        let user_name = token_data.preferred_username.clone().unwrap_or_else(|| token_data.sub.clone());
+        let user_name = token_data
+            .preferred_username
+            .clone()
+            .unwrap_or_else(|| token_data.sub.clone());
 
         Ok(AWSUserInfo {
             user_arn: format!("arn:aws:iam::{}:user/{}", account_id, user_name),
@@ -280,7 +320,7 @@ impl AWSIAMIntegration {
             mfa_authenticated: true, // Assume MFA for simplicity
         })
     }
-    
+
     /// Map AWS user to ProximaDB enterprise context
     fn map_aws_user_to_enterprise_context(
         &self,
@@ -288,21 +328,22 @@ impl AWSIAMIntegration {
         sso_token: &SSOToken,
     ) -> Result<EnterpriseUserContext> {
         // Find role mapping for AWS user
-        let role_mapping = self.role_mappings.iter()
-            .find(|mapping| {
-                aws_user.user_arn.contains(&mapping.aws_role_arn) ||
-                aws_user.assumed_role_arn.as_ref()
+        let role_mapping = self.role_mappings.iter().find(|mapping| {
+            aws_user.user_arn.contains(&mapping.aws_role_arn)
+                || aws_user
+                    .assumed_role_arn
+                    .as_ref()
                     .map(|arn| arn.contains(&mapping.aws_role_arn))
                     .unwrap_or(false)
-            });
-        
+        });
+
         let (proximadb_role, tenant_id) = if let Some(mapping) = role_mapping {
             (mapping.proximadb_role.clone(), mapping.tenant_id.clone())
         } else {
             // Default mapping for unmapped users
             ("tenant_user".to_string(), "default".to_string())
         };
-        
+
         // Create enterprise user context
         Ok(EnterpriseUserContext {
             user_id: aws_user.user_name.clone(),
@@ -330,17 +371,26 @@ impl AWSIAMIntegration {
             },
         })
     }
-    
+
     /// Get permissions for role (simplified)
     fn get_role_permissions(&self, role: &str) -> HashSet<String> {
         match role {
-            "tenant_admin" => ["tenant_admin", "collection_admin", "domain_admin"].into_iter().map(|s| s.to_string()).collect(),
-            "tenant_user" => ["collection_read", "entity_read"].into_iter().map(|s| s.to_string()).collect(),
-            "analyst" => ["collection_read", "entity_read", "domain_read"].into_iter().map(|s| s.to_string()).collect(),
+            "tenant_admin" => ["tenant_admin", "collection_admin", "domain_admin"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            "tenant_user" => ["collection_read", "entity_read"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            "analyst" => ["collection_read", "entity_read", "domain_read"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
             _ => HashSet::new(),
         }
     }
-    
+
     /// Extract account ID from access key (simplified)
     fn extract_account_id_from_access_key(&self, access_key: &str) -> Result<String> {
         // In real implementation, would decode access key properly
@@ -351,18 +401,30 @@ impl AWSIAMIntegration {
             Err(anyhow!("Invalid access key format"))
         }
     }
-    
+
     /// Extract AWS claims for metadata
     fn extract_aws_claims(&self, aws_user: &AWSUserInfo) -> HashMap<String, serde_json::Value> {
         let mut claims = HashMap::new();
-        claims.insert("account_id".to_string(), serde_json::Value::String(aws_user.account_id.clone()));
-        claims.insert("user_arn".to_string(), serde_json::Value::String(aws_user.user_arn.clone()));
-        claims.insert("mfa_authenticated".to_string(), serde_json::Value::Bool(aws_user.mfa_authenticated));
-        
+        claims.insert(
+            "account_id".to_string(),
+            serde_json::Value::String(aws_user.account_id.clone()),
+        );
+        claims.insert(
+            "user_arn".to_string(),
+            serde_json::Value::String(aws_user.user_arn.clone()),
+        );
+        claims.insert(
+            "mfa_authenticated".to_string(),
+            serde_json::Value::Bool(aws_user.mfa_authenticated),
+        );
+
         if let Some(ref role_arn) = aws_user.assumed_role_arn {
-            claims.insert("assumed_role_arn".to_string(), serde_json::Value::String(role_arn.clone()));
+            claims.insert(
+                "assumed_role_arn".to_string(),
+                serde_json::Value::String(role_arn.clone()),
+            );
         }
-        
+
         claims
     }
 }
@@ -381,8 +443,8 @@ pub struct AWSUserInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::SSOProvider;
+    use super::*;
 
     // Use the SSOProvider from super::types module
 
@@ -394,7 +456,7 @@ mod tests {
             "test_user".to_string(),
             3600,
         );
-        
+
         assert_eq!(token.provider, SSOProvider::AWSIAM);
         assert_eq!(token.user_id, "test_user");
         assert!(!token.is_expired());
@@ -404,7 +466,7 @@ mod tests {
     #[test]
     fn test_enterprise_user_context_system_admin() {
         let context = EnterpriseUserContext::system_admin();
-        
+
         assert_eq!(context.user_id, "system");
         assert!(context.has_permission("system_admin"));
         assert!(context.has_role("system_admin"));
@@ -427,10 +489,10 @@ mod tests {
             custom_tenant_id: None,
             raw_token: "jwt_token_here".to_string(),
         };
-        
+
         let json = serde_json::to_string(&token_data).unwrap();
         let deserialized: AWSTokenData = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(token_data.sub, deserialized.sub);
         assert_eq!(token_data.account_id, deserialized.account_id);
         assert_eq!(token_data.role_arn, deserialized.role_arn);

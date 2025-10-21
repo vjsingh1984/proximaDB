@@ -110,9 +110,21 @@ mod tests {
         let strategies = WALBatchFactory::available_strategies();
 
         assert_eq!(strategies.len(), 3);
-        assert!(strategies.iter().any(|s| matches!(s, WriteBufferStrategyType::AvroBatch)));
-        assert!(strategies.iter().any(|s| matches!(s, WriteBufferStrategyType::BincodeBatch)));
-        assert!(strategies.iter().any(|s| matches!(s, WriteBufferStrategyType::ProtoBatch)));
+        assert!(
+            strategies
+                .iter()
+                .any(|s| matches!(s, WriteBufferStrategyType::AvroBatch))
+        );
+        assert!(
+            strategies
+                .iter()
+                .any(|s| matches!(s, WriteBufferStrategyType::BincodeBatch))
+        );
+        assert!(
+            strategies
+                .iter()
+                .any(|s| matches!(s, WriteBufferStrategyType::ProtoBatch))
+        );
     }
 
     #[test]
@@ -252,18 +264,8 @@ mod tests {
         let comparison = WALBatchFactory::compare_strategies();
 
         // The recommendation should guide users on when to use each strategy
-        assert!(
-            comparison
-                .recommendation
-                .to_lowercase()
-                .contains("avro")
-        );
-        assert!(
-            comparison
-                .recommendation
-                .to_lowercase()
-                .contains("bincode")
-        );
+        assert!(comparison.recommendation.to_lowercase().contains("avro"));
+        assert!(comparison.recommendation.to_lowercase().contains("bincode"));
 
         // Should mention key decision factors
         let rec_lower = comparison.recommendation.to_lowercase();

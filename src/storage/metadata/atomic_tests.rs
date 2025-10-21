@@ -10,7 +10,8 @@ mod tests {
     };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
-        SystemMetadata, write_ahead_log::{MetadataWALConfig, AccessPattern}, VersionedCollectionMetadata,
+        SystemMetadata, VersionedCollectionMetadata,
+        write_ahead_log::{AccessPattern, MetadataWALConfig},
     };
     use crate::proto::proximadb_v1;
     use crate::storage::metadata::atomic::{
@@ -85,19 +86,33 @@ mod tests {
     }
 
     /// Convert protobuf Collection to VersionedCollectionMetadata
-    fn proto_to_versioned_metadata(collection: &proximadb_v1::Collection) -> VersionedCollectionMetadata {
+    fn proto_to_versioned_metadata(
+        collection: &proximadb_v1::Collection,
+    ) -> VersionedCollectionMetadata {
         let default_config = proximadb_v1::CollectionConfig::default();
         let config = collection.config.as_ref().unwrap_or(&default_config);
         VersionedCollectionMetadata {
             id: collection.id.clone(),
             name: config.name.clone(),
             dimension: config.dimension as usize,
-            distance_metric: format!("{:?}", proximadb_v1::DistanceMetric::try_from(config.distance_metric.unwrap_or(0)).unwrap_or_default()),
+            distance_metric: format!(
+                "{:?}",
+                proximadb_v1::DistanceMetric::try_from(config.distance_metric.unwrap_or(0))
+                    .unwrap_or_default()
+            ),
             indexing_algorithm: "hnsw".to_string(),
             timestamp: collection.created_at as u32,
             version: Some(1),
-            vector_count: collection.stats.as_ref().map(|s| s.vector_count).unwrap_or(0) as u64,
-            total_size_bytes: collection.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0) as u64,
+            vector_count: collection
+                .stats
+                .as_ref()
+                .map(|s| s.vector_count)
+                .unwrap_or(0) as u64,
+            total_size_bytes: collection
+                .stats
+                .as_ref()
+                .map(|s| s.data_size_bytes)
+                .unwrap_or(0) as u64,
             config: std::collections::HashMap::new(),
             description: config.description.clone(),
             tags: config.tags.clone(),
@@ -227,7 +242,10 @@ mod tests {
     // Implement MetadataStoreInterface for MockAtomicMetadataStore
     #[async_trait]
     impl MetadataStoreInterface for MockAtomicMetadataStore {
-        async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()> {
+        async fn create_collection(
+            &self,
+            metadata: crate::proto::proximadb_v1::Collection,
+        ) -> Result<()> {
             let versioned_metadata = proto_to_versioned_metadata(&metadata);
             self.metadata
                 .write()
@@ -236,7 +254,10 @@ mod tests {
             Ok(())
         }
 
-        async fn get_collection(&self, collection_id: &str) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+        async fn get_collection(
+            &self,
+            collection_id: &str,
+        ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
             if let Some(versioned) = self.metadata.read().await.get(collection_id) {
                 let collection = crate::proto::proximadb_v1::Collection {
                     id: versioned.id.clone(),
@@ -292,8 +313,12 @@ mod tests {
             &self,
             _filter: Option<MetadataFilter>,
         ) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
-            let collections: Vec<_> = self.metadata.read().await.values().map(|versioned| {
-                crate::proto::proximadb_v1::Collection {
+            let collections: Vec<_> = self
+                .metadata
+                .read()
+                .await
+                .values()
+                .map(|versioned| crate::proto::proximadb_v1::Collection {
                     id: versioned.id.clone(),
                     config: Some(proximadb_v1::CollectionConfig {
                         name: versioned.name.clone(),
@@ -319,8 +344,8 @@ mod tests {
                     created_at: versioned.timestamp as i64,
                     updated_at: versioned.timestamp as i64,
                     storage_assignment: None,
-                }
-            }).collect();
+                })
+                .collect();
             Ok(collections)
         }
 
@@ -406,7 +431,11 @@ mod tests {
         }
 
         async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
-            tracing::info!("Restoring from backup_id: {}, location: {}", backup_id, location);
+            tracing::info!(
+                "Restoring from backup_id: {}, location: {}",
+                backup_id,
+                location
+            );
             Ok(())
         }
 
@@ -702,8 +731,14 @@ mod tests {
         assert!(retrieved.is_some());
         let retrieved_metadata = retrieved.unwrap();
         assert_eq!(retrieved_metadata.id, metadata.id);
-        assert_eq!(retrieved_metadata.config.as_ref().unwrap().name, metadata.config.as_ref().unwrap().name);
-        assert_eq!(retrieved_metadata.config.as_ref().unwrap().dimension, metadata.config.as_ref().unwrap().dimension);
+        assert_eq!(
+            retrieved_metadata.config.as_ref().unwrap().name,
+            metadata.config.as_ref().unwrap().name
+        );
+        assert_eq!(
+            retrieved_metadata.config.as_ref().unwrap().dimension,
+            metadata.config.as_ref().unwrap().dimension
+        );
     }
 
     #[tokio::test]

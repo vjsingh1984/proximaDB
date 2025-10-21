@@ -9,9 +9,9 @@
 //! - Memory-efficient storage of quantized representations
 //! - Integration with existing quantization infrastructure
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::Result;
 
 // Define simple enum for quantization levels for this module
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,7 +154,6 @@ pub struct QuantizedVectorData {
 
     // ==================== QUANTIZED VECTOR COLUMNS ====================
     // Each column represents one quantization level - direct columnar access
-
     /// q_binary: Binary quantized vectors (1 bit per dimension)
     /// Column name: "q_binary"
     /// Storage: Bit-packed bytes, (dimension + 7) / 8 bytes per vector
@@ -201,7 +200,6 @@ pub struct QuantizedVectorData {
 
     // ==================== QUANTIZATION PARAMETER COLUMNS ====================
     // Direct optional columns for quantization parameters - enable parameter pruning
-
     /// qp_binary_threshold: Binary quantization threshold column
     /// Column name: "qp_binary_threshold"
     /// Storage: Single f32 value per file (constant column)
@@ -332,11 +330,7 @@ pub struct PerformanceImpact {
 
 impl UnifiedQuantizedFile {
     /// Create new unified quantized file
-    pub fn new(
-        file_id: String,
-        collection_id: String,
-        config: QuantizationFileConfig,
-    ) -> Self {
+    pub fn new(file_id: String, collection_id: String, config: QuantizationFileConfig) -> Self {
         Self {
             file_id,
             collection_id,
@@ -355,30 +349,32 @@ impl UnifiedQuantizedFile {
     /// Get quantized vectors for specific level
     pub fn get_quantized_vectors(&self, level: &QuantizationLevel) -> Option<&[Vec<u8>]> {
         match level {
-            QuantizationLevel::Binary =>
-                self.quantized_data.q_binary.as_ref().map(|v| v.as_slice()),
+            QuantizationLevel::Binary => {
+                self.quantized_data.q_binary.as_ref().map(|v| v.as_slice())
+            }
             QuantizationLevel::Int8 =>
-                // Convert i8 to u8 for unified interface
-                None, // TODO: implement conversion
-            QuantizationLevel::PQ4 =>
-                self.quantized_data.q_pq4.as_ref().map(|v| v.as_slice()),
-            QuantizationLevel::PQ8 =>
-                self.quantized_data.q_pq8.as_ref().map(|v| v.as_slice()),
-            QuantizationLevel::PQ16 =>
-                self.quantized_data.q_pq16.as_ref().map(|v| v.as_slice()),
-            QuantizationLevel::PQ32 =>
-                self.quantized_data.q_pq32.as_ref().map(|v| v.as_slice()),
+            // Convert i8 to u8 for unified interface
+            {
+                None
+            } // TODO: implement conversion
+            QuantizationLevel::PQ4 => self.quantized_data.q_pq4.as_ref().map(|v| v.as_slice()),
+            QuantizationLevel::PQ8 => self.quantized_data.q_pq8.as_ref().map(|v| v.as_slice()),
+            QuantizationLevel::PQ16 => self.quantized_data.q_pq16.as_ref().map(|v| v.as_slice()),
+            QuantizationLevel::PQ32 => self.quantized_data.q_pq32.as_ref().map(|v| v.as_slice()),
         }
     }
 
     /// Get compression ratio for file
     pub fn overall_compression_ratio(&self) -> f32 {
-        self.quantization_stats.storage_savings.overall_compression_ratio
+        self.quantization_stats
+            .storage_savings
+            .overall_compression_ratio
     }
 
     /// Estimate search performance improvement
     pub fn estimated_search_improvement(&self, level: &QuantizationLevel) -> f32 {
-        self.quantization_stats.performance_impact
+        self.quantization_stats
+            .performance_impact
             .estimated_search_speedup
             .get(&format!("{:?}", level))
             .copied()
@@ -409,21 +405,25 @@ impl QuantizedVectorData {
 
     /// Check if any quantization data exists
     pub fn has_any_quantization(&self) -> bool {
-        self.q_binary.is_some() ||
-        self.q_int8.is_some() ||
-        self.q_pq4.is_some() ||
-        self.q_pq8.is_some() ||
-        self.q_pq16.is_some() ||
-        self.q_pq32.is_some()
+        self.q_binary.is_some()
+            || self.q_int8.is_some()
+            || self.q_pq4.is_some()
+            || self.q_pq8.is_some()
+            || self.q_pq16.is_some()
+            || self.q_pq32.is_some()
     }
 
     /// Get memory usage for quantized data
     pub fn memory_usage(&self) -> usize {
-        let binary_size = self.q_binary.as_ref()
+        let binary_size = self
+            .q_binary
+            .as_ref()
             .map(|v| v.iter().map(|vec| vec.len()).sum::<usize>())
             .unwrap_or(0);
 
-        let int8_size = self.q_int8.as_ref()
+        let int8_size = self
+            .q_int8
+            .as_ref()
             .map(|v| v.iter().map(|vec| vec.len()).sum::<usize>())
             .unwrap_or(0);
 
@@ -517,15 +517,22 @@ mod tests {
     fn test_engine_specific_configs() {
         let proxima_config = EngineQuantizationConfig::proxima_block_inline();
         match proxima_config {
-            EngineQuantizationConfig::ProximaBlock { storage_strategy, .. } => {
-                assert!(matches!(storage_strategy, ProximaBlockQuantizationStorage::Inline));
+            EngineQuantizationConfig::ProximaBlock {
+                storage_strategy, ..
+            } => {
+                assert!(matches!(
+                    storage_strategy,
+                    ProximaBlockQuantizationStorage::Inline
+                ));
             }
             _ => panic!("Expected ProximaBlock configuration"),
         }
 
         let parquet_config = EngineQuantizationConfig::parquet_separate_columns();
         match parquet_config {
-            EngineQuantizationConfig::Parquet { separate_columns, .. } => {
+            EngineQuantizationConfig::Parquet {
+                separate_columns, ..
+            } => {
                 assert!(separate_columns);
             }
             _ => panic!("Expected Parquet configuration"),

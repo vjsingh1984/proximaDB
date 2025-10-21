@@ -109,12 +109,12 @@ impl EngineMetadataSerializer for ViperMetadataSerializer {
         }
 
         // Parquet files have "PAR1" magic bytes at start and end
-        if &data[0..4] != b"PAR1" || &data[data.len()-4..] != b"PAR1" {
+        if &data[0..4] != b"PAR1" || &data[data.len() - 4..] != b"PAR1" {
             return None;
         }
 
         // Read footer size from the last 4 bytes before the trailing PAR1
-        let footer_size_bytes = &data[data.len()-8..data.len()-4];
+        let footer_size_bytes = &data[data.len() - 8..data.len() - 4];
         let footer_size = u32::from_le_bytes([
             footer_size_bytes[0],
             footer_size_bytes[1],
@@ -129,16 +129,16 @@ impl EngineMetadataSerializer for ViperMetadataSerializer {
 
         // Extract footer data
         let footer_start = data.len() - 8 - footer_size;
-        let footer_data = &data[footer_start..data.len()-8];
+        let footer_data = &data[footer_start..data.len() - 8];
 
         Some(Bytes::copy_from_slice(footer_data))
     }
 
     fn should_cache_metadata(&self, file_path: &str) -> bool {
         // Cache metadata for Parquet files and VIPER-specific files
-        file_path.ends_with(".parquet") ||
-        file_path.contains("/viper/") ||
-        file_path.contains("cluster_metadata")
+        file_path.ends_with(".parquet")
+            || file_path.contains("/viper/")
+            || file_path.contains("cluster_metadata")
     }
 }
 
@@ -154,7 +154,7 @@ impl ViperCachedMetadata {
         // For now, create a placeholder
         Ok(Self {
             file_path,
-            total_rows: 0, // Would be extracted from footer
+            total_rows: 0,      // Would be extracted from footer
             row_group_count: 0, // Would be extracted from footer
             row_groups: Vec::new(),
             column_stats: HashMap::new(),
@@ -181,24 +181,20 @@ mod tests {
             file_path: "/data/viper/collection1.parquet".to_string(),
             total_rows: 1000000,
             row_group_count: 10,
-            row_groups: vec![
-                RowGroupMetadata {
-                    id: 0,
-                    row_count: 100000,
-                    file_offset: 0,
-                    total_byte_size: 1024000,
-                    compressed_size: 512000,
-                }
-            ],
+            row_groups: vec![RowGroupMetadata {
+                id: 0,
+                row_count: 100000,
+                file_offset: 0,
+                total_byte_size: 1024000,
+                compressed_size: 512000,
+            }],
             column_stats: HashMap::new(),
-            cluster_metadata: Some(vec![
-                ClusterInfo {
-                    cluster_id: 0,
-                    centroid: vec![0.1, 0.2, 0.3],
-                    vector_count: 1000,
-                    radius: 0.5,
-                }
-            ]),
+            cluster_metadata: Some(vec![ClusterInfo {
+                cluster_id: 0,
+                centroid: vec![0.1, 0.2, 0.3],
+                vector_count: 1000,
+                radius: 0.5,
+            }]),
             parquet_footer: Some(vec![1, 2, 3, 4]),
             file_size: 10485760,
             last_modified: 1234567890,

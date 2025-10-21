@@ -4,14 +4,17 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use proximadb::{
-    proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, StorageAssignment, QuantizationConfig},
+    compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute},
+    core::{config::ViperConfig, hardware_capabilities},
+    proto::proximadb_v1::{
+        Collection, CollectionConfig, QuantizationConfig, StorageAssignment, StorageEngine,
+        VectorRecord,
+    },
+    storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory},
     storage::{
         engines::impls::viper::engine::ViperEngine,
         traits::{FlushParameters, UnifiedStorageEngine},
     },
-    core::{config::ViperConfig, hardware_capabilities},
-    compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute},
-    storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig},
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Once};
@@ -96,12 +99,14 @@ async fn create_viper_engine() -> Arc<dyn UnifiedStorageEngine> {
     let filesystem = Arc::new(
         FilesystemFactory::create(filesystem_config)
             .await
-            .expect("Failed to create filesystem")
+            .expect("Failed to create filesystem"),
     );
     let viper_config = ViperConfig::default();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-    let engine = ViperEngine::new().await.expect("Failed to create VIPER engine");
+    let engine = ViperEngine::new()
+        .await
+        .expect("Failed to create VIPER engine");
 
     Arc::new(engine) as Arc<dyn UnifiedStorageEngine>
 }
@@ -118,11 +123,26 @@ fn bench_viper_flush(c: &mut Criterion) {
 
     // Test configurations
     let configs = vec![
-        ("no_quantization", create_quantization_config(false, false, false, 8, 8)),
-        ("binary_only", create_quantization_config(true, false, false, 8, 8)),
-        ("int8_only", create_quantization_config(false, true, false, 8, 8)),
-        ("pq_only", create_quantization_config(false, false, true, 32, 8)),
-        ("all_modes", create_quantization_config(true, true, true, 32, 8)),
+        (
+            "no_quantization",
+            create_quantization_config(false, false, false, 8, 8),
+        ),
+        (
+            "binary_only",
+            create_quantization_config(true, false, false, 8, 8),
+        ),
+        (
+            "int8_only",
+            create_quantization_config(false, true, false, 8, 8),
+        ),
+        (
+            "pq_only",
+            create_quantization_config(false, false, true, 32, 8),
+        ),
+        (
+            "all_modes",
+            create_quantization_config(true, true, true, 32, 8),
+        ),
     ];
 
     for (config_name, quant_config) in configs {

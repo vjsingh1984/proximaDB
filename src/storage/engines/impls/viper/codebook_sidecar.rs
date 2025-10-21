@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, QuantizationCodebookMetadata,
 };
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::FileSystem;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// VIPER-specific codebook sidecar manager
 pub struct ViperCodebookSidecarManager {
@@ -24,10 +24,7 @@ pub struct ViperCodebookSidecarManager {
 
 impl ViperCodebookSidecarManager {
     /// Create new VIPER codebook sidecar manager
-    pub fn new(
-        collection_id: String,
-        filesystem: Arc<dyn FileSystem>,
-    ) -> Self {
+    pub fn new(collection_id: String, filesystem: Arc<dyn FileSystem>) -> Self {
         Self {
             serializer: CodebookSerializer::new(),
             collection_id,
@@ -71,11 +68,18 @@ impl ViperCodebookSidecarManager {
     }
 
     /// Read codebook metadata from sidecar file
-    pub async fn read_sidecar(&self, parquet_path: &Path) -> Result<Option<QuantizationCodebookMetadata>> {
+    pub async fn read_sidecar(
+        &self,
+        parquet_path: &Path,
+    ) -> Result<Option<QuantizationCodebookMetadata>> {
         let sidecar_path = Self::sidecar_path(parquet_path);
 
         // Check if sidecar exists
-        if !self.filesystem.exists(sidecar_path.to_str().unwrap()).await? {
+        if !self
+            .filesystem
+            .exists(sidecar_path.to_str().unwrap())
+            .await?
+        {
             debug!(
                 "VIPER: No codebook sidecar found for {}",
                 parquet_path.display()
@@ -84,13 +88,14 @@ impl ViperCodebookSidecarManager {
         }
 
         // Read through unified filesystem
-        let json_bytes = self.filesystem
+        let json_bytes = self
+            .filesystem
             .read(sidecar_path.to_str().unwrap())
             .await
             .context("Failed to read codebook sidecar file")?;
 
-        let json = String::from_utf8(json_bytes.to_vec())
-            .context("Invalid UTF-8 in codebook sidecar")?;
+        let json =
+            String::from_utf8(json_bytes.to_vec()).context("Invalid UTF-8 in codebook sidecar")?;
 
         let metadata = self.serializer.deserialize_from_sidecar(&json)?;
 
@@ -107,7 +112,11 @@ impl ViperCodebookSidecarManager {
     pub async fn delete_sidecar(&self, parquet_path: &Path) -> Result<()> {
         let sidecar_path = Self::sidecar_path(parquet_path);
 
-        if self.filesystem.exists(sidecar_path.to_str().unwrap()).await? {
+        if self
+            .filesystem
+            .exists(sidecar_path.to_str().unwrap())
+            .await?
+        {
             self.filesystem
                 .delete(sidecar_path.to_str().unwrap())
                 .await
@@ -124,7 +133,8 @@ impl ViperCodebookSidecarManager {
 
     /// List all sidecar files in a directory
     pub async fn list_sidecars(&self, directory: &Path) -> Result<Vec<PathBuf>> {
-        let dir_entries = self.filesystem
+        let dir_entries = self
+            .filesystem
             .list(directory.to_str().unwrap())
             .await
             .context("Failed to list codebook sidecar files")?;
@@ -204,7 +214,9 @@ impl ViperCodebookSidecarManager {
         let metadata = if let Some(m) = merged_metadata {
             m
         } else {
-            self.serializer.extract_from_engine(engine, &self.collection_id).await?
+            self.serializer
+                .extract_from_engine(engine, &self.collection_id)
+                .await?
         };
 
         // Write to target
@@ -261,7 +273,8 @@ impl NovaCodebookSidecarManager {
 
         let json = self.base.serializer.serialize_for_sidecar(metadata)?;
 
-        self.base.filesystem
+        self.base
+            .filesystem
             .write(sidecar_path.to_str().unwrap(), json.as_bytes(), None)
             .await
             .context("Failed to write progressive codebook sidecar")?;
@@ -286,7 +299,11 @@ impl NovaCodebookSidecarManager {
             .unwrap_or_default()
             .to_string_lossy();
 
-        let dir_entries = self.base.filesystem.list(directory.to_str().unwrap()).await?;
+        let dir_entries = self
+            .base
+            .filesystem
+            .list(directory.to_str().unwrap())
+            .await?;
         let pattern = format!("{}.*.codebook.json", base_name);
 
         let mut results = Vec::new();
@@ -323,12 +340,15 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let fs_factory = FilesystemFactory::create(config).await.unwrap();
-        let filesystem = fs_factory.get_unified_caching_filesystem("file:///tmp", "test_collection".to_string(), "viper".to_string()).unwrap();
+        let filesystem = fs_factory
+            .get_unified_caching_filesystem(
+                "file:///tmp",
+                "test_collection".to_string(),
+                "viper".to_string(),
+            )
+            .unwrap();
 
-        let manager = ViperCodebookSidecarManager::new(
-            "test_collection".to_string(),
-            filesystem,
-        );
+        let manager = ViperCodebookSidecarManager::new("test_collection".to_string(), filesystem);
 
         let parquet_path = temp_dir.path().join("test.parquet");
         let metadata = QuantizationCodebookMetadata {
@@ -342,7 +362,10 @@ mod tests {
         };
 
         // Write sidecar
-        manager.write_sidecar(&parquet_path, &metadata).await.unwrap();
+        manager
+            .write_sidecar(&parquet_path, &metadata)
+            .await
+            .unwrap();
 
         // Read back
         let read_metadata = manager.read_sidecar(&parquet_path).await.unwrap().unwrap();

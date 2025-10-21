@@ -25,10 +25,10 @@ use tokio::sync::RwLock;
 pub struct RbacService {
     /// User to roles mapping
     user_roles: RwLock<HashMap<String, HashSet<String>>>,
-    
+
     /// Role to permissions mapping
     role_permissions: RwLock<HashMap<String, HashSet<Permission>>>,
-    
+
     /// Configuration
     config: RbacConfig,
 }
@@ -42,12 +42,12 @@ impl RbacService {
             role_permissions: RwLock::new(HashMap::new()),
             config,
         };
-        
+
         // Initialize default roles
         service.initialize_default_roles();
         service
     }
-    
+
     /// Create RBAC service with custom configuration
     pub fn with_config(config: RbacConfig) -> Self {
         let service = Self {
@@ -55,11 +55,11 @@ impl RbacService {
             role_permissions: RwLock::new(HashMap::new()),
             config,
         };
-        
+
         service.initialize_default_roles();
         service
     }
-    
+
     /// Initialize default roles from configuration
     fn initialize_default_roles(&self) {
         let runtime = tokio::runtime::Handle::current();
@@ -68,10 +68,12 @@ impl RbacService {
             // For now, we'll defer role setup to first access
         });
     }
-    
+
     /// Get roles for a user
     pub fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>, AuthError> {
-        let user_roles = self.user_roles.try_read()
+        let user_roles = self
+            .user_roles
+            .try_read()
             .map_err(|_| AuthError::InvalidCredentials)?;
         let roles = user_roles
             .get(user_id)
@@ -79,7 +81,7 @@ impl RbacService {
             .unwrap_or_else(|| vec![self.config.default_role.clone()]);
         Ok(roles)
     }
-    
+
     /// Assign role to user
     pub async fn assign_role(&self, user_id: &str, role: &str) -> Result<(), AuthError> {
         // Verify role exists
@@ -88,17 +90,17 @@ impl RbacService {
             return Err(AuthError::RoleNotFound(role.to_string()));
         }
         drop(role_permissions);
-        
+
         // Assign role to user
         let mut user_roles = self.user_roles.write().await;
         user_roles
             .entry(user_id.to_string())
             .or_insert_with(HashSet::new)
             .insert(role.to_string());
-        
+
         Ok(())
     }
-    
+
     /// Remove role from user
     pub async fn remove_role(&self, user_id: &str, role: &str) -> Result<(), AuthError> {
         let mut user_roles = self.user_roles.write().await;
@@ -107,20 +109,25 @@ impl RbacService {
         }
         Ok(())
     }
-    
+
     /// Get permissions for a list of roles
-    pub fn get_permissions_for_roles(&self, roles: &[String]) -> Result<Vec<Permission>, AuthError> {
+    pub fn get_permissions_for_roles(
+        &self,
+        roles: &[String],
+    ) -> Result<Vec<Permission>, AuthError> {
         let mut permissions = HashSet::new();
-        
+
         // Get cached permissions
-        let role_permissions = self.role_permissions.try_read()
+        let role_permissions = self
+            .role_permissions
+            .try_read()
             .map_err(|_| AuthError::InvalidCredentials)?;
-        
+
         for role in roles {
             // Check cached permissions first
             if let Some(role_perms) = role_permissions.get(role) {
                 permissions.extend(role_perms.iter().cloned());
-            } 
+            }
             // Fallback to config permissions
             else if let Some(config_perms) = self.config.roles.get(role) {
                 for perm_str in config_perms {
@@ -130,71 +137,75 @@ impl RbacService {
                 }
             }
         }
-        
+
         Ok(permissions.into_iter().collect())
     }
-    
+
     /// Create a new role with permissions
-    pub async fn create_role(&self, role_name: &str, permissions: Vec<Permission>) -> Result<(), AuthError> {
+    pub async fn create_role(
+        &self,
+        role_name: &str,
+        permissions: Vec<Permission>,
+    ) -> Result<(), AuthError> {
         let mut role_permissions = self.role_permissions.write().await;
         role_permissions.insert(role_name.to_string(), permissions.into_iter().collect());
         Ok(())
     }
-    
+
     /// Delete a role
     pub async fn delete_role(&self, role_name: &str) -> Result<(), AuthError> {
         // Don't allow deletion of built-in roles
         if ["admin", "user", "readonly"].contains(&role_name) {
             return Err(AuthError::AuthorizationDenied(Permission::ManageRoles));
         }
-        
+
         let mut role_permissions = self.role_permissions.write().await;
         role_permissions.remove(role_name);
-        
+
         // Remove role from all users
         let mut user_roles = self.user_roles.write().await;
         for roles in user_roles.values_mut() {
             roles.remove(role_name);
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if user has specific permission
     pub async fn user_has_permission(&self, user_id: &str, permission: Permission) -> bool {
         let roles = match self.get_user_roles(user_id) {
             Ok(roles) => roles,
             Err(_) => return false,
         };
-        
+
         let permissions = match self.get_permissions_for_roles(&roles) {
             Ok(permissions) => permissions,
             Err(_) => return false,
         };
-        
+
         permissions.contains(&permission)
     }
-    
+
     /// List all roles
     pub async fn list_roles(&self) -> Vec<String> {
         let role_permissions = self.role_permissions.read().await;
         let mut roles: Vec<String> = role_permissions.keys().cloned().collect();
-        
+
         // Add config roles that aren't cached yet
         for config_role in self.config.roles.keys() {
             if !roles.contains(config_role) {
                 roles.push(config_role.clone());
             }
         }
-        
+
         roles.sort();
         roles
     }
-    
+
     /// Get role permissions
     pub async fn get_role_permissions(&self, role: &str) -> Result<Vec<Permission>, AuthError> {
         let role_permissions = self.role_permissions.read().await;
-        
+
         if let Some(permissions) = role_permissions.get(role) {
             Ok(permissions.iter().cloned().collect())
         } else if let Some(config_perms) = self.config.roles.get(role) {
@@ -209,7 +220,7 @@ impl RbacService {
             Err(AuthError::RoleNotFound(role.to_string()))
         }
     }
-    
+
     /// Parse permission string to Permission enum
     fn parse_permission(&self, perm_str: &str) -> Result<Permission, AuthError> {
         match perm_str {
@@ -236,12 +247,19 @@ impl RbacService {
             "ManageRoles" => Ok(Permission::ManageRoles),
             "ManageApiKeys" => Ok(Permission::ManageApiKeys),
             "ViewAuditLogs" => Ok(Permission::ViewAuditLogs),
-            _ => Err(AuthError::AuthenticationFailed(format!("Unknown permission: {}", perm_str))),
+            _ => Err(AuthError::AuthenticationFailed(format!(
+                "Unknown permission: {}",
+                perm_str
+            ))),
         }
     }
-    
+
     /// Add permission to role
-    pub async fn add_permission_to_role(&self, role: &str, permission: Permission) -> Result<(), AuthError> {
+    pub async fn add_permission_to_role(
+        &self,
+        role: &str,
+        permission: Permission,
+    ) -> Result<(), AuthError> {
         let mut role_permissions = self.role_permissions.write().await;
         role_permissions
             .entry(role.to_string())
@@ -249,16 +267,20 @@ impl RbacService {
             .insert(permission);
         Ok(())
     }
-    
+
     /// Remove permission from role
-    pub async fn remove_permission_from_role(&self, role: &str, permission: Permission) -> Result<(), AuthError> {
+    pub async fn remove_permission_from_role(
+        &self,
+        role: &str,
+        permission: Permission,
+    ) -> Result<(), AuthError> {
         let mut role_permissions = self.role_permissions.write().await;
         if let Some(permissions) = role_permissions.get_mut(role) {
             permissions.remove(&permission);
         }
         Ok(())
     }
-    
+
     /// Get all users with a specific role
     pub async fn get_users_with_role(&self, role: &str) -> Vec<String> {
         let user_roles = self.user_roles.read().await;
@@ -275,13 +297,13 @@ impl RbacService {
 pub struct PermissionContext {
     /// Resource type (collection, system, etc.)
     pub resource_type: ResourceType,
-    
+
     /// Specific resource ID (optional)
     pub resource_id: Option<String>,
-    
+
     /// Tenant ID for multi-tenancy
     pub tenant_id: Option<String>,
-    
+
     /// Additional context metadata
     pub metadata: HashMap<String, String>,
 }
@@ -310,13 +332,16 @@ impl RbacService {
         if !self.user_has_permission(user_id, permission.clone()).await {
             return Err(AuthError::AuthorizationDenied(permission));
         }
-        
+
         // Additional context-based checks
         match context.resource_type {
             ResourceType::Collection => {
                 // Check if user has access to specific collection
                 if let Some(collection_id) = &context.resource_id {
-                    if !self.user_has_collection_access(user_id, collection_id).await {
+                    if !self
+                        .user_has_collection_access(user_id, collection_id)
+                        .await
+                    {
                         return Err(AuthError::AuthorizationDenied(permission));
                     }
                 }
@@ -330,7 +355,7 @@ impl RbacService {
             }
             _ => {} // Other resource types handled by basic permission check
         }
-        
+
         // Tenant isolation check
         if let Some(resource_tenant) = &context.tenant_id {
             let user_roles = self.get_user_roles(user_id)?;
@@ -340,10 +365,10 @@ impl RbacService {
                 return Err(AuthError::AuthorizationDenied(permission));
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if user has access to a specific collection
     async fn user_has_collection_access(&self, user_id: &str, collection_id: &str) -> bool {
         // This is a simplified implementation
@@ -352,17 +377,17 @@ impl RbacService {
             Ok(roles) => roles,
             Err(_) => return false,
         };
-        
+
         // Admins have access to all collections
         if roles.contains(&"admin".to_string()) {
             return true;
         }
-        
+
         // TODO: Implement collection-specific access control
         // For now, all authenticated users with appropriate permissions can access all collections
         true
     }
-    
+
     /// Check if user belongs to tenant
     async fn user_belongs_to_tenant(&self, _user_id: &str, _tenant_id: &str) -> bool {
         // TODO: Implement tenant membership validation
@@ -374,22 +399,22 @@ impl RbacService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_rbac_service_creation() {
         let rbac = RbacService::new();
         let roles = rbac.list_roles().await;
         assert!(roles.len() >= 3); // admin, user, readonly
     }
-    
+
     #[tokio::test]
     async fn test_role_assignment() {
         let rbac = RbacService::new();
         let user_id = "test_user";
-        
+
         // Assign admin role
         rbac.assign_role(user_id, "admin").await.unwrap();
-        
+
         // Check user roles
         let roles = rbac.get_user_roles(user_id).unwrap();
         assert!(roles.contains(&"admin".to_string()));
@@ -398,69 +423,77 @@ mod tests {
         let permissions = rbac.get_permissions_for_roles(&roles).unwrap();
         assert!(permissions.contains(&Permission::ManageUsers));
     }
-    
+
     #[tokio::test]
     async fn test_permission_check() {
         let rbac = RbacService::new();
         let user_id = "test_user";
-        
+
         // Initially user should have default role permissions
-        let has_read = rbac.user_has_permission(user_id, Permission::ReadVectors).await;
+        let has_read = rbac
+            .user_has_permission(user_id, Permission::ReadVectors)
+            .await;
         assert!(has_read); // default "user" role should have read permissions
-        
+
         // User should not have admin permissions initially
-        let has_manage = rbac.user_has_permission(user_id, Permission::ManageUsers).await;
+        let has_manage = rbac
+            .user_has_permission(user_id, Permission::ManageUsers)
+            .await;
         assert!(!has_manage);
-        
+
         // Assign admin role
         rbac.assign_role(user_id, "admin").await.unwrap();
-        
+
         // Now should have admin permissions
-        let has_manage = rbac.user_has_permission(user_id, Permission::ManageUsers).await;
+        let has_manage = rbac
+            .user_has_permission(user_id, Permission::ManageUsers)
+            .await;
         assert!(has_manage);
     }
-    
+
     #[tokio::test]
     async fn test_custom_role_creation() {
         let rbac = RbacService::new();
         let role_name = "custom_role";
         let permissions = vec![Permission::ReadVectors, Permission::SearchVectors];
-        
+
         // Create custom role
-        rbac.create_role(role_name, permissions.clone()).await.unwrap();
-        
+        rbac.create_role(role_name, permissions.clone())
+            .await
+            .unwrap();
+
         // Verify role exists
         let roles = rbac.list_roles().await;
         assert!(roles.contains(&role_name.to_string()));
-        
+
         // Verify role permissions
         let role_permissions = rbac.get_role_permissions(role_name).await.unwrap();
         assert_eq!(role_permissions.len(), 2);
         assert!(role_permissions.contains(&Permission::ReadVectors));
         assert!(role_permissions.contains(&Permission::SearchVectors));
     }
-    
+
     #[tokio::test]
     async fn test_permission_context() {
         let rbac = RbacService::new();
         let user_id = "test_user";
-        
+
         // Assign user role
         rbac.assign_role(user_id, "user").await.unwrap();
-        
+
         let context = PermissionContext {
             resource_type: ResourceType::Collection,
             resource_id: Some("test_collection".to_string()),
             tenant_id: None,
             metadata: HashMap::new(),
         };
-        
+
         // Should succeed for read permission
         let result = rbac
             .check_permission_with_context(user_id, Permission::ReadVectors, &context)
             .await;
         assert!(result.is_ok());
-        
+
         // Should fail for admin permission
         let result = rbac
             .check_permission_with_context(user_id, Permission::ManageUsers, &context)

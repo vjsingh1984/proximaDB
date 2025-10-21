@@ -11,7 +11,7 @@ This example demonstrates comprehensive monitoring:
 - Dashboard integration
 """
 
-import asyncio
+# import asyncio
 import json
 import logging
 import time
@@ -57,7 +57,7 @@ class CustomMetricsExporter:
         self.export_file = export_file
         self.metrics_buffer = []
     
-    async def export_metrics(self, metrics: Dict[str, Any]):
+    def export_metrics(self, metrics: Dict[str, Any]):
         """Export metrics to file"""
         timestamp = datetime.now().isoformat()
         
@@ -80,7 +80,7 @@ class CustomMetricsExporter:
         self.metrics_buffer.clear()
         logger.info(f"Exported metrics to {self.export_file}")
     
-    async def export_spans(self, spans: List[Any]):
+    def export_spans(self, spans: List[Any]):
         """Export trace spans"""
         # Similar implementation for spans
         pass
@@ -140,10 +140,10 @@ class MonitoredProximaDBClient:
         ))
     
     @trace_operation("custom_insert_with_validation")
-    async def insert_with_validation(self, collection_name: str, 
+    def insert_with_validation(self, collection_name: str, 
                                    vectors: List[VectorRecord]) -> Dict[str, Any]:
         """Insert vectors with quality validation and monitoring"""
-        async with SpanContext("validate_vectors") as span:
+        with SpanContext("validate_vectors") as span:
             span.set_tag("vector_count", len(vectors))
             span.set_tag("collection", collection_name)
             
@@ -168,8 +168,8 @@ class MonitoredProximaDBClient:
                 logger.warning(f"Low quality vectors detected: avg={avg_quality:.3f}")
         
         # Insert with monitoring
-        async with MetricsContext("vector_insertion") as ctx:
-            response = await self.client.ainsert_vectors(collection_name, vectors)
+        with MetricsContext("vector_insertion") as ctx:
+            response = self.client.ainsert_vectors(collection_name, vectors)
             
             # Record custom metrics
             ctx.increment("vectors_inserted", len(vectors))
@@ -183,14 +183,14 @@ class MonitoredProximaDBClient:
             }
     
     @trace_operation("monitored_search")
-    async def search_with_monitoring(self, collection_name: str,
+    def search_with_monitoring(self, collection_name: str,
                                    query_vector: List[float],
                                    top_k: int = 10,
                                    filters: Optional[List[Any]] = None) -> Dict[str, Any]:
         """Search with comprehensive monitoring"""
         start_time = time.time()
         
-        async with SpanContext("search_operation") as span:
+        with SpanContext("search_operation") as span:
             span.set_tag("collection", collection_name)
             span.set_tag("top_k", top_k)
             span.set_tag("has_filters", filters is not None)
@@ -206,7 +206,7 @@ class MonitoredProximaDBClient:
             
             # Perform search
             try:
-                results = await self.client.asearch_vectors(
+                results = self.client.search(
                     collection_name,
                     query_vector,
                     top_k=top_k
@@ -267,7 +267,7 @@ class MonitoredProximaDBClient:
         quality = min(1.0, variance * 10) * min(1.0, magnitude)
         return float(quality)
     
-    async def get_monitoring_dashboard(self) -> Dict[str, Any]:
+    def get_monitoring_dashboard(self) -> Dict[str, Any]:
         """Get current monitoring dashboard data"""
         metrics = self.telemetry.metrics_collector.get_metrics()
         
@@ -325,7 +325,7 @@ class MonitoredProximaDBClient:
         return getattr(self.client, name)
 
 
-async def simulate_production_workload(client: MonitoredProximaDBClient,
+def simulate_production_workload(client: MonitoredProximaDBClient,
                                      collection_name: str,
                                      duration_seconds: int = 60):
     """Simulate production workload for monitoring"""
@@ -357,7 +357,7 @@ async def simulate_production_workload(client: MonitoredProximaDBClient,
                         }
                     ))
                 
-                result = await client.insert_with_validation(collection_name, vectors)
+                result = client.insert_with_validation(collection_name, vectors)
                 logger.info(f"Inserted {len(vectors)} vectors, "
                           f"avg quality: {result['avg_quality']:.3f}")
             
@@ -372,7 +372,7 @@ async def simulate_production_workload(client: MonitoredProximaDBClient,
                         {"field": "metadata.quality", "operator": "=", "value": "normal"}
                     ]
                 
-                result = await client.search_with_monitoring(
+                result = client.search_with_monitoring(
                     collection_name,
                     query,
                     top_k=random.randint(5, 20),
@@ -389,8 +389,8 @@ async def simulate_production_workload(client: MonitoredProximaDBClient,
                     metadata={"type": "mixed_operation"}
                 )
                 
-                await client.ainsert_vector(collection_name, vector)
-                await client.search_with_monitoring(
+                client.ainsert_vector(collection_name, vector)
+                client.search_with_monitoring(
                     collection_name,
                     vector.vector,
                     top_k=5
@@ -399,7 +399,7 @@ async def simulate_production_workload(client: MonitoredProximaDBClient,
             operation_count += 1
             
             # Simulate variable load
-            await asyncio.sleep(random.uniform(0.1, 0.5))
+            time.sleep(random.uniform(0.1, 0.5))
             
         except Exception as e:
             logger.error(f"Operation failed: {e}")
@@ -408,7 +408,7 @@ async def simulate_production_workload(client: MonitoredProximaDBClient,
     print(f"✅ Completed {operation_count} operations")
 
 
-async def main():
+def main():
     print("🚀 Monitoring and Telemetry Example for ProximaDB")
     print("=" * 50)
     
@@ -427,7 +427,7 @@ async def main():
         service_version="1.0.0"
     )
     
-    await telemetry.start()
+    telemetry.start()
     
     # Create monitored client
     base_client = ProximaDBClient(
@@ -452,22 +452,22 @@ async def main():
         )
         
         try:
-            await client.adelete_collection(collection_name)
+            client.adelete_collection(collection_name)
         except:
             pass
         
-        collection = await client.acreate_collection(config)
+        collection = client.acreate_collection(config)
         print(f"✅ Collection created: {collection.id}")
         
         # Run workload simulation
-        await simulate_production_workload(client, collection_name, duration_seconds=30)
+        simulate_production_workload(client, collection_name, duration_seconds=30)
         
         # Wait for final metrics export
         print("\n⏳ Waiting for final metrics export...")
-        await asyncio.sleep(12)
+        time.sleep(12)
         
         # Display dashboard
-        dashboard = await client.get_monitoring_dashboard()
+        dashboard = client.get_monitoring_dashboard()
         
         print("\n📊 Monitoring Dashboard")
         print("=" * 50)
@@ -524,14 +524,14 @@ async def main():
         # Cleanup
         print("\n🧹 Cleaning up...")
         try:
-            await client.adelete_collection(collection_name)
+            client.adelete_collection(collection_name)
             print("✅ Demo collection deleted")
         except Exception as e:
             print(f"⚠️  Cleanup failed: {e}")
         
         # Stop telemetry
-        await telemetry.stop()
+        telemetry.stop()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

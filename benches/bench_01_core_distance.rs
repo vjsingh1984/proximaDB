@@ -1,13 +1,11 @@
 //! Real distance computation benchmarks
 
 mod common;
-use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+use common::benchmark_utils::{STANDARD_BATCH_SIZES, STANDARD_DIMENSIONS, print_system_info};
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{
-    DistanceMetric,
-    SimilarityResult,
-    engine::UnifiedDistanceCompute,
+    DistanceMetric, SimilarityResult, engine::UnifiedDistanceCompute,
 };
 
 fn init_hardware() {
@@ -41,8 +39,7 @@ fn benchmark_distance_computation(c: &mut Criterion) {
                 &(&a, &b),
                 |bencher, (a, b)| {
                     bencher.iter(|| {
-                        let result =
-                            compute.calculate_distance(a, b, &metric);
+                        let result = compute.calculate_distance(a, b, &metric);
                         black_box(result)
                     });
                 },
@@ -80,11 +77,8 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                         .iter()
                         .map(|v| {
                             compute
-                                .calculate_distance(
-                                    query,
-                                    v,
-                                    &DistanceMetric::Cosine,
-                                ).distance
+                                .calculate_distance(query, v, &DistanceMetric::Cosine)
+                                .distance
                         })
                         .collect();
                     black_box(results)
@@ -98,11 +92,8 @@ fn benchmark_batch_operations(c: &mut Criterion) {
             &(&query, &vector_refs),
             |bencher, (query, vectors)| {
                 bencher.iter(|| {
-                    let results = compute.batch_distance_pooled_simd(
-                        query,
-                        vectors,
-                        &DistanceMetric::Cosine,
-                    );
+                    let results =
+                        compute.batch_distance_pooled_simd(query, vectors, &DistanceMetric::Cosine);
                     black_box(results)
                 });
             },
@@ -114,11 +105,8 @@ fn benchmark_batch_operations(c: &mut Criterion) {
             &(&query, &vector_refs),
             |bencher, (query, vectors)| {
                 bencher.iter(|| {
-                    let results = compute.batch_distance_pooled_simd(
-                        query,
-                        vectors,
-                        &DistanceMetric::Cosine,
-                    );
+                    let results =
+                        compute.batch_distance_pooled_simd(query, vectors, &DistanceMetric::Cosine);
                     black_box(results)
                 });
             },
@@ -130,11 +118,8 @@ fn benchmark_batch_operations(c: &mut Criterion) {
             &(&query, &vector_refs),
             |bencher, (query, vectors)| {
                 bencher.iter(|| {
-                    let results = compute.batch_distance_pooled_lazy(
-                        query,
-                        vectors,
-                        &DistanceMetric::Cosine,
-                    );
+                    let results =
+                        compute.batch_distance_pooled_lazy(query, vectors, &DistanceMetric::Cosine);
                     // Access first few results to trigger computation
                     let distances = results.distances.get();
                     let _ = distances.get(0);
@@ -167,7 +152,8 @@ fn benchmark_memory_pool_effectiveness(c: &mut Criterion) {
     group.bench_function("batch_without_pool", |b| {
         b.iter(|| {
             // Use basic loop for non-pooled version
-            let results: Vec<SimilarityResult> = vector_refs.iter()
+            let results: Vec<SimilarityResult> = vector_refs
+                .iter()
                 .map(|v| compute_default.calculate_distance(&query, v, &DistanceMetric::Cosine))
                 .collect();
             black_box(results)

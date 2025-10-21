@@ -139,17 +139,13 @@ impl OrionGraphEngine {
     }
 
     /// Create ORION engine with persistence enabled
-    pub async fn with_persistence(
-        base_path: impl AsRef<Path>,
-        enable_wal: bool,
-    ) -> Result<Self> {
+    pub async fn with_persistence(base_path: impl AsRef<Path>, enable_wal: bool) -> Result<Self> {
         // Use default base URL if path is provided
         let base_url = format!("file:///{}", base_path.as_ref().display());
         let graph_id = "default".to_string(); // Default graph for backward compatibility
 
-        let persistence = Arc::new(
-            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?
-        );
+        let persistence =
+            Arc::new(persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?);
 
         Ok(Self {
             memory_pool: Arc::new(GraphMemoryPool::new()),
@@ -169,9 +165,8 @@ impl OrionGraphEngine {
         base_url: String,
         enable_wal: bool,
     ) -> Result<Self> {
-        let persistence = Arc::new(
-            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?
-        );
+        let persistence =
+            Arc::new(persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?);
 
         Ok(Self {
             memory_pool: Arc::new(GraphMemoryPool::new()),
@@ -747,7 +742,9 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Get outgoing edges
-        let outgoing = engine.get_outgoing_edges(&"node1".to_string(), None).unwrap();
+        let outgoing = engine
+            .get_outgoing_edges(&"node1".to_string(), None)
+            .unwrap();
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].edge_type, "KNOWS");
 

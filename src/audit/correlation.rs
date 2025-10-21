@@ -1,13 +1,12 @@
 //! Comprehensive audit correlation system for multi-provider enterprise environments
 
 use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
-use std::sync::Arc;
-use std::collections::HashMap;
-use tracing::{info, debug};
-use chrono::{DateTime, Utc, Duration};
 use serde::{Deserialize, Serialize};
-
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, info};
 
 /// Comprehensive audit correlation engine
 pub struct AuditCorrelationEngine {
@@ -209,10 +208,7 @@ impl AuditCorrelationEngine {
         })
     }
 
-    pub async fn correlate_events(
-        &self,
-        events: Vec<AuditEvent>,
-    ) -> Result<EventSequenceAnalysis> {
+    pub async fn correlate_events(&self, events: Vec<AuditEvent>) -> Result<EventSequenceAnalysis> {
         info!("Correlating {} audit events", events.len());
 
         // Basic event correlation logic
@@ -225,10 +221,7 @@ impl AuditCorrelationEngine {
         })
     }
 
-    pub async fn detect_anomalies(
-        &self,
-        events: &[AuditEvent],
-    ) -> Result<Vec<AuditAnomaly>> {
+    pub async fn detect_anomalies(&self, events: &[AuditEvent]) -> Result<Vec<AuditAnomaly>> {
         debug!("Detecting anomalies in {} events", events.len());
 
         // Basic anomaly detection
@@ -241,10 +234,7 @@ impl AuditCorrelationEngine {
         }])
     }
 
-    pub async fn generate_compliance_report(
-        &self,
-        framework: &str,
-    ) -> Result<ComplianceAnalysis> {
+    pub async fn generate_compliance_report(&self, framework: &str) -> Result<ComplianceAnalysis> {
         info!("Generating compliance report for framework: {}", framework);
 
         Ok(ComplianceAnalysis {

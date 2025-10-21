@@ -44,10 +44,7 @@ fn encode_pfor_delta_i32_base(wire_values: &[i32], base: i32) -> Result<Vec<u8>>
         .collect();
 
     // Find optimal bit width for 90% of values
-    let mut sorted_deltas: Vec<u64> = deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .collect();
+    let mut sorted_deltas: Vec<u64> = deltas.iter().map(|&d| d.unsigned_abs()).collect();
     sorted_deltas.sort_unstable();
 
     let percentile_90_idx = (sorted_deltas.len() * 90) / 100;
@@ -106,16 +103,10 @@ fn encode_pfor_delta_i64_base(wire_values: &[i64], base: i64) -> Result<Vec<u8>>
     result.extend_from_slice(&base.to_le_bytes());
 
     // Convert to deltas
-    let deltas: Vec<i64> = wire_values
-        .iter()
-        .map(|&v| v.wrapping_sub(base))
-        .collect();
+    let deltas: Vec<i64> = wire_values.iter().map(|&v| v.wrapping_sub(base)).collect();
 
     // Find optimal bit width for 90% of values
-    let mut sorted_deltas: Vec<u64> = deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .collect();
+    let mut sorted_deltas: Vec<u64> = deltas.iter().map(|&d| d.unsigned_abs()).collect();
     sorted_deltas.sort_unstable();
 
     let percentile_90_idx = (sorted_deltas.len() * 90) / 100;
@@ -233,7 +224,9 @@ fn decode_pfor_delta_i32_base(data: &[u8], count: usize) -> Result<Vec<i32>> {
 
     // Patches are 12 bytes each: 4 (pos) + 8 (value i64)
     if data.len() < 9 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PForDelta decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PForDelta decode: insufficient data for patches"
+        ));
     }
 
     // Unpack regular values using unsigned variant (no sign extension for sentinels)
@@ -283,8 +276,7 @@ fn decode_pfor_delta_i64_base(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     // Read base
     let base = i64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 
     // Read bit width
@@ -297,7 +289,9 @@ fn decode_pfor_delta_i64_base(data: &[u8], count: usize) -> Result<Vec<i64>> {
     let bitpacked_bytes = ((count * bits as usize) + 7) / 8;
 
     if data.len() < 13 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PForDelta decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PForDelta decode: insufficient data for patches"
+        ));
     }
 
     // Unpack regular values
@@ -355,7 +349,9 @@ pub(crate) fn parse_header_and_patches_f32(data: &[u8], count: usize) -> Result<
 
     let bitpacked_bytes = ((count * bits as usize) + 7) / 8;
     if data.len() < 9 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PForDelta decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PForDelta decode: insufficient data for patches"
+        ));
     }
 
     let bitpacked_data = &data[9..9 + bitpacked_bytes];
@@ -364,10 +360,21 @@ pub(crate) fn parse_header_and_patches_f32(data: &[u8], count: usize) -> Result<
     let patch_start = 9 + bitpacked_bytes;
     for i in 0..num_patches {
         let offset = patch_start + i * 12;
-        let pos = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+        let pos = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         let value = i64::from_le_bytes([
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
-            data[offset + 8], data[offset + 9], data[offset + 10], data[offset + 11],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
+            data[offset + 8],
+            data[offset + 9],
+            data[offset + 10],
+            data[offset + 11],
         ]);
         if pos < deltas.len() {
             deltas[pos] = value;
@@ -398,8 +405,7 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     // Read base
     let base = i64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 
     // Read bit width
@@ -412,7 +418,9 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     let bitpacked_bytes = ((count * bits as usize) + 7) / 8;
 
     if data.len() < 13 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PForDelta decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PForDelta decode: insufficient data for patches"
+        ));
     }
 
     // Unpack regular values (delegate to shared helper with sign extension)
@@ -557,12 +565,7 @@ mod tests {
         assert_eq!(values, decoded);
 
         // Should have 0 patches
-        let num_patches = u32::from_le_bytes([
-            encoded[5],
-            encoded[6],
-            encoded[7],
-            encoded[8],
-        ]);
+        let num_patches = u32::from_le_bytes([encoded[5], encoded[6], encoded[7], encoded[8]]);
         assert_eq!(num_patches, 0);
     }
 
@@ -580,13 +583,12 @@ mod tests {
         assert_eq!(values, decoded);
 
         // Should have 3 patches for the outliers
-        let num_patches = u32::from_le_bytes([
-            encoded[5],
-            encoded[6],
-            encoded[7],
-            encoded[8],
-        ]);
-        assert!(num_patches >= 3, "Expected at least 3 patches, got {}", num_patches);
+        let num_patches = u32::from_le_bytes([encoded[5], encoded[6], encoded[7], encoded[8]]);
+        assert!(
+            num_patches >= 3,
+            "Expected at least 3 patches, got {}",
+            num_patches
+        );
     }
 
     #[test]
@@ -609,12 +611,7 @@ mod tests {
 
         // PForDelta should handle the encoding (patches are implementation detail)
         // Just verify it works correctly
-        let num_patches = u32::from_le_bytes([
-            encoded[5],
-            encoded[6],
-            encoded[7],
-            encoded[8],
-        ]);
+        let num_patches = u32::from_le_bytes([encoded[5], encoded[6], encoded[7], encoded[8]]);
         // With base=0, deltas for constant 100.0 values fit in small bits
         // Large spikes should create patches
         assert!(num_patches >= 0, "Patches: {}", num_patches); // Always passes, just for visibility

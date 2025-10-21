@@ -32,7 +32,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::storage::traits::UnifiedStorageEngine;
 
@@ -40,9 +40,9 @@ use crate::compute::quantization::types::{
     BinaryQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
     UnifiedQuantizationLevel,
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::query::unified_query_optimizer::{
     ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType, UnifiedExecutionPlan,
     UnifiedQueryContext, UnifiedQueryOptimizer,
@@ -105,9 +105,9 @@ impl Default for UnifiedSearchConfig {
         }
     }
 }
+use crate::services::operations::{BatchOperationResult, OperationMetrics};
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::impls::sst::SstEngine;
-use crate::services::operations::{BatchOperationResult, OperationMetrics};
 
 /// Optional debug/explain hints for vector planning and pruning.
 #[derive(Debug, Clone, Default)]
@@ -446,13 +446,19 @@ impl VectorOperationsService {
     }
 
     /// Set tenant manager for multi-tenant support (builder-style)
-    pub fn with_tenant_manager(mut self, tenant_manager: Arc<crate::storage::tenant::TenantManager>) -> Self {
+    pub fn with_tenant_manager(
+        mut self,
+        tenant_manager: Arc<crate::storage::tenant::TenantManager>,
+    ) -> Self {
         self.tenant_manager = Some(tenant_manager);
         self
     }
 
     /// Set RBAC enforcer for permission validation (builder-style)
-    pub fn with_rbac_enforcer(mut self, rbac_enforcer: Arc<crate::storage::tenant::EnhancedRBACManager>) -> Self {
+    pub fn with_rbac_enforcer(
+        mut self,
+        rbac_enforcer: Arc<crate::storage::tenant::EnhancedRBACManager>,
+    ) -> Self {
         self.rbac_enforcer = Some(rbac_enforcer);
         self
     }
@@ -499,16 +505,24 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<VectorRecord>> {
-        let search_results = self.unified_search_with_tenant_context(collection_id, query_vector, k, filter, config, None).await?;
+        let search_results = self
+            .unified_search_with_tenant_context(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                None,
+            )
+            .await?;
 
         // Convert SearchResult to VectorRecord
         let mut vector_records = Vec::new();
         for search_result in search_results {
             for result in search_result.results {
                 // Convert proto metadata to proto SqlValue format
-                let proto_metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = result.metadata.into_iter().map(|(k, v)| {
-                    (k, v)
-                }).collect();
+                let proto_metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> =
+                    result.metadata.into_iter().map(|(k, v)| (k, v)).collect();
 
                 vector_records.push(VectorRecord {
                     id: result.id,
@@ -535,7 +549,10 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
-        debug!("🔍 Executing unified search: collection={}, k={}", collection_id, k);
+        debug!(
+            "🔍 Executing unified search: collection={}, k={}",
+            collection_id, k
+        );
 
         // NEW: Multi-tenant validation and security
         if let Some(ref tenant_manager) = self.tenant_manager {
@@ -545,8 +562,10 @@ impl VectorOperationsService {
                 let collection_tenant = tenant_ctx.tenant_id.clone(); // Temporary stub
 
                 if collection_tenant != tenant_ctx.tenant_id {
-                    warn!("🚨 CRITICAL: Cross-tenant search attempt blocked - user tenant {} tried to search collection owned by tenant {}",
-                          tenant_ctx.tenant_id, collection_tenant);
+                    warn!(
+                        "🚨 CRITICAL: Cross-tenant search attempt blocked - user tenant {} tried to search collection owned by tenant {}",
+                        tenant_ctx.tenant_id, collection_tenant
+                    );
                     return Ok(vec![]); // Return empty results for security
                 }
 
@@ -556,8 +575,10 @@ impl VectorOperationsService {
                     let _permission_result = true; // Temporary stub
 
                     if !_permission_result {
-                        warn!("🚨 RBAC: Search permission denied for user {} on collection {}",
-                              "system_user", collection_id); // TODO: Get user from context
+                        warn!(
+                            "🚨 RBAC: Search permission denied for user {} on collection {}",
+                            "system_user", collection_id
+                        ); // TODO: Get user from context
                         return Ok(vec![]);
                     }
                 }
@@ -570,7 +591,10 @@ impl VectorOperationsService {
                     return Err(anyhow::anyhow!("Tenant rate limit exceeded"));
                 }
 
-                debug!("✅ Tenant validation passed for search: tenant={}, collection={}", tenant_ctx.tenant_id, collection_id);
+                debug!(
+                    "✅ Tenant validation passed for search: tenant={}, collection={}",
+                    tenant_ctx.tenant_id, collection_id
+                );
             }
         }
 
@@ -644,7 +668,8 @@ impl VectorOperationsService {
 
         // NEW: Defense-in-depth result validation for tenant isolation
         let validated_results = if let Some(tenant_ctx) = tenant_context {
-            self.validate_search_results_tenant_isolation(&results, &tenant_ctx.tenant_id).await?
+            self.validate_search_results_tenant_isolation(&results, &tenant_ctx.tenant_id)
+                .await?
         } else {
             results
         };
@@ -669,39 +694,51 @@ impl VectorOperationsService {
                 // Check if result has tenant_id metadata
                 if let Some(result_tenant_id) = vector_result.metadata.get("tenant_id") {
                     if let Some(value) = &result_tenant_id.value {
-                        if let crate::proto::proximadb_v1::sql_value::Value::StringValue(tenant_value) = value {
+                        if let crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            tenant_value,
+                        ) = value
+                        {
                             if tenant_value == expected_tenant_id {
                                 validated_search_result.results.push(vector_result.clone());
                             } else {
-                            // CRITICAL SECURITY ALERT: Cross-tenant data leakage detected!
-                            error!(
-                                "🚨 CRITICAL SECURITY ALERT: Cross-tenant data leakage prevented! Expected tenant: {}, Found: {} for vector: {}",
-                                expected_tenant_id,
-                                tenant_value,
-                                vector_result.id
-                            );
+                                // CRITICAL SECURITY ALERT: Cross-tenant data leakage detected!
+                                error!(
+                                    "🚨 CRITICAL SECURITY ALERT: Cross-tenant data leakage prevented! Expected tenant: {}, Found: {} for vector: {}",
+                                    expected_tenant_id, tenant_value, vector_result.id
+                                );
 
-                            // Log security incident for audit trail
-                            if let Some(ref audit_logger) = self.get_audit_logger() {
-                                // TODO: Implement log_security_incident method
-                                warn!("Security incident logged: cross_tenant_data_leakage_prevented for vector {}", vector_result.id);
-                            }
+                                // Log security incident for audit trail
+                                if let Some(ref audit_logger) = self.get_audit_logger() {
+                                    // TODO: Implement log_security_incident method
+                                    warn!(
+                                        "Security incident logged: cross_tenant_data_leakage_prevented for vector {}",
+                                        vector_result.id
+                                    );
+                                }
 
-                            // Do not include this result - potential data breach prevented
+                                // Do not include this result - potential data breach prevented
                             }
                         }
                     } else {
                         // No tenant metadata - allow by default for now but log warning
-                        warn!("Vector result without tenant_id metadata found - allowing by default");
+                        warn!(
+                            "Vector result without tenant_id metadata found - allowing by default"
+                        );
                         validated_search_result.results.push(vector_result.clone());
                     }
                 } else {
                     // CRITICAL: Result without tenant_id is a security issue
-                    error!("🚨 CRITICAL SECURITY ALERT: Vector result without tenant_id found! Vector: {}", vector_result.id);
+                    error!(
+                        "🚨 CRITICAL SECURITY ALERT: Vector result without tenant_id found! Vector: {}",
+                        vector_result.id
+                    );
 
                     if let Some(ref audit_logger) = self.get_audit_logger() {
                         // TODO: Implement log_security_incident method
-                        warn!("Security incident logged: missing_tenant_metadata for vector {}", vector_result.id);
+                        warn!(
+                            "Security incident logged: missing_tenant_metadata for vector {}",
+                            vector_result.id
+                        );
                     }
                     // Don't include this result - it's a security risk
                 }
@@ -915,7 +952,14 @@ impl VectorOperationsService {
 
         // Execute the search
         let results = self
-            .unified_search_with_tenant_context(collection_id, query_vector, k, filter, config, None)
+            .unified_search_with_tenant_context(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+                None,
+            )
             .await?;
 
         // Populate minimal candidate estimate; refined values can be added later
@@ -1129,7 +1173,10 @@ impl VectorOperationsService {
         top_k: usize,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        tracing::debug!("🔍 execute_unified_plan received filter: {:?}", filter.as_ref().map(|f| format!("{:?}", f)));
+        tracing::debug!(
+            "🔍 execute_unified_plan received filter: {:?}",
+            filter.as_ref().map(|f| format!("{:?}", f))
+        );
         let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
         let mut intermediate_results: Option<
             Vec<crate::core::search::results::OptimizedSearchRecord>,
@@ -1137,9 +1184,15 @@ impl VectorOperationsService {
 
         for step in plan.execution_steps {
             match &step {
-                ExecutionStep::CombinedFilterSearch { .. } => tracing::debug!("🔍 Executing step: CombinedFilterSearch"),
-                ExecutionStep::MetadataFilter { .. } => tracing::debug!("🔍 Executing step: MetadataFilter"),
-                ExecutionStep::VectorSearch { .. } => tracing::debug!("🔍 Executing step: VectorSearch"),
+                ExecutionStep::CombinedFilterSearch { .. } => {
+                    tracing::debug!("🔍 Executing step: CombinedFilterSearch")
+                }
+                ExecutionStep::MetadataFilter { .. } => {
+                    tracing::debug!("🔍 Executing step: MetadataFilter")
+                }
+                ExecutionStep::VectorSearch { .. } => {
+                    tracing::debug!("🔍 Executing step: VectorSearch")
+                }
                 _ => tracing::debug!("🔍 Executing step: Other"),
             }
             match step {
@@ -1158,7 +1211,10 @@ impl VectorOperationsService {
                     }
 
                     // Execute search with filter-aware optimization using unified two-stage search
-                    tracing::debug!("🔍 About to call execute_two_stage_search with filter: {:?}", filter.as_ref().map(|f| format!("{:?}", f)));
+                    tracing::debug!(
+                        "🔍 About to call execute_two_stage_search with filter: {:?}",
+                        filter.as_ref().map(|f| format!("{:?}", f))
+                    );
                     results = self
                         .execute_two_stage_search(
                             collection_id,
@@ -1201,7 +1257,11 @@ impl VectorOperationsService {
                     quantization_strategy,
                     candidates,
                 } => {
-                    debug!("🎯 Executing vector search (candidates: {}, filter: {})", candidates, filter.is_some());
+                    debug!(
+                        "🎯 Executing vector search (candidates: {}, filter: {})",
+                        candidates,
+                        filter.is_some()
+                    );
 
                     let search_results = self
                         .execute_two_stage_search(
@@ -1346,7 +1406,9 @@ impl VectorOperationsService {
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         info!(
             "🎯 Executing PARALLEL TWO-STAGE search for collection {} (method: {:?}, filter: {})",
-            collection_id, method, filter.is_some()
+            collection_id,
+            method,
+            filter.is_some()
         );
         info!("   Stage 1 & 2 running in PARALLEL:");
         info!("   - Stage 1: WAL/memtable search for recent unflushed vectors");
@@ -1355,8 +1417,10 @@ impl VectorOperationsService {
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
         let distance_metric = match collection.config.as_ref() {
-            Some(cfg) => crate::proto::proximadb_v1::DistanceMetric::try_from(cfg.distance_metric.unwrap_or(0))
-                .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine),
+            Some(cfg) => crate::proto::proximadb_v1::DistanceMetric::try_from(
+                cfg.distance_metric.unwrap_or(0),
+            )
+            .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine),
             None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
         };
 
@@ -1416,17 +1480,26 @@ impl VectorOperationsService {
                         true,            // include_metadata
                     )
                     .await?;
-                info!("✅ Stage 1 complete: Found {} unflushed vectors from WAL", results.len());
+                info!(
+                    "✅ Stage 1 complete: Found {} unflushed vectors from WAL",
+                    results.len()
+                );
                 Ok::<_, anyhow::Error>(results)
             },
             // Stage 2: Storage engine search
             async {
-                debug!("🔍 Stage 2: Searching storage engine for collection {}", collection_id);
+                debug!(
+                    "🔍 Stage 2: Searching storage engine for collection {}",
+                    collection_id
+                );
                 let results = self
                     .storage_engine
                     .search_vectors_unified(&search_context)
                     .await?;
-                info!("✅ Stage 2 complete: Found {} vectors from storage", results.len());
+                info!(
+                    "✅ Stage 2 complete: Found {} vectors from storage",
+                    results.len()
+                );
                 Ok::<_, anyhow::Error>(results)
             }
         );
@@ -1496,20 +1569,29 @@ impl VectorOperationsService {
                     });
 
                     // Convert distance_metric from Option<i32> to DistanceMetric
-                    let distance_metric = config.distance_metric
+                    let distance_metric = config
+                        .distance_metric
                         .and_then(|m| crate::proto::proximadb_v1::DistanceMetric::try_from(m).ok())
                         .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
 
-                    let assignment = crate::storage::persistence::write_ahead_log::CollectionAssignment {
-                        base_location: storage_assignment.base_location.clone(),
-                        storage_engine: crate::proto::proximadb_v1::StorageEngine::try_from(storage_assignment.engine)
+                    let assignment =
+                        crate::storage::persistence::write_ahead_log::CollectionAssignment {
+                            base_location: storage_assignment.base_location.clone(),
+                            storage_engine: crate::proto::proximadb_v1::StorageEngine::try_from(
+                                storage_assignment.engine,
+                            )
                             .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst),
-                        dimension: config.dimension as i32,
-                        compression_config,
-                        distance_metric,
-                    };
-                    self.wal_manager.assign_collection(collection_id_string.clone(), assignment).await;
-                    tracing::debug!("✅ Registered collection {} with WAL manager", collection_id);
+                            dimension: config.dimension as i32,
+                            compression_config,
+                            distance_metric,
+                        };
+                    self.wal_manager
+                        .assign_collection(collection_id_string.clone(), assignment)
+                        .await;
+                    tracing::debug!(
+                        "✅ Registered collection {} with WAL manager",
+                        collection_id
+                    );
                 }
             }
 
@@ -1660,7 +1742,6 @@ impl VectorOperationsService {
         );
         Ok(optimized_results)
     }
-
 
     async fn execute_index_lookup(
         &self,
@@ -1838,7 +1919,9 @@ impl VectorOperationsService {
 
         debug!(
             "📊 Vector batch response: success={}, total={}, metrics={:?}",
-            true, vector_ids.len(), response.get("metrics")
+            true,
+            vector_ids.len(),
+            response.get("metrics")
         );
 
         Ok(serde_json::to_vec(&response)?)
@@ -1861,7 +1944,8 @@ impl VectorOperationsService {
         vectors: Vec<VectorRecord>,
     ) -> Result<BatchOperationResult> {
         // Validate vectors before insertion
-        self.validate_vectors_for_insert(collection_id, &vectors).await?;
+        self.validate_vectors_for_insert(collection_id, &vectors)
+            .await?;
 
         let start = std::time::Instant::now();
         let vectors_arc = Arc::new(vectors);
@@ -2059,19 +2143,31 @@ impl VectorOperationsService {
         // Trigger compaction in storage engine
         // Note: compact_all is not available in UnifiedStorageEngine trait
         // Instead, we need to compact each collection individually
-        let collections: Vec<String> = self.collection_cache.iter()
+        let collections: Vec<String> = self
+            .collection_cache
+            .iter()
             .map(|entry| entry.key().clone())
             .collect();
-        
+
         for collection_id in collections {
             if let Some(collection) = self.collection_cache.get(&collection_id) {
-                match self.unified_engine().compact_collection(&collection_id, Some(&**collection)).await {
+                match self
+                    .unified_engine()
+                    .compact_collection(&collection_id, Some(&**collection))
+                    .await
+                {
                     Ok(result) => {
-                        info!("✅ Compacted collection {}: {} files processed", 
-                              collection_id, result.output_files.unwrap_or(0));
+                        info!(
+                            "✅ Compacted collection {}: {} files processed",
+                            collection_id,
+                            result.output_files.unwrap_or(0)
+                        );
                     }
                     Err(e) => {
-                        debug!("⚠️ Compaction failed for collection {}: {}", collection_id, e);
+                        debug!(
+                            "⚠️ Compaction failed for collection {}: {}",
+                            collection_id, e
+                        );
                         // Continue with other collections
                     }
                 }
@@ -2092,18 +2188,32 @@ impl VectorOperationsService {
 
         // Trigger compaction for this collection
         if let Some(collection) = self.collection_cache.get(collection_id) {
-            match self.unified_engine().compact_collection(collection_id, Some(&**collection)).await {
+            match self
+                .unified_engine()
+                .compact_collection(collection_id, Some(&**collection))
+                .await
+            {
                 Ok(result) => {
-                    info!("✅ Compacted collection {}: {} files created, {} files processed", 
-                          collection_id, result.output_files.unwrap_or(0), result.input_files.unwrap_or(0));
+                    info!(
+                        "✅ Compacted collection {}: {} files created, {} files processed",
+                        collection_id,
+                        result.output_files.unwrap_or(0),
+                        result.input_files.unwrap_or(0)
+                    );
                 }
                 Err(e) => {
-                    debug!("⚠️ Compaction failed for collection {}: {}", collection_id, e);
+                    debug!(
+                        "⚠️ Compaction failed for collection {}: {}",
+                        collection_id, e
+                    );
                     // Don't fail the entire flush operation due to compaction issues
                 }
             }
         } else {
-            debug!("⚠️ Collection {} not found in cache, skipping compaction", collection_id);
+            debug!(
+                "⚠️ Collection {} not found in cache, skipping compaction",
+                collection_id
+            );
         }
 
         info!("✅ Force flush for collection {} completed", collection_id);
@@ -2125,7 +2235,7 @@ impl VectorOperationsService {
             Err(e) => serde_json::json!({
                 "status": "error",
                 "error": e.to_string()
-            })
+            }),
         };
 
         // Get query cache metrics - not implemented yet
@@ -2159,33 +2269,36 @@ impl VectorOperationsService {
         let wal_health = match self.wal_manager.stats().await {
             Ok(stats) => {
                 let memory_usage_mb = stats.memory_size_bytes as f64 / (1024.0 * 1024.0);
-                if memory_usage_mb > 500.0 { // More than 500MB in memory
+                if memory_usage_mb > 500.0 {
+                    // More than 500MB in memory
                     vec![format!("High WAL memory usage: {:.1}MB", memory_usage_mb)]
                 } else {
                     vec![]
                 }
             }
-            Err(e) => vec![format!("WAL stats error: {}", e)]
+            Err(e) => vec![format!("WAL stats error: {}", e)],
         };
 
         // Check storage engine health
         let storage_health = match self.storage_engine.health_check().await {
-            Ok(engine_health) => {
-                match engine_health.status.as_str() {
-                    "healthy" => vec![],
-                    _ => vec![format!("Storage engine: {}", engine_health.status)]
-                }
-            }
-            Err(e) => vec![format!("Storage engine health check failed: {}", e)]
+            Ok(engine_health) => match engine_health.status.as_str() {
+                "healthy" => vec![],
+                _ => vec![format!("Storage engine: {}", engine_health.status)],
+            },
+            Err(e) => vec![format!("Storage engine health check failed: {}", e)],
         };
-        
+
         // Combine health issues
         let mut all_issues = issues;
         all_issues.extend(wal_health);
         all_issues.extend(storage_health);
-        
+
         // Update status based on issues
-        let status = if all_issues.is_empty() { "healthy" } else { "degraded" };
+        let status = if all_issues.is_empty() {
+            "healthy"
+        } else {
+            "degraded"
+        };
 
         Ok(serde_json::json!({
             "status": status,
@@ -2327,7 +2440,7 @@ impl VectorOperationsService {
                 vec![]
             },
             metadata: metadata_map,
-            score: display_score,  // Use normalized similarity instead of raw distance
+            score: display_score, // Use normalized similarity instead of raw distance
             similarity: result.similarity,
             version: result.version,
             timestamp: result.timestamp,
@@ -2381,7 +2494,10 @@ impl VectorOperationsService {
         // DEBUG: Log the values to understand what's happening
         tracing::debug!(
             "optimized_to_proto_v1: id={}, score={}, similarity={:?}, display_score={}",
-            result.id, result.score, result.similarity, display_score
+            result.id,
+            result.score,
+            result.similarity,
+            display_score
         );
 
         crate::proto::proximadb_v1::SearchVectorRecord {
@@ -2396,11 +2512,11 @@ impl VectorOperationsService {
                 vec![]
             },
             metadata,
-            score: display_score,  // Use normalized similarity instead of raw distance
+            score: display_score, // Use normalized similarity instead of raw distance
             version: result.version,
             similarity: result.similarity,
             timestamp: result.timestamp.map(|t| t as i64),
-            source: None, // Add if needed
+            source: None,             // Add if needed
             expanded_context: vec![], // Add if needed
             semantic_similarity: result.similarity,
             quantization_info: None,

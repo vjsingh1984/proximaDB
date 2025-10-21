@@ -25,8 +25,8 @@ use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{debug, info};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -155,16 +155,26 @@ impl GraphMemtable {
 
         match op {
             GraphOperation::CreateNode { node, .. } => self.insert_node(node),
-            GraphOperation::UpdateNode { node_id, update, .. } => self.update_node(node_id, update),
+            GraphOperation::UpdateNode {
+                node_id, update, ..
+            } => self.update_node(node_id, update),
             GraphOperation::DeleteNode { node_id, .. } => self.delete_node(node_id),
             GraphOperation::CreateEdge { edge, .. } => self.insert_edge(edge),
-            GraphOperation::UpdateEdge { edge_id, update, .. } => self.update_edge(edge_id, update),
+            GraphOperation::UpdateEdge {
+                edge_id, update, ..
+            } => self.update_edge(edge_id, update),
             GraphOperation::DeleteEdge { edge_id, .. } => self.delete_edge(edge_id),
-            GraphOperation::CreateEdgeIndex { graph_id: _, index_config: _ } => {
+            GraphOperation::CreateEdgeIndex {
+                graph_id: _,
+                index_config: _,
+            } => {
                 // TODO: Implement edge index creation
                 Ok(())
             }
-            GraphOperation::DropEdgeIndex { graph_id: _, index_name: _ } => {
+            GraphOperation::DropEdgeIndex {
+                graph_id: _,
+                index_name: _,
+            } => {
                 // TODO: Implement edge index dropping
                 Ok(())
             }
@@ -197,8 +207,9 @@ impl GraphMemtable {
         self.update_csr_for_node(&node_id)?;
 
         // Update memory usage
-        let node_size = std::mem::size_of::<Node>() + node.id.len() +
-                       node.labels.iter().map(|l| l.len()).sum::<usize>();
+        let node_size = std::mem::size_of::<Node>()
+            + node.id.len()
+            + node.labels.iter().map(|l| l.len()).sum::<usize>();
         self.memory_usage.fetch_add(node_size, Ordering::Relaxed);
 
         debug!("Inserted node {} into graph {}", node_id, self.graph_id);
@@ -242,7 +253,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Node {} not found", node_id))
+                crate::core::error::StorageError::NotFound(format!("Node {} not found", node_id)),
             ))
         }
     }
@@ -263,7 +274,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Node {} not found", node_id))
+                crate::core::error::StorageError::NotFound(format!("Node {} not found", node_id)),
             ))
         }
     }
@@ -286,8 +297,10 @@ impl GraphMemtable {
         self.update_csr_for_edge(&edge)?;
 
         // Update memory usage
-        let edge_size = std::mem::size_of::<Edge>() + edge.id.len() +
-                       edge.from_node_id.len() + edge.to_node_id.len();
+        let edge_size = std::mem::size_of::<Edge>()
+            + edge.id.len()
+            + edge.from_node_id.len()
+            + edge.to_node_id.len();
         self.memory_usage.fetch_add(edge_size, Ordering::Relaxed);
 
         debug!("Inserted edge {} into graph {}", edge_id, self.graph_id);
@@ -311,7 +324,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Edge {} not found", edge_id))
+                crate::core::error::StorageError::NotFound(format!("Edge {} not found", edge_id)),
             ))
         }
     }
@@ -330,7 +343,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Edge {} not found", edge_id))
+                crate::core::error::StorageError::NotFound(format!("Edge {} not found", edge_id)),
             ))
         }
     }
@@ -382,9 +395,7 @@ impl GraphMemtable {
         let new_node_to_index = DashMap::new();
 
         // Collect all nodes
-        let mut nodes: Vec<_> = self.nodes.iter()
-            .map(|entry| entry.key().clone())
-            .collect();
+        let mut nodes: Vec<_> = self.nodes.iter().map(|entry| entry.key().clone()).collect();
         nodes.sort();
 
         // Build CSR for each node
@@ -392,7 +403,9 @@ impl GraphMemtable {
             new_node_to_index.insert(node_id.clone(), idx);
 
             // Find all outgoing edges
-            let outgoing: Vec<_> = self.edges.iter()
+            let outgoing: Vec<_> = self
+                .edges
+                .iter()
                 .filter(|e| e.from_node_id == *node_id)
                 .map(|e| e.to_node_id.clone())
                 .collect();
@@ -431,11 +444,15 @@ impl GraphMemtable {
 
     /// Create a snapshot for persistence
     pub fn create_snapshot(&self) -> GraphSnapshot {
-        let nodes = self.nodes.iter()
+        let nodes = self
+            .nodes
+            .iter()
             .map(|entry| (**entry.value()).clone())
             .collect();
 
-        let edges = self.edges.iter()
+        let edges = self
+            .edges
+            .iter()
             .map(|entry| (**entry.value()).clone())
             .collect();
 
@@ -489,9 +506,7 @@ impl GraphMemtable {
         *self.csr_targets.write() = snapshot.csr_targets;
 
         // Rebuild node_to_index
-        let nodes: Vec<_> = self.nodes.iter()
-            .map(|entry| entry.key().clone())
-            .collect();
+        let nodes: Vec<_> = self.nodes.iter().map(|entry| entry.key().clone()).collect();
         for (idx, node_id) in nodes.iter().enumerate() {
             self.node_to_index.insert(node_id.clone(), idx);
         }

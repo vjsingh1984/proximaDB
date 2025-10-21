@@ -9,9 +9,9 @@
 //! - Cosine WARNING: 35x SLOWER at 99% sparsity (must avoid!)
 //! - Detection overhead: ~1-2% for most cases
 
-use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 /// Information about vector sparsity
 #[derive(Debug, Clone)]
@@ -125,11 +125,7 @@ impl SparsityAnalyzer {
     ///
     /// # Returns
     /// SparsityInfo with detected characteristics
-    pub fn detect_sparsity(
-        &self,
-        vector: &[f32],
-        vector_id: Option<u64>,
-    ) -> SparsityInfo {
+    pub fn detect_sparsity(&self, vector: &[f32], vector_id: Option<u64>) -> SparsityInfo {
         // Check cache first
         if let Some(id) = vector_id {
             if self.config.cache_sparsity_info {
@@ -166,10 +162,7 @@ impl SparsityAnalyzer {
     }
 
     /// Detect sparsity quickly using sampling
-    pub fn detect_sparsity_quick(
-        &self,
-        vector: &[f32],
-    ) -> SparsityInfo {
+    pub fn detect_sparsity_quick(&self, vector: &[f32]) -> SparsityInfo {
         if vector.len() <= self.config.sparse_detection_sample_size {
             // Small vector, analyze fully
             self.analyze_vector(vector, None)
@@ -180,11 +173,7 @@ impl SparsityAnalyzer {
     }
 
     /// Detect combined sparsity of two vectors (for pairwise operations)
-    pub fn detect_pairwise_sparsity(
-        &self,
-        a: &[f32],
-        b: &[f32],
-    ) -> SparsityInfo {
+    pub fn detect_pairwise_sparsity(&self, a: &[f32], b: &[f32]) -> SparsityInfo {
         // Quick detection: count elements where both are zero
         let mut both_zero_count = 0;
         let dimension = a.len().min(b.len());
@@ -207,11 +196,7 @@ impl SparsityAnalyzer {
     }
 
     /// Internal: Analyze vector sparsity
-    fn analyze_vector(
-        &self,
-        vector: &[f32],
-        sample_size: Option<usize>,
-    ) -> SparsityInfo {
+    fn analyze_vector(&self, vector: &[f32], sample_size: Option<usize>) -> SparsityInfo {
         let dimension = vector.len();
 
         let (zero_count, checked_dimension) = if let Some(sample) = sample_size {
@@ -230,9 +215,7 @@ impl SparsityAnalyzer {
             (zeros, checked)
         } else {
             // Full analysis
-            let zeros = vector.iter()
-                .filter(|&&x| x.abs() < f32::EPSILON)
-                .count();
+            let zeros = vector.iter().filter(|&&x| x.abs() < f32::EPSILON).count();
             (zeros, dimension)
         };
 
@@ -255,8 +238,7 @@ impl SparsityAnalyzer {
 
     /// Check if sparse kernel should be used
     pub fn should_use_sparse_kernel(&self, info: &SparsityInfo) -> bool {
-        self.config.enable_sparse_kernels &&
-        info.is_sparse(self.config.sparse_threshold)
+        self.config.enable_sparse_kernels && info.is_sparse(self.config.sparse_threshold)
     }
 
     /// Check if cosine similarity should be avoided (warning)

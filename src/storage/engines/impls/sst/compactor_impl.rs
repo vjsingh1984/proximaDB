@@ -11,8 +11,8 @@
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::readers::sst_query_engine::{BlockIterator, SstDirectReader};
-use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::mvcc_resolution::MvccResolver;
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
 use anyhow::Result;
@@ -119,7 +119,12 @@ pub struct SstCompactor {
 
 impl SstCompactor {
     /// Notify AXIS indexes of changes during compaction
-    async fn notify_axis_of_changes(&self, stats: &ZeroCopyCompactionStats, collection_id: &str, output_file: &str) -> Result<()> {
+    async fn notify_axis_of_changes(
+        &self,
+        stats: &ZeroCopyCompactionStats,
+        collection_id: &str,
+        output_file: &str,
+    ) -> Result<()> {
         // This would integrate with AXIS similar to how EnhancedCompactionStats does it
         // For now, just log the notification
         if stats.recommend_index_rebuild {
@@ -140,7 +145,10 @@ impl SstCompactor {
 
         // Actual AXIS integration for index updates
         // TODO: Add axis_manager field to SstCompactor or use event log service
-        debug!("AXIS integration placeholder - compaction completed for collection {}", collection_id);
+        debug!(
+            "AXIS integration placeholder - compaction completed for collection {}",
+            collection_id
+        );
         Ok(())
     }
 
@@ -312,7 +320,8 @@ impl SstCompactor {
         if !stats.deleted_vector_ids.is_empty() || !stats.updated_vector_ids.is_empty() {
             // Extract collection_id from output file path or use placeholder
             let collection_id = output_file.split('/').nth(1).unwrap_or("unknown");
-            self.notify_axis_of_changes(&stats, collection_id, &output_file).await;
+            self.notify_axis_of_changes(&stats, collection_id, &output_file)
+                .await;
         }
 
         Ok(stats)
@@ -1084,7 +1093,8 @@ mod tests {
         );
 
         // Create compactor with PQ sorting
-        let compactor = SstCompactor::new(filesystem_factory, None).with_pq_sorting(quantization_engine);
+        let compactor =
+            SstCompactor::new(filesystem_factory, None).with_pq_sorting(quantization_engine);
 
         // Verify that the sorting strategy is set correctly
         assert!(matches!(

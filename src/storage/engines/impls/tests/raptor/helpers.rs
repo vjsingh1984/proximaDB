@@ -14,9 +14,9 @@
 //! - Distance calculations
 //! - Matrix building and verification
 
-use std::sync::Arc;
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+use std::sync::Arc;
 
 // ============================================================================
 // Mock Structures for Testing
@@ -96,15 +96,15 @@ pub fn create_clustered_vectors(
 // ENGINE CREATION & INITIALIZATION
 // ============================================================================
 
-use anyhow::Result;
-use std::collections::HashMap;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CompressionAlgorithm, StorageAssignment, StorageConfig,
     StorageEngine, VectorRecord,
 };
-use crate::storage::engines::impls::raptor::config::RaptorConfig;
 use crate::storage::engines::impls::raptor::RaptorEngine;
+use crate::storage::engines::impls::raptor::config::RaptorConfig;
 use crate::storage::persistence::filesystem::FileSystem;
+use anyhow::Result;
+use std::collections::HashMap;
 
 /// Create a test RAPTOR engine with default configuration
 /// Source: tests.rs
@@ -169,7 +169,9 @@ pub fn create_test_vector_records(count: usize, dimension: usize) -> Vec<VectorR
     (0..count)
         .map(|i| VectorRecord {
             id: format!("vec_{}", i),
-            vector: (0..dimension).map(|j| (i as f32 + j as f32) * 0.1).collect(),
+            vector: (0..dimension)
+                .map(|j| (i as f32 + j as f32) * 0.1)
+                .collect(),
             metadata: HashMap::new(),
             version: Some(1),
             timestamp: Some(1234567890 + i as i64),
@@ -338,7 +340,8 @@ use crate::compute::quantization::types::UnifiedQuantizationLevel;
 /// Create internal quantization config for testing
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_test_quantization_config() -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
+pub fn create_test_quantization_config()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
     crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
         primary_level: UnifiedQuantizationLevel::int8(),
         store_fp32: true,
@@ -349,7 +352,8 @@ pub fn create_test_quantization_config() -> crate::storage::engines::impls::rapt
 /// Create quantization config with PQ8
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_pq8_quantization_config() -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
+pub fn create_pq8_quantization_config()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
     crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
         primary_level: UnifiedQuantizationLevel::pq8(32),
         store_fp32: true,
@@ -405,24 +409,24 @@ pub fn create_matrix_builder(
 /// Create S3 Standard I/O profile for testing
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_s3_io_profile(
-) -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
+pub fn create_s3_io_profile()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
     crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile::s3_standard()
 }
 
 /// Create GCS Standard I/O profile for testing
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_gcs_io_profile(
-) -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
+pub fn create_gcs_io_profile()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
     crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile::gcs_standard()
 }
 
 /// Create ADLS Gen2 I/O profile for testing
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_adls_io_profile(
-) -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
+pub fn create_adls_io_profile()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
     crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile::adls_gen2()
 }
 
@@ -433,26 +437,24 @@ pub fn create_adls_io_profile(
 /// Create a SmartRowGroupSizer for S3 with OpenAI embeddings
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_openai_s3_sizer(
-) -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::openai_s3(
-    )
+pub fn create_openai_s3_sizer()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
+    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::openai_s3()
 }
 
 /// Create a SmartRowGroupSizer for GCS with BERT embeddings
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_bert_gcs_sizer(
-) -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::bert_gcs(
-    )
+pub fn create_bert_gcs_sizer()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
+    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::bert_gcs()
 }
 
 /// Create a SmartRowGroupSizer for ADLS with research vectors
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
-pub fn create_research_adls_sizer(
-) -> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
+pub fn create_research_adls_sizer()
+-> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
     crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::research_adls()
 }
 
@@ -463,8 +465,8 @@ pub fn create_research_adls_sizer(
 /// Create RaptorCachedMetadata for testing
 /// Source: unified_metadata_serializer.rs
 #[allow(dead_code)]
-pub fn create_test_raptor_metadata(
-) -> crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorCachedMetadata {
+pub fn create_test_raptor_metadata()
+-> crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorCachedMetadata {
     crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorCachedMetadata {
         file_size: 1024000,
         vector_count: 10000,
@@ -487,8 +489,8 @@ pub fn create_test_raptor_metadata(
 /// Create ArtusBloomConfig for testing
 /// Source: artus_bloom.rs
 #[allow(dead_code)]
-pub fn create_artus_bloom_config(
-) -> crate::storage::engines::impls::raptor::artus_bloom::ArtusBloomConfig {
+pub fn create_artus_bloom_config()
+-> crate::storage::engines::impls::raptor::artus_bloom::ArtusBloomConfig {
     crate::storage::engines::impls::raptor::artus_bloom::ArtusBloomConfig::default()
 }
 

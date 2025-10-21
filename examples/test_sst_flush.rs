@@ -1,13 +1,12 @@
 // Example to verify SST engine file writing
-use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::proto::proximadb_v1::{
-    VectorRecord, Collection, CollectionConfig, StorageAssignment,
-    StorageConfig, SqlValue,
+    Collection, CollectionConfig, SqlValue, StorageAssignment, StorageConfig, VectorRecord,
 };
-use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use proximadb::storage::engines::factory::StorageEngineFactory;
-use std::sync::Arc;
+use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 #[tokio::main]
@@ -38,7 +37,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut metadata = HashMap::new();
         metadata.insert(
             "index".to_string(),
-            SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64)) }
+            SqlValue {
+                value: Some(
+                    proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64),
+                ),
+            },
         );
 
         vectors.push(VectorRecord {
@@ -103,14 +106,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   ❌ No files found!");
     } else {
         for file in &files {
-            println!("   - {} ({} bytes, dir={})", file.name, file.metadata.size, file.metadata.is_directory);
+            println!(
+                "   - {} ({} bytes, dir={})",
+                file.name, file.metadata.size, file.metadata.is_directory
+            );
         }
     }
 
     // Check for SST files specifically
-    let sst_files: Vec<_> = files.iter()
-        .filter(|f| f.name.ends_with(".sst"))
-        .collect();
+    let sst_files: Vec<_> = files.iter().filter(|f| f.name.ends_with(".sst")).collect();
 
     if sst_files.is_empty() {
         println!("\n❌ No .sst files created!");
@@ -165,7 +169,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("   ✅ Search returned {} results", results.len());
                 for (i, result) in results.iter().take(3).enumerate() {
-                    println!("      #{}: {} (score: {:.4})", i+1, result.id, result.score);
+                    println!(
+                        "      #{}: {} (score: {:.4})",
+                        i + 1,
+                        result.id,
+                        result.score
+                    );
                 }
             }
         }
@@ -177,7 +186,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Keep temp directory info for manual inspection
     let path = temp_dir.path().to_path_buf();
     println!("\n📁 Temporary directory: {}", path.display());
-    println!("   Run this to inspect: ls -la {}/test_collection/data/", path.display());
+    println!(
+        "   Run this to inspect: ls -la {}/test_collection/data/",
+        path.display()
+    );
 
     // Keep the temp directory alive by not dropping it immediately
     std::mem::forget(temp_dir);

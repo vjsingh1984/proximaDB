@@ -1,12 +1,14 @@
 //! Enhanced authentication and authorization for multi-tenant enterprise
 
-pub mod sso;
-pub mod rbac;
 pub mod federated_delegation_complete;
+pub mod rbac;
+pub mod sso;
 
-pub use sso::{SSOIntegrationManager, SSOToken, SSOProvider, EnterpriseUserContext};
+pub use federated_delegation_complete::{
+    CompleteDelegationResult, CompleteFederatedIdentityDelegation,
+};
 pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
-pub use federated_delegation_complete::{CompleteFederatedIdentityDelegation, CompleteDelegationResult};
+pub use sso::{EnterpriseUserContext, SSOIntegrationManager, SSOProvider, SSOToken};
 
 use anyhow::Result;
 
@@ -14,7 +16,7 @@ use anyhow::Result;
 pub struct EnterpriseAuthManager {
     /// SSO integration manager
     sso_manager: sso::SSOIntegrationManager,
-    
+
     /// Enhanced RBAC manager
     rbac_manager: rbac::EnhancedRBACManager,
 }
@@ -30,9 +32,12 @@ impl EnterpriseAuthManager {
             rbac_manager,
         }
     }
-    
+
     /// Validate and resolve SSO token to enterprise user context
-    pub async fn validate_and_resolve_token(&self, sso_token: &SSOToken) -> Result<EnterpriseUserContext> {
+    pub async fn validate_and_resolve_token(
+        &self,
+        sso_token: &SSOToken,
+    ) -> Result<EnterpriseUserContext> {
         self.sso_manager.validate_and_resolve_token(sso_token).await
     }
 
@@ -44,19 +49,26 @@ impl EnterpriseAuthManager {
         operation: AuthorizedOperation,
     ) -> Result<AuthorizedContext> {
         // Validate SSO token and resolve user context
-        let enterprise_user = self.sso_manager.validate_and_resolve_token(sso_token).await?;
-        
+        let enterprise_user = self
+            .sso_manager
+            .validate_and_resolve_token(sso_token)
+            .await?;
+
         // Validate operation authorization with RBAC
         let authorization_result = match operation {
-            AuthorizedOperation::CollectionAccess { collection_id, operation_type } => {
-                self.rbac_manager.validate_collection_access(
-                    tenant_id,
-                    &collection_id,
-                    operation_type,
-                    &enterprise_user.clone().into(),
-                ).await?
-            },
-            // Additional operation types to be added
+            AuthorizedOperation::CollectionAccess {
+                collection_id,
+                operation_type,
+            } => {
+                self.rbac_manager
+                    .validate_collection_access(
+                        tenant_id,
+                        &collection_id,
+                        operation_type,
+                        &enterprise_user.clone().into(),
+                    )
+                    .await?
+            } // Additional operation types to be added
         };
 
         Ok(AuthorizedContext {
@@ -105,7 +117,7 @@ mod tests {
     fn test_user_context_conversion() {
         let enterprise_user = EnterpriseUserContext::system_admin();
         let storage_user: crate::storage::tenant::UserContext = enterprise_user.into();
-        
+
         assert_eq!(storage_user.user_id, "system");
         assert_eq!(storage_user.tenant_id, "system");
     }

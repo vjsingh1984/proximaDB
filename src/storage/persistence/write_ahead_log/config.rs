@@ -5,7 +5,6 @@
 
 //! WAL Configuration with Smart Defaults for Performance
 
-
 // NOTE: CompressionAlgorithm moved to unified_types.rs
 // Write Buffer-specific configuration uses the unified type
 pub use crate::core::CompressionAlgorithm;

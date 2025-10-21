@@ -1,8 +1,8 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
-};
 use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
+};
 use std::collections::HashMap;
 
 fn create_test_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorRecord> {
@@ -12,8 +12,8 @@ fn create_test_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorRecord
         let mut vector = Vec::with_capacity(dimension);
         for dim in 0..dimension {
             // Create a pattern that tests different value ranges
-            let value = ((row as f32) * 0.01 + (dim as f32) * 0.1) +
-                       (row as f32 * dim as f32).sin() * 0.05;
+            let value =
+                ((row as f32) * 0.01 + (dim as f32) * 0.1) + (row as f32 * dim as f32).sin() * 0.05;
             vector.push(value);
         }
 
@@ -22,12 +22,18 @@ fn create_test_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorRecord
             vector,
             metadata: {
                 let mut meta = HashMap::new();
-                meta.insert("row_index".to_string(), SqlValue {
-                    value: Some(sql_value::Value::Int64Value(row as i64))
-                });
-                meta.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue(format!("cat_{}", row % 10)))
-                });
+                meta.insert(
+                    "row_index".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::Int64Value(row as i64)),
+                    },
+                );
+                meta.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue(format!("cat_{}", row % 10))),
+                    },
+                );
                 meta
             },
             expires_at: None,
@@ -62,7 +68,9 @@ fn test_compression(
         VectorEncodingLayout::FullVector => "FullVector",
         VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector => "TransposeFieldEncoded",
         VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector => "GroupedFieldEncoded",
-        VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector => "TransposeBlockCompressed",
+        VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector => {
+            "TransposeBlockCompressed"
+        }
         VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector => "GroupedBlockCompressed",
         VectorEncodingLayout::Auto => "Auto",
     };
@@ -125,9 +133,11 @@ fn main() -> anyhow::Result<()> {
     println!("\n📐 Test Configuration:");
     println!("   Vectors: {}", NUM_VECTORS);
     println!("   Dimensions: {}", DIMENSION);
-    println!("   Raw data size: {} bytes ({:.2} KB)",
-             NUM_VECTORS * DIMENSION * 4,
-             (NUM_VECTORS * DIMENSION * 4) as f64 / 1024.0);
+    println!(
+        "   Raw data size: {} bytes ({:.2} KB)",
+        NUM_VECTORS * DIMENSION * 4,
+        (NUM_VECTORS * DIMENSION * 4) as f64 / 1024.0
+    );
 
     let test_vectors = create_test_vectors(NUM_VECTORS, DIMENSION);
 
@@ -166,57 +176,86 @@ fn main() -> anyhow::Result<()> {
 
     // Print detailed results table
     println!("\n📈 DETAILED RESULTS");
-    println!("═══════════════════════════════════════════════════════════════════════════════════════════");
-    println!("{:<15} │ {:<8} │ {:>10} │ {:>10} │ {:>8} │ {:>10} │ {:>10}",
-             "Strategy", "Algorithm", "Original", "Encoded", "Ratio", "Encode(ms)", "Decode(ms)");
-    println!("───────────────┼──────────┼────────────┼────────────┼──────────┼────────────┼────────────");
+    println!(
+        "═══════════════════════════════════════════════════════════════════════════════════════════"
+    );
+    println!(
+        "{:<15} │ {:<8} │ {:>10} │ {:>10} │ {:>8} │ {:>10} │ {:>10}",
+        "Strategy", "Algorithm", "Original", "Encoded", "Ratio", "Encode(ms)", "Decode(ms)"
+    );
+    println!(
+        "───────────────┼──────────┼────────────┼────────────┼──────────┼────────────┼────────────"
+    );
 
     for result in &results {
-        println!("{:<15} │ {:<8} │ {:>10} │ {:>10} │ {:>8.2}x │ {:>10.2} │ {:>10.2}",
-                 result.strategy,
-                 result.algorithm,
-                 result.original_size,
-                 result.encoded_size,
-                 result.compression_ratio,
-                 result.encode_time_ms,
-                 result.decode_time_ms);
+        println!(
+            "{:<15} │ {:<8} │ {:>10} │ {:>10} │ {:>8.2}x │ {:>10.2} │ {:>10.2}",
+            result.strategy,
+            result.algorithm,
+            result.original_size,
+            result.encoded_size,
+            result.compression_ratio,
+            result.encode_time_ms,
+            result.decode_time_ms
+        );
     }
-    println!("═══════════════════════════════════════════════════════════════════════════════════════════");
+    println!(
+        "═══════════════════════════════════════════════════════════════════════════════════════════"
+    );
 
     // Find best configurations
     println!("\n🏆 BEST CONFIGURATIONS");
     println!("────────────────────────────────────────────────────");
 
     // Best compression ratio
-    if let Some(best_ratio) = results.iter().max_by(|a, b| a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap()) {
-        println!("Best Compression Ratio: {} + {} ({:.2}x)",
-                 best_ratio.strategy, best_ratio.algorithm, best_ratio.compression_ratio);
+    if let Some(best_ratio) = results.iter().max_by(|a, b| {
+        a.compression_ratio
+            .partial_cmp(&b.compression_ratio)
+            .unwrap()
+    }) {
+        println!(
+            "Best Compression Ratio: {} + {} ({:.2}x)",
+            best_ratio.strategy, best_ratio.algorithm, best_ratio.compression_ratio
+        );
     }
 
     // Fastest encoding
-    if let Some(fastest_encode) = results.iter().min_by(|a, b| a.encode_time_ms.partial_cmp(&b.encode_time_ms).unwrap()) {
-        println!("Fastest Encoding: {} + {} ({:.2} ms)",
-                 fastest_encode.strategy, fastest_encode.algorithm, fastest_encode.encode_time_ms);
+    if let Some(fastest_encode) = results
+        .iter()
+        .min_by(|a, b| a.encode_time_ms.partial_cmp(&b.encode_time_ms).unwrap())
+    {
+        println!(
+            "Fastest Encoding: {} + {} ({:.2} ms)",
+            fastest_encode.strategy, fastest_encode.algorithm, fastest_encode.encode_time_ms
+        );
     }
 
     // Fastest decoding
-    if let Some(fastest_decode) = results.iter().min_by(|a, b| a.decode_time_ms.partial_cmp(&b.decode_time_ms).unwrap()) {
-        println!("Fastest Decoding: {} + {} ({:.2} ms)",
-                 fastest_decode.strategy, fastest_decode.algorithm, fastest_decode.decode_time_ms);
+    if let Some(fastest_decode) = results
+        .iter()
+        .min_by(|a, b| a.decode_time_ms.partial_cmp(&b.decode_time_ms).unwrap())
+    {
+        println!(
+            "Fastest Decoding: {} + {} ({:.2} ms)",
+            fastest_decode.strategy, fastest_decode.algorithm, fastest_decode.decode_time_ms
+        );
     }
 
     // Best balance (ratio * speed)
     let mut best_balance: Option<(&CompressionResult, f64)> = None;
     for result in &results {
-        let balance_score = result.compression_ratio / (result.encode_time_ms + result.decode_time_ms + 0.1);
+        let balance_score =
+            result.compression_ratio / (result.encode_time_ms + result.decode_time_ms + 0.1);
         if best_balance.is_none() || balance_score > best_balance.as_ref().unwrap().1 {
             best_balance = Some((result, balance_score));
         }
     }
 
     if let Some((best, _)) = best_balance {
-        println!("Best Balance (ratio/time): {} + {}",
-                 best.strategy, best.algorithm);
+        println!(
+            "Best Balance (ratio/time): {} + {}",
+            best.strategy, best.algorithm
+        );
     }
 
     // Strategy comparison
@@ -226,28 +265,41 @@ fn main() -> anyhow::Result<()> {
     for strategy in &strategies {
         let strategy_name = match strategy {
             VectorEncodingLayout::FullVector => "FullVector",
-            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector => "TransposeFieldEncoded",
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector => {
+                "TransposeFieldEncoded"
+            }
             VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector => "GroupedFieldEncoded",
-            VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector => "TransposeBlockCompressed",
-            VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector => "GroupedBlockCompressed",
+            VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector => {
+                "TransposeBlockCompressed"
+            }
+            VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector => {
+                "GroupedBlockCompressed"
+            }
             VectorEncodingLayout::Auto => "Auto",
         };
 
-        let strategy_results: Vec<_> = results.iter()
+        let strategy_results: Vec<_> = results
+            .iter()
             .filter(|r| r.strategy == strategy_name)
             .collect();
 
         if !strategy_results.is_empty() {
-            let avg_ratio: f64 = strategy_results.iter()
+            let avg_ratio: f64 = strategy_results
+                .iter()
                 .map(|r| r.compression_ratio)
-                .sum::<f64>() / strategy_results.len() as f64;
+                .sum::<f64>()
+                / strategy_results.len() as f64;
 
-            let avg_size: f64 = strategy_results.iter()
+            let avg_size: f64 = strategy_results
+                .iter()
                 .map(|r| r.encoded_size as f64)
-                .sum::<f64>() / strategy_results.len() as f64;
+                .sum::<f64>()
+                / strategy_results.len() as f64;
 
-            println!("{:<20}: Avg ratio {:.2}x, Avg size {:.0} bytes",
-                     strategy_name, avg_ratio, avg_size);
+            println!(
+                "{:<20}: Avg ratio {:.2}x, Avg size {:.0} bytes",
+                strategy_name, avg_ratio, avg_size
+            );
         }
     }
 

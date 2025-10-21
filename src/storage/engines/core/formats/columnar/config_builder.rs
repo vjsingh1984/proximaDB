@@ -4,11 +4,11 @@
 //! All optimizations are enabled by default, but users can selectively
 //! disable or tune them based on their specific requirements.
 
+use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
 use crate::storage::engines::core::formats::columnar::{
     FooterCacheConfig, HybridWriterConfig, WriterMode,
 };
-use crate::proto::proximadb_v1::QuantizationConfig;
 use parquet::basic::Compression;
 use std::time::Duration;
 

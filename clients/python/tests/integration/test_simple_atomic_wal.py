@@ -33,25 +33,29 @@ def test_atomic_wal():
     # Try standard REST collection creation
     print(f"\n📁 Creating collection: {collection_id}")
     
-    collection_data = {
+    collection_config = {
         "name": collection_id,
         "dimension": 384,
         "distance_metric": "cosine",
         "storage_engine": "viper"
     }
-    
-    # Use the correct REST API endpoint
-    endpoint = "/api/v1/collection"
-    
+
+    # Use the correct REST API endpoint with proper request format
+    endpoint = "/api/v1/collections"
+
     collection_created = False
     try:
         print(f"   Trying: POST {endpoint}")
+        request_data = {
+            "operation": 1,  # COLLECTION_CREATE
+            "collection_config": collection_config,
+            "query_params": {},
+            "options": {},
+            "migration_config": {}
+        }
         response = requests.post(
             f"{base_url}{endpoint}",
-            json={
-                "operation": "create",
-                "config": collection_data
-            },
+            json=request_data,
             headers={"Content-Type": "application/json"}
         )
         print(f"   Response: {response.status_code} - {response.text[:200]}")

@@ -3,11 +3,11 @@
 //! Automatically detects enterprise deployment environments and generates
 //! optimal ProximaDB configurations for one-click deployment.
 
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use tracing::{info, debug, warn};
-use async_trait::async_trait;
+use tracing::{debug, info, warn};
 
 /// Enterprise environment detector for automated deployment
 pub struct EnvironmentDetector {
@@ -243,16 +243,23 @@ impl BackupStrategy {
 impl EnvironmentDetector {
     /// Create new environment detector
     pub async fn new() -> Result<Self> {
-        let mut platform_analyzers: HashMap<PlatformType, Box<dyn PlatformAnalyzer + Send + Sync>> = HashMap::new();
+        let mut platform_analyzers: HashMap<PlatformType, Box<dyn PlatformAnalyzer + Send + Sync>> =
+            HashMap::new();
 
         // Initialize platform-specific analyzers
-        platform_analyzers.insert(PlatformType::Kubernetes, Box::new(KubernetesAnalyzer::new()));
+        platform_analyzers.insert(
+            PlatformType::Kubernetes,
+            Box::new(KubernetesAnalyzer::new()),
+        );
         platform_analyzers.insert(PlatformType::AWS, Box::new(AWSAnalyzer::new()));
         platform_analyzers.insert(PlatformType::Azure, Box::new(AzureAnalyzer::new()));
         platform_analyzers.insert(PlatformType::GCP, Box::new(GCPAnalyzer::new()));
         platform_analyzers.insert(PlatformType::DockerCompose, Box::new(DockerAnalyzer::new()));
 
-        info!("✅ Environment detector initialized with {} platform analyzers", platform_analyzers.len());
+        info!(
+            "✅ Environment detector initialized with {} platform analyzers",
+            platform_analyzers.len()
+        );
 
         Ok(Self {
             detection_config: DetectionConfig::default(),
@@ -269,17 +276,23 @@ impl EnvironmentDetector {
         info!("✅ Detected platform: {:?}", platform_type);
 
         // Step 2: Analyze platform-specific capabilities
-        let analyzer = self.platform_analyzers.get(&platform_type)
+        let analyzer = self
+            .platform_analyzers
+            .get(&platform_type)
             .ok_or_else(|| anyhow!("No analyzer available for platform: {:?}", platform_type))?;
 
         let platform_analysis = analyzer.analyze_platform().await?;
 
         // Step 3: Analyze resource availability
-        let resource_availability = self.analyze_resource_availability(&platform_analysis).await?;
-        info!("📊 Resources: {} CPU cores, {}GB memory, {}GB storage",
-              resource_availability.cpu_cores,
-              resource_availability.memory_gb,
-              resource_availability.storage_gb);
+        let resource_availability = self
+            .analyze_resource_availability(&platform_analysis)
+            .await?;
+        info!(
+            "📊 Resources: {} CPU cores, {}GB memory, {}GB storage",
+            resource_availability.cpu_cores,
+            resource_availability.memory_gb,
+            resource_availability.storage_gb
+        );
 
         // Step 4: Detect network configuration
         let network_config = self.analyze_network_configuration().await?;
@@ -288,15 +301,19 @@ impl EnvironmentDetector {
         let security_constraints = self.analyze_security_constraints().await?;
 
         // Step 6: Profile performance characteristics
-        let performance_profile = self.profile_performance_characteristics(&resource_availability).await?;
+        let performance_profile = self
+            .profile_performance_characteristics(&resource_availability)
+            .await?;
 
         // Step 7: Generate deployment recommendation
-        let deployment_recommendation = self.generate_deployment_recommendation(
-            &platform_type,
-            &resource_availability,
-            &security_constraints,
-            &performance_profile,
-        ).await?;
+        let deployment_recommendation = self
+            .generate_deployment_recommendation(
+                &platform_type,
+                &resource_availability,
+                &security_constraints,
+                &performance_profile,
+            )
+            .await?;
 
         let detected_environment = DetectedEnvironment {
             platform_type,
@@ -308,8 +325,12 @@ impl EnvironmentDetector {
             detected_at: chrono::Utc::now(),
         };
 
-        info!("✅ Environment discovery complete: {:?} deployment recommended",
-              detected_environment.recommended_deployment.deployment_strategy);
+        info!(
+            "✅ Environment discovery complete: {:?} deployment recommended",
+            detected_environment
+                .recommended_deployment
+                .deployment_strategy
+        );
 
         Ok(detected_environment)
     }
@@ -373,7 +394,10 @@ impl EnvironmentDetector {
                     {
                         Ok(nodes_output) => {
                             let success = nodes_output.status.success();
-                            debug!("📋 kubectl get nodes: {}", if success { "✅ Success" } else { "❌ Failed" });
+                            debug!(
+                                "📋 kubectl get nodes: {}",
+                                if success { "✅ Success" } else { "❌ Failed" }
+                            );
                             Ok(success)
                         }
                         Err(_) => {
@@ -402,10 +426,21 @@ impl EnvironmentDetector {
             .timeout(std::time::Duration::from_secs(5))
             .build()?;
 
-        match client.get("http://169.254.169.254/latest/meta-data/instance-id").send().await {
+        match client
+            .get("http://169.254.169.254/latest/meta-data/instance-id")
+            .send()
+            .await
+        {
             Ok(response) => {
                 let is_aws = response.status().is_success();
-                debug!("☁️ AWS metadata service: {}", if is_aws { "✅ Available" } else { "❌ Not available" });
+                debug!(
+                    "☁️ AWS metadata service: {}",
+                    if is_aws {
+                        "✅ Available"
+                    } else {
+                        "❌ Not available"
+                    }
+                );
                 Ok(is_aws)
             }
             Err(_) => {
@@ -431,7 +466,14 @@ impl EnvironmentDetector {
         {
             Ok(response) => {
                 let is_azure = response.status().is_success();
-                debug!("☁️ Azure metadata service: {}", if is_azure { "✅ Available" } else { "❌ Not available" });
+                debug!(
+                    "☁️ Azure metadata service: {}",
+                    if is_azure {
+                        "✅ Available"
+                    } else {
+                        "❌ Not available"
+                    }
+                );
                 Ok(is_azure)
             }
             Err(_) => {
@@ -457,7 +499,14 @@ impl EnvironmentDetector {
         {
             Ok(response) => {
                 let is_gcp = response.status().is_success();
-                debug!("☁️ GCP metadata service: {}", if is_gcp { "✅ Available" } else { "❌ Not available" });
+                debug!(
+                    "☁️ GCP metadata service: {}",
+                    if is_gcp {
+                        "✅ Available"
+                    } else {
+                        "❌ Not available"
+                    }
+                );
                 Ok(is_gcp)
             }
             Err(_) => {
@@ -478,7 +527,14 @@ impl EnvironmentDetector {
         {
             Ok(output) => {
                 let available = output.status.success();
-                debug!("🐳 Docker: {}", if available { "✅ Available" } else { "❌ Not available" });
+                debug!(
+                    "🐳 Docker: {}",
+                    if available {
+                        "✅ Available"
+                    } else {
+                        "❌ Not available"
+                    }
+                );
                 Ok(available)
             }
             Err(_) => {
@@ -489,7 +545,10 @@ impl EnvironmentDetector {
     }
 
     /// Analyze resource availability for ProximaDB deployment
-    async fn analyze_resource_availability(&self, platform_analysis: &PlatformAnalysis) -> Result<ResourceAvailability> {
+    async fn analyze_resource_availability(
+        &self,
+        platform_analysis: &PlatformAnalysis,
+    ) -> Result<ResourceAvailability> {
         debug!("📊 Analyzing resource availability...");
 
         // Get system information
@@ -505,7 +564,9 @@ impl EnvironmentDetector {
         let high_iops_storage = self.detect_high_iops_storage().await?;
 
         // Estimate ProximaDB capacity
-        let estimated_capacity = self.estimate_proximadb_capacity(cpu_cores, memory_gb, storage_gb).await?;
+        let estimated_capacity = self
+            .estimate_proximadb_capacity(cpu_cores, memory_gb, storage_gb)
+            .await?;
 
         let resource_availability = ResourceAvailability {
             cpu_cores,
@@ -517,8 +578,10 @@ impl EnvironmentDetector {
             estimated_capacity,
         };
 
-        info!("📊 Resource analysis: {} cores, {}GB RAM, {}GB storage, GPU: {}, High-IOPS: {}",
-              cpu_cores, memory_gb, storage_gb, gpu_available, high_iops_storage);
+        info!(
+            "📊 Resource analysis: {} cores, {}GB RAM, {}GB storage, GPU: {}, High-IOPS: {}",
+            cpu_cores, memory_gb, storage_gb, gpu_available, high_iops_storage
+        );
 
         Ok(resource_availability)
     }
@@ -572,7 +635,8 @@ impl EnvironmentDetector {
                     for line in df_output.lines().skip(1) {
                         let fields: Vec<&str> = line.split_whitespace().collect();
                         if fields.len() >= 4 {
-                            if let Ok(available_gb) = fields[3].trim_end_matches('G').parse::<u64>() {
+                            if let Ok(available_gb) = fields[3].trim_end_matches('G').parse::<u64>()
+                            {
                                 return Ok(available_gb);
                             }
                         }
@@ -590,7 +654,12 @@ impl EnvironmentDetector {
     }
 
     /// Estimate ProximaDB capacity based on resources
-    async fn estimate_proximadb_capacity(&self, cpu_cores: u32, memory_gb: u32, storage_gb: u64) -> Result<CapacityEstimate> {
+    async fn estimate_proximadb_capacity(
+        &self,
+        cpu_cores: u32,
+        memory_gb: u32,
+        storage_gb: u64,
+    ) -> Result<CapacityEstimate> {
         // ProximaDB capacity estimation based on hardware
         let max_collections = (memory_gb * 10).min(10000); // ~10 collections per GB RAM, max 10K
 
@@ -682,9 +751,15 @@ impl EnvironmentDetector {
     }
 
     // Additional detection methods (simplified implementations)
-    async fn detect_network_bandwidth(&self) -> Result<u32> { Ok(1000) } // Default 1Gbps
-    async fn detect_gpu_availability(&self) -> Result<bool> { Ok(false) } // Conservative default
-    async fn detect_high_iops_storage(&self) -> Result<bool> { Ok(true) } // Assume modern storage
+    async fn detect_network_bandwidth(&self) -> Result<u32> {
+        Ok(1000)
+    } // Default 1Gbps
+    async fn detect_gpu_availability(&self) -> Result<bool> {
+        Ok(false)
+    } // Conservative default
+    async fn detect_high_iops_storage(&self) -> Result<bool> {
+        Ok(true)
+    } // Assume modern storage
 
     /// Analyze network configuration
     async fn analyze_network_configuration(&self) -> Result<NetworkConfig> {
@@ -732,11 +807,18 @@ impl EnvironmentDetector {
     }
 
     /// Profile performance characteristics
-    async fn profile_performance_characteristics(&self, resource_availability: &ResourceAvailability) -> Result<PerformanceProfile> {
+    async fn profile_performance_characteristics(
+        &self,
+        resource_availability: &ResourceAvailability,
+    ) -> Result<PerformanceProfile> {
         debug!("⚡ Profiling performance characteristics...");
         Ok(PerformanceProfile {
             estimated_qps_capacity: resource_availability.cpu_cores * 250,
-            storage_iops: if self.detect_high_iops_storage().await? { 10000 } else { 5000 },
+            storage_iops: if self.detect_high_iops_storage().await? {
+                10000
+            } else {
+                5000
+            },
             network_latency_ms: 25.0,
             recommended_storage_engine: "NOVA".to_string(),
             optimal_configuration: OptimalConfig {
@@ -805,7 +887,8 @@ impl PlatformAnalyzer for KubernetesAnalyzer {
                 capabilities.push("Dynamic volume provisioning".to_string());
             } else {
                 limitations.push("No dynamic storage provisioning".to_string());
-                recommendations.push("Configure storage classes for dynamic provisioning".to_string());
+                recommendations
+                    .push("Configure storage classes for dynamic provisioning".to_string());
             }
         }
 
@@ -823,7 +906,9 @@ impl PlatformAnalyzer for KubernetesAnalyzer {
 pub struct AWSAnalyzer;
 
 impl AWSAnalyzer {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[async_trait]
@@ -843,7 +928,9 @@ impl PlatformAnalyzer for AWSAnalyzer {
 pub struct AzureAnalyzer;
 
 impl AzureAnalyzer {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[async_trait]
@@ -862,7 +949,9 @@ impl PlatformAnalyzer for AzureAnalyzer {
 pub struct GCPAnalyzer;
 
 impl GCPAnalyzer {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[async_trait]
@@ -881,7 +970,9 @@ impl PlatformAnalyzer for GCPAnalyzer {
 pub struct DockerAnalyzer;
 
 impl DockerAnalyzer {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[async_trait]
@@ -912,7 +1003,6 @@ impl Default for DetectionConfig {
 // Removed duplicate structs - using original definitions above
 
 // Removed duplicate NetworkConfiguration struct - use NetworkConfig instead
-
 
 #[cfg(test)]
 mod tests {
@@ -950,6 +1040,9 @@ mod tests {
         assert!(cpu_cores > 0);
         assert!(memory_gb > 0);
 
-        println!("Detected resources: {} CPU cores, {}GB memory", cpu_cores, memory_gb);
+        println!(
+            "Detected resources: {} CPU cores, {}GB memory",
+            cpu_cores, memory_gb
+        );
     }
 }

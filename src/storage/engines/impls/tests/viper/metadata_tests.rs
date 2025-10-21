@@ -11,7 +11,7 @@ use std::sync::Arc;
 #[test]
 fn test_viper_metadata_serialization() {
     use crate::storage::engines::impls::viper::unified_metadata_serializer::{
-        ViperCachedMetadata, ViperMetadataSerializer, RowGroupMetadata, ClusterInfo,
+        ClusterInfo, RowGroupMetadata, ViperCachedMetadata, ViperMetadataSerializer,
     };
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 
@@ -19,24 +19,20 @@ fn test_viper_metadata_serialization() {
         file_path: "/data/viper/collection1.parquet".to_string(),
         total_rows: 1000000,
         row_group_count: 10,
-        row_groups: vec![
-            RowGroupMetadata {
-                id: 0,
-                row_count: 100000,
-                file_offset: 0,
-                total_byte_size: 1024000,
-                compressed_size: 512000,
-            }
-        ],
+        row_groups: vec![RowGroupMetadata {
+            id: 0,
+            row_count: 100000,
+            file_offset: 0,
+            total_byte_size: 1024000,
+            compressed_size: 512000,
+        }],
         column_stats: HashMap::new(),
-        cluster_metadata: Some(vec![
-            ClusterInfo {
-                cluster_id: 0,
-                centroid: vec![0.1, 0.2, 0.3],
-                vector_count: 1000,
-                radius: 0.5,
-            }
-        ]),
+        cluster_metadata: Some(vec![ClusterInfo {
+            cluster_id: 0,
+            centroid: vec![0.1, 0.2, 0.3],
+            vector_count: 1000,
+            radius: 0.5,
+        }]),
         parquet_footer: Some(vec![1, 2, 3, 4]),
         file_size: 10485760,
         last_modified: 1234567890,
@@ -98,20 +94,23 @@ fn test_should_cache_metadata() {
 
 #[tokio::test]
 async fn test_viper_sidecar_write_read() {
-    use crate::storage::engines::impls::viper::codebook_sidecar::ViperCodebookSidecarManager;
     use crate::storage::engines::core::formats::codebook_metadata::QuantizationCodebookMetadata;
+    use crate::storage::engines::impls::viper::codebook_sidecar::ViperCodebookSidecarManager;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
     let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let fs_factory = FilesystemFactory::create(config).await.unwrap();
-    let filesystem = fs_factory.get_unified_caching_filesystem("file:///tmp", "test_collection".to_string(), "viper".to_string()).unwrap();
+    let filesystem = fs_factory
+        .get_unified_caching_filesystem(
+            "file:///tmp",
+            "test_collection".to_string(),
+            "viper".to_string(),
+        )
+        .unwrap();
 
-    let manager = ViperCodebookSidecarManager::new(
-        "test_collection".to_string(),
-        filesystem,
-    );
+    let manager = ViperCodebookSidecarManager::new("test_collection".to_string(), filesystem);
 
     let parquet_path = temp_dir.path().join("test.parquet");
     let metadata = QuantizationCodebookMetadata {
@@ -125,7 +124,10 @@ async fn test_viper_sidecar_write_read() {
     };
 
     // Write sidecar
-    manager.write_sidecar(&parquet_path, &metadata).await.unwrap();
+    manager
+        .write_sidecar(&parquet_path, &metadata)
+        .await
+        .unwrap();
 
     // Read back
     let read_metadata = manager.read_sidecar(&parquet_path).await.unwrap().unwrap();

@@ -1,11 +1,13 @@
 //! Global Manifest Singleton with Convenience Functions
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use super::{GlobalManifestService, GlobalManifestServiceConfig, GlobalManifestEntry, WalEntryStatus};
+use super::{
+    GlobalManifestEntry, GlobalManifestService, GlobalManifestServiceConfig, WalEntryStatus,
+};
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
 
 /// Global singleton instance
@@ -19,12 +21,21 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
     }
 
     info!("🌐 Initializing global WAL manifest");
-    info!("🔍 DEBUG: Config has {} data directories", config.multi_disk.data_directories.len());
-    info!("🔍 DEBUG: Config global_manifest_url: {:?}", config.global_manifest_url);
+    info!(
+        "🔍 DEBUG: Config has {} data directories",
+        config.multi_disk.data_directories.len()
+    );
+    info!(
+        "🔍 DEBUG: Config global_manifest_url: {:?}",
+        config.global_manifest_url
+    );
 
     // Get manifest location from explicit config or fallback to primary disk
     let wal_base_url = if let Some(ref explicit_url) = config.global_manifest_url {
-        info!("📌 Using explicit global manifest location: {}", explicit_url);
+        info!(
+            "📌 Using explicit global manifest location: {}",
+            explicit_url
+        );
         explicit_url.clone()
     } else {
         // Fallback: first data directory + /wal
@@ -42,21 +53,24 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
     info!("🔍 DEBUG: Final wal_base_url: {}", wal_base_url);
 
     if config.multi_disk.data_directories.len() > 1 {
-        info!("📊 Multi-disk mode: {} data disks, 1 global manifest location",
-              config.multi_disk.data_directories.len());
+        info!(
+            "📊 Multi-disk mode: {} data disks, 1 global manifest location",
+            config.multi_disk.data_directories.len()
+        );
     }
 
     let filesystem_factory = Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create_default()
             .await
-            .context("Failed to create filesystem factory")?
+            .context("Failed to create filesystem factory")?,
     );
 
     let service = GlobalManifestService::new(
         GlobalManifestServiceConfig::default(),
         filesystem_factory,
         wal_base_url,
-    ).await?;
+    )
+    .await?;
 
     match GLOBAL_MANIFEST.set(service.clone()) {
         Ok(()) => {
@@ -99,15 +113,13 @@ pub async fn shutdown() -> Result<()> {
 
 /// Append entry asynchronously (high performance)
 pub async fn append_async(entry: GlobalManifestEntry) -> Result<()> {
-    let service = get_service()
-        .ok_or_else(|| anyhow!("Global manifest not initialized"))?;
+    let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
     service.append_async(entry).await
 }
 
 /// Append entry synchronously (waits for disk write)
 pub async fn append_sync(entry: GlobalManifestEntry) -> Result<()> {
-    let service = get_service()
-        .ok_or_else(|| anyhow!("Global manifest not initialized"))?;
+    let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
     service.append_sync(entry).await
 }
 
@@ -137,21 +149,18 @@ pub async fn get_all_entries() -> Vec<GlobalManifestEntry> {
 
 /// Create a checkpoint
 pub async fn create_checkpoint() -> Result<super::GlobalCheckpoint> {
-    let service = get_service()
-        .ok_or_else(|| anyhow!("Global manifest not initialized"))?;
+    let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
     service.create_checkpoint().await
 }
 
 /// Cleanup checkpointed entries
 pub async fn cleanup_checkpointed() -> Result<usize> {
-    let service = get_service()
-        .ok_or_else(|| anyhow!("Global manifest not initialized"))?;
+    let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
     service.cleanup_checkpointed_entries().await
 }
 
 /// Mark entries as flushed
 pub async fn mark_flushed(batch_ids: &[String]) -> Result<()> {
-    let service = get_service()
-        .ok_or_else(|| anyhow!("Global manifest not initialized"))?;
+    let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
     service.mark_flushed(batch_ids).await
 }

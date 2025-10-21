@@ -10,10 +10,10 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
-use dashmap::DashMap;
 
 use super::super::core::MemtableCore;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -111,7 +111,8 @@ where
 
     async fn range_scan(&self, from: K, limit: Option<usize>) -> Result<Vec<(K, V)>> {
         // DashMap doesn't have built-in range scan, so we need to collect and sort
-        let mut results: Vec<(K, V)> = self.data
+        let mut results: Vec<(K, V)> = self
+            .data
             .iter()
             .filter(|entry| *entry.key() >= from)
             .map(|entry| (entry.key().clone(), entry.value().clone()))
@@ -144,7 +145,8 @@ where
         let mut removed_size = 0;
 
         // Collect keys to remove
-        let keys_to_remove: Vec<K> = self.data
+        let keys_to_remove: Vec<K> = self
+            .data
             .iter()
             .filter(|entry| *entry.key() <= threshold)
             .map(|entry| entry.key().clone())
@@ -177,7 +179,8 @@ where
 
     async fn get_all_ordered(&self) -> Result<Vec<(K, V)>> {
         // Collect all entries and sort by key
-        let mut results: Vec<(K, V)> = self.data
+        let mut results: Vec<(K, V)> = self
+            .data
             .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();

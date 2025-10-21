@@ -150,9 +150,7 @@ mod tests {
     #[test]
     fn test_raw_normalized_embeddings() {
         // Normalized embeddings in [-1, 1]
-        let values: Vec<f32> = (0..256)
-            .map(|i| ((i % 200) as f32 / 100.0) - 1.0)
-            .collect();
+        let values: Vec<f32> = (0..256).map(|i| ((i % 200) as f32 / 100.0) - 1.0).collect();
 
         let encoded = encode_f32(&values).unwrap();
         let decoded = decode_f32(&encoded).unwrap();

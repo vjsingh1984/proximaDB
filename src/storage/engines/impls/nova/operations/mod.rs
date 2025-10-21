@@ -5,10 +5,10 @@
 //! - Compaction operations: Merging and optimizing stored files
 //! - Search operations: Query execution with progressive refinement
 
-pub mod flush;
 pub mod compaction;
+pub mod flush;
 pub mod search;
 
-pub use flush::NovaFlushOperations;
 pub use compaction::NovaCompactionOperations;
+pub use flush::NovaFlushOperations;
 pub use search::NovaSearchOperations;

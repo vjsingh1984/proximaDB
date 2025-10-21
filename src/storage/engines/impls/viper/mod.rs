@@ -238,12 +238,12 @@ pub mod column_filter;
 // New modular structure for better maintainability
 pub mod types;
 // Schema now uses columnar module's ColumnarSchema
+pub mod codebook_sidecar;
 pub mod compaction;
 pub mod engine;
 pub mod flush;
 pub mod unified_metadata_serializer;
 pub mod unified_strategy_reader;
-pub mod codebook_sidecar;
 
 // Test modules
 
@@ -279,9 +279,7 @@ pub use eventlog_flush::ViperFlushNotifier;
 pub use flush::Flush;
 
 // Re-export unified strategy readers
-pub use unified_strategy_reader::{
-    UnifiedVIPERReader, DirectVIPERReader, CachedVIPERReader
-};
+pub use unified_strategy_reader::{CachedVIPERReader, DirectVIPERReader, UnifiedVIPERReader};
 // pub use clustering_models::{ClusteringModelManager, EfficientClusteringModel, ClusteringStats}; // Moved to AXIS
 
 // Unified search engine removed - using IntegratedSearchOptimizer from core::search

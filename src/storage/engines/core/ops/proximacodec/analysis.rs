@@ -28,8 +28,8 @@
 //!
 //! Therefore, Raw is the ONLY safe fallback for normalized f32 ML embeddings.
 
-use super::types::ProximaScheme;
 use super::simd_analysis::{simd_min_max_f32, simd_zero_count_f32};
+use super::types::ProximaScheme;
 
 // ============================================================================
 // Pattern Analysis Helper Functions
@@ -52,7 +52,10 @@ fn analyze_linearity(data: &[f32]) -> f64 {
     let bits: Vec<i32> = data.iter().map(|&v| v.to_bits() as i32).collect();
 
     // Compute first deltas
-    let first_deltas: Vec<i64> = bits.windows(2).map(|w| (w[1] as i64) - (w[0] as i64)).collect();
+    let first_deltas: Vec<i64> = bits
+        .windows(2)
+        .map(|w| (w[1] as i64) - (w[0] as i64))
+        .collect();
 
     if first_deltas.len() < 2 {
         return 0.0;
@@ -85,7 +88,11 @@ fn analyze_linearity(data: &[f32]) -> f64 {
     let dd_range = (max_dd - min_dd).unsigned_abs() as f64;
 
     // Calculate mean absolute value of stable second deltas
-    let mean_abs_dd = stable_deltas.iter().map(|&d| d.unsigned_abs() as f64).sum::<f64>() / stable_deltas.len() as f64;
+    let mean_abs_dd = stable_deltas
+        .iter()
+        .map(|&d| d.unsigned_abs() as f64)
+        .sum::<f64>()
+        / stable_deltas.len() as f64;
 
     // Linearity score based on how consistent the second deltas are
     // Perfect linear: all second deltas are identical (range ≈ 0)
@@ -136,7 +143,10 @@ fn analyze_smoothness(data: &[f32]) -> f64 {
     let bits: Vec<i32> = data.iter().map(|&v| v.to_bits() as i32).collect();
 
     // Compute first deltas
-    let deltas: Vec<i64> = bits.windows(2).map(|w| (w[1] as i64) - (w[0] as i64)).collect();
+    let deltas: Vec<i64> = bits
+        .windows(2)
+        .map(|w| (w[1] as i64) - (w[0] as i64))
+        .collect();
 
     // Smooth data has consistent delta magnitude
     let mean_delta = deltas.iter().sum::<i64>() as f64 / deltas.len() as f64;
@@ -153,11 +163,7 @@ fn analyze_smoothness(data: &[f32]) -> f64 {
 
     // Calculate coefficient of variation
     let cov = if mean_delta.abs() < 1e-9 {
-        if std_dev < 100.0 {
-            1.0
-        } else {
-            0.0
-        }
+        if std_dev < 100.0 { 1.0 } else { 0.0 }
     } else {
         std_dev / mean_delta.abs()
     };
@@ -429,10 +435,7 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
         } else {
             1
         };
-        return ProximaScheme::PForDoubleDelta {
-            base,
-            first_delta,
-        }; // 45-55% compression
+        return ProximaScheme::PForDoubleDelta { base, first_delta }; // 45-55% compression
     }
 
     // Case 3: Smooth but not necessarily linear (gradual changes)
@@ -463,7 +466,8 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
         let reference = calculate_reference_value(data);
 
         // Calculate optimal bit width for offsets
-        let max_offset = ((max_bits - reference).unsigned_abs()).max((min_bits - reference).unsigned_abs());
+        let max_offset =
+            ((max_bits - reference).unsigned_abs()).max((min_bits - reference).unsigned_abs());
         let bits = if max_offset == 0 {
             1
         } else {
@@ -551,8 +555,11 @@ mod tests {
             | ProximaScheme::PForDoubleDelta { .. }
             | ProximaScheme::FrameOfReference { .. }
             | ProximaScheme::Simple8b
-            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
-            other => panic!("Expected delta or FOR scheme for monotonic data, got {:?}", other),
+            | ProximaScheme::Raw => {} // Raw is safe fallback for f32 (no expansion)
+            other => panic!(
+                "Expected delta or FOR scheme for monotonic data, got {:?}",
+                other
+            ),
         }
     }
 
@@ -572,7 +579,7 @@ mod tests {
             | ProximaScheme::PForDoubleDelta { .. }
             | ProximaScheme::FrameOfReference { .. }
             | ProximaScheme::Simple8b
-            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
+            | ProximaScheme::Raw => {} // Raw is safe fallback for f32 (no expansion)
             other => panic!("Expected outlier-handling scheme, got {:?}", other),
         }
     }
@@ -585,10 +592,11 @@ mod tests {
 
         // Should choose Delta, Simple8b, or Raw for smooth non-linear data
         match scheme {
-            ProximaScheme::Delta { .. }
-            | ProximaScheme::Simple8b
-            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
-            other => panic!("Expected Delta/Simple8b/Raw for smooth gradual data, got {:?}", other),
+            ProximaScheme::Delta { .. } | ProximaScheme::Simple8b | ProximaScheme::Raw => {} // Raw is safe fallback for f32 (no expansion)
+            other => panic!(
+                "Expected Delta/Simple8b/Raw for smooth gradual data, got {:?}",
+                other
+            ),
         }
     }
 
@@ -596,17 +604,18 @@ mod tests {
     fn test_random_jaggy_data() {
         // Random data - delta encoding would make it worse!
         let values: Vec<f32> = vec![
-            1.5, 100.2, -50.3, 200.1, -10.5, 300.7, -150.2, 75.3,
-            -200.1, 50.5, 400.3, -300.1, 25.7, 150.2, -100.5, 500.1
+            1.5, 100.2, -50.3, 200.1, -10.5, 300.7, -150.2, 75.3, -200.1, 50.5, 400.3, -300.1,
+            25.7, 150.2, -100.5, 500.1,
         ];
         let scheme = analyze_and_choose_scheme_f32(&values);
 
         // Should choose BitPacked, Simple8b, or Raw (NOT delta schemes)
         match scheme {
-            ProximaScheme::BitPacked { .. }
-            | ProximaScheme::Simple8b
-            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
-            other => panic!("Expected BitPacked/Simple8b/Raw for random data (avoid delta!), got {:?}", other),
+            ProximaScheme::BitPacked { .. } | ProximaScheme::Simple8b | ProximaScheme::Raw => {} // Raw is safe fallback for f32 (no expansion)
+            other => panic!(
+                "Expected BitPacked/Simple8b/Raw for random data (avoid delta!), got {:?}",
+                other
+            ),
         }
     }
 
@@ -621,7 +630,7 @@ mod tests {
 
         // Should choose SparseBitmap or SparseCOO for sparse data
         match scheme {
-            ProximaScheme::SparseBitmap | ProximaScheme::SparseCOO => {},
+            ProximaScheme::SparseBitmap | ProximaScheme::SparseCOO => {}
             other => panic!("Expected Sparse scheme for sparse data, got {:?}", other),
         }
     }
@@ -634,7 +643,7 @@ mod tests {
 
         // Should choose RunLength for constant data
         match scheme {
-            ProximaScheme::RunLength => {},
+            ProximaScheme::RunLength => {}
             other => panic!("Expected RunLength for constant data, got {:?}", other),
         }
     }
@@ -651,8 +660,11 @@ mod tests {
             | ProximaScheme::Delta { .. }
             | ProximaScheme::PForDelta { .. }
             | ProximaScheme::DoubleDelta { .. }
-            | ProximaScheme::PForDoubleDelta { .. } => {},
-            other => panic!("Expected FrameOfReference or delta scheme for clustered data, got {:?}", other),
+            | ProximaScheme::PForDoubleDelta { .. } => {}
+            other => panic!(
+                "Expected FrameOfReference or delta scheme for clustered data, got {:?}",
+                other
+            ),
         }
     }
 
@@ -661,32 +673,42 @@ mod tests {
         // Test jaggedness detection on random data
         let random: Vec<f32> = vec![1.0, 100.0, -50.0, 200.0, -10.0, 150.0];
         let jaggedness = analyze_jaggedness(&random);
-        assert!(jaggedness > 0.1, "Random data should have measurable jaggedness score: {}", jaggedness);
+        assert!(
+            jaggedness > 0.1,
+            "Random data should have measurable jaggedness score: {}",
+            jaggedness
+        );
 
         // Test smoothness detection on gradual changes
         let smooth: Vec<f32> = (0..50).map(|i| (i as f32 * 0.05).sin()).collect();
         let smoothness = analyze_smoothness(&smooth);
-        assert!(smoothness > 0.2, "Smooth data should have reasonable smoothness score: {}", smoothness);
+        assert!(
+            smoothness > 0.2,
+            "Smooth data should have reasonable smoothness score: {}",
+            smoothness
+        );
 
         // Test that constant data has good scores
         let constant = vec![42.5f32; 50];
         let const_linearity = analyze_linearity(&constant);
-        assert!(const_linearity > 0.5, "Constant data should have high linearity: {}", const_linearity);
+        assert!(
+            const_linearity > 0.5,
+            "Constant data should have high linearity: {}",
+            const_linearity
+        );
     }
 
     #[test]
     fn test_normalized_embeddings_pattern() {
         // Normalized ML embeddings in [-1, 1] with high entropy
         // These should use Raw encoding to avoid transformation overhead
-        let embeddings: Vec<f32> = (0..256)
-            .map(|i| ((i % 200) as f32 / 100.0) - 1.0)
-            .collect();
+        let embeddings: Vec<f32> = (0..256).map(|i| ((i % 200) as f32 / 100.0) - 1.0).collect();
 
         let scheme = analyze_and_choose_scheme_f32(&embeddings);
 
         // Should choose Raw for normalized embeddings
         match scheme {
-            ProximaScheme::Raw => {},
+            ProximaScheme::Raw => {}
             other => panic!("Expected Raw for normalized embeddings, got {:?}", other),
         }
     }
@@ -694,9 +716,7 @@ mod tests {
     #[test]
     fn test_normalized_smooth_not_raw() {
         // Normalized but highly structured data - could use delta schemes OR Raw
-        let smooth_normalized: Vec<f32> = (0..100)
-            .map(|i| (i as f32 * 0.01))
-            .collect();
+        let smooth_normalized: Vec<f32> = (0..100).map(|i| (i as f32 * 0.01)).collect();
 
         let scheme = analyze_and_choose_scheme_f32(&smooth_normalized);
 

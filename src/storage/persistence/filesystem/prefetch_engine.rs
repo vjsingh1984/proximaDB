@@ -101,7 +101,9 @@ impl PrefetchEngine {
             };
 
             let probability = match prediction {
-                AccessPrediction::Likely(p) | AccessPrediction::Possible(p) | AccessPrediction::Unlikely(p) => p,
+                AccessPrediction::Likely(p)
+                | AccessPrediction::Possible(p)
+                | AccessPrediction::Unlikely(p) => p,
             };
 
             self.queue_prefetch(path, priority, probability).await;
@@ -111,7 +113,8 @@ impl PrefetchEngine {
         let correlated = tracker.get_correlated_files(path).await;
         for correlated_path in correlated {
             if !self.prefetching.contains_key(&correlated_path) {
-                self.queue_prefetch(&correlated_path, PrefetchPriority::Low, 0.4).await;
+                self.queue_prefetch(&correlated_path, PrefetchPriority::Low, 0.4)
+                    .await;
             }
         }
     }
@@ -125,7 +128,10 @@ impl PrefetchEngine {
             return;
         }
 
-        debug!("Queuing {} for prefetch (priority: {:?}, prob: {:.2})", path, priority, probability);
+        debug!(
+            "Queuing {} for prefetch (priority: {:?}, prob: {:.2})",
+            path, priority, probability
+        );
 
         queue.push(PrefetchRequest {
             path: path.to_string(),
@@ -152,16 +158,23 @@ impl PrefetchEngine {
         let mut to_prefetch = Vec::new();
 
         // Sort queue by priority (high priority first)
-        queue.sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap_or(std::cmp::Ordering::Equal));
+        queue.sort_by(|a, b| {
+            b.priority
+                .partial_cmp(&a.priority)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Take up to 5 items from queue (highest priority first)
         while to_prefetch.len() < 5 && !queue.is_empty() {
             let request = queue.remove(0); // Remove from front (highest priority)
             // Mark as in progress
-            self.prefetching.insert(request.path.clone(), PrefetchStatus::InProgress);
+            self.prefetching
+                .insert(request.path.clone(), PrefetchStatus::InProgress);
             to_prefetch.push(request.path);
 
-            self.stats.total_prefetches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.stats
+                .total_prefetches
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
 
         to_prefetch
@@ -170,10 +183,16 @@ impl PrefetchEngine {
     /// Mark prefetch as completed
     pub async fn mark_completed(&self, path: &str, success: bool) {
         if success {
-            self.prefetching.insert(path.to_string(), PrefetchStatus::Completed);
-            self.stats.successful_prefetches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.prefetching
+                .insert(path.to_string(), PrefetchStatus::Completed);
+            self.stats
+                .successful_prefetches
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         } else {
-            self.prefetching.insert(path.to_string(), PrefetchStatus::Failed("Failed to prefetch".to_string()));
+            self.prefetching.insert(
+                path.to_string(),
+                PrefetchStatus::Failed("Failed to prefetch".to_string()),
+            );
         }
 
         // Clean up old entries after some time
@@ -189,7 +208,9 @@ impl PrefetchEngine {
     pub fn was_prefetched(&self, path: &str) -> bool {
         if let Some(entry) = self.prefetching.get(path) {
             if matches!(entry.value(), PrefetchStatus::Completed) {
-                self.stats.useful_prefetches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.stats
+                    .useful_prefetches
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return true;
             }
         }
@@ -199,7 +220,8 @@ impl PrefetchEngine {
     /// Check if we have capacity for more prefetches
     async fn has_capacity(&self) -> bool {
         // Limit concurrent prefetches
-        let in_progress = self.prefetching
+        let in_progress = self
+            .prefetching
             .iter()
             .filter(|entry| matches!(entry.value(), PrefetchStatus::InProgress))
             .count();
@@ -212,7 +234,8 @@ impl PrefetchEngine {
         let mut wasted = 0;
 
         // Find completed prefetches that weren't used
-        let to_remove: Vec<String> = self.prefetching
+        let to_remove: Vec<String> = self
+            .prefetching
             .iter()
             .filter_map(|entry| {
                 if matches!(entry.value(), PrefetchStatus::Completed) {
@@ -229,7 +252,9 @@ impl PrefetchEngine {
         }
 
         if wasted > 0 {
-            self.stats.wasted_prefetches.fetch_add(wasted, std::sync::atomic::Ordering::Relaxed);
+            self.stats
+                .wasted_prefetches
+                .fetch_add(wasted, std::sync::atomic::Ordering::Relaxed);
             debug!("Cleaned up {} wasted prefetches", wasted);
         }
     }
@@ -237,10 +262,22 @@ impl PrefetchEngine {
     /// Get prefetch statistics
     pub fn stats(&self) -> PrefetchStatistics {
         PrefetchStatistics {
-            total_prefetches: self.stats.total_prefetches.load(std::sync::atomic::Ordering::Relaxed),
-            successful_prefetches: self.stats.successful_prefetches.load(std::sync::atomic::Ordering::Relaxed),
-            useful_prefetches: self.stats.useful_prefetches.load(std::sync::atomic::Ordering::Relaxed),
-            wasted_prefetches: self.stats.wasted_prefetches.load(std::sync::atomic::Ordering::Relaxed),
+            total_prefetches: self
+                .stats
+                .total_prefetches
+                .load(std::sync::atomic::Ordering::Relaxed),
+            successful_prefetches: self
+                .stats
+                .successful_prefetches
+                .load(std::sync::atomic::Ordering::Relaxed),
+            useful_prefetches: self
+                .stats
+                .useful_prefetches
+                .load(std::sync::atomic::Ordering::Relaxed),
+            wasted_prefetches: self
+                .stats
+                .wasted_prefetches
+                .load(std::sync::atomic::Ordering::Relaxed),
             queue_size: 0, // Will be updated when needed
         }
     }
@@ -297,9 +334,15 @@ mod tests {
         let engine = PrefetchEngine::new(true);
 
         // Queue multiple items with different priorities
-        engine.queue_prefetch("file1.parquet", PrefetchPriority::Low, 0.3).await;
-        engine.queue_prefetch("file2.parquet", PrefetchPriority::High, 0.9).await;
-        engine.queue_prefetch("file3.parquet", PrefetchPriority::Medium, 0.6).await;
+        engine
+            .queue_prefetch("file1.parquet", PrefetchPriority::Low, 0.3)
+            .await;
+        engine
+            .queue_prefetch("file2.parquet", PrefetchPriority::High, 0.9)
+            .await;
+        engine
+            .queue_prefetch("file3.parquet", PrefetchPriority::Medium, 0.6)
+            .await;
 
         let to_prefetch = engine.process_queue().await;
 

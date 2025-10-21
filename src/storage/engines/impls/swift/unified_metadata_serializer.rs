@@ -7,8 +7,8 @@
 use anyhow::Result;
 use bytes::Bytes;
 use std::any::Any;
-use std::fmt::Debug;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 use serde::{Deserialize, Serialize};
@@ -134,7 +134,8 @@ impl EngineMetadataSerializer for SwiftUnifiedMetadataSerializer {
         // [Header][SuperBlock Index][DataBlocks][Footer]
         // The SuperBlock Index is the most valuable part to cache
 
-        if data.len() < 64 { // Minimum header size
+        if data.len() < 64 {
+            // Minimum header size
             return None;
         }
 
@@ -145,19 +146,16 @@ impl EngineMetadataSerializer for SwiftUnifiedMetadataSerializer {
 
         // Read index offset from header (bytes 8-16)
         let index_offset = u64::from_le_bytes([
-            data[8], data[9], data[10], data[11],
-            data[12], data[13], data[14], data[15],
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
         ]) as usize;
 
         // Read index size from header (bytes 16-24)
         let index_size = u64::from_le_bytes([
-            data[16], data[17], data[18], data[19],
-            data[20], data[21], data[22], data[23],
+            data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
         ]) as usize;
 
         // Validate index location
-        if index_offset == 0 || index_size == 0 ||
-           index_offset + index_size > data.len() {
+        if index_offset == 0 || index_size == 0 || index_offset + index_size > data.len() {
             return None;
         }
 
@@ -167,19 +165,19 @@ impl EngineMetadataSerializer for SwiftUnifiedMetadataSerializer {
         // For SWIFT, we also want to include the header for navigation hints
         let mut cacheable = Vec::with_capacity(64 + index_size);
         cacheable.extend_from_slice(&data[0..64]); // Header
-        cacheable.extend_from_slice(index_data);    // Index
+        cacheable.extend_from_slice(index_data); // Index
 
         Some(Bytes::from(cacheable))
     }
 
     fn should_cache_metadata(&self, file_path: &str) -> bool {
         // Cache metadata for SWIFT files
-        file_path.ends_with(".swift") ||
-        file_path.contains("/swift/") ||
-        file_path.contains("_swift_") ||
-        file_path.contains("/superblocks/") ||
-        file_path.contains("/hierarchical/") ||
-        file_path.contains("/proxima/")
+        file_path.ends_with(".swift")
+            || file_path.contains("/swift/")
+            || file_path.contains("_swift_")
+            || file_path.contains("/superblocks/")
+            || file_path.contains("/hierarchical/")
+            || file_path.contains("/proxima/")
     }
 }
 
@@ -196,28 +194,24 @@ mod tests {
             superblock_count: 10,
             datablock_count: 100,
             tree_depth: 3,
-            superblock_metadata: vec![
-                SuperBlockMetadata {
-                    superblock_id: 0,
-                    start_offset: 0,
-                    end_offset: 5242880,
-                    datablock_count: 10,
-                    record_count: 5000,
-                    centroid: vec![0.0; 768],
-                    quantized_signature: vec![0xAB; 96], // 768/8 bytes for binary quantization
-                    tree_node_count: 15,
-                    leaf_node_count: 8,
-                },
-            ],
+            superblock_metadata: vec![SuperBlockMetadata {
+                superblock_id: 0,
+                start_offset: 0,
+                end_offset: 5242880,
+                datablock_count: 10,
+                record_count: 5000,
+                centroid: vec![0.0; 768],
+                quantized_signature: vec![0xAB; 96], // 768/8 bytes for binary quantization
+                tree_node_count: 15,
+                leaf_node_count: 8,
+            }],
             navigation_hints: NavigationHints {
-                hot_paths: vec![
-                    TreePath {
-                        path_id: "path_001".to_string(),
-                        superblock_sequence: vec![0, 3, 7],
-                        avg_latency_us: 50,
-                        hit_rate: 0.95,
-                    },
-                ],
+                hot_paths: vec![TreePath {
+                    path_id: "path_001".to_string(),
+                    superblock_sequence: vec![0, 3, 7],
+                    avg_latency_us: 50,
+                    hit_rate: 0.95,
+                }],
                 prefetch_superblocks: vec![0, 1, 2],
                 cache_priorities: HashMap::from([(0, 10), (1, 8), (2, 6)]),
                 access_frequencies: HashMap::from([(0, 1000), (1, 800), (2, 600)]),

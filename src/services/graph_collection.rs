@@ -20,7 +20,7 @@
 //! the same pattern as vector collections service.
 
 use crate::core::error::ProximaDBError;
-use crate::proto::proximadb_v1::{GraphCollection, GraphSchema, CreateGraphRequest};
+use crate::proto::proximadb_v1::{CreateGraphRequest, GraphCollection, GraphSchema};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::info;
@@ -56,16 +56,18 @@ impl GraphCollectionService {
 
         // Check if graph already exists
         if self.collections.contains_key(graph_id) {
-            return Err(ProximaDBError::InvalidInput(
-                format!("Graph collection '{}' already exists", graph_id)
-            ));
+            return Err(ProximaDBError::InvalidInput(format!(
+                "Graph collection '{}' already exists",
+                graph_id
+            )));
         }
 
         // Check limits
         if self.collections.len() >= self.max_graphs {
-            return Err(ProximaDBError::InvalidInput(
-                format!("Maximum number of graphs ({}) exceeded", self.max_graphs)
-            ));
+            return Err(ProximaDBError::InvalidInput(format!(
+                "Maximum number of graphs ({}) exceeded",
+                self.max_graphs
+            )));
         }
 
         // Create graph collection metadata
@@ -84,7 +86,8 @@ impl GraphCollectionService {
         };
 
         let collection_arc = Arc::new(collection);
-        self.collections.insert(graph_id.clone(), collection_arc.clone());
+        self.collections
+            .insert(graph_id.clone(), collection_arc.clone());
 
         info!("Created graph collection: {}", graph_id);
         Ok(collection_arc)
@@ -92,7 +95,10 @@ impl GraphCollectionService {
 
     /// Get graph collection metadata
     pub async fn get_graph(&self, graph_id: &str) -> Result<Option<Arc<GraphCollection>>> {
-        Ok(self.collections.get(graph_id).map(|entry| Arc::clone(&entry)))
+        Ok(self
+            .collections
+            .get(graph_id)
+            .map(|entry| Arc::clone(&entry)))
     }
 
     /// Delete a graph collection
@@ -102,15 +108,20 @@ impl GraphCollectionService {
                 info!("Deleted graph collection: {}", graph_id);
                 Ok(())
             }
-            None => Err(ProximaDBError::InvalidInput(
-                format!("Graph collection '{}' not found", graph_id)
-            ))
+            None => Err(ProximaDBError::InvalidInput(format!(
+                "Graph collection '{}' not found",
+                graph_id
+            ))),
         }
     }
 
     /// List all graph collections
     pub async fn list_graphs(&self) -> Result<Vec<Arc<GraphCollection>>> {
-        Ok(self.collections.iter().map(|entry| Arc::clone(&entry)).collect())
+        Ok(self
+            .collections
+            .iter()
+            .map(|entry| Arc::clone(&entry))
+            .collect())
     }
 
     /// Update graph schema
@@ -128,28 +139,32 @@ impl GraphCollectionService {
             info!("Updated schema for graph: {}", graph_id);
             Ok(())
         } else {
-            Err(ProximaDBError::InvalidInput(
-                format!("Graph collection '{}' not found", graph_id)
-            ))
+            Err(ProximaDBError::InvalidInput(format!(
+                "Graph collection '{}' not found",
+                graph_id
+            )))
         }
     }
 
     /// Validate that a graph exists before operations
     pub async fn ensure_graph_exists(&self, graph_id: &str) -> Result<Arc<GraphCollection>> {
-        self.get_graph(graph_id).await?
-            .ok_or_else(|| ProximaDBError::InvalidInput(
-                format!("Graph collection '{}' does not exist", graph_id)
-            ))
+        self.get_graph(graph_id).await?.ok_or_else(|| {
+            ProximaDBError::InvalidInput(format!("Graph collection '{}' does not exist", graph_id))
+        })
     }
 
     /// Get graph statistics
-    pub async fn get_graph_stats(&self, graph_id: &str) -> Result<Option<crate::proto::proximadb_v1::GraphStats>> {
+    pub async fn get_graph_stats(
+        &self,
+        graph_id: &str,
+    ) -> Result<Option<crate::proto::proximadb_v1::GraphStats>> {
         if let Some(collection) = self.get_graph(graph_id).await? {
             Ok(collection.stats.clone())
         } else {
-            Err(ProximaDBError::InvalidInput(
-                format!("Graph collection '{}' not found", graph_id)
-            ))
+            Err(ProximaDBError::InvalidInput(format!(
+                "Graph collection '{}' not found",
+                graph_id
+            )))
         }
     }
 }

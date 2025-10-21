@@ -58,7 +58,11 @@ mod tests {
         }
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
+            let collection_id = params
+                .collection_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone();
 
             self.operation_calls
                 .lock()
@@ -86,7 +90,11 @@ mod tests {
         }
 
         async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
+            let collection_id = params
+                .collection_id
+                .as_ref()
+                .unwrap_or(&"unknown".to_string())
+                .clone();
 
             self.operation_calls
                 .lock()
@@ -254,7 +262,10 @@ mod tests {
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
 
-        metrics_updater.record_operation(collection_id, operation_update).await.unwrap();
+        metrics_updater
+            .record_operation(collection_id, operation_update)
+            .await
+            .unwrap();
 
         // Simulate search operation with metrics
         let search_update = SearchMetricsUpdate {
@@ -266,24 +277,47 @@ mod tests {
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
 
-        metrics_updater.record_search(collection_id, search_update).await.unwrap();
+        metrics_updater
+            .record_search(collection_id, search_update)
+            .await
+            .unwrap();
 
         // Allow metrics processing time
         sleep(Duration::from_millis(200)).await;
 
         // Verify metrics were recorded
-        let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
-        assert!(stored_metrics.is_some(), "VectorOperationsService metrics should be stored");
+        let stored_metrics = metrics_store
+            .collection_metrics(collection_id)
+            .await
+            .unwrap();
+        assert!(
+            stored_metrics.is_some(),
+            "VectorOperationsService metrics should be stored"
+        );
 
         let collection_metrics = stored_metrics.unwrap();
         assert_eq!(collection_metrics.collection_id, collection_id);
-        assert!(collection_metrics.total_inserts > 0, "Insert operations should be recorded");
-        assert!(collection_metrics.total_searches > 0, "Search operations should be recorded");
-        assert!(collection_metrics.avg_insert_latency_us > 0.0, "Insert latency should be recorded");
-        assert!(collection_metrics.avg_search_latency_us > 0.0, "Search latency should be recorded");
+        assert!(
+            collection_metrics.total_inserts > 0,
+            "Insert operations should be recorded"
+        );
+        assert!(
+            collection_metrics.total_searches > 0,
+            "Search operations should be recorded"
+        );
+        assert!(
+            collection_metrics.avg_insert_latency_us > 0.0,
+            "Insert latency should be recorded"
+        );
+        assert!(
+            collection_metrics.avg_search_latency_us > 0.0,
+            "Search latency should be recorded"
+        );
 
-        debug!("📊 VectorOperationsService metrics: {} inserts, {} searches",
-               collection_metrics.total_inserts, collection_metrics.total_searches);
+        debug!(
+            "📊 VectorOperationsService metrics: {} inserts, {} searches",
+            collection_metrics.total_inserts, collection_metrics.total_searches
+        );
 
         info!("✅ VectorOperationsService metrics integration test passed");
     }
@@ -482,8 +516,13 @@ mod tests {
 
         // Create mock storage engine
         let mock_engine = Arc::new(MockStorageEngineWithMetrics::new("viper"));
-        flush_coordinator.register_storage_engine("viper", mock_engine.clone()).await;
-        bg_manager.register_storage_engine("viper", mock_engine.clone()).await.unwrap();
+        flush_coordinator
+            .register_storage_engine("viper", mock_engine.clone())
+            .await;
+        bg_manager
+            .register_storage_engine("viper", mock_engine.clone())
+            .await
+            .unwrap();
 
         let collection_id = "end_to_end_integration_test";
         let context = create_test_context(collection_id, StorageEngineType::Viper);
@@ -496,7 +535,10 @@ mod tests {
             bytes_processed: 50 * 384 * 4,
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
-        metrics_updater.record_operation(collection_id, operation_update).await.unwrap();
+        metrics_updater
+            .record_operation(collection_id, operation_update)
+            .await
+            .unwrap();
 
         let search_update = SearchMetricsUpdate {
             query_latency_us: 1800.0,
@@ -506,24 +548,27 @@ mod tests {
             index_used: "hnsw_e2e".to_string(),
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
-        metrics_updater.record_search(collection_id, search_update).await.unwrap();
+        metrics_updater
+            .record_search(collection_id, search_update)
+            .await
+            .unwrap();
 
         // Step 2: Execute FlushCoordinator operation
         let test_vectors = create_test_vectors(25);
         let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(test_vectors);
 
-        let flush_result = flush_coordinator.execute_coordinated_flush(
-            collection_id,
-            flush_data,
-            None,
-            Some(&context),
-        ).await;
+        let flush_result = flush_coordinator
+            .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))
+            .await;
         assert!(flush_result.is_ok());
 
         // Step 3: Execute BackgroundManager compaction
         let storage_engines = Arc::new(RwLock::new({
             let mut engines = HashMap::new();
-            engines.insert("viper".to_string(), mock_engine.clone() as Arc<dyn UnifiedStorageEngine>);
+            engines.insert(
+                "viper".to_string(),
+                mock_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+            );
             engines
         }));
 
@@ -532,44 +577,92 @@ mod tests {
             &storage_engines,
             &context,
             Some(&metrics_updater_dyn),
-        ).await;
+        )
+        .await;
         assert!(compaction_result.is_ok());
 
         // Allow all metrics to be processed
         sleep(Duration::from_millis(500)).await;
 
         // Step 4: Verify comprehensive metrics collection
-        let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
-        assert!(stored_metrics.is_some(), "End-to-end metrics should be stored");
+        let stored_metrics = metrics_store
+            .collection_metrics(collection_id)
+            .await
+            .unwrap();
+        assert!(
+            stored_metrics.is_some(),
+            "End-to-end metrics should be stored"
+        );
 
         let collection_metrics = stored_metrics.unwrap();
         assert_eq!(collection_metrics.collection_id, collection_id);
 
         // Verify all operation types were recorded
-        assert!(collection_metrics.total_inserts > 0, "VectorOperationsService inserts should be recorded");
-        assert!(collection_metrics.total_searches > 0, "VectorOperationsService searches should be recorded");
-        assert!(collection_metrics.total_flushes > 0, "FlushCoordinator flushes should be recorded");
-        assert!(collection_metrics.total_compactions > 0, "BackgroundManager compactions should be recorded");
+        assert!(
+            collection_metrics.total_inserts > 0,
+            "VectorOperationsService inserts should be recorded"
+        );
+        assert!(
+            collection_metrics.total_searches > 0,
+            "VectorOperationsService searches should be recorded"
+        );
+        assert!(
+            collection_metrics.total_flushes > 0,
+            "FlushCoordinator flushes should be recorded"
+        );
+        assert!(
+            collection_metrics.total_compactions > 0,
+            "BackgroundManager compactions should be recorded"
+        );
 
         // Verify latency metrics
-        assert!(collection_metrics.avg_insert_latency_us > 0.0, "Insert latency should be recorded");
-        assert!(collection_metrics.avg_search_latency_us > 0.0, "Search latency should be recorded");
+        assert!(
+            collection_metrics.avg_insert_latency_us > 0.0,
+            "Insert latency should be recorded"
+        );
+        assert!(
+            collection_metrics.avg_search_latency_us > 0.0,
+            "Search latency should be recorded"
+        );
 
         // Verify timestamps
-        assert!(collection_metrics.last_flush_timestamp > 0, "Flush timestamp should be recorded");
-        assert!(collection_metrics.last_compaction_timestamp > 0, "Compaction timestamp should be recorded");
-        assert!(collection_metrics.updated_at > 0, "Updated timestamp should be current");
+        assert!(
+            collection_metrics.last_flush_timestamp > 0,
+            "Flush timestamp should be recorded"
+        );
+        assert!(
+            collection_metrics.last_compaction_timestamp > 0,
+            "Compaction timestamp should be recorded"
+        );
+        assert!(
+            collection_metrics.updated_at > 0,
+            "Updated timestamp should be current"
+        );
 
         // Verify storage engine operations occurred
         let engine_calls = mock_engine.get_operation_calls().await;
-        assert!(engine_calls.iter().any(|call| call.starts_with("flush:")), "Flush operation should have occurred");
-        assert!(engine_calls.iter().any(|call| call.starts_with("compact:")), "Compaction operation should have occurred");
+        assert!(
+            engine_calls.iter().any(|call| call.starts_with("flush:")),
+            "Flush operation should have occurred"
+        );
+        assert!(
+            engine_calls.iter().any(|call| call.starts_with("compact:")),
+            "Compaction operation should have occurred"
+        );
 
         debug!("📊 End-to-end metrics summary:");
-        debug!("   📈 Inserts: {}, Searches: {}", collection_metrics.total_inserts, collection_metrics.total_searches);
-        debug!("   💾 Flushes: {}, Compactions: {}", collection_metrics.total_flushes, collection_metrics.total_compactions);
-        debug!("   ⏱️  Avg Insert: {:.1}µs, Avg Search: {:.1}µs",
-               collection_metrics.avg_insert_latency_us, collection_metrics.avg_search_latency_us);
+        debug!(
+            "   📈 Inserts: {}, Searches: {}",
+            collection_metrics.total_inserts, collection_metrics.total_searches
+        );
+        debug!(
+            "   💾 Flushes: {}, Compactions: {}",
+            collection_metrics.total_flushes, collection_metrics.total_compactions
+        );
+        debug!(
+            "   ⏱️  Avg Insert: {:.1}µs, Avg Search: {:.1}µs",
+            collection_metrics.avg_insert_latency_us, collection_metrics.avg_search_latency_us
+        );
         debug!("   🔧 Storage operations: {:?}", engine_calls);
 
         info!("✅ End-to-end metrics collection test passed");

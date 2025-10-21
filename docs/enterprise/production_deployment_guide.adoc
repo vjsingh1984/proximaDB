@@ -457,8 +457,14 @@ RUST_LOG=proximadb::memory=debug ./proximadb-server
 # Monitor storage engine performance
 RUST_LOG=proximadb::storage=info ./proximadb-server 2>&1 | grep throughput
 
-# Run engine-specific benchmarks
-cargo run --release --bin proximadb-bench -- --engine SST --vectors 100000
+# Run engine-specific benchmarks (graph)
+cargo bench --bench bench_17_graph_engines
+
+# Graph ops and traversal benchmarks
+cargo bench --bench bench_14_graph_operations
+
+# Generate CSV performance report (graph engines)
+RUN_BENCHMARKS=true cargo run --release --bench graph_engine_reporter
 ```
 
 == **Backup and Recovery**

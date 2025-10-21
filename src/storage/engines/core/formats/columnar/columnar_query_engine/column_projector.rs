@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use arrow::datatypes::Schema;
 use parquet::arrow::ProjectionMask;
-use parquet::schema::types::{Type, SchemaDescriptor};
+use parquet::schema::types::{SchemaDescriptor, Type};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -52,7 +52,7 @@ impl ProjectionBuilder {
             // ProjectionMask::roots expects SchemaDescriptor, not Type
             // For now, create mask from indices directly
             // Convert Type to SchemaDescriptor if needed, or use from_raw_projection
-            Ok(ProjectionMask::all())  // TODO: Implement proper projection with SchemaDescriptor
+            Ok(ProjectionMask::all()) // TODO: Implement proper projection with SchemaDescriptor
         }
     }
 
@@ -97,7 +97,8 @@ impl ColumnProjection {
     /// Check if projection is valid for schema
     pub fn validate(&self, schema: &Schema) -> Result<()> {
         for col in &self.required_columns {
-            schema.field_with_name(col)
+            schema
+                .field_with_name(col)
                 .with_context(|| format!("Required column '{}' not found", col))?;
         }
         Ok(())

@@ -250,7 +250,7 @@ fn extract_records_from_batch(
             id: expected_id.clone(),
             vector,
             metadata: HashMap::new(), // Would extract if needed
-            timestamp: Some(0),         // Would extract from timestamp column
+            timestamp: Some(0),       // Would extract from timestamp column
             updated_at: None,
             expires_at: None,
             version: None,

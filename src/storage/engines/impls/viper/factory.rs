@@ -637,14 +637,17 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
         fields.push(Field::new(
             crate::storage::engines::core::formats::columnar::FIELD_ID,
             DataType::Utf8,
-            true
+            true,
         ));
         // Use FixedSizeList with a default dimension - actual dimension should come from collection config
         // TODO: Get dimension from collection config context
         let default_dimension = 128; // This should come from collection config
         fields.push(Field::new(
             crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), default_dimension),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                default_dimension,
+            ),
             true, // Nullable for sparse vectors
         ));
 
@@ -652,14 +655,14 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
         fields.push(Field::new(
             crate::storage::engines::core::formats::columnar::FIELD_VERSION,
             DataType::Int8,
-            true
+            true,
         ));
 
         // Audit field - stores creation or update time
         fields.push(Field::new(
             crate::storage::engines::core::formats::columnar::FIELD_UPDATED_AT,
             DataType::Int64,
-            true
+            true,
         ));
 
         // Dynamic filterable metadata columns

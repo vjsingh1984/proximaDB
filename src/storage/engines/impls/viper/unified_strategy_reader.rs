@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 /// Unified VIPER reader that implements strategy-aware reading
 pub struct UnifiedVIPERReader {
@@ -49,7 +49,11 @@ impl UnifiedVIPERReader {
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
     ) -> Result<Self> {
-        Self::new(filesystem_factory, collection_id, ReadAccessStrategy::DirectStream)
+        Self::new(
+            filesystem_factory,
+            collection_id,
+            ReadAccessStrategy::DirectStream,
+        )
     }
 
     /// Create a reader optimized for search (cached Parquet metadata)
@@ -60,7 +64,9 @@ impl UnifiedVIPERReader {
         Self::new(
             filesystem_factory,
             collection_id,
-            ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            ReadAccessStrategy::CachedSearch {
+                prefetch_metadata: true,
+            },
         )
     }
 
@@ -76,7 +82,9 @@ impl UnifiedVIPERReader {
             }
             _ => {
                 // Cached Parquet read with footer caching
-                let cached_fs = self.cached_filesystem.as_ref()
+                let cached_fs = self
+                    .cached_filesystem
+                    .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Cached filesystem not initialized"))?;
                 let _data = cached_fs.read(file_path).await?;
                 // TODO: Use cached Parquet metadata

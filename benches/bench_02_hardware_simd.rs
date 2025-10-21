@@ -8,18 +8,20 @@
 //! Benchmarks for SIMD-accelerated distance computation with realistic embeddings
 
 mod common;
-use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+use common::benchmark_utils::{STANDARD_BATCH_SIZES, STANDARD_DIMENSIONS, print_system_info};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use proximadb::compute::distance_computation::{
-    DistanceMetric, UnifiedDistanceCompute,
-};
-use proximadb::core::hardware_capabilities;
 use common::{EmbeddingGenerator, EmbeddingModel};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use proximadb::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
+use proximadb::core::hardware_capabilities;
 use tracing::debug;
 
 /// Generate realistic embedding vectors for benchmarking
-fn generate_embedding_vectors(count: usize, dimension: usize, model: EmbeddingModel) -> Vec<Vec<f32>> {
+fn generate_embedding_vectors(
+    count: usize,
+    dimension: usize,
+    model: EmbeddingModel,
+) -> Vec<Vec<f32>> {
     let mut generator = EmbeddingGenerator::new(model);
     generator.generate_batch(count, dimension)
 }
@@ -32,12 +34,13 @@ fn benchmark_dimensions(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_distance_dimensions");
 
     // Test standard dimensions with appropriate embedding models
-    let test_configs: Vec<(usize, EmbeddingModel)> = STANDARD_DIMENSIONS.iter()
+    let test_configs: Vec<(usize, EmbeddingModel)> = STANDARD_DIMENSIONS
+        .iter()
         .map(|&dim| match dim {
-            384 => (dim, EmbeddingModel::Normalized),   // MiniLM
-            768 => (dim, EmbeddingModel::Bert),          // BERT
-            1536 => (dim, EmbeddingModel::OpenAIAda),    // OpenAI Ada
-            _ => (dim, EmbeddingModel::Normalized),      // Others
+            384 => (dim, EmbeddingModel::Normalized), // MiniLM
+            768 => (dim, EmbeddingModel::Bert),       // BERT
+            1536 => (dim, EmbeddingModel::OpenAIAda), // OpenAI Ada
+            _ => (dim, EmbeddingModel::Normalized),   // Others
         })
         .collect();
 
@@ -150,7 +153,10 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
     // Get hardware info
     let calculator = UnifiedDistanceCompute::default();
     debug!("\nHardware Backend:");
-    debug!("  Available backends: {:?}", calculator.available_backends());
+    debug!(
+        "  Available backends: {:?}",
+        calculator.available_backends()
+    );
 
     let mut group = c.benchmark_group("hardware_backends");
 

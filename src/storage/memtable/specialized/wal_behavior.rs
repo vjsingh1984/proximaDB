@@ -15,9 +15,9 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
@@ -60,9 +60,7 @@ impl WALVectorBatch {
 
                 // Also add key=value pairs for exact matching
                 let value_str = match &value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                        s.clone()
-                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         n.to_string()
                     }
@@ -233,9 +231,11 @@ pub struct WALBehaviorWrapper {
     flush_state: Arc<RwLock<FlushState>>,
 
     /// Distributed mode: idempotency tokens per collection
-    idempotency_tokens: Arc<RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
+    idempotency_tokens:
+        Arc<RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
     /// Distributed mode: per-collection partition sequencers (partition_key -> seq)
-    partition_sequences: Arc<RwLock<std::collections::HashMap<String, std::collections::HashMap<String, u64>>>>,
+    partition_sequences:
+        Arc<RwLock<std::collections::HashMap<String, std::collections::HashMap<String, u64>>>>,
 }
 
 impl WALBehaviorWrapper {
@@ -303,8 +303,10 @@ impl WALBehaviorWrapper {
             }
             "bincode" => {
                 // Use Bincode deserializer
-                bincode::deserialize::<Vec<crate::proto::proximadb_v1::VectorRecord>>(&operation.payload_data)
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize Bincode payload: {}", e))?
+                bincode::deserialize::<Vec<crate::proto::proximadb_v1::VectorRecord>>(
+                    &operation.payload_data,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize Bincode payload: {}", e))?
             }
             format => {
                 anyhow::bail!("Unsupported payload format: {}", format);
@@ -341,12 +343,20 @@ impl WALBehaviorWrapper {
         let current_usage = {
             let coord = self.batch_coordinator.read().await;
             if let Some(col) = coord.batches.get(collection_id) {
-                col.values().filter(|b| !b.is_flushed).map(|b| b.total_size_bytes as u64).sum()
-            } else { 0 }
+                col.values()
+                    .filter(|b| !b.is_flushed)
+                    .map(|b| b.total_size_bytes as u64)
+                    .sum()
+            } else {
+                0
+            }
         };
         let threshold = self.config.flush_threshold_bytes as u64;
         if current_usage >= threshold {
-            anyhow::bail!("BACKPRESSURE: collection {} over memtable threshold; retry later", collection_id);
+            anyhow::bail!(
+                "BACKPRESSURE: collection {} over memtable threshold; retry later",
+                collection_id
+            );
         }
         let batch_id = batch.batch_id.to_base62();
         let vector_count = batch.vector_records.len();
@@ -809,14 +819,18 @@ impl WALBehaviorWrapper {
     /// Distributed: register idempotency token; returns false if duplicate
     pub async fn register_idempotency(&self, collection_id: &str, token: &str) -> bool {
         let mut map = self.idempotency_tokens.write().await;
-        let set = map.entry(collection_id.to_string()).or_insert_with(Default::default);
+        let set = map
+            .entry(collection_id.to_string())
+            .or_insert_with(Default::default);
         set.insert(token.to_string())
     }
 
     /// Distributed: get next partition sequence
     pub async fn next_partition_sequence(&self, collection_id: &str, partition_key: &str) -> u64 {
         let mut all = self.partition_sequences.write().await;
-        let per = all.entry(collection_id.to_string()).or_insert_with(Default::default);
+        let per = all
+            .entry(collection_id.to_string())
+            .or_insert_with(Default::default);
         let seq = per.entry(partition_key.to_string()).or_insert(0);
         *seq += 1;
         *seq
@@ -1192,9 +1206,14 @@ mod tests {
         for i in 0..3 {
             let now = chrono::Utc::now().timestamp_millis();
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("version".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
-            });
+            metadata.insert(
+                "version".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        i.to_string(),
+                    )),
+                },
+            );
 
             let vector_record = crate::proto::proximadb_v1::VectorRecord {
                 id: vector_id.to_string(),

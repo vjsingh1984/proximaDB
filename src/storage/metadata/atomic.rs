@@ -639,7 +639,9 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
                     name: versioned.name,
                     dimension: versioned.dimension as u32,
-                    distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32), // Default for now
+                    distance_metric: Some(
+                        crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                    ), // Default for now
                     ..Default::default()
                 }),
                 stats: Some(crate::proto::proximadb_v1::CollectionStats {
@@ -725,7 +727,9 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     config: Some(crate::proto::proximadb_v1::CollectionConfig {
                         name: versioned.name,
                         dimension: versioned.dimension as u32,
-                        distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32), // Default for now
+                        distance_metric: Some(
+                            crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                        ), // Default for now
                         ..Default::default()
                     }),
                     stats: Some(crate::proto::proximadb_v1::CollectionStats {

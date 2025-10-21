@@ -26,12 +26,26 @@ fn create_test_vectors_with_metadata(
     (start_id..start_id + count)
         .map(|i| {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("batch_id".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue((i / 100).to_string())),
-            });
-            metadata.insert("timestamp".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(chrono::Utc::now().timestamp().to_string())),
-            });
+            metadata.insert(
+                "batch_id".to_string(),
+                proximadb::proto::proximadb_v1::SqlValue {
+                    value: Some(
+                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            (i / 100).to_string(),
+                        ),
+                    ),
+                },
+            );
+            metadata.insert(
+                "timestamp".to_string(),
+                proximadb::proto::proximadb_v1::SqlValue {
+                    value: Some(
+                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            chrono::Utc::now().timestamp().to_string(),
+                        ),
+                    ),
+                },
+            );
 
             VectorRecord {
                 id: format!("vec_{}", i),

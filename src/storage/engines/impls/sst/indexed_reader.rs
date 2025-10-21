@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::index_based_filter::{
     ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// SST-specific metadata source representing an SST file
@@ -138,7 +138,8 @@ impl SSTIndexBasedReader {
                 .expect("Failed to create filesystem factory"),
         );
         // Create UnifiedCachingFilesystem for the reader
-        let base_fs = filesystem.get_filesystem("file://")
+        let base_fs = filesystem
+            .get_filesystem("file://")
             .expect("Failed to get base filesystem");
         let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,

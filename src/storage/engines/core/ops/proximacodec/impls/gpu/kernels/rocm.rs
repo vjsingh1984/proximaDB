@@ -42,8 +42,10 @@ impl RocmContext {
     pub fn new(total_vectors: usize, dimension: usize) -> Result<Self> {
         let config = GpuBatchConfig::for_backend(&HardwareBackend::ROCm, total_vectors, dimension);
 
-        debug!("🔥 [ROCm] Initializing context: {} vectors, dim={}",
-               total_vectors, dimension);
+        debug!(
+            "🔥 [ROCm] Initializing context: {} vectors, dim={}",
+            total_vectors, dimension
+        );
 
         Ok(Self { config })
     }
@@ -72,13 +74,21 @@ impl RocmContext {
 /// }
 /// ```
 pub fn rocm_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
-    trace!("🔧 [ROCm] Delta encode: {} values, base={}", values.len(), base);
+    trace!(
+        "🔧 [ROCm] Delta encode: {} values, base={}",
+        values.len(),
+        base
+    );
 
     // TODO: Real ROCm/HIP implementation
     // For now, use CPU fallback (HIP kernels require separate compilation)
     let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
 
-    debug!("✅ [ROCm] Delta encoded {} values → {} deltas", values.len(), deltas.len());
+    debug!(
+        "✅ [ROCm] Delta encoded {} values → {} deltas",
+        values.len(),
+        deltas.len()
+    );
     Ok(deltas)
 }
 
@@ -96,12 +106,20 @@ pub fn rocm_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 /// }
 /// ```
 pub fn rocm_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
-    trace!("🔧 [ROCm] Delta decode: {} deltas, base={}", deltas.len(), base);
+    trace!(
+        "🔧 [ROCm] Delta decode: {} deltas, base={}",
+        deltas.len(),
+        base
+    );
 
     // TODO: Real ROCm/HIP implementation
     let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
 
-    debug!("✅ [ROCm] Delta decoded {} deltas → {} values", deltas.len(), values.len());
+    debug!(
+        "✅ [ROCm] Delta decoded {} deltas → {} values",
+        deltas.len(),
+        values.len()
+    );
     Ok(values)
 }
 
@@ -132,7 +150,11 @@ pub fn rocm_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 /// }
 /// ```
 pub fn rocm_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [ROCm] BitPacked encode: {} values, {}b/val", values.len(), bits);
+    trace!(
+        "🔧 [ROCm] BitPacked encode: {} values, {}b/val",
+        values.len(),
+        bits
+    );
 
     // TODO: Real ROCm/HIP implementation with parallel bit-packing
     // For now, use CPU fallback
@@ -140,7 +162,11 @@ pub fn rocm_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     let byte_count = (total_bits + 7) / 8;
     let mut result = vec![0u8; byte_count];
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
 
     for (i, &value) in values.iter().enumerate() {
         let bit_offset = i * bits as usize;
@@ -155,16 +181,29 @@ pub fn rocm_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         }
     }
 
-    debug!("✅ [ROCm] BitPacked encoded {} values → {} bytes", values.len(), result.len());
+    debug!(
+        "✅ [ROCm] BitPacked encoded {} values → {} bytes",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
 /// ROCm BitPacked decoding for f32
 pub fn rocm_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [ROCm] BitPacked decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
+    trace!(
+        "🔧 [ROCm] BitPacked decode: {} bytes, {}b/val, count={}",
+        packed.len(),
+        bits,
+        count
+    );
 
     // TODO: Real ROCm/HIP implementation
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
     let mut result = Vec::with_capacity(count);
 
     for i in 0..count {
@@ -186,7 +225,11 @@ pub fn rocm_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
         result.push(f32::from_bits(value & mask));
     }
 
-    debug!("✅ [ROCm] BitPacked decoded {} bytes → {} values", packed.len(), result.len());
+    debug!(
+        "✅ [ROCm] BitPacked decoded {} bytes → {} values",
+        packed.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -197,9 +240,17 @@ pub fn rocm_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
 /// ROCm FrameOfReference encoding
 ///
 /// Combines delta encoding with bit-packing
-pub fn rocm_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [ROCm] FrameOfReference encode: {} values, ref={}, {}b/val",
-           values.len(), reference, bits);
+pub fn rocm_frame_of_reference_encode_f32(
+    values: &[f32],
+    reference: i64,
+    bits: u8,
+) -> Result<Vec<u8>> {
+    trace!(
+        "🔧 [ROCm] FrameOfReference encode: {} values, ref={}, {}b/val",
+        values.len(),
+        reference,
+        bits
+    );
 
     // Step 1: Compute offsets (parallel in HIP kernel)
     let reference_f32 = reference as f32;
@@ -211,7 +262,11 @@ pub fn rocm_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits: 
     let mut result = vec![0u8; byte_count];
 
     // TODO: Real ROCm/HIP parallel bit-packing
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
 
     for (i, &offset) in offsets.iter().enumerate() {
         let bit_offset = i * bits as usize;
@@ -226,19 +281,36 @@ pub fn rocm_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits: 
         }
     }
 
-    debug!("✅ [ROCm] FrameOfReference encoded {} values → {} bytes",
-           values.len(), result.len());
+    debug!(
+        "✅ [ROCm] FrameOfReference encoded {} values → {} bytes",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
 /// ROCm FrameOfReference decoding
-pub fn rocm_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [ROCm] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
-           packed.len(), reference, bits, count);
+pub fn rocm_frame_of_reference_decode_f32(
+    packed: &[u8],
+    reference: i64,
+    bits: u8,
+    count: usize,
+) -> Result<Vec<f32>> {
+    trace!(
+        "🔧 [ROCm] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
+        packed.len(),
+        reference,
+        bits,
+        count
+    );
 
     // Step 1: Bit-unpack offsets (parallel in HIP kernel)
     // TODO: Real ROCm/HIP parallel bit-unpacking
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
     let mut offsets = Vec::with_capacity(count);
 
     for i in 0..count {
@@ -262,10 +334,16 @@ pub fn rocm_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u
 
     // Step 2: Add reference back (parallel in HIP kernel)
     let reference_f32 = reference as f32;
-    let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+    let values: Vec<f32> = offsets
+        .iter()
+        .map(|&offset| offset as f32 + reference_f32)
+        .collect();
 
-    debug!("✅ [ROCm] FrameOfReference decoded {} bytes → {} values",
-           packed.len(), values.len());
+    debug!(
+        "✅ [ROCm] FrameOfReference decoded {} bytes → {} values",
+        packed.len(),
+        values.len()
+    );
     Ok(values)
 }
 
@@ -288,21 +366,32 @@ pub fn rocm_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u
 /// }
 /// ```
 pub fn rocm_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [ROCm] Zigzag encode: {} values, {}b/val", values.len(), bits);
+    trace!(
+        "🔧 [ROCm] Zigzag encode: {} values, {}b/val",
+        values.len(),
+        bits
+    );
 
     // TODO: Real ROCm/HIP parallel zigzag
-    let zigzag: Vec<i64> = values.iter().map(|&v| {
-        let n = v.to_bits() as i32;
-        let zz = (n << 1) ^ (n >> 31);
-        zz as i64
-    }).collect();
+    let zigzag: Vec<i64> = values
+        .iter()
+        .map(|&v| {
+            let n = v.to_bits() as i32;
+            let zz = (n << 1) ^ (n >> 31);
+            zz as i64
+        })
+        .collect();
 
     // Bit-pack zigzag values
     let total_bits = zigzag.len() * bits as usize;
     let byte_count = (total_bits + 7) / 8;
     let mut result = vec![0u8; byte_count];
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
 
     for (i, &zz) in zigzag.iter().enumerate() {
         let bit_offset = i * bits as usize;
@@ -317,16 +406,29 @@ pub fn rocm_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         }
     }
 
-    debug!("✅ [ROCm] Zigzag encoded {} values → {} bytes", values.len(), result.len());
+    debug!(
+        "✅ [ROCm] Zigzag encoded {} values → {} bytes",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
 /// ROCm Zigzag decoding
 pub fn rocm_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [ROCm] Zigzag decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
+    trace!(
+        "🔧 [ROCm] Zigzag decode: {} bytes, {}b/val, count={}",
+        packed.len(),
+        bits,
+        count
+    );
 
     // Step 1: Bit-unpack
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
     let mut zigzag = Vec::with_capacity(count);
 
     for i in 0..count {
@@ -350,12 +452,19 @@ pub fn rocm_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<V
 
     // Step 2: Reverse zigzag (parallel in HIP kernel)
     // TODO: Real ROCm/HIP parallel zigzag reverse
-    let values: Vec<f32> = zigzag.iter().map(|&zz| {
-        let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
-        f32::from_bits(n as u32)
-    }).collect();
+    let values: Vec<f32> = zigzag
+        .iter()
+        .map(|&zz| {
+            let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
+            f32::from_bits(n as u32)
+        })
+        .collect();
 
-    debug!("✅ [ROCm] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
+    debug!(
+        "✅ [ROCm] Zigzag decoded {} bytes → {} values",
+        packed.len(),
+        values.len()
+    );
     Ok(values)
 }
 
@@ -365,8 +474,12 @@ pub fn rocm_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<V
 
 /// ROCm PForDelta encoding (stub - complex kernel)
 pub fn rocm_pfor_delta_encode_f32(values: &[f32], majority_bits: u8, base: i64) -> Result<Vec<u8>> {
-    trace!("🔧 [ROCm] PForDelta encode: {} values, {}b majority, base={}",
-           values.len(), majority_bits, base);
+    trace!(
+        "🔧 [ROCm] PForDelta encode: {} values, {}b majority, base={}",
+        values.len(),
+        majority_bits,
+        base
+    );
 
     // TODO: Real ROCm/HIP implementation with parallel exception detection
     // For now, use CPU fallback (complex algorithm)
@@ -374,9 +487,19 @@ pub fn rocm_pfor_delta_encode_f32(values: &[f32], majority_bits: u8, base: i64) 
 }
 
 /// ROCm PForDelta decoding (stub - complex kernel)
-pub fn rocm_pfor_delta_decode_f32(data: &[u8], majority_bits: u8, base: i64, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [ROCm] PForDelta decode: {} bytes, {}b majority, base={}, count={}",
-           data.len(), majority_bits, base, count);
+pub fn rocm_pfor_delta_decode_f32(
+    data: &[u8],
+    majority_bits: u8,
+    base: i64,
+    count: usize,
+) -> Result<Vec<f32>> {
+    trace!(
+        "🔧 [ROCm] PForDelta decode: {} bytes, {}b majority, base={}, count={}",
+        data.len(),
+        majority_bits,
+        base,
+        count
+    );
 
     // TODO: Real ROCm/HIP implementation
     anyhow::bail!("ROCm PForDelta decoding not yet implemented - use SIMD fallback")

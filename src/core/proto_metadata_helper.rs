@@ -1,6 +1,6 @@
 // Helper functions for proto metadata conversion with repeated MetadataItem
 
-use crate::proto::proximadb_v1::{MetadataItem, metadata_item, SqlValue};
+use crate::proto::proximadb_v1::{MetadataItem, SqlValue, metadata_item};
 use std::collections::HashMap;
 
 /// Convert repeated MetadataItem to serde_json Value map for REST API compatibility
@@ -99,10 +99,14 @@ pub fn proto_metadata_to_sqlvalue_hashmap(metadata: &[MetadataItem]) -> HashMap<
         .map(|item| {
             let sql_value = match &item.value {
                 Some(metadata_item::Value::StringValue(s)) => SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        s.clone(),
+                    )),
                 },
                 Some(metadata_item::Value::NumberValue(n)) => SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(*n)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                        *n,
+                    )),
                 },
                 Some(metadata_item::Value::BoolValue(b)) => SqlValue {
                     value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
@@ -119,32 +123,58 @@ pub fn proto_metadata_to_sqlvalue_hashmap(metadata: &[MetadataItem]) -> HashMap<
 /// Convert SqlValue to MetadataItem for compatibility
 pub fn sqlvalue_to_metadata_item(key: String, sql_value: &SqlValue) -> MetadataItem {
     let value = match &sql_value.value {
-        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => Some(metadata_item::Value::StringValue(s.clone())),
-        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => Some(metadata_item::Value::NumberValue(*n)),
-        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => Some(metadata_item::Value::BoolValue(*b)),
-        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => Some(metadata_item::Value::NumberValue(*i as f64)),
+        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+            Some(metadata_item::Value::StringValue(s.clone()))
+        }
+        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+            Some(metadata_item::Value::NumberValue(*n))
+        }
+        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+            Some(metadata_item::Value::BoolValue(*b))
+        }
+        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+            Some(metadata_item::Value::NumberValue(*i as f64))
+        }
         _ => None, // BytesValue, NullValue, ArrayValue, ObjectValue not supported in MetadataItem
     };
     MetadataItem { key, value }
 }
 
 /// Convert HashMap<String, SqlValue> to serde_json Value map for REST API compatibility
-pub fn sqlvalue_metadata_to_json(metadata: &HashMap<String, SqlValue>) -> HashMap<String, serde_json::Value> {
+pub fn sqlvalue_metadata_to_json(
+    metadata: &HashMap<String, SqlValue>,
+) -> HashMap<String, serde_json::Value> {
     metadata
         .iter()
         .filter_map(|(key, sql_value)| {
             sql_value.value.as_ref().map(|v| {
                 let json_value = match v {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => serde_json::Value::String(s.clone()),
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => serde_json::Number::from_f64(*n)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => serde_json::Value::Bool(*b),
-                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
-                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => serde_json::Value::String("[binary data]".to_string()),
-                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => serde_json::Value::Null,
-                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => serde_json::Value::String("[array]".to_string()),
-                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => serde_json::Value::String("[object]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                        serde_json::Number::from_f64(*n)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                        serde_json::Value::Number(serde_json::Number::from(*i))
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
+                        serde_json::Value::String("[binary data]".to_string())
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => {
+                        serde_json::Value::Null
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
+                        serde_json::Value::String("[array]".to_string())
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
+                        serde_json::Value::String("[object]".to_string())
+                    }
                 };
                 (key.clone(), json_value)
             })

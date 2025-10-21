@@ -37,7 +37,10 @@ async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
 }
 
 /// Create test collection config with dimension
-fn create_test_collection_config(collection_id: &str, dimension: usize) -> crate::proto::proximadb_v1::Collection {
+fn create_test_collection_config(
+    collection_id: &str,
+    dimension: usize,
+) -> crate::proto::proximadb_v1::Collection {
     crate::proto::proximadb_v1::Collection {
         id: collection_id.to_string(),
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
@@ -61,12 +64,22 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                 vector: vec![0.1 * i as f32, 0.2 * i as f32, 0.3 * i as f32],
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("category_{}", i % 3)))
-                    });
-                    metadata.insert("priority".to_string(), crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
-                    });
+                    metadata.insert(
+                        "category".to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                format!("category_{}", i % 3),
+                            )),
+                        },
+                    );
+                    metadata.insert(
+                        "priority".to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                i.to_string(),
+                            )),
+                        },
+                    );
                     metadata
                 },
                 timestamp: Some(now),

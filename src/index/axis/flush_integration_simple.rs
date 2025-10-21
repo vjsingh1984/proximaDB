@@ -225,9 +225,10 @@ mod tests {
 
         // Create EventLogManager (aliased as MetadataQueueService)
         let event_config = crate::index::axis::eventlog::EventLogConfig::default();
-        let queue_service = MetadataQueueService::new(event_config, filesystem_factory, collection_cache)
-            .await
-            .unwrap();
+        let queue_service =
+            MetadataQueueService::new(event_config, filesystem_factory, collection_cache)
+                .await
+                .unwrap();
 
         let notifier = SimpleFlushNotifier::new(queue_service.clone());
 

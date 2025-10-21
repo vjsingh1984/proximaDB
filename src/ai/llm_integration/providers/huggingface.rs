@@ -3,7 +3,10 @@
 //! Complete HuggingFace API integration for Inference API and custom endpoints.
 
 use super::{LLMClient, RateLimitStatus, validate_request_safety};
-use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason, HuggingFaceConfig};
+use crate::ai::llm_integration::types::{
+    FinishReason, HuggingFaceConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext,
+    LLMResponse, TokenUsage,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -53,13 +56,17 @@ struct HuggingFaceErrorResponse {
 impl HuggingFaceClient {
     pub async fn new(config: HuggingFaceConfig) -> Result<Self, LLMError> {
         if config.api_key.is_empty() {
-            return Err(LLMError::ConfigurationError("HuggingFace API key is required".to_string()));
+            return Err(LLMError::ConfigurationError(
+                "HuggingFace API key is required".to_string(),
+            ));
         }
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(120)) // HF can be slower for large models
             .build()
-            .map_err(|e| LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let hf_client = Self { client, config };
         hf_client.test_authentication().await?;
@@ -70,22 +77,35 @@ impl HuggingFaceClient {
         if let Some(ref endpoint_url) = self.config.endpoint_url {
             endpoint_url.clone()
         } else if self.config.use_inference_api {
-            format!("https://api-inference.huggingface.co/models/{}", self.config.model_name)
+            format!(
+                "https://api-inference.huggingface.co/models/{}",
+                self.config.model_name
+            )
         } else {
-            format!("https://huggingface.co/api/inference/models/{}", self.config.model_name)
+            format!(
+                "https://huggingface.co/api/inference/models/{}",
+                self.config.model_name
+            )
         }
     }
 }
 
 #[async_trait]
 impl LLMClient for HuggingFaceClient {
-    async fn query(&self, request: &LLMRequest, _context: &LLMRequestContext) -> Result<LLMResponse, LLMError> {
+    async fn query(
+        &self,
+        request: &LLMRequest,
+        _context: &LLMRequestContext,
+    ) -> Result<LLMResponse, LLMError> {
         let start_time = Instant::now();
         validate_request_safety(request)?;
 
         // Build input text (HF models often expect specific formats)
         let input_text = if let Some(ref system_prompt) = request.system_prompt {
-            format!("### System:\n{}\n\n### User:\n{}\n\n### Assistant:\n", system_prompt, request.prompt)
+            format!(
+                "### System:\n{}\n\n### User:\n{}\n\n### Assistant:\n",
+                system_prompt, request.prompt
+            )
         } else {
             format!("### User:\n{}\n\n### Assistant:\n", request.prompt)
         };
@@ -105,9 +125,13 @@ impl LLMClient for HuggingFaceClient {
             }),
         };
 
-        debug!("Sending HuggingFace request to model: {}", self.config.model_name);
+        debug!(
+            "Sending HuggingFace request to model: {}",
+            self.config.model_name
+        );
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.get_api_url())
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json")
@@ -117,30 +141,43 @@ impl LLMClient for HuggingFaceClient {
             .map_err(|e| LLMError::NetworkError(format!("Request failed: {}", e)))?;
 
         let status = response.status();
-        let response_body = response.text().await
+        let response_body = response
+            .text()
+            .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to read response: {}", e)))?;
 
         if !status.is_success() {
             // Try to parse HuggingFace error format
-            if let Ok(error_response) = serde_json::from_str::<HuggingFaceErrorResponse>(&response_body) {
+            if let Ok(error_response) =
+                serde_json::from_str::<HuggingFaceErrorResponse>(&response_body)
+            {
                 return Err(LLMError::APIError {
                     provider: LLMProvider::HuggingFace,
                     message: error_response.error,
                 });
             } else {
-                return Err(super::handle_http_error(status, &response_body, LLMProvider::HuggingFace));
+                return Err(super::handle_http_error(
+                    status,
+                    &response_body,
+                    LLMProvider::HuggingFace,
+                ));
             }
         }
 
         // HuggingFace returns array of responses or single response
-        let hf_response: Vec<HuggingFaceResponse> = serde_json::from_str(&response_body)
-            .map_err(|e| LLMError::ParseError(format!("Failed to parse HuggingFace response: {}", e)))?;
-
-        let response_content = hf_response.into_iter().next()
-            .ok_or_else(|| LLMError::InvalidResponse {
-                provider: LLMProvider::HuggingFace,
-                reason: "No response content".to_string(),
+        let hf_response: Vec<HuggingFaceResponse> =
+            serde_json::from_str(&response_body).map_err(|e| {
+                LLMError::ParseError(format!("Failed to parse HuggingFace response: {}", e))
             })?;
+
+        let response_content =
+            hf_response
+                .into_iter()
+                .next()
+                .ok_or_else(|| LLMError::InvalidResponse {
+                    provider: LLMProvider::HuggingFace,
+                    reason: "No response content".to_string(),
+                })?;
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -193,7 +230,8 @@ impl LLMClient for HuggingFaceClient {
             }),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.get_api_url())
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json")
@@ -202,7 +240,9 @@ impl LLMClient for HuggingFaceClient {
             .await
             .map_err(|e| LLMError::NetworkError(format!("Authentication test failed: {}", e)))?;
 
-        if response.status().is_success() || response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        if response.status().is_success()
+            || response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        {
             // 503 can happen if model is loading, which means auth is OK
             debug!("HuggingFace authentication test successful");
             Ok(())
@@ -214,7 +254,10 @@ impl LLMClient for HuggingFaceClient {
         } else {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            warn!("HuggingFace authentication test returned {}: {}", status, error_body);
+            warn!(
+                "HuggingFace authentication test returned {}: {}",
+                status, error_body
+            );
             Err(LLMError::AuthenticationFailed {
                 provider: LLMProvider::HuggingFace,
                 reason: format!("Authentication test failed: {}", error_body),

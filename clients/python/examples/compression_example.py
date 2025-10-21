@@ -8,7 +8,7 @@ to control compression settings for collections from the client side.
 Copyright 2025 ProximaDB
 """
 
-import asyncio
+# import asyncio
 import time
 from typing import List
 import numpy as np
@@ -31,7 +31,7 @@ def generate_random_vectors(num_vectors: int, dimension: int) -> List[List[float
     return np.random.rand(num_vectors, dimension).tolist()
 
 
-async def create_compressed_collections(client: ProximaDBClient):
+def create_compressed_collections(client: ProximaDBClient):
     """Create collections with different compression configurations"""
     
     # 1. SST collection with ZSTD compression
@@ -50,7 +50,7 @@ async def create_compressed_collections(client: ProximaDBClient):
     )
     
     print("Creating SST collection with ZSTD compression...")
-    sst_collection = await client.create_collection(sst_config)
+    sst_collection = client.create_collection(sst_config.name, sst_config)
     print(f"✅ Created: {sst_collection.id}")
     
     # 2. VIPER collection with LZ4 compression and dual columns
@@ -68,7 +68,7 @@ async def create_compressed_collections(client: ProximaDBClient):
     )
     
     print("Creating VIPER collection with LZ4 compression and dual columns...")
-    viper_collection = await client.create_collection(viper_config)
+    viper_collection = client.create_collection(viper_config.name, viper_config)
     print(f"✅ Created: {viper_collection.id}")
     
     # 3. Mixed collection with adaptive compression
@@ -85,13 +85,13 @@ async def create_compressed_collections(client: ProximaDBClient):
     )
     
     print("Creating collection with adaptive compression...")
-    mixed_collection = await client.create_collection(mixed_config)
+    mixed_collection = client.create_collection(mixed_config.name, mixed_config)
     print(f"✅ Created: {mixed_collection.id}")
     
     return sst_collection, viper_collection, mixed_collection
 
 
-async def insert_and_search_compressed(client: ProximaDBClient, collection_name: str):
+def insert_and_search_compressed(client: ProximaDBClient, collection_name: str):
     """Insert vectors and perform compression-aware searches"""
     
     print(f"\n📝 Working with collection: {collection_name}")
@@ -118,7 +118,7 @@ async def insert_and_search_compressed(client: ProximaDBClient, collection_name:
         for i in range(num_vectors)
     ]
     
-    insert_response = await client.insert_vectors(collection_name, records)
+    insert_response = client.insert_vectors(collection_name, records)
     insert_time = time.time() - start_time
     print(f"✅ Inserted {num_vectors} vectors in {insert_time:.2f}s")
     
@@ -128,9 +128,9 @@ async def insert_and_search_compressed(client: ProximaDBClient, collection_name:
     # 1. Regular search
     print("\n🔍 Regular search...")
     start_time = time.time()
-    regular_results = await client.search_vectors(
+    regular_results = client.search(
         collection_id=collection_name,
-        query_vector=query_vector,
+        vector=query_vector,
         top_k=10,
     )
     regular_time = time.time() - start_time
@@ -147,9 +147,9 @@ async def insert_and_search_compressed(client: ProximaDBClient, collection_name:
     )
     
     start_time = time.time()
-    optimized_results = await client.search_vectors(
+    optimized_results = client.search(
         collection_id=collection_name,
-        query_vector=query_vector,
+        vector=query_vector,
         top_k=10,
         search_optimization=search_optimization,
     )
@@ -159,9 +159,9 @@ async def insert_and_search_compressed(client: ProximaDBClient, collection_name:
     # 3. Second search (should hit cache)
     print("\n🔍 Second search (cache hit expected)...")
     start_time = time.time()
-    cached_results = await client.search_vectors(
+    cached_results = client.search(
         collection_id=collection_name,
-        query_vector=query_vector,
+        vector=query_vector,
         top_k=10,
         search_optimization=search_optimization,
     )
@@ -178,7 +178,7 @@ async def insert_and_search_compressed(client: ProximaDBClient, collection_name:
         print(f"  🚀 Cache speedup: {speedup:.1f}x")
 
 
-async def demonstrate_adaptive_compression(client: ProximaDBClient):
+def demonstrate_adaptive_compression(client: ProximaDBClient):
     """Demonstrate adaptive compression based on data characteristics"""
     
     print("\n🎯 Demonstrating Adaptive Compression")
@@ -197,7 +197,7 @@ async def demonstrate_adaptive_compression(client: ProximaDBClient):
         ),
     )
     
-    collection = await client.create_collection(config)
+    collection = client.create_collection(config)
     print(f"✅ Created adaptive collection: {collection.id}")
     
     # Insert sparse vectors (should compress well)
@@ -212,7 +212,7 @@ async def demonstrate_adaptive_compression(client: ProximaDBClient):
         VectorRecord(id=f"sparse_{i}", vector=v, metadata={"type": "sparse"})
         for i, v in enumerate(sparse_vectors)
     ]
-    await client.insert_vectors(collection.name, sparse_records)
+    client.insert_vectors(collection.name, sparse_records)
     
     # Insert dense vectors (lower compressibility)
     print("Inserting dense vectors (low compressibility)...")
@@ -221,12 +221,12 @@ async def demonstrate_adaptive_compression(client: ProximaDBClient):
         VectorRecord(id=f"dense_{i}", vector=v, metadata={"type": "dense"})
         for i, v in enumerate(dense_vectors)
     ]
-    await client.insert_vectors(collection.name, dense_records)
+    client.insert_vectors(collection.name, dense_records)
     
     print("✅ Adaptive compression will optimize based on data characteristics")
 
 
-async def main():
+def main():
     """Main example function"""
     print("=" * 60)
     print("ProximaDB SDK-Driven Compression Example")
@@ -240,14 +240,14 @@ async def main():
     
     try:
         # Create collections with different compression configs
-        sst_col, viper_col, mixed_col = await create_compressed_collections(client)
+        sst_col, viper_col, mixed_col = create_compressed_collections(client)
         
         # Test compression-aware operations
-        await insert_and_search_compressed(client, sst_col.name)
-        await insert_and_search_compressed(client, viper_col.name)
+        insert_and_search_compressed(client, sst_col.name)
+        insert_and_search_compressed(client, viper_col.name)
         
         # Demonstrate adaptive compression
-        await demonstrate_adaptive_compression(client)
+        demonstrate_adaptive_compression(client)
         
         print("\n✅ Compression example completed successfully!")
         
@@ -257,13 +257,13 @@ async def main():
         # Cleanup (optional)
         print("\n🧹 Cleaning up...")
         try:
-            await client.delete_collection("compressed_sst_collection")
-            await client.delete_collection("compressed_viper_collection")
-            await client.delete_collection("adaptive_compression_collection")
-            await client.delete_collection("adaptive_demo_collection")
+            client.delete_collection("compressed_sst_collection")
+            client.delete_collection("compressed_viper_collection")
+            client.delete_collection("adaptive_compression_collection")
+            client.delete_collection("adaptive_demo_collection")
         except:
             pass
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

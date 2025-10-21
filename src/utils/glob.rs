@@ -147,7 +147,7 @@ impl GlobPattern {
                     } else {
                         elements.push(PatternElement::Star);
                     }
-                },
+                }
                 '?' => elements.push(PatternElement::Question),
                 '[' => {
                     let (char_class, new_i) = Self::parse_character_class(&chars, i)?;

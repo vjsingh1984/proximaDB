@@ -1,7 +1,7 @@
 //! Defines the data structures for tracking symbols in the current query scope.
 
-use std::collections::HashMap;
 use crate::query::ast::Expr;
+use std::collections::HashMap;
 
 /// Represents a symbol in the query scope.
 #[derive(Debug, Clone)]
@@ -100,7 +100,8 @@ impl Scope {
 
         // Also search in parent scope if exists
         if let Some(parent) = &self.parent {
-            let (parent_column, parent_count, parent_tables) = parent.find_column_in_tables(column_name);
+            let (parent_column, parent_count, parent_tables) =
+                parent.find_column_in_tables(column_name);
             if parent_column.is_some() {
                 if found_column.is_none() {
                     found_column = parent_column;

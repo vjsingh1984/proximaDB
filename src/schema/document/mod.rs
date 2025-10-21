@@ -89,67 +89,102 @@ impl DocumentSchema {
                 if field_def.required && !obj.contains_key(field_name) {
                     return Err(ValidationError::MissingRequiredField(field_name.clone()));
                 }
-                
+
                 // Validate field type if present
                 if let Some(value) = obj.get(field_name) {
                     self.validate_field_value(field_name, &field_def.field_type, value)?;
                 }
             }
         } else if !self.fields.is_empty() {
-            return Err(ValidationError::InvalidDocumentStructure("Expected object".to_string()));
+            return Err(ValidationError::InvalidDocumentStructure(
+                "Expected object".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 
-    fn validate_field_value(&self, field_name: &str, field_type: &FieldType, value: &serde_json::Value) -> Result<(), ValidationError> {
+    fn validate_field_value(
+        &self,
+        field_name: &str,
+        field_type: &FieldType,
+        value: &serde_json::Value,
+    ) -> Result<(), ValidationError> {
         match field_type {
             FieldType::String => {
                 if !value.is_string() {
-                    return Err(ValidationError::TypeMismatch(field_name.to_string(), "string".to_string()));
+                    return Err(ValidationError::TypeMismatch(
+                        field_name.to_string(),
+                        "string".to_string(),
+                    ));
                 }
             }
             FieldType::Integer => {
                 if !value.is_i64() && !value.is_u64() {
-                    return Err(ValidationError::TypeMismatch(field_name.to_string(), "integer".to_string()));
+                    return Err(ValidationError::TypeMismatch(
+                        field_name.to_string(),
+                        "integer".to_string(),
+                    ));
                 }
             }
             FieldType::Float => {
                 if !value.is_f64() {
-                    return Err(ValidationError::TypeMismatch(field_name.to_string(), "float".to_string()));
+                    return Err(ValidationError::TypeMismatch(
+                        field_name.to_string(),
+                        "float".to_string(),
+                    ));
                 }
             }
             FieldType::Boolean => {
                 if !value.is_boolean() {
-                    return Err(ValidationError::TypeMismatch(field_name.to_string(), "boolean".to_string()));
+                    return Err(ValidationError::TypeMismatch(
+                        field_name.to_string(),
+                        "boolean".to_string(),
+                    ));
                 }
             }
             FieldType::Array(_) => {
                 if !value.is_array() {
-                    return Err(ValidationError::TypeMismatch(field_name.to_string(), "array".to_string()));
+                    return Err(ValidationError::TypeMismatch(
+                        field_name.to_string(),
+                        "array".to_string(),
+                    ));
                 }
             }
             FieldType::Object(_) => {
                 if !value.is_object() {
-                    return Err(ValidationError::TypeMismatch(field_name.to_string(), "object".to_string()));
+                    return Err(ValidationError::TypeMismatch(
+                        field_name.to_string(),
+                        "object".to_string(),
+                    ));
                 }
             }
             FieldType::Vector(expected_dim) => {
                 if let Some(array) = value.as_array() {
                     if array.len() != *expected_dim as usize {
-                        return Err(ValidationError::VectorDimensionMismatch(field_name.to_string(), *expected_dim, array.len()));
+                        return Err(ValidationError::VectorDimensionMismatch(
+                            field_name.to_string(),
+                            *expected_dim,
+                            array.len(),
+                        ));
                     }
                     // Ensure all elements are numbers
                     if !array.iter().all(|v| v.is_f64() || v.is_i64() || v.is_u64()) {
-                        return Err(ValidationError::TypeMismatch(field_name.to_string(), "numeric array".to_string()));
+                        return Err(ValidationError::TypeMismatch(
+                            field_name.to_string(),
+                            "numeric array".to_string(),
+                        ));
                     }
                 } else {
-                    return Err(ValidationError::TypeMismatch(field_name.to_string(), "vector array".to_string()));
+                    return Err(ValidationError::TypeMismatch(
+                        field_name.to_string(),
+                        "vector array".to_string(),
+                    ));
                 }
             }
             _ => {} // Skip validation for other types
         }
-        
+
         Ok(())
     }
 }
@@ -166,10 +201,22 @@ pub enum ValidationError {
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            ValidationError::MissingRequiredField(field) => write!(f, "Missing required field: {}", field),
-            ValidationError::TypeMismatch(field, expected) => write!(f, "Type mismatch for field {}: expected {}", field, expected),
-            ValidationError::VectorDimensionMismatch(field, expected, actual) => write!(f, "Vector dimension mismatch for field {}: expected {}, got {}", field, expected, actual),
-            ValidationError::InvalidDocumentStructure(msg) => write!(f, "Invalid document structure: {}", msg),
+            ValidationError::MissingRequiredField(field) => {
+                write!(f, "Missing required field: {}", field)
+            }
+            ValidationError::TypeMismatch(field, expected) => write!(
+                f,
+                "Type mismatch for field {}: expected {}",
+                field, expected
+            ),
+            ValidationError::VectorDimensionMismatch(field, expected, actual) => write!(
+                f,
+                "Vector dimension mismatch for field {}: expected {}, got {}",
+                field, expected, actual
+            ),
+            ValidationError::InvalidDocumentStructure(msg) => {
+                write!(f, "Invalid document structure: {}", msg)
+            }
         }
     }
 }

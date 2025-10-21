@@ -26,11 +26,11 @@
 //! - Optional persistence for recovery
 //! - Memory-efficient HashMap implementation
 
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use async_trait::async_trait;
-use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::index::axis::types::IndexAlgorithm;
@@ -109,7 +109,10 @@ pub struct GlobalIdIndexStats {
 impl GlobalIdIndex {
     /// Create new GlobalIdIndex
     pub fn new(collection_id: String, config: GlobalIdIndexConfig) -> Self {
-        info!("🆔 Creating GlobalIdIndex for collection: {}", collection_id);
+        info!(
+            "🆔 Creating GlobalIdIndex for collection: {}",
+            collection_id
+        );
 
         let algorithm_config = IndexAlgorithm::GlobalId {
             cache_size: config.cache_size,
@@ -127,10 +130,16 @@ impl GlobalIdIndex {
 
     /// Add vector ID to location mapping
     pub async fn add_vector(&self, vector_id: String, location: StorageLocation) -> Result<()> {
-        debug!("📍 Adding vector ID mapping: {} -> {}", vector_id, location.file_path);
+        debug!(
+            "📍 Adding vector ID mapping: {} -> {}",
+            vector_id, location.file_path
+        );
 
         {
-            let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let mut map = self
+                .id_map
+                .write()
+                .map_err(|e| anyhow!("Lock error: {}", e))?;
             map.insert(vector_id.clone(), location);
         } // Drop lock before async call
 
@@ -146,14 +155,22 @@ impl GlobalIdIndex {
         let start_time = std::time::Instant::now();
 
         let result = {
-            let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let map = self
+                .id_map
+                .read()
+                .map_err(|e| anyhow!("Lock error: {}", e))?;
             map.get(vector_id).cloned()
         }; // Drop lock before async call
 
         // Update statistics
-        self.update_stats_after_lookup(start_time.elapsed(), result.is_some()).await?;
+        self.update_stats_after_lookup(start_time.elapsed(), result.is_some())
+            .await?;
 
-        debug!("🔍 Vector ID lookup: {} -> {:?}", vector_id, result.is_some());
+        debug!(
+            "🔍 Vector ID lookup: {} -> {:?}",
+            vector_id,
+            result.is_some()
+        );
         Ok(result)
     }
 
@@ -162,7 +179,10 @@ impl GlobalIdIndex {
         debug!("🗑️ Removing vector ID mapping: {}", vector_id);
 
         let removed = {
-            let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let mut map = self
+                .id_map
+                .write()
+                .map_err(|e| anyhow!("Lock error: {}", e))?;
             map.remove(vector_id).is_some()
         }; // Drop lock before async call
 
@@ -178,12 +198,18 @@ impl GlobalIdIndex {
     }
 
     /// Bulk add vector mappings for efficiency
-    pub async fn add_vectors_bulk(&self, mappings: HashMap<String, StorageLocation>) -> Result<usize> {
+    pub async fn add_vectors_bulk(
+        &self,
+        mappings: HashMap<String, StorageLocation>,
+    ) -> Result<usize> {
         info!("📦 Bulk adding {} vector ID mappings", mappings.len());
 
         let count = mappings.len();
         {
-            let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let mut map = self
+                .id_map
+                .write()
+                .map_err(|e| anyhow!("Lock error: {}", e))?;
             for (vector_id, location) in mappings {
                 map.insert(vector_id, location);
             }
@@ -198,7 +224,10 @@ impl GlobalIdIndex {
 
     /// Get index statistics
     pub fn get_stats(&self) -> Result<GlobalIdIndexStats> {
-        let stats = self.stats.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let stats = self
+            .stats
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         Ok(stats.clone())
     }
 
@@ -215,25 +244,40 @@ impl GlobalIdIndex {
 
     /// Check if vector ID exists
     pub async fn contains_vector(&self, vector_id: &str) -> Result<bool> {
-        let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let map = self
+            .id_map
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         Ok(map.contains_key(vector_id))
     }
 
     /// Get all vector IDs (for debugging/admin)
     pub fn get_all_vector_ids(&self) -> Result<Vec<String>> {
-        let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let map = self
+            .id_map
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         Ok(map.keys().cloned().collect())
     }
 
     /// Clear all mappings (for testing)
     pub async fn clear(&self) -> Result<()> {
-        warn!("🧹 Clearing all vector ID mappings for collection: {}", self.collection_id);
+        warn!(
+            "🧹 Clearing all vector ID mappings for collection: {}",
+            self.collection_id
+        );
 
-        let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut map = self
+            .id_map
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         map.clear();
 
         // Reset statistics
-        let mut stats = self.stats.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stats = self
+            .stats
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         *stats = GlobalIdIndexStats::default();
 
         Ok(())
@@ -241,8 +285,14 @@ impl GlobalIdIndex {
 
     // Private helper methods for statistics updates
     async fn update_stats_after_insert(&self) -> Result<()> {
-        let mut stats = self.stats.write().map_err(|e| anyhow!("Lock error: {}", e))?;
-        let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stats = self
+            .stats
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
+        let map = self
+            .id_map
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
 
         stats.total_vectors = map.len();
         stats.memory_usage_bytes = map.len() * 128; // Rough estimate: 128 bytes per entry
@@ -250,8 +300,15 @@ impl GlobalIdIndex {
         Ok(())
     }
 
-    async fn update_stats_after_lookup(&self, latency: std::time::Duration, success: bool) -> Result<()> {
-        let mut stats = self.stats.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+    async fn update_stats_after_lookup(
+        &self,
+        latency: std::time::Duration,
+        success: bool,
+    ) -> Result<()> {
+        let mut stats = self
+            .stats
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
 
         stats.lookup_count += 1;
         if success {
@@ -261,14 +318,21 @@ impl GlobalIdIndex {
         // Update rolling average latency
         let latency_us = latency.as_micros() as f64;
         stats.avg_lookup_latency_us =
-            (stats.avg_lookup_latency_us * (stats.lookup_count - 1) as f64 + latency_us) / stats.lookup_count as f64;
+            (stats.avg_lookup_latency_us * (stats.lookup_count - 1) as f64 + latency_us)
+                / stats.lookup_count as f64;
 
         Ok(())
     }
 
     async fn update_stats_after_removal(&self) -> Result<()> {
-        let mut stats = self.stats.write().map_err(|e| anyhow!("Lock error: {}", e))?;
-        let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stats = self
+            .stats
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
+        let map = self
+            .id_map
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
 
         stats.total_vectors = map.len();
         stats.memory_usage_bytes = map.len() * 128;
@@ -277,8 +341,14 @@ impl GlobalIdIndex {
     }
 
     async fn update_stats_after_bulk_insert(&self, _count: usize) -> Result<()> {
-        let mut stats = self.stats.write().map_err(|e| anyhow!("Lock error: {}", e))?;
-        let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stats = self
+            .stats
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
+        let map = self
+            .id_map
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
 
         stats.total_vectors = map.len();
         stats.memory_usage_bytes = map.len() * 128;
@@ -286,7 +356,6 @@ impl GlobalIdIndex {
         Ok(())
     }
 }
-
 
 // Implement required traits for AXIS integration
 #[async_trait]

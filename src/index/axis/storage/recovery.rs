@@ -732,8 +732,8 @@ impl Clone for IndexRecoveryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
     use crate::index::axis::*;
+    use std::time::Instant;
 
     #[tokio::test]
     async fn test_recovery_config() {

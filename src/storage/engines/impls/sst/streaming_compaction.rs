@@ -20,8 +20,8 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::CompressionConfig;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -211,15 +211,16 @@ impl StreamingCompactor {
             }
 
             // Create streaming reader - for compaction, we use unified caching filesystem
-            let base_fs = self.filesystem.get_filesystem("file://").map_err(|e| {
-                anyhow::anyhow!("Failed to get base filesystem: {}", e)
-            })?;
+            let base_fs = self
+                .filesystem
+                .get_filesystem("file://")
+                .map_err(|e| anyhow::anyhow!("Failed to get base filesystem: {}", e))?;
             let unified_fs = Arc::new(
                 crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
                     base_fs,
                     "compaction".to_string(), // Use generic collection_id for compaction
                     "sst_compaction".to_string(),
-                )
+                ),
             );
 
             let reader = UnifiedSstableReader::new(

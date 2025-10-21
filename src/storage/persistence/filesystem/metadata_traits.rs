@@ -63,13 +63,13 @@ pub struct GenericMetadataSerializer;
 impl EngineMetadataSerializer for GenericMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
         // For generic engines, we just store basic file info
-        if let Some(file_meta) = metadata.downcast_ref::<crate::storage::persistence::filesystem::FileMetadata>() {
+        if let Some(file_meta) =
+            metadata.downcast_ref::<crate::storage::persistence::filesystem::FileMetadata>()
+        {
             let cacheable = CacheableMetadata {
                 file_path: file_meta.path.clone(),
                 file_size: file_meta.size,
-                last_modified: file_meta.modified
-                    .map(|dt| dt.timestamp())
-                    .unwrap_or(0),
+                last_modified: file_meta.modified.map(|dt| dt.timestamp()).unwrap_or(0),
                 engine_metadata: None,
                 cached_component: None,
             };
@@ -137,9 +137,9 @@ mod viper_example {
             // Extract Parquet footer for VIPER files
             if file_path.ends_with(".parquet") && data.len() > 8 {
                 // Check for PAR1 magic bytes
-                if &data[0..4] == b"PAR1" && &data[data.len()-4..] == b"PAR1" {
+                if &data[0..4] == b"PAR1" && &data[data.len() - 4..] == b"PAR1" {
                     // Read footer size (last 4 bytes before final PAR1)
-                    let footer_size_bytes = &data[data.len()-8..data.len()-4];
+                    let footer_size_bytes = &data[data.len() - 8..data.len() - 4];
                     let footer_size = u32::from_le_bytes([
                         footer_size_bytes[0],
                         footer_size_bytes[1],
@@ -149,7 +149,7 @@ mod viper_example {
 
                     if footer_size < data.len() - 8 {
                         let footer_start = data.len() - 8 - footer_size;
-                        return Some(Bytes::copy_from_slice(&data[footer_start..data.len()-8]));
+                        return Some(Bytes::copy_from_slice(&data[footer_start..data.len() - 8]));
                     }
                 }
             }

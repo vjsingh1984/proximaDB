@@ -9,24 +9,24 @@
 //! Total: 51 tests covering all aspects of VIPER parquet reader functionality
 
 use anyhow::Result;
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio;
 use tempfile::TempDir;
-use serde_json::json;
+use tokio;
 use tracing::{debug, error, info};
 
 // Core imports
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::SimilarityResult;
-use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-use crate::core::search::unified_interface::{SearchPlan, CollectionConfig, StorageInfo};
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
+use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+use crate::core::service_types::VectorSearchResponse;
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::core::formats::columnar::CollectionContext;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::core::service_types::VectorSearchResponse;
 
 // Arrow imports for parquet file creation
 use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
@@ -318,7 +318,11 @@ async fn test_search_vectors_basic() -> Result<()> {
     println!("Search returned {} results", results.results.len());
     assert!(!results.results.is_empty(), "Should find results");
     // The reader now applies basic scoring and top_k filtering
-    assert!(results.results.len() <= 3, "Should return at most top_k=3 results (got {})", results.results.len());
+    assert!(
+        results.results.len() <= 3,
+        "Should return at most top_k=3 results (got {})",
+        results.results.len()
+    );
 
     // Debug output
     for (i, result) in results.results.iter().enumerate() {
@@ -334,7 +338,10 @@ async fn test_search_vectors_basic() -> Result<()> {
         debug!("  {} -> {:?}", vec.id, vec.vector);
     }
 
-    assert_eq!(results.results[0].id, "vec_0", "First result should be exact match");
+    assert_eq!(
+        results.results[0].id, "vec_0",
+        "First result should be exact match"
+    );
 
     Ok(())
 }
@@ -369,7 +376,11 @@ async fn test_empty_file_handling() -> Result<()> {
     let results = reader.search_vectors(&search_plan, &context).await?;
 
     // Verify
-    assert_eq!(results.results.len(), 0, "Should handle empty file gracefully");
+    assert_eq!(
+        results.results.len(),
+        0,
+        "Should handle empty file gracefully"
+    );
 
     Ok(())
 }
@@ -540,13 +551,11 @@ async fn test_deeply_nested_filter_expressions() {
                     operator: ComparisonOperator::Equals,
                     value: json!("value1"),
                 },
-                FilterExpression::Not(Box::new(
-                    FilterExpression::Comparison {
-                        field: "level2_a".to_string(),
-                        operator: ComparisonOperator::In,
-                        value: json!(["a", "b", "c"]),
-                    }
-                )),
+                FilterExpression::Not(Box::new(FilterExpression::Comparison {
+                    field: "level2_a".to_string(),
+                    operator: ComparisonOperator::In,
+                    value: json!(["a", "b", "c"]),
+                })),
             ]),
             FilterExpression::And(vec![
                 FilterExpression::Comparison {
@@ -568,13 +577,11 @@ async fn test_deeply_nested_filter_expressions() {
                 ]),
             ]),
         ]),
-        FilterExpression::Not(Box::new(
-            FilterExpression::Comparison {
-                field: "excluded".to_string(),
-                operator: ComparisonOperator::Equals,
-                value: json!(true),
-            }
-        )),
+        FilterExpression::Not(Box::new(FilterExpression::Comparison {
+            field: "excluded".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: json!(true),
+        })),
     ]);
 
     let params = SearchParams {
@@ -750,9 +757,7 @@ async fn test_batch_query_edge_cases() {
     };
 
     // Very large batch
-    let large_batch: Vec<Vec<f32>> = (0..1000)
-        .map(|i| vec![i as f32 / 1000.0; 128])
-        .collect();
+    let large_batch: Vec<Vec<f32>> = (0..1000).map(|i| vec![i as f32 / 1000.0; 128]).collect();
     let params_large = SearchParams {
         query_vectors: Some(large_batch.clone()),
         top_k: Some(10),
@@ -827,40 +832,24 @@ async fn test_range_coalescing_edge_cases() {
     assert_eq!(coalesced[0], (0, 1024));
 
     // Overlapping ranges
-    let overlapping = vec![
-        (0, 1024),
-        (512, 1536),
-        (1000, 2000),
-    ];
+    let overlapping = vec![(0, 1024), (512, 1536), (1000, 2000)];
     let coalesced = coalesce_ranges(overlapping);
     assert_eq!(coalesced.len(), 1);
     assert_eq!(coalesced[0], (0, 2000));
 
     // Adjacent ranges (should coalesce)
-    let adjacent = vec![
-        (0, 1024),
-        (1024, 2048),
-        (2048, 3072),
-    ];
+    let adjacent = vec![(0, 1024), (1024, 2048), (2048, 3072)];
     let coalesced = coalesce_ranges(adjacent);
     assert_eq!(coalesced.len(), 1);
     assert_eq!(coalesced[0], (0, 3072));
 
     // Ranges with gaps
-    let with_gaps = vec![
-        (0, 1024),
-        (2048, 3072),
-        (4096, 5120),
-    ];
+    let with_gaps = vec![(0, 1024), (2048, 3072), (4096, 5120)];
     let coalesced = coalesce_ranges(with_gaps);
     assert_eq!(coalesced.len(), 3);
 
     // Unsorted ranges
-    let unsorted = vec![
-        (4096, 5120),
-        (0, 1024),
-        (2048, 3072),
-    ];
+    let unsorted = vec![(4096, 5120), (0, 1024), (2048, 3072)];
     let coalesced = coalesce_ranges(unsorted);
     assert_eq!(coalesced.len(), 3);
     assert_eq!(coalesced[0], (0, 1024)); // Should be sorted
@@ -903,16 +892,16 @@ async fn test_unicode_handling() {
     let reader = create_test_reader().await;
 
     let unicode_values = vec![
-        "Hello 世界", // Chinese
-        "Привет мир", // Russian
+        "Hello 世界",    // Chinese
+        "Привет мир",    // Russian
         "مرحبا بالعالم", // Arabic
-        "שלום עולם", // Hebrew
-        "🌍🌎🌏", // Emojis
-        "Ñoño", // Spanish special chars
-        "Ελληνικά", // Greek
-        "日本語", // Japanese
-        "한국어", // Korean
-        "ไทย", // Thai
+        "שלום עולם",     // Hebrew
+        "🌍🌎🌏",        // Emojis
+        "Ñoño",          // Spanish special chars
+        "Ελληνικά",      // Greek
+        "日本語",        // Japanese
+        "한국어",        // Korean
+        "ไทย",           // Thai
     ];
 
     for value in unicode_values {
@@ -1082,7 +1071,10 @@ async fn test_run_all_strategy_tests() {
 
 /// Helper to create test reader with default files
 async fn create_test_reader() -> UnifiedParquetReader {
-    let file_paths = vec!["/tmp/test1.parquet".to_string(), "/tmp/test2.parquet".to_string()];
+    let file_paths = vec![
+        "/tmp/test1.parquet".to_string(),
+        "/tmp/test2.parquet".to_string(),
+    ];
     create_test_reader_with_files(file_paths).await
 }
 
@@ -1093,7 +1085,7 @@ async fn create_test_reader_with_files(file_paths: Vec<String>) -> UnifiedParque
     let filesystem_factory = Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
             .await
-            .unwrap()
+            .unwrap(),
     );
     let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
@@ -1101,7 +1093,7 @@ async fn create_test_reader_with_files(file_paths: Vec<String>) -> UnifiedParque
             base_fs,
             "test_collection".to_string(),
             "viper".to_string(),
-        )
+        ),
     );
     UnifiedParquetReader::new(
         file_paths,
@@ -1110,7 +1102,8 @@ async fn create_test_reader_with_files(file_paths: Vec<String>) -> UnifiedParque
         cached_filesystem,
         "test_collection".to_string(),
         "viper".to_string(),
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 /// Convert SearchParams to SearchPlan for unified interface
@@ -1190,7 +1183,7 @@ async fn create_test_parquet_file(
     vectors: Vec<VectorRecord>,
     vector_dim: usize,
 ) -> Result<()> {
-    use arrow_array::builder::{Float32Builder, ListBuilder, StringBuilder, FixedSizeListBuilder};
+    use arrow_array::builder::{FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder};
     use tokio::fs;
 
     // Ensure parent directory exists
@@ -1204,7 +1197,10 @@ async fn create_test_parquet_file(
         Field::new("collection_id", DataType::Utf8, false),
         Field::new(
             "vector_fp32",
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), vector_dim as i32),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                vector_dim as i32,
+            ),
             true,
         ),
         Field::new("version", DataType::Int8, true),
@@ -1273,9 +1269,7 @@ async fn create_test_parquet_file(
                     .append_value(key);
                 // Convert metadata value to string
                 let value_str = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                        s.clone()
-                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         n.to_string()
                     }
@@ -1348,12 +1342,18 @@ fn create_test_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
 
     for i in 0..count {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
-        });
-        metadata.insert("score".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
-        });
+        metadata.insert(
+            "category".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
+            },
+        );
+        metadata.insert(
+            "score".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
+            },
+        );
 
         let vector = VectorRecord {
             id: format!("vec_{}", i),

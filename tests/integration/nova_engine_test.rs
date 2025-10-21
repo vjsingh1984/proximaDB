@@ -3,17 +3,24 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use std::collections::HashMap;
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb_v1::{
-    CollectionConfig, DistanceMetric, StorageEngine,
-};
-use proximadb::services::operations::vectors::VectorOperationsService;
+use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::services::collection::manager::CollectionService;
+use proximadb::services::operations::vectors::VectorOperationsService;
 use proximadb::storage::engines::impls::nova::NovaEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use std::collections::HashMap;
+
+// Import test utilities
+#[path = "../common/collection_builder.rs"]
+mod collection_builder;
+#[path = "../common/vector_generator.rs"]
+mod vector_generator;
+
+use collection_builder::TestCollectionBuilder;
+use vector_generator::sequential;
 
 /// Test setup helper - DEPRECATED, use direct Collection creation instead
 /// This setup requires complex CollectionService initialization which is not needed for engine tests
@@ -25,8 +32,10 @@ async fn create_test_setup() -> (Arc<NovaEngine>, Arc<CollectionService>, TempDi
 
     let metadata_backend = Arc::new(
         proximadb::storage::metadata::MetadataStore::new(
-            proximadb::storage::metadata::MetadataStoreConfig::default()
-        ).await.unwrap()
+            proximadb::storage::metadata::MetadataStoreConfig::default(),
+        )
+        .await
+        .unwrap(),
     ) as Arc<dyn proximadb::storage::traits::InternalCollectionProvider>;
     let storage_config = proximadb::core::config::StorageConfig::default();
     let collection_service = Arc::new(
@@ -35,68 +44,34 @@ async fn create_test_setup() -> (Arc<NovaEngine>, Arc<CollectionService>, TempDi
             .unwrap(),
     );
 
-    let nova_engine = Arc::new(
-        NovaEngine::new()
-        .await
-        .unwrap(),
-    );
+    let nova_engine = Arc::new(NovaEngine::new().await.unwrap());
 
     (nova_engine, collection_service, temp_dir)
 }
 
 /// Create test vectors
+/// REFACTORED: Now uses vector_generator::sequential()
 fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
-    (0..count)
-        .map(|i| {
-            let vector = (0..128)
-                .map(|j| (i * 128 + j) as f32 / (count * 128) as f32)
-                .collect();
-
-            VectorRecord {
-                id: format!("vec_{}", i),
-                vector,
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            }
-        })
-        .collect()
+    sequential("nova_test_collection", count, 128)
 }
 
 #[tokio::test]
 async fn test_nova_engine_creation_and_insertion() {
-    use proximadb::proto::proximadb_v1::{Collection, StorageAssignment};
-
-    let temp_dir = TempDir::new().unwrap();
-    let base_location = temp_dir.path().to_str().unwrap().to_string();
-
     let nova_engine = NovaEngine::new().await.unwrap();
 
     let vectors = create_test_vectors(100);
     let collection_id = "nova_test_collection";
 
-    let collection = Collection {
-        id: collection_id.to_string(),
-        config: Some(CollectionConfig {
-            name: collection_id.to_string(),
-            dimension: 128,
-            distance_metric: Some(DistanceMetric::Cosine as i32),
-            storage_engine: Some(StorageEngine::Nova as i32),
-            primary_index: Some("default".to_string()),
-            auto_index_selection: Some(true),
-            owner: Some("test_user".to_string()),
-            embedding_models: vec!["test_model".to_string()],
-            ..Default::default()
-        }),
-        storage_assignment: Some(StorageAssignment {
-            base_location: base_location.clone(),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    // REFACTORED: Use TestCollectionBuilder
+    let (mut collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(128)
+        .with_engine(StorageEngine::Nova)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+
+    let base_location = _temp.path().to_str().unwrap().to_string();
 
     let batch_ids: Vec<BatchId> = (0..100).map(|_| BatchId::new()).collect();
 
@@ -113,12 +88,22 @@ async fn test_nova_engine_creation_and_insertion() {
         estimated_size: 1024 * 1024,
     };
 
-    println!("🧪 Test: Flushing {} vectors", flush_params.vector_records.len());
+    println!(
+        "🧪 Test: Flushing {} vectors",
+        flush_params.vector_records.len()
+    );
     let flush_result = nova_engine.flush(flush_params).await.unwrap();
 
-    println!("🧪 Test: Flush result - success={}, entries={:?}", flush_result.success, flush_result.entries_flushed);
+    println!(
+        "🧪 Test: Flush result - success={}, entries={:?}",
+        flush_result.success, flush_result.entries_flushed
+    );
     assert!(flush_result.success, "Flush should succeed");
-    assert_eq!(flush_result.entries_flushed, Some(100), "Should flush 100 vectors");
+    assert_eq!(
+        flush_result.entries_flushed,
+        Some(100),
+        "Should flush 100 vectors"
+    );
 
     // Verify files were created using filesystem API for cloud compatibility
     let data_path = format!("{}/{}/data", base_location, collection_id);
@@ -133,7 +118,10 @@ async fn test_nova_engine_creation_and_insertion() {
         .collect();
 
     println!("🧪 Test: Found {} parquet files", parquet_files.len());
-    assert!(!parquet_files.is_empty(), "Should have created at least one parquet file");
+    assert!(
+        !parquet_files.is_empty(),
+        "Should have created at least one parquet file"
+    );
 
     // Note: vector_by_id requires ID index which may not be built yet, so we skip that check
     // The important verification is that flush succeeded and files were created
@@ -141,31 +129,21 @@ async fn test_nova_engine_creation_and_insertion() {
 
 #[tokio::test]
 async fn test_nova_flush_basic() {
-    use proximadb::proto::proximadb_v1::{Collection, StorageAssignment};
-
-    let temp_dir = TempDir::new().unwrap();
-    let base_location = temp_dir.path().to_str().unwrap().to_string();
-
     let nova_engine = NovaEngine::new().await.unwrap();
 
     let vectors = create_test_vectors(10);
     let collection_id = "test_flush";
 
-    let collection = Collection {
-        id: collection_id.to_string(),
-        config: Some(CollectionConfig {
-            name: collection_id.to_string(),
-            dimension: 128,
-            distance_metric: Some(DistanceMetric::Cosine as i32),
-            storage_engine: Some(StorageEngine::Nova as i32),
-            ..Default::default()
-        }),
-        storage_assignment: Some(StorageAssignment {
-            base_location: base_location.clone(),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    // REFACTORED: Use TestCollectionBuilder
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(128)
+        .with_engine(StorageEngine::Nova)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+
+    let base_location = _temp.path().to_str().unwrap().to_string();
 
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
@@ -180,15 +158,28 @@ async fn test_nova_flush_basic() {
         estimated_size: 1024 * 1024,
     };
 
-    println!("🧪 Test: Flushing {} vectors to {}", flush_params.vector_records.len(), base_location);
+    println!(
+        "🧪 Test: Flushing {} vectors to {}",
+        flush_params.vector_records.len(),
+        base_location
+    );
     let flush_result = nova_engine.flush(flush_params).await.unwrap();
 
-    println!("🧪 Test: Flush result - success={}, entries={:?}, bytes={:?}",
-             flush_result.success, flush_result.entries_flushed, flush_result.bytes_written);
+    println!(
+        "🧪 Test: Flush result - success={}, entries={:?}, bytes={:?}",
+        flush_result.success, flush_result.entries_flushed, flush_result.bytes_written
+    );
 
     assert!(flush_result.success, "Flush should succeed");
-    assert_eq!(flush_result.entries_flushed, Some(10), "Should flush 10 vectors");
-    assert!(flush_result.bytes_written.unwrap() > 0, "Should write some bytes");
+    assert_eq!(
+        flush_result.entries_flushed,
+        Some(10),
+        "Should flush 10 vectors"
+    );
+    assert!(
+        flush_result.bytes_written.unwrap() > 0,
+        "Should write some bytes"
+    );
 
     // Verify files exist using filesystem API (cloud-compatible)
     let data_path = format!("{}/{}/data", base_location, collection_id);
@@ -209,38 +200,32 @@ async fn test_nova_flush_basic() {
         println!("  - {}", file.name);
     }
 
-    assert!(!parquet_files.is_empty(), "Should have created at least one parquet file");
+    assert!(
+        !parquet_files.is_empty(),
+        "Should have created at least one parquet file"
+    );
 }
 
 #[tokio::test]
 async fn test_nova_search_basic() {
-    use proximadb::proto::proximadb_v1::{Collection, StorageAssignment};
     use proximadb::core::search::SearchParams;
     use proximadb::storage::traits::{StorageQueryContext, StorageQueryMetadata};
-
-    let temp_dir = TempDir::new().unwrap();
-    let base_location = temp_dir.path().to_str().unwrap().to_string();
 
     let nova_engine = NovaEngine::new().await.unwrap();
 
     let vectors = create_test_vectors(20);
     let collection_id = "test_search";
 
-    let collection = Collection {
-        id: collection_id.to_string(),
-        config: Some(CollectionConfig {
-            name: collection_id.to_string(),
-            dimension: 128,
-            distance_metric: Some(DistanceMetric::Cosine as i32),
-            storage_engine: Some(StorageEngine::Nova as i32),
-            ..Default::default()
-        }),
-        storage_assignment: Some(StorageAssignment {
-            base_location: base_location.clone(),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    // REFACTORED: Use TestCollectionBuilder
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(128)
+        .with_engine(StorageEngine::Nova)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+
+    let base_location = _temp.path().to_str().unwrap().to_string();
 
     // First flush some vectors
     let flush_params = FlushParameters {
@@ -306,36 +291,30 @@ async fn test_nova_search_basic() {
 
     assert!(!results.is_empty(), "Should find at least one result");
     assert!(results.len() <= 5, "Should return at most 5 results");
-    assert_eq!(results[0].id, "vec_0", "First result should be vec_0 (exact match)");
+    assert_eq!(
+        results[0].id, "vec_0",
+        "First result should be vec_0 (exact match)"
+    );
 }
 
 #[tokio::test]
 async fn test_nova_compact_basic() {
-    use proximadb::proto::proximadb_v1::{Collection, StorageAssignment};
     use proximadb::storage::traits::CompactionParameters;
-
-    let temp_dir = TempDir::new().unwrap();
-    let base_location = temp_dir.path().to_str().unwrap().to_string();
 
     let nova_engine = NovaEngine::new().await.unwrap();
 
     let collection_id = "test_compact";
 
-    let collection = Collection {
-        id: collection_id.to_string(),
-        config: Some(CollectionConfig {
-            name: collection_id.to_string(),
-            dimension: 128,
-            distance_metric: Some(DistanceMetric::Cosine as i32),
-            storage_engine: Some(StorageEngine::Nova as i32),
-            ..Default::default()
-        }),
-        storage_assignment: Some(StorageAssignment {
-            base_location: base_location.clone(),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    // REFACTORED: Use TestCollectionBuilder
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_id(collection_id)
+        .with_name(collection_id)
+        .with_dimension(128)
+        .with_engine(StorageEngine::Nova)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+
+    let base_location = _temp.path().to_str().unwrap().to_string();
 
     // Flush multiple batches to create multiple files
     for i in 0..3 {
@@ -373,8 +352,13 @@ async fn test_nova_compact_basic() {
     println!("🧪 Test: Starting compaction");
     let compact_result = nova_engine.compact(compact_params).await.unwrap();
 
-    println!("🧪 Test: Compaction result - success={}, input_files={:?}, output_files={:?}, entries_processed={:?}",
-             compact_result.success, compact_result.input_files, compact_result.output_files, compact_result.entries_processed);
+    println!(
+        "🧪 Test: Compaction result - success={}, input_files={:?}, output_files={:?}, entries_processed={:?}",
+        compact_result.success,
+        compact_result.input_files,
+        compact_result.output_files,
+        compact_result.entries_processed
+    );
 
     assert!(compact_result.success, "Compaction should succeed");
 }

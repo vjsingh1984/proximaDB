@@ -4,7 +4,9 @@
 //! Implements GPT-4 and other OpenAI model access with proper error handling.
 
 use super::{LLMClient, RateLimitStatus, validate_request_safety};
-use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason};
+use crate::ai::llm_integration::types::{
+    FinishReason, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -94,14 +96,16 @@ impl OpenAIClient {
     pub async fn new(api_key: &str) -> Result<Self, LLMError> {
         if api_key.is_empty() {
             return Err(LLMError::ConfigurationError(
-                "OpenAI API key is required".to_string()
+                "OpenAI API key is required".to_string(),
             ));
         }
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
-            .map_err(|e| LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let openai_client = Self {
             client,
@@ -117,7 +121,11 @@ impl OpenAIClient {
     }
 
     /// Create OpenAI request from LLMRequest
-    fn build_openai_request(&self, request: &LLMRequest, context: &LLMRequestContext) -> OpenAIRequest {
+    fn build_openai_request(
+        &self,
+        request: &LLMRequest,
+        context: &LLMRequestContext,
+    ) -> OpenAIRequest {
         let mut messages = Vec::new();
 
         // Add system prompt if provided
@@ -147,12 +155,20 @@ impl OpenAIClient {
     }
 
     /// Parse OpenAI response into LLMResponse
-    fn parse_openai_response(&self, response: OpenAIResponse, response_time_ms: u64) -> Result<LLMResponse, LLMError> {
-        let choice = response.choices.into_iter().next()
-            .ok_or_else(|| LLMError::InvalidResponse {
-                provider: LLMProvider::OpenAI,
-                reason: "No choices in response".to_string(),
-            })?;
+    fn parse_openai_response(
+        &self,
+        response: OpenAIResponse,
+        response_time_ms: u64,
+    ) -> Result<LLMResponse, LLMError> {
+        let choice =
+            response
+                .choices
+                .into_iter()
+                .next()
+                .ok_or_else(|| LLMError::InvalidResponse {
+                    provider: LLMProvider::OpenAI,
+                    reason: "No choices in response".to_string(),
+                })?;
 
         let finish_reason = match choice.finish_reason.as_str() {
             "stop" => FinishReason::Stop,
@@ -189,7 +205,11 @@ impl OpenAIClient {
 
 #[async_trait]
 impl LLMClient for OpenAIClient {
-    async fn query(&self, request: &LLMRequest, context: &LLMRequestContext) -> Result<LLMResponse, LLMError> {
+    async fn query(
+        &self,
+        request: &LLMRequest,
+        context: &LLMRequestContext,
+    ) -> Result<LLMResponse, LLMError> {
         let start_time = Instant::now();
 
         // Validate request safety
@@ -209,8 +229,9 @@ impl LLMClient for OpenAIClient {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::AUTHORIZATION,
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key))
-                .map_err(|e| LLMError::ConfigurationError(format!("Invalid API key format: {}", e)))?,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_key)).map_err(
+                |e| LLMError::ConfigurationError(format!("Invalid API key format: {}", e)),
+            )?,
         );
         headers.insert(
             reqwest::header::CONTENT_TYPE,
@@ -220,13 +241,15 @@ impl LLMClient for OpenAIClient {
         if let Some(ref org_id) = self.organization_id {
             headers.insert(
                 "OpenAI-Organization",
-                reqwest::header::HeaderValue::from_str(org_id)
-                    .map_err(|e| LLMError::ConfigurationError(format!("Invalid organization ID: {}", e)))?,
+                reqwest::header::HeaderValue::from_str(org_id).map_err(|e| {
+                    LLMError::ConfigurationError(format!("Invalid organization ID: {}", e))
+                })?,
             );
         }
 
         // Send request to OpenAI
-        let response = self.client
+        let response = self
+            .client
             .post(&format!("{}/chat/completions", self.base_url))
             .headers(headers)
             .json(&openai_request)
@@ -238,19 +261,29 @@ impl LLMClient for OpenAIClient {
         let response_headers = response.headers().clone();
 
         // Get response body
-        let response_body = response.text().await
+        let response_body = response
+            .text()
+            .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to read response: {}", e)))?;
 
         // Handle error responses
         if !status.is_success() {
             // Try to parse error response
-            if let Ok(error_response) = serde_json::from_str::<OpenAIErrorResponse>(&response_body) {
+            if let Ok(error_response) = serde_json::from_str::<OpenAIErrorResponse>(&response_body)
+            {
                 return Err(LLMError::APIError {
                     provider: LLMProvider::OpenAI,
-                    message: format!("{}: {}", error_response.error.error_type, error_response.error.message),
+                    message: format!(
+                        "{}: {}",
+                        error_response.error.error_type, error_response.error.message
+                    ),
                 });
             } else {
-                return Err(super::handle_http_error(status, &response_body, LLMProvider::OpenAI));
+                return Err(super::handle_http_error(
+                    status,
+                    &response_body,
+                    LLMProvider::OpenAI,
+                ));
             }
         }
 
@@ -303,7 +336,8 @@ impl LLMClient for OpenAIClient {
             user: None,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -355,8 +389,8 @@ mod tests {
             .with_temperature(0.7)
             .with_system_prompt("You are a helpful assistant".to_string());
 
-        let context = LLMRequestContext::new("test_request".to_string())
-            .with_user("test_user".to_string());
+        let context =
+            LLMRequestContext::new("test_request".to_string()).with_user("test_user".to_string());
 
         let openai_request = client.build_openai_request(&request, &context);
 

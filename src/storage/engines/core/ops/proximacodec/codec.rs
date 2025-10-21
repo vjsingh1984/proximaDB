@@ -10,16 +10,16 @@
 //! - Type safety (cannot decode wrong type)
 //! - Metrics integration (future)
 
-use std::sync::OnceLock;
 use anyhow::Result;
+use std::sync::OnceLock;
 
-use super::types::{Encodable, Decodable, ProximaScheme, TypeId};
-use super::wire_format::WireFormatManager;
+use super::impls::baseline::{BaselineDecoder, BaselineEncoder};
 use super::registry::ImplementationRegistry;
-use super::impls::baseline::{BaselineEncoder, BaselineDecoder};
+use super::types::{Decodable, Encodable, ProximaScheme, TypeId};
+use super::wire_format::WireFormatManager;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use super::impls::simd::{SimdEncoder, SimdDecoder};
+use super::impls::simd::{SimdDecoder, SimdEncoder};
 
 /// The ONLY public encoding/decoding interface
 ///
@@ -55,7 +55,9 @@ impl ProximaCodec {
         // Phase 1: GPU implementations (highest priority, CUDA/ROCm/MPS/OpenCL)
         #[cfg(feature = "gpu")]
         {
-            use crate::storage::engines::core::ops::proximacodec::impls::gpu::{GpuEncoder, GpuDecoder};
+            use crate::storage::engines::core::ops::proximacodec::impls::gpu::{
+                GpuDecoder, GpuEncoder,
+            };
 
             // GPU encoders/decoders only activate if GPU backend is detected
             registry.register_encoder(Box::new(GpuEncoder));
@@ -99,7 +101,9 @@ impl ProximaCodec {
         let raw_data = encoder.encode_f32(values, &safe_scheme)?;
 
         // Add wire format header (use safe_scheme, not original)
-        let header = self.wire_format.write_header(&safe_scheme, values.len(), TypeId::F32);
+        let header = self
+            .wire_format
+            .write_header(&safe_scheme, values.len(), TypeId::F32);
 
         let mut result = header;
         result.extend_from_slice(&raw_data);
@@ -122,7 +126,9 @@ impl ProximaCodec {
 
         let encoder = self.registry.get_encoder(&safe_scheme)?;
         let raw_data = encoder.encode_i64(values, &safe_scheme)?;
-        let header = self.wire_format.write_header(&safe_scheme, values.len(), TypeId::I64);
+        let header = self
+            .wire_format
+            .write_header(&safe_scheme, values.len(), TypeId::I64);
 
         let mut result = header;
         result.extend_from_slice(&raw_data);
@@ -144,7 +150,9 @@ impl ProximaCodec {
 
         let encoder = self.registry.get_encoder(&safe_scheme)?;
         let raw_data = encoder.encode_i32(values, &safe_scheme)?;
-        let header = self.wire_format.write_header(&safe_scheme, values.len(), TypeId::I32);
+        let header = self
+            .wire_format
+            .write_header(&safe_scheme, values.len(), TypeId::I32);
 
         let mut result = header;
         result.extend_from_slice(&raw_data);
@@ -241,7 +249,9 @@ mod tests {
 
         // Test u32 encoding/decoding (internally uses i64 delegation)
         let values = vec![1u32, 2, 3, 4, 5, 100, 1000, 10000];
-        let encoded = codec.encode_u32(&values, ProximaScheme::Delta { base: 0 }).unwrap();
+        let encoded = codec
+            .encode_u32(&values, ProximaScheme::Delta { base: 0 })
+            .unwrap();
         let decoded = codec.decode_u32(&encoded).unwrap();
 
         assert_eq!(values, decoded);
@@ -252,7 +262,9 @@ mod tests {
         let codec = ProximaCodec::global();
 
         let values = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
-        let encoded = codec.encode(&values, ProximaScheme::Delta { base: 0 }).unwrap();
+        let encoded = codec
+            .encode(&values, ProximaScheme::Delta { base: 0 })
+            .unwrap();
         let decoded = codec.decode(&encoded).unwrap();
 
         assert_eq!(values, decoded);
@@ -264,7 +276,9 @@ mod tests {
 
         // Encode as f32
         let values_f32 = vec![1.0f32, 2.0, 3.0];
-        let encoded = codec.encode(&values_f32, ProximaScheme::Delta { base: 0 }).unwrap();
+        let encoded = codec
+            .encode(&values_f32, ProximaScheme::Delta { base: 0 })
+            .unwrap();
 
         // Try to decode as i64 (should fail)
         let result_i64 = codec.decode_i64(&encoded);

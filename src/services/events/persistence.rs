@@ -14,7 +14,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::index::axis::eventlog::{IndexEvent, EventType, StorageEngineType};
+use crate::index::axis::eventlog::{EventType, IndexEvent, StorageEngineType};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog WAL (Write-Ahead Log) for persistence
@@ -96,9 +96,10 @@ impl EventLogWAL {
         }
 
         // Append to current WAL file using filesystem API for consistency
-        let current_file_str = self.current_file.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid current file path: {:?}", self.current_file)
-        })?;
+        let current_file_str = self
+            .current_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid current file path: {:?}", self.current_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(current_file_str)?;
 
         // Read existing content if file exists
@@ -138,15 +139,14 @@ impl EventLogWAL {
 
         // For now, we'll add to a separate acknowledgment file using filesystem API
         let ack_file = self.wal_dir.join("acknowledged_events.txt");
-        let ack_file_str = ack_file.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid ack file path: {:?}", ack_file)
-        })?;
+        let ack_file_str = ack_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid ack file path: {:?}", ack_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
         // Read existing content if file exists
         let mut content = if filesystem.exists(ack_file_str).await? {
-            String::from_utf8(filesystem.read(ack_file_str).await?)
-                .unwrap_or_default()
+            String::from_utf8(filesystem.read(ack_file_str).await?).unwrap_or_default()
         } else {
             String::new()
         };
@@ -155,7 +155,9 @@ impl EventLogWAL {
         content.push_str(&format!("{}\n", event_id));
 
         // Write back
-        filesystem.write(ack_file_str, content.as_bytes(), None).await?;
+        filesystem
+            .write(ack_file_str, content.as_bytes(), None)
+            .await?;
 
         Ok(())
     }
@@ -166,9 +168,9 @@ impl EventLogWAL {
 
         // Read acknowledged events using filesystem API
         let ack_file = self.wal_dir.join("acknowledged_events.txt");
-        let ack_file_str = ack_file.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid ack file path: {:?}", ack_file)
-        })?;
+        let ack_file_str = ack_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid ack file path: {:?}", ack_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
         let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
@@ -183,9 +185,10 @@ impl EventLogWAL {
         };
 
         // Read all WAL files using filesystem API
-        let wal_dir_str = self.wal_dir.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid WAL dir path: {:?}", self.wal_dir)
-        })?;
+        let wal_dir_str = self
+            .wal_dir
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid WAL dir path: {:?}", self.wal_dir))?;
         let wal_filesystem = self.filesystem_factory.get_filesystem(wal_dir_str)?;
 
         let entries = wal_filesystem.list(wal_dir_str).await?;
@@ -270,12 +273,13 @@ impl EventLogWAL {
         let rotated_file = self.wal_dir.join(format!("eventlog_wal_{}.bin", timestamp));
 
         // Use filesystem API for rename
-        let current_file_str = self.current_file.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid current file path: {:?}", self.current_file)
-        })?;
-        let rotated_file_str = rotated_file.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid rotated file path: {:?}", rotated_file)
-        })?;
+        let current_file_str = self
+            .current_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid current file path: {:?}", self.current_file))?;
+        let rotated_file_str = rotated_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid rotated file path: {:?}", rotated_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(current_file_str)?;
 
         // Read current file content and write to new rotated file
@@ -295,9 +299,9 @@ impl EventLogWAL {
     /// Compact WAL by removing acknowledged events
     pub async fn compact(&mut self) -> Result<()> {
         let ack_file = self.wal_dir.join("acknowledged_events.txt");
-        let ack_file_str = ack_file.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid ack file path: {:?}", ack_file)
-        })?;
+        let ack_file_str = ack_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid ack file path: {:?}", ack_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
         let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
@@ -315,9 +319,10 @@ impl EventLogWAL {
         let pending_events = self.recover_pending_events().await?;
 
         // Clear existing WAL files using filesystem API
-        let wal_dir_str = self.wal_dir.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Invalid WAL dir path: {:?}", self.wal_dir)
-        })?;
+        let wal_dir_str = self
+            .wal_dir
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid WAL dir path: {:?}", self.wal_dir))?;
         let wal_filesystem = self.filesystem_factory.get_filesystem(wal_dir_str)?;
 
         // List and remove WAL files
@@ -382,7 +387,8 @@ mod tests {
     #[tokio::test]
     async fn test_wal_persistence_and_recovery() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
 
         // Create test events
@@ -435,7 +441,8 @@ mod tests {
     #[tokio::test]
     async fn test_wal_rotation() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory.clone()).await?;
 
         // Set small max file size for testing
@@ -461,7 +468,8 @@ mod tests {
         let wal_dir_str = temp_dir.path().to_str().unwrap();
         let filesystem = filesystem_factory.get_filesystem(wal_dir_str)?;
         let files = filesystem.list(wal_dir_str).await?;
-        let wal_files: Vec<_> = files.iter()
+        let wal_files: Vec<_> = files
+            .iter()
             .filter(|f| f.url.contains("eventlog_wal_"))
             .collect();
 
@@ -478,7 +486,8 @@ mod tests {
     #[tokio::test]
     async fn test_wal_compaction() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
         let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
 
         // Create and persist multiple events

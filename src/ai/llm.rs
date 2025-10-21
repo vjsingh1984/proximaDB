@@ -1,29 +1,29 @@
 //! LLM integration engine for enterprise knowledge intelligence
 
 use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
-use crate::storage::tenant::BusinessContext;
 use crate::auth::sso::EnterpriseUserContext;
+use crate::storage::tenant::BusinessContext;
 
 /// AI intelligence foundation with LLM integration
 pub struct AIIntelligenceFoundation {
     /// LLM integration engine
     llm_integration: Arc<LLMIntegrationEngine>,
-    
+
     /// Business context AI processor
     business_context_ai: Arc<BusinessContextAI>,
-    
+
     /// Enterprise NLP engine
     enterprise_nlp: Arc<EnterpriseNLPEngine>,
-    
+
     /// AI query translator
     ai_query_translator: Arc<AIQueryTranslator>,
-    
+
     /// Knowledge graph AI coordinator
     knowledge_graph_ai: Arc<KnowledgeGraphAICoordinator>,
 }
@@ -32,13 +32,13 @@ pub struct AIIntelligenceFoundation {
 pub struct LLMIntegrationEngine {
     /// Model configurations for different business contexts
     model_configurations: Arc<DashMap<String, LLMModelConfiguration>>,
-    
+
     /// Enterprise prompt templates
     prompt_templates: Arc<DashMap<String, EnterprisePromptTemplate>>,
-    
+
     /// Response validation and filtering
     response_validator: Arc<LLMResponseValidator>,
-    
+
     /// Performance optimization for enterprise workloads
     performance_optimizer: Arc<LLMPerformanceOptimizer>,
 }
@@ -47,13 +47,13 @@ pub struct LLMIntegrationEngine {
 pub struct BusinessContextAI {
     /// Industry-specific intent classifiers
     industry_classifiers: Arc<DashMap<String, IndustryIntentClassifier>>,
-    
+
     /// Business domain understanding
     domain_understanding: Arc<BusinessDomainUnderstanding>,
-    
+
     /// Regulatory context integration
     regulatory_context: Arc<RegulatoryContextIntegration>,
-    
+
     /// Enterprise terminology processor
     enterprise_terminology: Arc<EnterpriseTerminologyProcessor>,
 }
@@ -69,7 +69,7 @@ impl AIIntelligenceFoundation {
             knowledge_graph_ai: Arc::new(KnowledgeGraphAICoordinator::new()?),
         })
     }
-    
+
     /// Process natural language business query with enterprise intelligence
     pub async fn process_natural_language_business_query(
         &self,
@@ -79,33 +79,38 @@ impl AIIntelligenceFoundation {
         user_context: &EnterpriseUserContext,
     ) -> Result<AIIntelligentBusinessAnswer> {
         // Step 1: Understand business intent with industry context
-        let business_intent = self.business_context_ai.understand_business_intent(
-            natural_query,
-            business_context,
-            user_context,
-        ).await?;
-        
+        let business_intent = self
+            .business_context_ai
+            .understand_business_intent(natural_query, business_context, user_context)
+            .await?;
+
         // Step 2: Translate to structured knowledge graph query
-        let structured_query = self.ai_query_translator.translate_to_knowledge_query(
-            &business_intent,
-            business_context,
-        ).await?;
-        
+        let structured_query = self
+            .ai_query_translator
+            .translate_to_knowledge_query(&business_intent, business_context)
+            .await?;
+
         // Step 3: Execute with Release 1 domain intelligence
-        let domain_intelligence_result = self.knowledge_graph_ai.execute_with_domain_intelligence(
-            tenant_id,
-            &structured_query,
-            business_context,
-            user_context,
-        ).await?;
-        
+        let domain_intelligence_result = self
+            .knowledge_graph_ai
+            .execute_with_domain_intelligence(
+                tenant_id,
+                &structured_query,
+                business_context,
+                user_context,
+            )
+            .await?;
+
         // Step 4: Generate AI-powered intelligent answer
-        let ai_answer = self.llm_integration.generate_intelligent_business_answer(
-            &domain_intelligence_result,
-            &business_intent,
-            natural_query,
-        ).await?;
-        
+        let ai_answer = self
+            .llm_integration
+            .generate_intelligent_business_answer(
+                &domain_intelligence_result,
+                &business_intent,
+                natural_query,
+            )
+            .await?;
+
         Ok(AIIntelligentBusinessAnswer {
             original_query: natural_query.to_string(),
             business_intent,
@@ -139,55 +144,75 @@ impl LLMIntegrationEngine {
             performance_optimizer: Arc::new(LLMPerformanceOptimizer::new()?),
         })
     }
-    
+
     /// Initialize enterprise LLM configurations
     pub async fn initialize_enterprise_models(&self) -> Result<()> {
         // Configure financial services LLM
-        self.model_configurations.insert("financial_services".to_string(), LLMModelConfiguration {
-            model_name: "enterprise_financial_llm".to_string(),
-            model_type: LLMModelType::FinancialIntelligence,
-            context_window: 32000,
-            temperature: 0.1, // Low temperature for financial accuracy
-            max_tokens: 4000,
-            enterprise_context: EnterpriseModelContext {
-                industry: "financial_services".to_string(),
-                compliance_requirements: vec!["basel_iii".to_string(), "sox".to_string()],
-                business_domains: vec!["risk_management".to_string(), "trading".to_string()],
+        self.model_configurations.insert(
+            "financial_services".to_string(),
+            LLMModelConfiguration {
+                model_name: "enterprise_financial_llm".to_string(),
+                model_type: LLMModelType::FinancialIntelligence,
+                context_window: 32000,
+                temperature: 0.1, // Low temperature for financial accuracy
+                max_tokens: 4000,
+                enterprise_context: EnterpriseModelContext {
+                    industry: "financial_services".to_string(),
+                    compliance_requirements: vec!["basel_iii".to_string(), "sox".to_string()],
+                    business_domains: vec!["risk_management".to_string(), "trading".to_string()],
+                },
             },
-        });
-        
+        );
+
         // Configure healthcare LLM
-        self.model_configurations.insert("healthcare".to_string(), LLMModelConfiguration {
-            model_name: "enterprise_healthcare_llm".to_string(),
-            model_type: LLMModelType::ClinicalIntelligence,
-            context_window: 16000,
-            temperature: 0.05, // Very low temperature for clinical accuracy
-            max_tokens: 2000,
-            enterprise_context: EnterpriseModelContext {
-                industry: "healthcare".to_string(),
-                compliance_requirements: vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()],
-                business_domains: vec!["clinical_care".to_string(), "medical_research".to_string()],
+        self.model_configurations.insert(
+            "healthcare".to_string(),
+            LLMModelConfiguration {
+                model_name: "enterprise_healthcare_llm".to_string(),
+                model_type: LLMModelType::ClinicalIntelligence,
+                context_window: 16000,
+                temperature: 0.05, // Very low temperature for clinical accuracy
+                max_tokens: 2000,
+                enterprise_context: EnterpriseModelContext {
+                    industry: "healthcare".to_string(),
+                    compliance_requirements: vec![
+                        "hipaa".to_string(),
+                        "fda_cfr_part_11".to_string(),
+                    ],
+                    business_domains: vec![
+                        "clinical_care".to_string(),
+                        "medical_research".to_string(),
+                    ],
+                },
             },
-        });
-        
+        );
+
         // Configure general enterprise LLM
-        self.model_configurations.insert("general_enterprise".to_string(), LLMModelConfiguration {
-            model_name: "enterprise_general_llm".to_string(),
-            model_type: LLMModelType::GeneralBusiness,
-            context_window: 16000,
-            temperature: 0.3, // Moderate temperature for creative insights
-            max_tokens: 3000,
-            enterprise_context: EnterpriseModelContext {
-                industry: "technology".to_string(),
-                compliance_requirements: vec!["soc2".to_string(), "gdpr".to_string()],
-                business_domains: vec!["customer_intelligence".to_string(), "product_analytics".to_string()],
+        self.model_configurations.insert(
+            "general_enterprise".to_string(),
+            LLMModelConfiguration {
+                model_name: "enterprise_general_llm".to_string(),
+                model_type: LLMModelType::GeneralBusiness,
+                context_window: 16000,
+                temperature: 0.3, // Moderate temperature for creative insights
+                max_tokens: 3000,
+                enterprise_context: EnterpriseModelContext {
+                    industry: "technology".to_string(),
+                    compliance_requirements: vec!["soc2".to_string(), "gdpr".to_string()],
+                    business_domains: vec![
+                        "customer_intelligence".to_string(),
+                        "product_analytics".to_string(),
+                    ],
+                },
             },
-        });
-        
-        info!("Initialized enterprise LLM configurations for financial, healthcare, and general business");
+        );
+
+        info!(
+            "Initialized enterprise LLM configurations for financial, healthcare, and general business"
+        );
         Ok(())
     }
-    
+
     /// Generate intelligent business answer using appropriate LLM
     async fn generate_intelligent_business_answer(
         &self,
@@ -196,30 +221,34 @@ impl LLMIntegrationEngine {
         original_query: &str,
     ) -> Result<AIGeneratedAnswer> {
         // Get optimal model configuration for business context
-        let model_config = self.get_optimal_model_configuration(&business_intent.business_domain)?;
-        
+        let model_config =
+            self.get_optimal_model_configuration(&business_intent.business_domain)?;
+
         // Create enterprise prompt with Release 1 knowledge integration
-        let enterprise_prompt = self.create_enterprise_prompt_with_knowledge(
-            original_query,
-            business_intent,
-            domain_result,
-            &model_config,
-        ).await?;
-        
+        let enterprise_prompt = self
+            .create_enterprise_prompt_with_knowledge(
+                original_query,
+                business_intent,
+                domain_result,
+                &model_config,
+            )
+            .await?;
+
         // Generate response with business intelligence
-        let llm_response = self.execute_llm_with_enterprise_context(
-            &enterprise_prompt,
-            &model_config,
-            business_intent,
-        ).await?;
-        
+        let llm_response = self
+            .execute_llm_with_enterprise_context(&enterprise_prompt, &model_config, business_intent)
+            .await?;
+
         // Validate response for enterprise compliance
-        let validated_response = self.response_validator.validate_enterprise_response(
-            &llm_response,
-            business_intent,
-            &model_config.enterprise_context,
-        ).await?;
-        
+        let validated_response = self
+            .response_validator
+            .validate_enterprise_response(
+                &llm_response,
+                business_intent,
+                &model_config.enterprise_context,
+            )
+            .await?;
+
         Ok(AIGeneratedAnswer {
             answer_text: validated_response.answer_text,
             supporting_evidence: validated_response.supporting_evidence,
@@ -229,20 +258,26 @@ impl LLMIntegrationEngine {
             regulatory_compliance: validated_response.regulatory_compliance,
         })
     }
-    
-    fn get_optimal_model_configuration(&self, business_domain: &str) -> Result<LLMModelConfiguration> {
+
+    fn get_optimal_model_configuration(
+        &self,
+        business_domain: &str,
+    ) -> Result<LLMModelConfiguration> {
         // Map business domain to appropriate LLM configuration
         let config_key = match business_domain {
-            "risk_management" | "trading_operations" | "regulatory_compliance" => "financial_services",
+            "risk_management" | "trading_operations" | "regulatory_compliance" => {
+                "financial_services"
+            }
             "clinical_care" | "medical_research" | "pharmaceutical_intelligence" => "healthcare",
             _ => "general_enterprise",
         };
-        
-        self.model_configurations.get(config_key)
+
+        self.model_configurations
+            .get(config_key)
             .map(|entry| entry.clone())
             .ok_or_else(|| anyhow!("No LLM configuration found for domain: {}", business_domain))
     }
-    
+
     async fn create_enterprise_prompt_with_knowledge(
         &self,
         original_query: &str,
@@ -256,7 +291,10 @@ impl LLMIntegrationEngine {
                  Provide accurate, business-relevant insights based on the knowledge data provided. \
                  Ensure compliance with {} regulations.",
                 business_intent.business_domain,
-                model_config.enterprise_context.compliance_requirements.join(", ")
+                model_config
+                    .enterprise_context
+                    .compliance_requirements
+                    .join(", ")
             ),
             user_query: original_query.to_string(),
             knowledge_context: format!(
@@ -267,12 +305,15 @@ impl LLMIntegrationEngine {
                 business_intent.business_domain,
                 domain_result.entities_analyzed,
                 domain_result.relationships_analyzed,
-                model_config.enterprise_context.compliance_requirements.join(", ")
+                model_config
+                    .enterprise_context
+                    .compliance_requirements
+                    .join(", ")
             ),
             business_constraints: model_config.enterprise_context.clone(),
         })
     }
-    
+
     async fn execute_llm_with_enterprise_context(
         &self,
         prompt: &EnterprisePrompt,
@@ -281,13 +322,12 @@ impl LLMIntegrationEngine {
     ) -> Result<LLMResponse> {
         // Foundation implementation for LLM execution
         // In production, this would integrate with actual LLM providers
-        
+
         Ok(LLMResponse {
             response_text: format!(
                 "Based on the {} analysis of your enterprise knowledge graph, \
                  here are the key insights for your question about {}...",
-                business_intent.business_domain,
-                business_intent.primary_intent
+                business_intent.business_domain, business_intent.primary_intent
             ),
             confidence_score: 0.91,
             processing_time_ms: 1800,
@@ -306,7 +346,7 @@ impl BusinessContextAI {
             enterprise_terminology: Arc::new(EnterpriseTerminologyProcessor::new()?),
         })
     }
-    
+
     /// Understand business intent from natural language with industry context
     async fn understand_business_intent(
         &self,
@@ -315,23 +355,31 @@ impl BusinessContextAI {
         user_context: &EnterpriseUserContext,
     ) -> Result<BusinessIntent> {
         // Extract business intent with industry-specific understanding
-        let primary_intent = self.extract_primary_business_intent(natural_query, business_context).await?;
-        let business_domain = self.identify_business_domain(natural_query, business_context).await?;
-        let intent_confidence = self.calculate_intent_confidence(natural_query, &primary_intent).await?;
-        
+        let primary_intent = self
+            .extract_primary_business_intent(natural_query, business_context)
+            .await?;
+        let business_domain = self
+            .identify_business_domain(natural_query, business_context)
+            .await?;
+        let intent_confidence = self
+            .calculate_intent_confidence(natural_query, &primary_intent)
+            .await?;
+
         // Apply industry-specific processing
-        let industry_context = self.apply_industry_context(
-            &primary_intent,
-            &business_context.primary_function,
-            user_context,
-        ).await?;
-        
+        let industry_context = self
+            .apply_industry_context(
+                &primary_intent,
+                &business_context.primary_function,
+                user_context,
+            )
+            .await?;
+
         // Integrate regulatory requirements
-        let regulatory_requirements = self.regulatory_context.extract_regulatory_requirements(
-            natural_query,
-            business_context,
-        ).await?;
-        
+        let regulatory_requirements = self
+            .regulatory_context
+            .extract_regulatory_requirements(natural_query, business_context)
+            .await?;
+
         Ok(BusinessIntent {
             primary_intent,
             business_domain,
@@ -339,39 +387,61 @@ impl BusinessContextAI {
             regulatory_requirements,
             intent_confidence,
             extracted_entities: self.extract_business_entities(natural_query).await?,
-            business_constraints: self.extract_business_constraints(natural_query, business_context).await?,
+            business_constraints: self
+                .extract_business_constraints(natural_query, business_context)
+                .await?,
         })
     }
-    
-    async fn extract_primary_business_intent(&self, query: &str, context: &BusinessContext) -> Result<String> {
+
+    async fn extract_primary_business_intent(
+        &self,
+        query: &str,
+        context: &BusinessContext,
+    ) -> Result<String> {
         // Foundation implementation for business intent extraction
         let intent = match context.primary_function.as_str() {
             "enterprise_risk_assessment" => {
-                if query.contains("risk") { "risk_analysis" }
-                else if query.contains("compliance") { "compliance_assessment" }
-                else { "general_risk_inquiry" }
-            },
+                if query.contains("risk") {
+                    "risk_analysis"
+                } else if query.contains("compliance") {
+                    "compliance_assessment"
+                } else {
+                    "general_risk_inquiry"
+                }
+            }
             "customer_relationship_management" => {
-                if query.contains("customer") { "customer_analysis" }
-                else if query.contains("relationship") { "relationship_analysis" }
-                else { "general_customer_inquiry" }
-            },
+                if query.contains("customer") {
+                    "customer_analysis"
+                } else if query.contains("relationship") {
+                    "relationship_analysis"
+                } else {
+                    "general_customer_inquiry"
+                }
+            }
             "clinical_care" => {
-                if query.contains("patient") { "patient_analysis" }
-                else if query.contains("treatment") { "treatment_analysis" }
-                else { "general_clinical_inquiry" }
-            },
+                if query.contains("patient") {
+                    "patient_analysis"
+                } else if query.contains("treatment") {
+                    "treatment_analysis"
+                } else {
+                    "general_clinical_inquiry"
+                }
+            }
             _ => "general_business_inquiry",
         };
-        
+
         Ok(intent.to_string())
     }
-    
-    async fn identify_business_domain(&self, query: &str, context: &BusinessContext) -> Result<String> {
+
+    async fn identify_business_domain(
+        &self,
+        query: &str,
+        context: &BusinessContext,
+    ) -> Result<String> {
         // Map query to business domain
         Ok(context.primary_function.clone())
     }
-    
+
     async fn calculate_intent_confidence(&self, query: &str, intent: &str) -> Result<f32> {
         // Calculate confidence based on query-intent alignment
         let confidence = if query.to_lowercase().contains(&intent.replace('_', " ")) {
@@ -379,10 +449,10 @@ impl BusinessContextAI {
         } else {
             0.7
         };
-        
+
         Ok(confidence)
     }
-    
+
     async fn apply_industry_context(
         &self,
         intent: &str,
@@ -396,52 +466,82 @@ impl BusinessContextAI {
             compliance_context: self.get_compliance_context(business_function).await?,
         })
     }
-    
+
     fn map_business_function_to_industry(&self, business_function: &str) -> String {
         match business_function {
-            s if s.contains("risk") || s.contains("trading") || s.contains("financial") => "financial_services".to_string(),
-            s if s.contains("clinical") || s.contains("medical") || s.contains("healthcare") => "healthcare".to_string(),
-            s if s.contains("customer") || s.contains("product") || s.contains("technology") => "technology".to_string(),
+            s if s.contains("risk") || s.contains("trading") || s.contains("financial") => {
+                "financial_services".to_string()
+            }
+            s if s.contains("clinical") || s.contains("medical") || s.contains("healthcare") => {
+                "healthcare".to_string()
+            }
+            s if s.contains("customer") || s.contains("product") || s.contains("technology") => {
+                "technology".to_string()
+            }
             _ => "general_business".to_string(),
         }
     }
-    
+
     async fn get_domain_expertise(&self, business_function: &str) -> Result<Vec<String>> {
         let expertise = match business_function {
-            s if s.contains("risk") => vec!["risk_management".to_string(), "regulatory_compliance".to_string()],
-            s if s.contains("clinical") => vec!["clinical_medicine".to_string(), "patient_care".to_string()],
-            s if s.contains("customer") => vec!["customer_analytics".to_string(), "relationship_management".to_string()],
+            s if s.contains("risk") => vec![
+                "risk_management".to_string(),
+                "regulatory_compliance".to_string(),
+            ],
+            s if s.contains("clinical") => {
+                vec!["clinical_medicine".to_string(), "patient_care".to_string()]
+            }
+            s if s.contains("customer") => vec![
+                "customer_analytics".to_string(),
+                "relationship_management".to_string(),
+            ],
             _ => vec!["general_business".to_string()],
         };
-        
+
         Ok(expertise)
     }
-    
+
     async fn get_compliance_context(&self, business_function: &str) -> Result<Vec<String>> {
         let compliance = match business_function {
-            s if s.contains("risk") || s.contains("trading") => vec!["basel_iii".to_string(), "sox".to_string()],
-            s if s.contains("clinical") || s.contains("medical") => vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()],
+            s if s.contains("risk") || s.contains("trading") => {
+                vec!["basel_iii".to_string(), "sox".to_string()]
+            }
+            s if s.contains("clinical") || s.contains("medical") => {
+                vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()]
+            }
             _ => vec!["soc2".to_string(), "gdpr".to_string()],
         };
-        
+
         Ok(compliance)
     }
-    
+
     async fn extract_business_entities(&self, query: &str) -> Result<Vec<String>> {
         // Foundation implementation for entity extraction
         let mut entities = Vec::new();
-        
-        if query.contains("customer") { entities.push("customer".to_string()); }
-        if query.contains("portfolio") { entities.push("portfolio".to_string()); }
-        if query.contains("risk") { entities.push("risk".to_string()); }
-        if query.contains("patient") { entities.push("patient".to_string()); }
-        
+
+        if query.contains("customer") {
+            entities.push("customer".to_string());
+        }
+        if query.contains("portfolio") {
+            entities.push("portfolio".to_string());
+        }
+        if query.contains("risk") {
+            entities.push("risk".to_string());
+        }
+        if query.contains("patient") {
+            entities.push("patient".to_string());
+        }
+
         Ok(entities)
     }
-    
-    async fn extract_business_constraints(&self, query: &str, context: &BusinessContext) -> Result<Vec<String>> {
+
+    async fn extract_business_constraints(
+        &self,
+        query: &str,
+        context: &BusinessContext,
+    ) -> Result<Vec<String>> {
         let mut constraints = Vec::new();
-        
+
         // Add compliance constraints based on business context
         if context.data_sensitivity == crate::storage::tenant::DataSensitivityLevel::Restricted {
             constraints.push("hipaa_minimum_necessary".to_string());
@@ -449,7 +549,7 @@ impl BusinessContextAI {
         if context.data_sensitivity == crate::storage::tenant::DataSensitivityLevel::Confidential {
             constraints.push("sox_financial_controls".to_string());
         }
-        
+
         Ok(constraints)
     }
 }
@@ -490,9 +590,11 @@ pub struct AIIntelligentBusinessAnswer {
 
 impl std::fmt::Display for AIIntelligentBusinessAnswer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AI Business Answer: {} (confidence: {:.2})",
-               self.ai_generated_answer.answer_text,
-               self.confidence_metrics.overall_confidence)
+        write!(
+            f,
+            "AI Business Answer: {} (confidence: {:.2})",
+            self.ai_generated_answer.answer_text, self.confidence_metrics.overall_confidence
+        )
     }
 }
 
@@ -717,8 +819,12 @@ impl RegulatoryContextIntegration {
         business_context: &BusinessContext,
     ) -> Result<Vec<String>> {
         let requirements = match business_context.primary_function.as_str() {
-            s if s.contains("risk") || s.contains("trading") => vec!["basel_iii".to_string(), "sox".to_string()],
-            s if s.contains("clinical") || s.contains("medical") => vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()],
+            s if s.contains("risk") || s.contains("trading") => {
+                vec!["basel_iii".to_string(), "sox".to_string()]
+            }
+            s if s.contains("clinical") || s.contains("medical") => {
+                vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()]
+            }
             _ => vec!["soc2".to_string(), "gdpr".to_string()],
         };
         Ok(requirements)
@@ -745,14 +851,22 @@ mod tests {
     #[tokio::test]
     async fn test_llm_integration_engine_initialization() {
         let llm_engine = LLMIntegrationEngine::new().await.unwrap();
-        
+
         // Initialize enterprise models
         llm_engine.initialize_enterprise_models().await.unwrap();
-        
+
         // Verify model configurations were created
-        assert!(llm_engine.model_configurations.contains_key("financial_services"));
+        assert!(
+            llm_engine
+                .model_configurations
+                .contains_key("financial_services")
+        );
         assert!(llm_engine.model_configurations.contains_key("healthcare"));
-        assert!(llm_engine.model_configurations.contains_key("general_enterprise"));
+        assert!(
+            llm_engine
+                .model_configurations
+                .contains_key("general_enterprise")
+        );
     }
 
     #[test]
@@ -771,7 +885,7 @@ mod tests {
             extracted_entities: vec!["portfolio".to_string(), "risk_score".to_string()],
             business_constraints: vec!["sox_financial_controls".to_string()],
         };
-        
+
         assert_eq!(intent.primary_intent, "risk_analysis");
         assert_eq!(intent.business_domain, "risk_management");
         assert_eq!(intent.intent_confidence, 0.92);

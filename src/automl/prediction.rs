@@ -123,14 +123,14 @@ impl FeatureVector {
             sparsity: sparsity as f64,
             read_ratio: read_write_ratio / (1.0 + read_write_ratio),
             write_ratio: 1.0 / (1.0 + read_write_ratio),
-            query_complexity: 1.0, // Default
-            batch_size: 1.0, // Default
-            index_type: 0.0, // Default
+            query_complexity: 1.0,   // Default
+            batch_size: 1.0,         // Default
+            index_type: 0.0,         // Default
             quantization_level: 0.0, // Default
-            cache_size_mb: 1024.0, // Default 1GB
-            cpu_cores: 4.0, // Default
-            memory_gb: 8.0, // Default
-            disk_type: 1.0, // SSD default
+            cache_size_mb: 1024.0,   // Default 1GB
+            cpu_cores: 4.0,          // Default
+            memory_gb: 8.0,          // Default
+            disk_type: 1.0,          // SSD default
         }
     }
 
@@ -271,7 +271,9 @@ struct DecisionTree {
 
 #[derive(Debug, Clone)]
 enum TreeNode {
-    Leaf { value: f64 },
+    Leaf {
+        value: f64,
+    },
     Split {
         feature_idx: usize,
         threshold: f64,
@@ -293,7 +295,8 @@ impl RandomForestModel {
             return 0.0;
         }
 
-        let predictions: Vec<f64> = self.trees
+        let predictions: Vec<f64> = self
+            .trees
             .iter()
             .map(|tree| tree.predict(features))
             .collect();
@@ -319,12 +322,16 @@ impl DecisionTree {
 
     fn train_simple(samples: &[TrainingSample]) -> Self {
         // Very simplified tree training
-        let avg_target = samples.iter().map(|s| match s.target {
-            TargetMetric::QueryLatency(v) => v,
-            TargetMetric::Throughput(v) => v,
-            TargetMetric::MemoryUsage(v) => v,
-            TargetMetric::IndexBuildTime(v) => v,
-        }).sum::<f64>() / samples.len() as f64;
+        let avg_target = samples
+            .iter()
+            .map(|s| match s.target {
+                TargetMetric::QueryLatency(v) => v,
+                TargetMetric::Throughput(v) => v,
+                TargetMetric::MemoryUsage(v) => v,
+                TargetMetric::IndexBuildTime(v) => v,
+            })
+            .sum::<f64>()
+            / samples.len() as f64;
 
         Self {
             root: TreeNode::Leaf { value: avg_target },
@@ -336,7 +343,12 @@ impl TreeNode {
     fn predict(&self, features: &FeatureVector) -> f64 {
         match self {
             TreeNode::Leaf { value } => *value,
-            TreeNode::Split { feature_idx, threshold, left, right } => {
+            TreeNode::Split {
+                feature_idx,
+                threshold,
+                left,
+                right,
+            } => {
                 let feature_value = features.to_array()[*feature_idx];
                 if feature_value <= *threshold {
                     left.predict(features)
@@ -437,12 +449,16 @@ impl GradientBoostingModel {
 
     fn train(&mut self, samples: &[TrainingSample]) {
         // Calculate base prediction
-        self.base_prediction = samples.iter().map(|s| match s.target {
-            TargetMetric::QueryLatency(v) => v,
-            TargetMetric::Throughput(v) => v,
-            TargetMetric::MemoryUsage(v) => v,
-            TargetMetric::IndexBuildTime(v) => v,
-        }).sum::<f64>() / samples.len() as f64;
+        self.base_prediction = samples
+            .iter()
+            .map(|s| match s.target {
+                TargetMetric::QueryLatency(v) => v,
+                TargetMetric::Throughput(v) => v,
+                TargetMetric::MemoryUsage(v) => v,
+                TargetMetric::IndexBuildTime(v) => v,
+            })
+            .sum::<f64>()
+            / samples.len() as f64;
 
         // Simplified - would need gradient computation
         self.trees.clear();
@@ -487,12 +503,12 @@ impl PerformancePredictor {
         let mut model = match model_type {
             "linear" => PredictionModel::LinearRegression(LinearRegressionModel::new()),
             "random_forest" => PredictionModel::RandomForest(RandomForestModel::new(10)),
-            "neural_network" => PredictionModel::NeuralNetwork(
-                NeuralNetworkModel::new(&[13, 32, 16, 1])
-            ),
-            "gradient_boosting" => PredictionModel::GradientBoosting(
-                GradientBoostingModel::new(10, 0.1)
-            ),
+            "neural_network" => {
+                PredictionModel::NeuralNetwork(NeuralNetworkModel::new(&[13, 32, 16, 1]))
+            }
+            "gradient_boosting" => {
+                PredictionModel::GradientBoosting(GradientBoostingModel::new(10, 0.1))
+            }
             _ => return Err(anyhow::anyhow!("Unknown model type: {}", model_type)),
         };
 
@@ -518,7 +534,8 @@ impl PerformancePredictor {
         features: &FeatureVector,
     ) -> Result<PredictionResult> {
         let models = self.models.read().await;
-        let model = models.get(collection_id)
+        let model = models
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No model found for collection"))?;
 
         let prediction = match model {
@@ -567,8 +584,8 @@ pub struct PredictionResult {
 /// Model accuracy metrics
 #[derive(Debug, Clone)]
 pub struct ModelMetrics {
-    pub mse: f64, // Mean squared error
-    pub mae: f64, // Mean absolute error
+    pub mse: f64,      // Mean squared error
+    pub mae: f64,      // Mean absolute error
     pub r2_score: f64, // R-squared score
     pub training_samples: usize,
 }

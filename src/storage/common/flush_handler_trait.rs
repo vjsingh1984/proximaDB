@@ -93,15 +93,20 @@ impl FlushHandler for SstFlushHandlerAdapter {
         output_path: &str,
     ) -> Result<()> {
         // SST flush handler doesn't have compact_files method, so we implement basic compaction logic
-        info!("SST compaction initiated: {} files -> {} for collection {}", files.len(), output_path, collection_id);
-        
+        info!(
+            "SST compaction initiated: {} files -> {} for collection {}",
+            files.len(),
+            output_path,
+            collection_id
+        );
+
         // Notify about compaction completion using available methods
         self.inner.notify_compaction_complete(
             collection_id,
             vec![output_path.to_string()],
             0, // Vector count would be calculated during actual compaction
         );
-        
+
         Ok(())
     }
 
@@ -137,15 +142,20 @@ impl FlushHandler for ViperFlushHandlerAdapter {
         output_path: &str,
     ) -> Result<()> {
         // VIPER flush handler doesn't have compact_files method, so we implement basic compaction logic
-        info!("VIPER compaction initiated: {} files -> {} for collection {}", files.len(), output_path, collection_id);
-        
+        info!(
+            "VIPER compaction initiated: {} files -> {} for collection {}",
+            files.len(),
+            output_path,
+            collection_id
+        );
+
         // Notify about compaction completion using available methods
         self.inner.notify_compaction_complete(
             collection_id,
             vec![output_path.to_string()],
             0, // Vector count would be calculated during actual compaction
         );
-        
+
         Ok(())
     }
 
@@ -188,10 +198,15 @@ impl FlushHandler for NovaFlushHandler {
             collection_config: None,
             estimated_input_size: 0,
         };
-        
+
         // Delegate to NOVA engine's unified compaction interface
         // This would use the actual NOVA engine instance when available
-        info!("NOVA compaction initiated: {} files -> {} for collection {}", files.len(), output_path, collection_id);
+        info!(
+            "NOVA compaction initiated: {} files -> {} for collection {}",
+            files.len(),
+            output_path,
+            collection_id
+        );
         Ok(())
     }
 
@@ -234,9 +249,14 @@ impl FlushHandler for SwiftFlushHandler {
             collection_config: None,
             estimated_input_size: 0,
         };
-        
+
         // Delegate to SWIFT engine's unified compaction interface
-        info!("SWIFT compaction initiated: {} files -> {} for collection {}", files.len(), output_path, collection_id);
+        info!(
+            "SWIFT compaction initiated: {} files -> {} for collection {}",
+            files.len(),
+            output_path,
+            collection_id
+        );
         Ok(())
     }
 
@@ -279,9 +299,14 @@ impl FlushHandler for HelixFlushHandler {
             collection_config: None,
             estimated_input_size: 0,
         };
-        
+
         // Delegate to PRISM engine's unified compaction interface
-        info!("PRISM compaction initiated: {} files -> {} for collection {}", files.len(), output_path, collection_id);
+        info!(
+            "PRISM compaction initiated: {} files -> {} for collection {}",
+            files.len(),
+            output_path,
+            collection_id
+        );
         Ok(())
     }
 
@@ -324,9 +349,14 @@ impl FlushHandler for RaptorFlushHandler {
             collection_config: None,
             estimated_input_size: 0,
         };
-        
+
         // Delegate to RAPTOR engine's unified compaction interface
-        info!("RAPTOR compaction initiated: {} files -> {} for collection {}", files.len(), output_path, collection_id);
+        info!(
+            "RAPTOR compaction initiated: {} files -> {} for collection {}",
+            files.len(),
+            output_path,
+            collection_id
+        );
         Ok(())
     }
 

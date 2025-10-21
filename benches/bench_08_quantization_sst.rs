@@ -22,12 +22,8 @@ fn init_hardware() {
 }
 
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use proximadb::compute::quantization::unified::{
-    InMemoryCodebookStore, UnifiedQuantizationEngine,
-};
-use proximadb::compute::quantization::{
-    StorageQuantizationConfig, StorageQuantizationEngine,
-};
+use proximadb::compute::quantization::unified::{InMemoryCodebookStore, UnifiedQuantizationEngine};
+use proximadb::compute::quantization::{StorageQuantizationConfig, StorageQuantizationEngine};
 use proximadb::core::memory::pool::VectorMemoryPool;
 
 /// Generate random vectors for benchmarking
@@ -79,14 +75,14 @@ fn bench_quantization_speed(c: &mut Criterion) {
             ));
 
             let config = StorageQuantizationConfig::default();
-            let mut engine = StorageQuantizationEngine::new(
-                unified_engine,
-                distance_compute,
-                config,
-            );
+            let mut engine =
+                StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
             // Train the quantization model with sample vectors
-            engine.train(&vectors).await.expect("Failed to train quantization model");
+            engine
+                .train(&vectors)
+                .await
+                .expect("Failed to train quantization model");
 
             Arc::new(engine)
         });
@@ -95,8 +91,8 @@ fn bench_quantization_speed(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("dimension", dim), dim, |b, _| {
             b.iter(|| {
                 futures::executor::block_on(async {
-                let result = engine.quantize_batch(&vectors, None).await.unwrap();
-                black_box(result);
+                    let result = engine.quantize_batch(&vectors, None).await.unwrap();
+                    black_box(result);
                 })
             });
         });
@@ -126,14 +122,14 @@ fn bench_progressive_search(c: &mut Criterion) {
             ));
 
             let config = StorageQuantizationConfig::default();
-            let mut engine = StorageQuantizationEngine::new(
-                unified_engine,
-                distance_compute,
-                config,
-            );
+            let mut engine =
+                StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
             // Train the quantization model
-            engine.train(&vectors).await.expect("Failed to train quantization model");
+            engine
+                .train(&vectors)
+                .await
+                .expect("Failed to train quantization model");
 
             let engine = Arc::new(engine);
             let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
@@ -146,11 +142,11 @@ fn bench_progressive_search(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("dataset_size", size), size, |b, _| {
             b.iter(|| {
                 futures::executor::block_on(async {
-                let stages = engine
-                    .progressive_search(&query, &quantized, 10, &DistanceMetric::Cosine)
-                    .await
-                    .unwrap();
-                black_box(stages);
+                    let stages = engine
+                        .progressive_search(&query, &quantized, 10, &DistanceMetric::Cosine)
+                        .await
+                        .unwrap();
+                    black_box(stages);
                 })
             });
         });
@@ -250,18 +246,18 @@ fn bench_pq_distance_tables(c: &mut Criterion) {
             &config_name,
             |b, _| {
                 b.iter(|| {
-                futures::executor::block_on(async {
-                    let stages = engine
-                        .progressive_search(&query, &quantized, 10, &DistanceMetric::Euclidean)
-                        .await
-                        .unwrap();
+                    futures::executor::block_on(async {
+                        let stages = engine
+                            .progressive_search(&query, &quantized, 10, &DistanceMetric::Euclidean)
+                            .await
+                            .unwrap();
 
-                    // Note: SearchStage not available, using simplified implementation
-                    // let pq_stage = stages.iter().find(|s| s.stage == SearchStage::PQRanking);
+                        // Note: SearchStage not available, using simplified implementation
+                        // let pq_stage = stages.iter().find(|s| s.stage == SearchStage::PQRanking);
 
-                    black_box(&stages);
-                })
-            });
+                        black_box(&stages);
+                    })
+                });
             },
         );
     }
@@ -289,14 +285,14 @@ fn bench_compression_ratios(c: &mut Criterion) {
             ));
 
             let config = StorageQuantizationConfig::default();
-            let mut engine = StorageQuantizationEngine::new(
-                unified_engine,
-                distance_compute,
-                config,
-            );
+            let mut engine =
+                StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
             // Train the quantization model
-            engine.train(&vectors).await.expect("Failed to train quantization model");
+            engine
+                .train(&vectors)
+                .await
+                .expect("Failed to train quantization model");
 
             Arc::new(engine)
         });
@@ -304,9 +300,9 @@ fn bench_compression_ratios(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("dimension", dim), dim, |b, _| {
             b.iter(|| {
                 futures::executor::block_on(async {
-                let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
-                let savings = engine.calculate_savings(original_size, &quantized);
-                black_box(savings);
+                    let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
+                    let savings = engine.calculate_savings(original_size, &quantized);
+                    black_box(savings);
                 })
             });
         });
@@ -339,14 +335,14 @@ fn bench_binary_filtering(c: &mut Criterion) {
                 ..Default::default()
             };
 
-            let mut engine = StorageQuantizationEngine::new(
-                unified_engine,
-                distance_compute,
-                config,
-            );
+            let mut engine =
+                StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
             // Train the quantization model
-            engine.train(&vectors).await.expect("Failed to train quantization model");
+            engine
+                .train(&vectors)
+                .await
+                .expect("Failed to train quantization model");
 
             let engine = Arc::new(engine);
             let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
@@ -358,15 +354,15 @@ fn bench_binary_filtering(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("candidates", size), size, |b, _| {
             b.iter(|| {
                 futures::executor::block_on(async {
-                let stages = engine
-                    .progressive_search(&query, &quantized, 10, &DistanceMetric::Cosine)
-                    .await
-                    .unwrap();
+                    let stages = engine
+                        .progressive_search(&query, &quantized, 10, &DistanceMetric::Cosine)
+                        .await
+                        .unwrap();
 
-                // Note: SearchStage not available, using simplified implementation
-                // let binary_stage = stages.iter().find(|s| s.stage == SearchStage::BinaryFilter);
+                    // Note: SearchStage not available, using simplified implementation
+                    // let binary_stage = stages.iter().find(|s| s.stage == SearchStage::BinaryFilter);
 
-                black_box(&stages);
+                    black_box(&stages);
                 })
             });
         });

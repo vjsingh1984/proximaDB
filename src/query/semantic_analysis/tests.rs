@@ -1,12 +1,12 @@
 //! Tests for the semantic analyzer.
 
-use crate::query::semantic_analysis::analyzer::Analyzer;
-use crate::query::semantic_analysis::scope::{Symbol, DataType};
-use crate::services::collection::manager::CollectionService;
 use crate::core::config::StorageConfig;
+use crate::query::semantic_analysis::analyzer::Analyzer;
+use crate::query::semantic_analysis::scope::{DataType, Symbol};
 use crate::query::sql_frontend::parser::SqlFrontendParser;
-use std::sync::Arc;
+use crate::services::collection::manager::CollectionService;
 use anyhow::Result;
+use std::sync::Arc;
 
 // Mock CollectionService for testing
 struct MockCollectionService {
@@ -25,7 +25,7 @@ impl MockCollectionService {
                     name: "products".to_string(),
                     dimension: 1536,
                     distance_metric: Some(0), // Cosine metric
-                    storage_engine: Some(0), // Default storage engine
+                    storage_engine: Some(0),  // Default storage engine
                     tags: vec![],
                     description: None,
                     filterable_columns: vec![
@@ -33,17 +33,23 @@ impl MockCollectionService {
                         // It's automatically registered by the analyzer
                         crate::proto::proximadb_v1::FilterableColumnSpec {
                             name: "name".to_string(),
-                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            data_type:
+                                crate::proto::proximadb_v1::FilterableDataType::FilterableString
+                                    as i32,
                             ..Default::default()
                         },
                         crate::proto::proximadb_v1::FilterableColumnSpec {
                             name: "price".to_string(),
-                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                            data_type:
+                                crate::proto::proximadb_v1::FilterableDataType::FilterableFloat
+                                    as i32,
                             ..Default::default()
                         },
                         crate::proto::proximadb_v1::FilterableColumnSpec {
                             name: "category".to_string(),
-                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            data_type:
+                                crate::proto::proximadb_v1::FilterableDataType::FilterableString
+                                    as i32,
                             ..Default::default()
                         },
                         // Note: "embedding" is a standard vector field, not a filterable column
@@ -107,18 +113,22 @@ impl MockCollectionService {
                     name: "users".to_string(),
                     dimension: 0,
                     distance_metric: Some(0), // Changed from string to enum
-                    storage_engine: Some(0), // Default storage engine
+                    storage_engine: Some(0),  // Default storage engine
                     tags: vec![],
                     description: None,
                     filterable_columns: vec![
                         crate::proto::proximadb_v1::FilterableColumnSpec {
                             name: "user_id".to_string(),
-                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            data_type:
+                                crate::proto::proximadb_v1::FilterableDataType::FilterableString
+                                    as i32,
                             ..Default::default()
                         },
                         crate::proto::proximadb_v1::FilterableColumnSpec {
                             name: "email".to_string(),
-                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            data_type:
+                                crate::proto::proximadb_v1::FilterableDataType::FilterableString
+                                    as i32,
                             ..Default::default()
                         },
                     ],
@@ -156,32 +166,50 @@ impl MockCollectionService {
 // Note: CollectionServiceTrait doesn't exist in current codebase
 // This mock provides the same interface for testing
 impl MockCollectionService {
-    async fn create_collection(&self, _config: &crate::proto::proximadb_v1::CollectionConfig) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
+    async fn create_collection(
+        &self,
+        _config: &crate::proto::proximadb_v1::CollectionConfig,
+    ) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
         unimplemented!()
     }
-    async fn get_collection(&self, id: &str) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+    async fn get_collection(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
         Ok(self.collections.get(id).cloned())
     }
-    async fn delete_collection(&self, _id: &str) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
+    async fn delete_collection(
+        &self,
+        _id: &str,
+    ) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
         unimplemented!()
     }
     async fn list_collections(&self) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
         Ok(self.collections.values().cloned().collect())
     }
-    async fn update_collection(&self, _id: &str, _config: Option<crate::proto::proximadb_v1::CollectionConfig>) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
+    async fn update_collection(
+        &self,
+        _id: &str,
+        _config: Option<crate::proto::proximadb_v1::CollectionConfig>,
+    ) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
         unimplemented!()
     }
     async fn resolve_collection_id(&self, name_or_id: &str) -> Result<Option<String>> {
         Ok(self.collections.get(name_or_id).map(|c| c.id.clone()))
     }
-    async fn get_collection_by_name(&self, name: &str) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+    async fn get_collection_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
         Ok(self.collections.get(name).cloned())
     }
 }
 
 async fn setup_analyzer_with_mock() -> Analyzer {
     // Create a real CollectionService for testing
-    use crate::storage::metadata::backends::universal_backend::{UniversalMetadataBackend, UniversalMetadataConfig};
+    use crate::storage::metadata::backends::universal_backend::{
+        UniversalMetadataBackend, UniversalMetadataConfig,
+    };
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use tempfile::TempDir;
 
@@ -196,14 +224,22 @@ async fn setup_analyzer_with_mock() -> Analyzer {
         storage_url: format!("file://{}", temp_dir.path().display()),
         ..Default::default()
     };
-    let metadata_backend = Arc::new(UniversalMetadataBackend::new(config, filesystem_factory).await.unwrap());
+    let metadata_backend = Arc::new(
+        UniversalMetadataBackend::new(config, filesystem_factory)
+            .await
+            .unwrap(),
+    );
 
     let storage_config = StorageConfig {
         metadata_url: format!("file://{}", temp_dir.path().display()),
         ..Default::default()
     };
 
-    let collection_service = Arc::new(CollectionService::new(metadata_backend, storage_config).await.unwrap());
+    let collection_service = Arc::new(
+        CollectionService::new(metadata_backend, storage_config)
+            .await
+            .unwrap(),
+    );
 
     // Create the test collections in the actual service
     let products_config = crate::proto::proximadb_v1::CollectionConfig {
@@ -246,7 +282,7 @@ async fn setup_analyzer_with_mock() -> Analyzer {
 
     let users_config = crate::proto::proximadb_v1::CollectionConfig {
         name: "app_users".to_string(), // Must be at least 8 characters
-        dimension: 128, // Non-zero dimension required
+        dimension: 128,                // Non-zero dimension required
         distance_metric: Some(0),
         storage_engine: Some(0),
         tags: vec![],
@@ -279,8 +315,14 @@ async fn setup_analyzer_with_mock() -> Analyzer {
     };
 
     // Create the collections
-    collection_service.create_collection(&products_config).await.expect("Failed to create products collection");
-    collection_service.create_collection(&users_config).await.expect("Failed to create app_users collection");
+    collection_service
+        .create_collection(&products_config)
+        .await
+        .expect("Failed to create products collection");
+    collection_service
+        .create_collection(&users_config)
+        .await
+        .expect("Failed to create app_users collection");
 
     Analyzer::new(collection_service)
 }
@@ -293,7 +335,11 @@ async fn test_analyze_simple_select_success() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed: {:?}",
+        result.err()
+    );
     let scope = result.unwrap();
 
     // Verify 'products' table is in scope
@@ -328,7 +374,12 @@ async fn test_analyze_unknown_column() {
 
     let result = analyzer.analyze(&query).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Identifier not found"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Identifier not found")
+    );
 }
 
 #[tokio::test]
@@ -351,7 +402,11 @@ async fn test_analyze_vector_similarity_function() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -363,7 +418,12 @@ async fn test_analyze_vector_similarity_function_invalid_args() {
 
     let result = analyzer.analyze(&query).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid arguments for vector similarity function"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid arguments for vector similarity function")
+    );
 }
 
 #[tokio::test]
@@ -374,7 +434,11 @@ async fn test_analyze_group_by() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -385,7 +449,11 @@ async fn test_analyze_having() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -396,7 +464,11 @@ async fn test_analyze_join() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed: {:?}",
+        result.err()
+    );
 
     let scope = result.unwrap();
     // Verify both tables are in scope
@@ -426,7 +498,12 @@ async fn test_analyze_join_ambiguous_column() {
     let result = analyzer.analyze(&query).await;
     // Expect an error because 'id' is ambiguous without qualification
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Ambiguous column reference"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Ambiguous column reference")
+    );
 }
 
 #[tokio::test]
@@ -437,7 +514,11 @@ async fn test_analyze_sks_similar() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed for SKS_SIMILAR: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed for SKS_SIMILAR: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -449,7 +530,12 @@ async fn test_analyze_sks_similar_invalid_field() {
 
     let result = analyzer.analyze(&query).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("SIMILAR field must be a vector type"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("SIMILAR field must be a vector type")
+    );
 }
 
 #[tokio::test]
@@ -460,7 +546,11 @@ async fn test_analyze_sks_follow() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed for SKS_FOLLOW: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed for SKS_FOLLOW: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -472,7 +562,12 @@ async fn test_analyze_sks_follow_invalid_start_node() {
 
     let result = analyzer.analyze(&query).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("FOLLOW start node must be a string or integer ID"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("FOLLOW start node must be a string or integer ID")
+    );
 }
 
 #[tokio::test]
@@ -483,5 +578,9 @@ async fn test_analyze_sks_assemble() {
     let query = parser.parse(sql).unwrap();
 
     let result = analyzer.analyze(&query).await;
-    assert!(result.is_ok(), "Semantic analysis failed for SKS_ASSEMBLE: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Semantic analysis failed for SKS_ASSEMBLE: {:?}",
+        result.err()
+    );
 }

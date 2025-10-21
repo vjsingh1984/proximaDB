@@ -10,11 +10,11 @@ use crate::query::execution::{
     ExecutionOperation, ExecutionPlan, ExecutionStrategy, FusionStrategy, ProjectionTransform,
 };
 use crate::services::operations::vectors::VectorOperationsService;
-use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
+use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// Cached execution plan with metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -99,18 +99,23 @@ impl ExecutionPlanner {
     pub fn create_plan(&self, query: &Query) -> Result<ExecutionPlan> {
         // Generate cache key for query plan caching
         let cache_key = self.generate_cache_key(query);
-        
+
         // Note: Cache checking is async and would require making this function async,
         // which would break many synchronous callers. For now, skip cache check.
         // TODO: Consider implementing a synchronous cache interface or async create_plan_async
-        
+
         // Generate new plan
         let plan = match query {
             Query::Select(select) => self.plan_select(select),
             Query::With { ctes, query } => self.plan_cte(ctes, query),
-            Query::Set { left, op, all, right } => self.plan_set_operation(left, op, *all, right),
+            Query::Set {
+                left,
+                op,
+                all,
+                right,
+            } => self.plan_set_operation(left, op, *all, right),
         }?;
-        
+
         // Cache the new plan if cache orchestrator is available
         if let Some(ref cache_orchestrator) = self.cache_orchestrator {
             let cached_plan = CachedPlan {
@@ -119,12 +124,12 @@ impl ExecutionPlanner {
                 hit_count: 0,
                 avg_execution_time_ms: 0.0,
             };
-            
+
             if let Ok(cached_data) = serde_json::to_vec(&cached_plan) {
                 let _ = cache_orchestrator.put(CacheType::QueryPlan, cache_key, cached_data, None);
             }
         }
-        
+
         Ok(plan)
     }
 
@@ -167,19 +172,27 @@ impl ExecutionPlanner {
             for j in &select.joins {
                 let kind = match j.join_type {
                     crate::query::ast::JoinType::Inner => crate::query::execution::JoinKind::Inner,
-                    crate::query::ast::JoinType::LeftOuter => crate::query::execution::JoinKind::Left,
+                    crate::query::ast::JoinType::LeftOuter => {
+                        crate::query::execution::JoinKind::Left
+                    }
                     _ => continue, // Skip unsupported join types for now
                 };
                 let (lks, rks) = if let Some(on) = &j.on_condition {
                     let pairs = Self::extract_join_key_pairs_static(on);
-                    if pairs.is_empty() { (vec!["".into()], vec!["".into()]) } else {
+                    if pairs.is_empty() {
+                        (vec!["".into()], vec!["".into()])
+                    } else {
                         let (ls, rs): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
                         (ls, rs)
                     }
                 } else {
                     (vec!["".into()], vec!["".into()])
                 };
-                let right_alias = j.right_table.alias.clone().unwrap_or_else(|| "r".to_string());
+                let right_alias = j
+                    .right_table
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| "r".to_string());
                 operations.push(ExecutionOperation::Join {
                     kind,
                     left_keys: lks,
@@ -226,8 +239,9 @@ impl ExecutionPlanner {
 
         // Check for SKS functions in WHERE clause
         if let Some(where_expr) = &select.selection {
-            analysis.has_sks_functions = analysis.has_sks_functions ||
-                self.detect_sks_functions(where_expr) || self.contains_sks_funcs(where_expr);
+            analysis.has_sks_functions = analysis.has_sks_functions
+                || self.detect_sks_functions(where_expr)
+                || self.contains_sks_funcs(where_expr);
         }
 
         // Check for graph patterns in FROM clause
@@ -259,9 +273,7 @@ impl ExecutionPlanner {
             Expr::Binary { left, right, .. } => {
                 self.contains_sks_funcs(left) || self.contains_sks_funcs(right)
             }
-            Expr::FuncCall { args, .. } => {
-                args.iter().any(|e| self.contains_sks_funcs(e))
-            }
+            Expr::FuncCall { args, .. } => args.iter().any(|e| self.contains_sks_funcs(e)),
             _ => false,
         }
     }
@@ -318,10 +330,7 @@ impl ExecutionPlanner {
                         edge_types: vec![fol.edge],
                         max_depth: fol.max_depth,
                         filters: self.convert_where_to_filter(&select.selection)?,
-                        vector_target_collection: select
-                            .from
-                            .first()
-                            .and_then(|t| t.name.clone()),
+                        vector_target_collection: select.from.first().and_then(|t| t.name.clone()),
                     });
                 } else {
                     operations.push(ExecutionOperation::GraphTraversal {
@@ -330,10 +339,7 @@ impl ExecutionPlanner {
                         edge_types: self.extract_edge_types(select)?,
                         max_depth: self.extract_max_depth(select).unwrap_or(3),
                         filters: self.convert_where_to_filter(&select.selection)?,
-                        vector_target_collection: select
-                            .from
-                            .first()
-                            .and_then(|t| t.name.clone()),
+                        vector_target_collection: select.from.first().and_then(|t| t.name.clone()),
                     });
                 }
             }
@@ -365,15 +371,15 @@ impl ExecutionPlanner {
                         edge_types: vec![fol.edge],
                         max_depth: fol.max_depth,
                         filters: self.convert_where_to_filter(&select.selection)?,
-                        vector_target_collection: select
-                            .from
-                            .first()
-                            .and_then(|t| t.name.clone()),
+                        vector_target_collection: select.from.first().and_then(|t| t.name.clone()),
                     });
                 }
                 operations.push(ExecutionOperation::Fusion {
                     strategy: FusionStrategy::ReciprocalRankFusion { k: 60.0 },
-                    weights: self.fusion_weights.clone().unwrap_or_else(|| vec![0.6, 0.4]),
+                    weights: self
+                        .fusion_weights
+                        .clone()
+                        .unwrap_or_else(|| vec![0.6, 0.4]),
                 });
             }
 
@@ -392,7 +398,8 @@ impl ExecutionPlanner {
                 .iter()
                 .filter_map(|e| self.expr_to_identifier(e))
                 .collect::<Vec<_>>();
-            let projection_exprs: Vec<_> = select.projection.iter().map(|p| p.expr.clone()).collect();
+            let projection_exprs: Vec<_> =
+                select.projection.iter().map(|p| p.expr.clone()).collect();
             let aggs = self.extract_aggregates(&projection_exprs);
             let having = self.convert_where_to_filter(&select.having)?; // reuse filter converter
             operations.push(ExecutionOperation::Aggregate {
@@ -486,9 +493,9 @@ impl ExecutionPlanner {
         // Use GraphOperationsService stats to validate edge types when available
         // (best-effort; if stats not accessible, skip)
         // TODO: Add graph_id parameter when available from context
-        if let Ok(stats) = tokio::runtime::Handle::current().block_on(
-            self.graph_service.get_stats("default")
-        ) {
+        if let Ok(stats) =
+            tokio::runtime::Handle::current().block_on(self.graph_service.get_stats("default"))
+        {
             let exists = stats
                 .edge_type_stats
                 .iter()
@@ -552,7 +559,10 @@ impl ExecutionPlanner {
                 if out.is_empty() {
                     None
                 } else {
-                    tracing::info!("Successfully parsed vector from array, length: {}", out.len());
+                    tracing::info!(
+                        "Successfully parsed vector from array, length: {}",
+                        out.len()
+                    );
                     Some(out)
                 }
             }
@@ -573,7 +583,10 @@ impl ExecutionPlanner {
                 tracing::debug!("Found string literal: {}", s);
                 if s.starts_with('[') {
                     if let Ok(v) = serde_json::from_str::<Vec<f32>>(s) {
-                        tracing::info!("Successfully parsed vector from string, length: {}", v.len());
+                        tracing::info!(
+                            "Successfully parsed vector from string, length: {}",
+                            v.len()
+                        );
                         return Some(v);
                     } else {
                         tracing::warn!("Failed to parse JSON array from string: {}", s);
@@ -696,7 +709,9 @@ impl ExecutionPlanner {
         }
     }
 
-    fn extract_join_keys(&self, expr: &Expr) -> Option<(String, String)> { Self::extract_join_keys_static(expr) }
+    fn extract_join_keys(&self, expr: &Expr) -> Option<(String, String)> {
+        Self::extract_join_keys_static(expr)
+    }
 
     pub(crate) fn extract_join_keys_static(expr: &Expr) -> Option<(String, String)> {
         // Support simple equality join: a.id = b.entity_id
@@ -719,20 +734,21 @@ impl ExecutionPlanner {
     pub(crate) fn extract_join_key_pairs_static(expr: &Expr) -> Vec<(String, String)> {
         let mut out = Vec::new();
         match expr {
-            Expr::Binary { left, op, right } => {
-                match op {
-                    BinaryOp::Eq => {
-                        if let (Some(l), Some(r)) = (Self::extract_join_keys_static(expr).map(|p| p.0), Self::extract_join_keys_static(expr).map(|p| p.1)) {
-                            out.push((l, r));
-                        }
+            Expr::Binary { left, op, right } => match op {
+                BinaryOp::Eq => {
+                    if let (Some(l), Some(r)) = (
+                        Self::extract_join_keys_static(expr).map(|p| p.0),
+                        Self::extract_join_keys_static(expr).map(|p| p.1),
+                    ) {
+                        out.push((l, r));
                     }
-                    BinaryOp::And => {
-                        out.extend(Self::extract_join_key_pairs_static(left));
-                        out.extend(Self::extract_join_key_pairs_static(right));
-                    }
-                    _ => {}
                 }
-            }
+                BinaryOp::And => {
+                    out.extend(Self::extract_join_key_pairs_static(left));
+                    out.extend(Self::extract_join_key_pairs_static(right));
+                }
+                _ => {}
+            },
             _ => {}
         }
         out
@@ -1231,12 +1247,12 @@ mod planner_tests {
     }
 
     async fn create_test_planner() -> ExecutionPlanner {
+        use crate::graph::service::GraphOperationsService;
+        use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::graph::service::GraphOperationsService;
         use crate::storage::engines::impls::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-        use crate::index::AxisManager;
         use std::sync::Arc;
 
         // Create temporary directory for storage
@@ -1247,35 +1263,50 @@ mod planner_tests {
         let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager with default config
-        use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory, WriteBufferStrategyType};
-        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use crate::storage::persistence::write_ahead_log::{
+            WALBatchFactory, WALConfig, WriteBufferStrategyType,
+        };
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
         let wal_config = WALConfig::default();
         let strategy = WALBatchFactory::create_batch_serialization_strategy(
             WriteBufferStrategyType::AvroBatch,
             &wal_config,
-            filesystem
-        ).await.expect("Failed to create WAL strategy");
-        let wal_manager = Arc::new(WriteAheadLogManager::new(
-            strategy,
-            wal_config
-        ).await.expect("Failed to create WAL manager"));
+            filesystem,
+        )
+        .await
+        .expect("Failed to create WAL strategy");
+        let wal_manager = Arc::new(
+            WriteAheadLogManager::new(strategy, wal_config)
+                .await
+                .expect("Failed to create WAL manager"),
+        );
 
         // Create Axis index manager with default config
         use crate::index::axis::AxisConfig;
         let axis_config = AxisConfig::default();
-        let axis_manager = Arc::new(AxisManager::new(
-            axis_config
-        ).await.expect("Failed to create Axis manager"));
+        let axis_manager = Arc::new(
+            AxisManager::new(axis_config)
+                .await
+                .expect("Failed to create Axis manager"),
+        );
 
         // Create collection service with universal metadata backend
+        use crate::core::config::StorageConfig;
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
         use crate::storage::traits::InternalCollectionProvider;
-        use crate::core::config::StorageConfig;
 
         let fs_config = FilesystemConfig::default();
-        let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem2 = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
 
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
         let metadata_config = UniversalMetadataConfig {
@@ -1287,18 +1318,20 @@ mod planner_tests {
             backup_url: None,
             temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
         };
-        let metadata_backend = Arc::new(UniversalMetadataBackend::new(
-            metadata_config,
-            filesystem2
-        ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+        let metadata_backend = Arc::new(
+            UniversalMetadataBackend::new(metadata_config, filesystem2)
+                .await
+                .expect("Failed to create metadata backend"),
+        ) as Arc<dyn InternalCollectionProvider>;
         let storage_config = StorageConfig {
             metadata_url: storage_url.clone(),
             ..Default::default()
         };
-        let collection_service = Arc::new(CollectionService::new(
-            metadata_backend,
-            storage_config
-        ).await.expect("Failed to create collection service"));
+        let collection_service = Arc::new(
+            CollectionService::new(metadata_backend, storage_config)
+                .await
+                .expect("Failed to create collection service"),
+        );
 
         // Create vector operations service with all dependencies
         let vector_service = Arc::new(VectorOperationsService::new(
@@ -1388,7 +1421,7 @@ mod planner_tests {
         use crate::graph::GraphOperationsService;
         use crate::services::operations::vectors::VectorOperationsService;
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-        
+
         // Create mock services (simplified for testing)
         let _graph_service = Arc::new(GraphOperationsService::new());
         // Skip complex vector service setup for test
@@ -1419,7 +1452,7 @@ mod planner_tests {
     #[test]
     fn test_cost_model_estimation() {
         let cost_model = CostModel::new();
-        
+
         let operations = vec![
             ExecutionOperation::VectorSearch {
                 collection_id: "test".to_string(),
@@ -1433,7 +1466,7 @@ mod planner_tests {
                 transformations: vec![],
             },
         ];
-        
+
         let total_cost = cost_model.estimate_total_cost(&operations);
         assert!(total_cost > 0.0);
     }

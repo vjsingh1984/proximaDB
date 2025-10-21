@@ -12,8 +12,8 @@
 //! These implementations are registered with ProximaCodec and automatically
 //! selected when SIMD acceleration is available on the platform.
 
-pub mod encoder;
 pub mod decoder;
+pub mod encoder;
 
-pub use encoder::SimdEncoder;
 pub use decoder::SimdDecoder;
+pub use encoder::SimdEncoder;

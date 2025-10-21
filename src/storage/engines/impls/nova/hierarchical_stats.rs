@@ -5,7 +5,7 @@ use anyhow::Result;
 // These parquet metadata types are used internally for low-level operations
 // The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::RowGroupMetaData;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 // Note: Using string representation instead of proto enum for consistency

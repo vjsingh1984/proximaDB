@@ -7,8 +7,8 @@
 use anyhow::Result;
 use bytes::Bytes;
 use std::any::Any;
-use std::fmt::Debug;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 use serde::{Deserialize, Serialize};
@@ -141,12 +141,12 @@ impl EngineMetadataSerializer for NovaUnifiedMetadataSerializer {
         }
 
         // Check for PAR1 magic bytes at start and end
-        if &data[0..4] != b"PAR1" || &data[data.len()-4..] != b"PAR1" {
+        if &data[0..4] != b"PAR1" || &data[data.len() - 4..] != b"PAR1" {
             return None;
         }
 
         // Read footer length (4 bytes before the trailing PAR1)
-        let footer_len_bytes = &data[data.len()-8..data.len()-4];
+        let footer_len_bytes = &data[data.len() - 8..data.len() - 4];
         let footer_len = u32::from_le_bytes([
             footer_len_bytes[0],
             footer_len_bytes[1],
@@ -170,11 +170,11 @@ impl EngineMetadataSerializer for NovaUnifiedMetadataSerializer {
 
     fn should_cache_metadata(&self, file_path: &str) -> bool {
         // Cache metadata for NOVA Parquet files
-        file_path.ends_with(".parquet") ||
-        file_path.contains("/nova/") ||
-        file_path.contains("_nova_") ||
-        file_path.contains("/superblocks/") ||
-        file_path.contains("/progressive/")
+        file_path.ends_with(".parquet")
+            || file_path.contains("/nova/")
+            || file_path.contains("_nova_")
+            || file_path.contains("/superblocks/")
+            || file_path.contains("/progressive/")
     }
 }
 
@@ -191,31 +191,27 @@ mod tests {
             super_block_count: 10,
             row_group_count: 100,
             hierarchical_stats: HierarchicalStatsCache {
-                super_block_stats: vec![
-                    SuperBlockStat {
-                        super_block_id: 0,
-                        start_row_group: 0,
-                        end_row_group: 10,
-                        vector_count: 10000,
-                        min_similarity: 0.1,
-                        max_similarity: 0.99,
-                        centroid: vec![0.5; 1536],
-                    },
-                ],
+                super_block_stats: vec![SuperBlockStat {
+                    super_block_id: 0,
+                    start_row_group: 0,
+                    end_row_group: 10,
+                    vector_count: 10000,
+                    min_similarity: 0.1,
+                    max_similarity: 0.99,
+                    centroid: vec![0.5; 1536],
+                }],
                 global_min_values: vec![-1.0; 1536],
                 global_max_values: vec![1.0; 1536],
                 global_centroid: vec![0.0; 1536],
                 pruning_efficiency: 0.85,
             },
-            zone_maps: vec![
-                ZoneMapEntry {
-                    row_group_id: 0,
-                    min_values: vec![-0.5; 16], // Abbreviated for test
-                    max_values: vec![0.5; 16],
-                    null_count: 0,
-                    distinct_count: 1000,
-                },
-            ],
+            zone_maps: vec![ZoneMapEntry {
+                row_group_id: 0,
+                min_values: vec![-0.5; 16], // Abbreviated for test
+                max_values: vec![0.5; 16],
+                null_count: 0,
+                distinct_count: 1000,
+            }],
             column_metadata: HashMap::new(),
             compression_ratio: 0.25,
             quantization_config: Some(QuantizationMetadata {

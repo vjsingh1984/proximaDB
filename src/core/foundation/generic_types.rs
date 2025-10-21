@@ -271,7 +271,7 @@ where
             {
                 let mut data = None;
                 let mut validation_rules = None;
-                
+
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "data" => {
@@ -291,10 +291,10 @@ where
                         }
                     }
                 }
-                
+
                 let data = data.ok_or_else(|| de::Error::missing_field("data"))?;
                 let validation_rules = validation_rules.unwrap_or_else(HashMap::new);
-                
+
                 Ok(GenericConfig {
                     data,
                     validation_rules,
@@ -341,7 +341,15 @@ where
 
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field { Id, Data, Version, Timestamp, UpdatedAt, Tags, Properties }
+        enum Field {
+            Id,
+            Data,
+            Version,
+            Timestamp,
+            UpdatedAt,
+            Tags,
+            Properties,
+        }
 
         struct GenericMetadataVisitor<T>(PhantomData<T>);
 
@@ -366,7 +374,7 @@ where
                 let mut updated_at = None;
                 let mut tags = None;
                 let mut properties = None;
-                
+
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Id => {
@@ -413,7 +421,7 @@ where
                         }
                     }
                 }
-                
+
                 let id = id.ok_or_else(|| de::Error::missing_field("id"))?;
                 let data = data.ok_or_else(|| de::Error::missing_field("data"))?;
                 let version = version.unwrap_or(1);
@@ -421,7 +429,7 @@ where
                 let updated_at = updated_at.unwrap_or(timestamp);
                 let tags = tags.unwrap_or_else(Vec::new);
                 let properties = properties.unwrap_or_else(HashMap::new);
-                
+
                 Ok(GenericMetadata {
                     id,
                     data,
@@ -469,7 +477,12 @@ where
 
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field { Data, Timestamp, CollectionCount, ResetCount }
+        enum Field {
+            Data,
+            Timestamp,
+            CollectionCount,
+            ResetCount,
+        }
 
         struct GenericStatsVisitor<T>(PhantomData<T>);
 
@@ -491,7 +504,7 @@ where
                 let mut timestamp = None;
                 let mut collection_count = None;
                 let mut reset_count = None;
-                
+
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Data => {
@@ -520,12 +533,12 @@ where
                         }
                     }
                 }
-                
+
                 let data = data.ok_or_else(|| de::Error::missing_field("data"))?;
                 let timestamp = timestamp.ok_or_else(|| de::Error::missing_field("timestamp"))?;
                 let collection_count = collection_count.unwrap_or(0);
                 let reset_count = reset_count.unwrap_or(0);
-                
+
                 Ok(GenericStats {
                     data,
                     timestamp,
@@ -571,7 +584,13 @@ where
 
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field { Success, Data, ErrorCode, ProcessingTimeUs, Metadata }
+        enum Field {
+            Success,
+            Data,
+            ErrorCode,
+            ProcessingTimeUs,
+            Metadata,
+        }
 
         struct GenericResultVisitor<T>(PhantomData<T>);
 
@@ -594,7 +613,7 @@ where
                 let mut error_code = None;
                 let mut processing_time_us = None;
                 let mut metadata = None;
-                
+
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Success => {
@@ -629,13 +648,13 @@ where
                         }
                     }
                 }
-                
+
                 let success = success.ok_or_else(|| de::Error::missing_field("success"))?;
                 let data = data.unwrap_or(None);
                 let error_code = error_code.unwrap_or(None);
                 let processing_time_us = processing_time_us.unwrap_or(None);
                 let metadata = metadata.unwrap_or_else(HashMap::new);
-                
+
                 Ok(GenericResult {
                     success,
                     data,

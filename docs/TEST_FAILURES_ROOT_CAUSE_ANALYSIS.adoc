@@ -181,8 +181,10 @@ WHERE price > 100 AND metadata.category = 'electronics'
 === Graph Test (1 failure)
 
 **test_executor_node_scan**:
-- **Issue**: URL parsing error `file://file:///tmp/...`
-- **Fix**: Enhanced error handling to skip test on URL errors
+- **Issue**: URL parsing error `file://file:///tmp/...` due to double-prefix of `file://` in WAL paths.
+- **Root Cause**: Passing a fully-qualified `file:///...` URL into a helper that blindly prefixed `file://` again.
+- **Fix**: Updated WAL writer to detect already-qualified URLs and avoid re-prefixing; Graph engine now passes a storage ROOT URL and lets persistence append `/graphs/{id}/data` internally.
+- **Result**: No double-prefix; tests and benches initialize persistence cleanly.
 
 === Event Log Test (1 failure)
 

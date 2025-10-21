@@ -114,13 +114,21 @@ impl GraphService for GraphServiceImpl {
         request: Request<CreateNodeRequest>,
     ) -> Result<Response<Node>, Status> {
         let req = request.into_inner();
-        debug!("gRPC CreateNode request for graph: {} node: {:?}", req.graph_id, req.node);
+        debug!(
+            "gRPC CreateNode request for graph: {} node: {:?}",
+            req.graph_id, req.node
+        );
 
         let node = req
             .node
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
-        match self.unified_handlers.graph_operations_service.create_node(&req.graph_id, node).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .create_node(&req.graph_id, node)
+            .await
+        {
             Ok(created_node) => {
                 info!("Successfully created node via gRPC: {}", created_node.id);
                 Ok(Response::new((*created_node).clone()))
@@ -135,9 +143,17 @@ impl GraphService for GraphServiceImpl {
     /// Get a node by ID
     async fn get_node(&self, request: Request<GetNodeRequest>) -> Result<Response<Node>, Status> {
         let req = request.into_inner();
-        debug!("gRPC GetNode request for graph: {} ID: {}", req.graph_id, req.node_id);
+        debug!(
+            "gRPC GetNode request for graph: {} ID: {}",
+            req.graph_id, req.node_id
+        );
 
-        match self.unified_handlers.graph_operations_service.get_node(&req.graph_id, &req.node_id).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .get_node(&req.graph_id, &req.node_id)
+            .await
+        {
             Ok(Some(node)) => {
                 info!("Successfully retrieved node via gRPC: {}", req.node_id);
                 Ok(Response::new((*node).clone()))
@@ -162,13 +178,21 @@ impl GraphService for GraphServiceImpl {
         request: Request<UpdateNodeRequest>,
     ) -> Result<Response<Node>, Status> {
         let req = request.into_inner();
-        debug!("gRPC UpdateNode request for graph: {} node: {:?}", req.graph_id, req.node);
+        debug!(
+            "gRPC UpdateNode request for graph: {} node: {:?}",
+            req.graph_id, req.node
+        );
 
         let node = req
             .node
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
-        match self.unified_handlers.graph_operations_service.update_node(&req.graph_id, node).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .update_node(&req.graph_id, node)
+            .await
+        {
             Ok(updated_node) => {
                 info!("Successfully updated node via gRPC: {}", updated_node.id);
                 Ok(Response::new((*updated_node).clone()))
@@ -186,7 +210,10 @@ impl GraphService for GraphServiceImpl {
         request: Request<DeleteNodeRequest>,
     ) -> Result<Response<Node>, Status> {
         let req = request.into_inner();
-        debug!("gRPC DeleteNode request for graph: {} ID: {}", req.graph_id, req.node_id);
+        debug!(
+            "gRPC DeleteNode request for graph: {} ID: {}",
+            req.graph_id, req.node_id
+        );
 
         match self
             .unified_handlers
@@ -218,13 +245,21 @@ impl GraphService for GraphServiceImpl {
         request: Request<CreateEdgeRequest>,
     ) -> Result<Response<Edge>, Status> {
         let req = request.into_inner();
-        debug!("gRPC CreateEdge request for graph: {} edge: {:?}", req.graph_id, req.edge);
+        debug!(
+            "gRPC CreateEdge request for graph: {} edge: {:?}",
+            req.graph_id, req.edge
+        );
 
         let edge = req
             .edge
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
-        match self.unified_handlers.graph_operations_service.create_edge(&req.graph_id, edge).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .create_edge(&req.graph_id, edge)
+            .await
+        {
             Ok(created_edge) => {
                 info!("Successfully created edge via gRPC: {}", created_edge.id);
                 Ok(Response::new((*created_edge).clone()))
@@ -239,9 +274,17 @@ impl GraphService for GraphServiceImpl {
     /// Get an edge by ID
     async fn get_edge(&self, request: Request<GetEdgeRequest>) -> Result<Response<Edge>, Status> {
         let req = request.into_inner();
-        debug!("gRPC GetEdge request for graph: {} ID: {}", req.graph_id, req.edge_id);
+        debug!(
+            "gRPC GetEdge request for graph: {} ID: {}",
+            req.graph_id, req.edge_id
+        );
 
-        match self.unified_handlers.graph_operations_service.get_edge(&req.graph_id, &req.edge_id).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .get_edge(&req.graph_id, &req.edge_id)
+            .await
+        {
             Ok(Some(edge)) => {
                 info!("Successfully retrieved edge via gRPC: {}", req.edge_id);
                 Ok(Response::new((*edge).clone()))
@@ -266,13 +309,21 @@ impl GraphService for GraphServiceImpl {
         request: Request<UpdateEdgeRequest>,
     ) -> Result<Response<Edge>, Status> {
         let req = request.into_inner();
-        debug!("gRPC UpdateEdge request for graph: {} edge: {:?}", req.graph_id, req.edge);
+        debug!(
+            "gRPC UpdateEdge request for graph: {} edge: {:?}",
+            req.graph_id, req.edge
+        );
 
         let edge = req
             .edge
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
-        match self.unified_handlers.graph_operations_service.update_edge(&req.graph_id, edge).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .update_edge(&req.graph_id, edge)
+            .await
+        {
             Ok(updated_edge) => {
                 info!("Successfully updated edge via gRPC: {}", updated_edge.id);
                 Ok(Response::new((*updated_edge).clone()))
@@ -290,7 +341,10 @@ impl GraphService for GraphServiceImpl {
         request: Request<DeleteEdgeRequest>,
     ) -> Result<Response<Edge>, Status> {
         let req = request.into_inner();
-        debug!("gRPC DeleteEdge request for graph: {} ID: {}", req.graph_id, req.edge_id);
+        debug!(
+            "gRPC DeleteEdge request for graph: {} ID: {}",
+            req.graph_id, req.edge_id
+        );
 
         match self
             .unified_handlers
@@ -322,7 +376,10 @@ impl GraphService for GraphServiceImpl {
         request: Request<NodeQuery>,
     ) -> Result<Response<BatchResponse>, Status> {
         let mut query = request.into_inner();
-        debug!("gRPC QueryNodes request for graph: {} with labels: {:?}", query.graph_id, query.labels);
+        debug!(
+            "gRPC QueryNodes request for graph: {} with labels: {:?}",
+            query.graph_id, query.labels
+        );
         // Continuation token parsing: format "offset:<n>"
         if query.offset.is_none() {
             if let Some(token) = &query.continuation_token {
@@ -427,7 +484,10 @@ impl GraphService for GraphServiceImpl {
         request: Request<GetNeighborsRequest>,
     ) -> Result<Response<BatchResponse>, Status> {
         let req = request.into_inner();
-        debug!("gRPC GetNeighbors request for graph: {} node: {}", req.graph_id, req.node_id);
+        debug!(
+            "gRPC GetNeighbors request for graph: {} node: {}",
+            req.graph_id, req.node_id
+        );
 
         match self
             .unified_handlers
@@ -479,7 +539,12 @@ impl GraphService for GraphServiceImpl {
             req.graph_id, req.start_node_id
         );
 
-        match self.unified_handlers.graph_operations_service.traverse(&req.graph_id, req.clone()).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .traverse(&req.graph_id, req.clone())
+            .await
+        {
             Ok(response) => {
                 info!("Successfully completed graph traversal via gRPC");
                 Ok(Response::new(response))
@@ -505,7 +570,11 @@ impl GraphService for GraphServiceImpl {
         let handlers = self.unified_handlers.clone();
         let graph_id = req.graph_id.clone();
         tokio::spawn(async move {
-            match handlers.graph_operations_service.traverse(&graph_id, req).await {
+            match handlers
+                .graph_operations_service
+                .traverse(&graph_id, req)
+                .await
+            {
                 Ok(resp) => {
                     let chunk_size = 1000usize;
                     let mut idx = 0;
@@ -608,7 +677,12 @@ impl GraphService for GraphServiceImpl {
         let req = request.into_inner();
         debug!("gRPC GetGraphStats request for graph: {}", req.graph_id);
 
-        match self.unified_handlers.graph_operations_service.get_stats(&req.graph_id).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .get_stats(&req.graph_id)
+            .await
+        {
             Ok(stats) => {
                 info!("Successfully retrieved graph statistics via gRPC");
                 Ok(Response::new(stats))
@@ -631,7 +705,8 @@ impl GraphService for GraphServiceImpl {
         let req = request.into_inner();
         debug!(
             "gRPC BatchCreateNodes request for graph: {} with {} nodes",
-            req.graph_id, req.nodes.len()
+            req.graph_id,
+            req.nodes.len()
         );
 
         match self
@@ -674,7 +749,8 @@ impl GraphService for GraphServiceImpl {
         let req = request.into_inner();
         debug!(
             "gRPC BatchCreateEdges request for graph: {} with {} edges",
-            req.graph_id, req.edges.len()
+            req.graph_id,
+            req.edges.len()
         );
 
         match self
@@ -741,7 +817,12 @@ impl GraphService for GraphServiceImpl {
         request: Request<GetStatsRequest>,
     ) -> Result<Response<CycleCheckResponse>, Status> {
         let req = request.into_inner();
-        match self.unified_handlers.graph_operations_service.has_cycle(&req.graph_id).await {
+        match self
+            .unified_handlers
+            .graph_operations_service
+            .has_cycle(&req.graph_id)
+            .await
+        {
             Ok(has) => Ok(Response::new(CycleCheckResponse { has_cycle: has })),
             Err(e) => Err(Status::internal(format!("HasCycle failed: {}", e))),
         }
@@ -776,7 +857,8 @@ impl GraphService for GraphServiceImpl {
         request: Request<UniqueConstraintRequest>,
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
         let req = request.into_inner();
-        match self.unified_handlers
+        match self
+            .unified_handlers
             .graph_operations_service
             .remove_unique_constraint(&req.graph_id, &req.label, &req.property)
             .await
@@ -798,7 +880,10 @@ impl GraphService for GraphServiceImpl {
         request: Request<HybridSearchRequest>,
     ) -> Result<Response<HybridSearchResponse>, Status> {
         let req = request.into_inner();
-        debug!("gRPC ExecuteHybridQuery request with strategy: {:?}", req.combination_strategy);
+        debug!(
+            "gRPC ExecuteHybridQuery request with strategy: {:?}",
+            req.combination_strategy
+        );
 
         match self.unified_handlers.execute_hybrid_query(req).await {
             Ok(response) => {

@@ -4,11 +4,11 @@
 //! and ensure tenant isolation compliance.
 
 use crate::ai::natural_language::translator::UserContext;
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use anyhow::{Result, anyhow};
-use tracing::{debug, error};
+use serde::{Deserialize, Serialize};
 use sqlparser::ast::Query;
+use std::collections::HashSet;
+use tracing::{debug, error};
 
 /// SQL Validator for security and safety
 #[derive(Debug, Clone)]
@@ -77,33 +77,52 @@ impl SQLValidator {
         // Build list of allowed SQL functions
         let allowed_functions = [
             // String functions
-            "UPPER", "LOWER", "SUBSTR", "LENGTH", "TRIM", "CONCAT",
+            "UPPER",
+            "LOWER",
+            "SUBSTR",
+            "LENGTH",
+            "TRIM",
+            "CONCAT",
             // Math functions
-            "SUM", "COUNT", "AVG", "MIN", "MAX", "ROUND", "ABS",
+            "SUM",
+            "COUNT",
+            "AVG",
+            "MIN",
+            "MAX",
+            "ROUND",
+            "ABS",
             // Date functions
-            "NOW", "DATE", "EXTRACT", "DATE_TRUNC",
+            "NOW",
+            "DATE",
+            "EXTRACT",
+            "DATE_TRUNC",
             // Conditional functions
-            "CASE", "COALESCE", "NULLIF",
+            "CASE",
+            "COALESCE",
+            "NULLIF",
             // Vector functions (ProximaDB specific)
-            "VECTOR_SIMILARITY", "COSINE_DISTANCE", "DOT_PRODUCT",
-        ].iter().map(|s| s.to_string()).collect();
+            "VECTOR_SIMILARITY",
+            "COSINE_DISTANCE",
+            "DOT_PRODUCT",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
         // Build list of forbidden patterns
         let forbidden_patterns = vec![
             // SQL injection patterns
             r"(?i)(\s|^)(DROP|DELETE|UPDATE|INSERT|ALTER|CREATE|TRUNCATE)\s".to_string(),
-            r"(?i)--\s*.*".to_string(), // SQL comments
-            r"(?i)/\*.*\*/".to_string(), // Block comments
+            r"(?i)--\s*.*".to_string(),            // SQL comments
+            r"(?i)/\*.*\*/".to_string(),           // Block comments
             r"(?i)(\s|^)OR\s+\d+=\d+".to_string(), // Classic SQL injection OR 1=1, OR 2=2, etc.
             r"(?i)(\s|^)EXEC(\s|\(|$)".to_string(),
             r"(?i)(\s|^)EXECUTE(\s|\(|$)".to_string(),
             r"(?i)(\s|^)xp_".to_string(),
             r"(?i)(\s|^)sp_".to_string(),
-
             // System functions and procedures
             r"(?i)(\s|^)(LOAD_FILE|INTO\s+OUTFILE|INTO\s+DUMPFILE)".to_string(),
             r"(?i)(\s|^)(UNION\s+SELECT|UNION\s+ALL\s+SELECT)".to_string(),
-
             // Information schema access
             r"(?i)information_schema".to_string(),
             r"(?i)sys\.".to_string(),
@@ -128,17 +147,28 @@ impl SQLValidator {
         let validation_result = self.validate_sql(sql, user_context).await?;
 
         if !validation_result.is_valid {
-            error!("SQL validation failed for user {}: {:?}", user_context.user_id, validation_result.errors);
-            return Err(anyhow!("SQL validation failed: {}", validation_result.errors.join("; ")));
+            error!(
+                "SQL validation failed for user {}: {:?}",
+                user_context.user_id, validation_result.errors
+            );
+            return Err(anyhow!(
+                "SQL validation failed: {}",
+                validation_result.errors.join("; ")
+            ));
         }
 
         // Check for critical security issues
-        let critical_issues: Vec<&SecurityIssue> = validation_result.security_issues.iter()
+        let critical_issues: Vec<&SecurityIssue> = validation_result
+            .security_issues
+            .iter()
             .filter(|issue| matches!(issue.severity, SecuritySeverity::Critical))
             .collect();
 
         if !critical_issues.is_empty() {
-            error!("Critical security issues found in SQL: {:?}", critical_issues);
+            error!(
+                "Critical security issues found in SQL: {:?}",
+                critical_issues
+            );
             return Err(anyhow!("Critical security issues detected in query"));
         }
 
@@ -150,7 +180,11 @@ impl SQLValidator {
     }
 
     /// Comprehensive SQL validation
-    async fn validate_sql(&self, sql: &str, user_context: &UserContext) -> Result<ValidationResult> {
+    async fn validate_sql(
+        &self,
+        sql: &str,
+        user_context: &UserContext,
+    ) -> Result<ValidationResult> {
         let warnings = Vec::new();
         let mut errors = Vec::new();
         let mut security_issues = Vec::new();
@@ -208,9 +242,10 @@ impl SQLValidator {
             security_issues.push(limit_issue);
         }
 
-        let is_valid = errors.is_empty() && security_issues.iter().all(|issue| {
-            !matches!(issue.severity, SecuritySeverity::Critical)
-        });
+        let is_valid = errors.is_empty()
+            && security_issues
+                .iter()
+                .all(|issue| !matches!(issue.severity, SecuritySeverity::Critical));
 
         Ok(ValidationResult {
             is_valid,
@@ -224,15 +259,16 @@ impl SQLValidator {
 
     /// Parse and sanitize SQL using sqlparser
     fn parse_and_sanitize_sql(&self, sql: &str, user_context: &UserContext) -> Result<String> {
-        use sqlparser::parser::Parser;
-        use sqlparser::dialect::PostgreSqlDialect;
         use sqlparser::ast::Statement;
+        use sqlparser::dialect::PostgreSqlDialect;
+        use sqlparser::parser::Parser;
 
         let dialect = PostgreSqlDialect {};
         let parser = Parser::new(&dialect);
 
         // Parse SQL
-        let statements = parser.try_with_sql(sql)
+        let statements = parser
+            .try_with_sql(sql)
             .map_err(|e| anyhow!("Failed to parse SQL: {}", e))?
             .parse_statements()
             .map_err(|e| anyhow!("Failed to parse statements: {}", e))?;
@@ -249,9 +285,7 @@ impl SQLValidator {
                 let sanitized_query = self.sanitize_select_query(query, user_context)?;
                 Ok(format!("{}", sanitized_query))
             }
-            _ => {
-                Err(anyhow!("Only SELECT queries are allowed"))
-            }
+            _ => Err(anyhow!("Only SELECT queries are allowed")),
         }
     }
 
@@ -306,14 +340,17 @@ impl SQLValidator {
 
         // Extract table names from SQL (simplified approach)
         let sql_upper = sql.to_uppercase();
-        let accessible_tables_upper: HashSet<String> = user_context.accessible_tables.iter()
+        let accessible_tables_upper: HashSet<String> = user_context
+            .accessible_tables
+            .iter()
             .map(|t| t.to_uppercase())
             .collect();
 
         // Check for unauthorized table access
         for accessible_table in &user_context.accessible_tables {
-            if sql_upper.contains(&accessible_table.to_uppercase()) &&
-               !accessible_tables_upper.contains(&accessible_table.to_uppercase()) {
+            if sql_upper.contains(&accessible_table.to_uppercase())
+                && !accessible_tables_upper.contains(&accessible_table.to_uppercase())
+            {
                 issues.push(SecurityIssue {
                     issue_type: SecurityIssueType::UnauthorizedTableAccess,
                     description: format!("Unauthorized access to table: {}", accessible_table),
@@ -344,7 +381,10 @@ impl SQLValidator {
                 if limit_value > self.config.max_result_limit {
                     return Some(SecurityIssue {
                         issue_type: SecurityIssueType::ExcessiveResultSize,
-                        description: format!("LIMIT {} exceeds maximum allowed {}", limit_value, self.config.max_result_limit),
+                        description: format!(
+                            "LIMIT {} exceeds maximum allowed {}",
+                            limit_value, self.config.max_result_limit
+                        ),
                         severity: SecuritySeverity::Medium,
                         location: Some(format!("LIMIT {}", limit_value)),
                     });
@@ -393,7 +433,9 @@ mod tests {
         };
 
         let safe_sql = "SELECT id, name FROM collections WHERE tenant_id = 'tenant_1' LIMIT 100";
-        let result = validator.validate_and_sanitize(safe_sql, &user_context).await;
+        let result = validator
+            .validate_and_sanitize(safe_sql, &user_context)
+            .await;
 
         assert!(result.is_ok());
     }
@@ -402,21 +444,27 @@ mod tests {
     fn test_malicious_sql_rejection() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-        let validator = SQLValidator::new().await.unwrap();
-        let user_context = UserContext::default();
+            let validator = SQLValidator::new().await.unwrap();
+            let user_context = UserContext::default();
 
-        let malicious_sqls = vec![
-            "DROP TABLE users;",
-            "SELECT * FROM users; DELETE FROM users;",
-            "SELECT * FROM users WHERE id = 1 OR 1=1",
-            "INSERT INTO users (name) VALUES ('hacker')",
-            "UPDATE users SET password = 'hacked'",
-        ];
+            let malicious_sqls = vec![
+                "DROP TABLE users;",
+                "SELECT * FROM users; DELETE FROM users;",
+                "SELECT * FROM users WHERE id = 1 OR 1=1",
+                "INSERT INTO users (name) VALUES ('hacker')",
+                "UPDATE users SET password = 'hacked'",
+            ];
 
-        for malicious_sql in malicious_sqls {
-            let result = validator.validate_and_sanitize(malicious_sql, &user_context).await;
-            assert!(result.is_err(), "Malicious SQL should be rejected: {}", malicious_sql);
-        }
+            for malicious_sql in malicious_sqls {
+                let result = validator
+                    .validate_and_sanitize(malicious_sql, &user_context)
+                    .await;
+                assert!(
+                    result.is_err(),
+                    "Malicious SQL should be rejected: {}",
+                    malicious_sql
+                );
+            }
         });
     }
 
@@ -464,6 +512,9 @@ mod tests {
         let bad_sql = "SELECT * FROM collections LIMIT 50000";
         let issue = validator.check_result_limits(bad_sql);
         assert!(issue.is_some());
-        assert!(matches!(issue.unwrap().issue_type, SecurityIssueType::ExcessiveResultSize));
+        assert!(matches!(
+            issue.unwrap().issue_type,
+            SecurityIssueType::ExcessiveResultSize
+        ));
     }
 }

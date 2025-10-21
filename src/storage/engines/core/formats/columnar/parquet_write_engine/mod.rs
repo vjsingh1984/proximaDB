@@ -3,25 +3,25 @@
 //! This module provides efficient Parquet writing capabilities for columnar storage engines.
 //! It's organized into focused submodules for better maintainability and clarity.
 
-pub mod writer_config;
-pub mod streaming_writer;
 pub mod batch_writer;
-pub mod writer_statistics;
+pub mod bloom_filter_builder;
 pub mod implicit_id_generator;
 pub mod schema_builder;
-pub mod bloom_filter_builder;
+pub mod streaming_writer;
+pub mod writer_config;
+pub mod writer_statistics;
 
 // Re-export main types for convenience
-pub use writer_config::ParquetWriterConfig;
-pub use streaming_writer::{StreamingParquetWriter, StreamingWriterBuilder};
 pub use batch_writer::{BatchParquetWriter, BatchWriterBuilder};
-pub use writer_statistics::StreamingParquetWriterStats;
 pub use implicit_id_generator::IdLessLookup;
+pub use streaming_writer::{StreamingParquetWriter, StreamingWriterBuilder};
+pub use writer_config::ParquetWriterConfig;
+pub use writer_statistics::StreamingParquetWriterStats;
 // MetadataCollector is already in parent module, not here
 
 // Common traits used across writer implementations
-use anyhow::Result;
 use crate::proto::proximadb_v1::VectorRecord;
+use anyhow::Result;
 
 /// Common trait for all Parquet writers
 pub trait ParquetWriter: Send + Sync {

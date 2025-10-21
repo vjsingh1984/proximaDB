@@ -10,11 +10,11 @@
 use anyhow::Result;
 use tracing::{debug, trace};
 
+use crate::storage::engines::core::ops::proximacodec::simd::{
+    get_simd_backend, simd_bitpack_encode_f32, simd_delta_encode_f32,
+};
 use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
-use crate::storage::engines::core::ops::proximacodec::simd::{
-    get_simd_backend, simd_delta_encode_f32, simd_bitpack_encode_f32,
-};
 
 /// SIMD-accelerated encoder
 ///
@@ -51,54 +51,102 @@ impl RawEncoder for SimdEncoder {
     fn encode_f32(&self, values: &[f32], scheme: &ProximaScheme) -> Result<Vec<u8>> {
         match scheme {
             ProximaScheme::Delta { base } => {
-                trace!("🚀 [SIMD] Encoding {} values with Delta (base={})", values.len(), base);
+                trace!(
+                    "🚀 [SIMD] Encoding {} values with Delta (base={})",
+                    values.len(),
+                    base
+                );
 
                 // Use baseline implementation for wire format compatibility
                 // SIMD can compute deltas faster, but we bitpack them for compression
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_f32(values, *base)?;
 
-                debug!("✅ [SIMD] Delta encoded {} values → {} bytes (using baseline format)", values.len(), result.len());
+                debug!(
+                    "✅ [SIMD] Delta encoded {} values → {} bytes (using baseline format)",
+                    values.len(),
+                    result.len()
+                );
                 Ok(result)
             }
 
             ProximaScheme::BitPacked { bits } => {
-                trace!("🚀 [SIMD] Encoding {} values with BitPacked ({}b/val)", values.len(), bits);
+                trace!(
+                    "🚀 [SIMD] Encoding {} values with BitPacked ({}b/val)",
+                    values.len(),
+                    bits
+                );
 
                 // Encode using SIMD BitPacked
                 let packed = simd_bitpack_encode_f32(values, *bits)?;
 
-                debug!("✅ [SIMD] BitPacked encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [SIMD] BitPacked encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
             ProximaScheme::FrameOfReference { reference, bits } => {
-                trace!("🚀 [SIMD] Encoding {} values with FrameOfReference (ref={}, {}b/val)", values.len(), reference, bits);
+                trace!(
+                    "🚀 [SIMD] Encoding {} values with FrameOfReference (ref={}, {}b/val)",
+                    values.len(),
+                    reference,
+                    bits
+                );
 
                 // Encode using SIMD FrameOfReference
                 let packed = crate::storage::engines::core::ops::proximacodec::simd::simd_frame_of_reference_encode_f32(values, *reference, *bits)?;
 
-                debug!("✅ [SIMD] FrameOfReference encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [SIMD] FrameOfReference encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
             ProximaScheme::Zigzag { bits } => {
-                trace!("🚀 [SIMD] Encoding {} values with Zigzag ({}b/val)", values.len(), bits);
+                trace!(
+                    "🚀 [SIMD] Encoding {} values with Zigzag ({}b/val)",
+                    values.len(),
+                    bits
+                );
 
                 // Encode using SIMD Zigzag
-                let packed = crate::storage::engines::core::ops::proximacodec::simd::simd_zigzag_encode_f32(values, *bits)?;
+                let packed =
+                    crate::storage::engines::core::ops::proximacodec::simd::simd_zigzag_encode_f32(
+                        values, *bits,
+                    )?;
 
-                debug!("✅ [SIMD] Zigzag encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [SIMD] Zigzag encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
-            ProximaScheme::PForDelta { majority_bits, base } => {
-                trace!("🚀 [SIMD] Encoding {} values with PForDelta ({}b majority, base={})", values.len(), majority_bits, base);
+            ProximaScheme::PForDelta {
+                majority_bits,
+                base,
+            } => {
+                trace!(
+                    "🚀 [SIMD] Encoding {} values with PForDelta ({}b majority, base={})",
+                    values.len(),
+                    majority_bits,
+                    base
+                );
 
                 // Encode using SIMD PForDelta
                 let packed = crate::storage::engines::core::ops::proximacodec::simd::simd_pfor_delta_encode_f32(values, *majority_bits, *base)?;
 
-                debug!("✅ [SIMD] PForDelta encoded {} values → {} bytes", values.len(), packed.len());
+                debug!(
+                    "✅ [SIMD] PForDelta encoded {} values → {} bytes",
+                    values.len(),
+                    packed.len()
+                );
                 Ok(packed)
             }
 
@@ -111,18 +159,29 @@ impl RawEncoder for SimdEncoder {
     fn encode_i64(&self, values: &[i64], scheme: &ProximaScheme) -> Result<Vec<u8>> {
         match scheme {
             ProximaScheme::Delta { base } => {
-                trace!("🚀 [SIMD] Encoding {} i64 values with Delta (base={})", values.len(), base);
+                trace!(
+                    "🚀 [SIMD] Encoding {} i64 values with Delta (base={})",
+                    values.len(),
+                    base
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_i64(values, *base)?;
 
-                debug!("✅ [SIMD] Delta encoded {} i64 values → {} bytes (using baseline format)", values.len(), result.len());
+                debug!(
+                    "✅ [SIMD] Delta encoded {} i64 values → {} bytes (using baseline format)",
+                    values.len(),
+                    result.len()
+                );
                 Ok(result)
             }
 
             _ => {
-                anyhow::bail!("SIMD encoder does not support scheme: {} for i64", scheme.name())
+                anyhow::bail!(
+                    "SIMD encoder does not support scheme: {} for i64",
+                    scheme.name()
+                )
             }
         }
     }
@@ -130,18 +189,29 @@ impl RawEncoder for SimdEncoder {
     fn encode_i32(&self, values: &[i32], scheme: &ProximaScheme) -> Result<Vec<u8>> {
         match scheme {
             ProximaScheme::Delta { base } => {
-                trace!("🚀 [SIMD] Encoding {} i32 values with Delta (base={})", values.len(), base);
+                trace!(
+                    "🚀 [SIMD] Encoding {} i32 values with Delta (base={})",
+                    values.len(),
+                    base
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_i32(values, *base)?;
 
-                debug!("✅ [SIMD] Delta encoded {} i32 values → {} bytes (using baseline format)", values.len(), result.len());
+                debug!(
+                    "✅ [SIMD] Delta encoded {} i32 values → {} bytes (using baseline format)",
+                    values.len(),
+                    result.len()
+                );
                 Ok(result)
             }
 
             _ => {
-                anyhow::bail!("SIMD encoder does not support scheme: {} for i32", scheme.name())
+                anyhow::bail!(
+                    "SIMD encoder does not support scheme: {} for i32",
+                    scheme.name()
+                )
             }
         }
     }
@@ -158,9 +228,15 @@ mod tests {
         // Should support: Delta, BitPacked, FrameOfReference, Zigzag, PForDelta
         assert!(encoder.supports(&ProximaScheme::Delta { base: 0 }));
         assert!(encoder.supports(&ProximaScheme::BitPacked { bits: 8 }));
-        assert!(encoder.supports(&ProximaScheme::FrameOfReference { reference: 0, bits: 8 }));
+        assert!(encoder.supports(&ProximaScheme::FrameOfReference {
+            reference: 0,
+            bits: 8
+        }));
         assert!(encoder.supports(&ProximaScheme::Zigzag { bits: 8 }));
-        assert!(encoder.supports(&ProximaScheme::PForDelta { majority_bits: 8, base: 0 }));
+        assert!(encoder.supports(&ProximaScheme::PForDelta {
+            majority_bits: 8,
+            base: 0
+        }));
 
         // Should not support other schemes
         assert!(!encoder.supports(&ProximaScheme::RunLength));
@@ -182,11 +258,18 @@ mod tests {
         // Using baseline bitpacked format: [base:4][bits:1][packed_deltas]
         // Baseline format is wire-compatible across all implementations
         // Verify compression (32 values * 4 bytes raw = 128 bytes)
-        println!("Encoded size: {} bytes (raw would be 128 bytes)", encoded.len());
+        println!(
+            "Encoded size: {} bytes (raw would be 128 bytes)",
+            encoded.len()
+        );
 
         // Bitpacked format should provide some compression for sequential data
         // but may not always be < 128 due to bitpacking overhead and float representation
-        assert!(encoded.len() <= 160, "Encoded size should be reasonable: {} bytes", encoded.len());
+        assert!(
+            encoded.len() <= 160,
+            "Encoded size should be reasonable: {} bytes",
+            encoded.len()
+        );
     }
 
     #[test]

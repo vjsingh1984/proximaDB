@@ -192,12 +192,7 @@ extern "C" {
     /// - `input` must point to valid device memory of `n` i64 values
     /// - `output` must point to valid device memory for `n` u64 values
     /// - `stream` must be a valid CUDA stream or null for default stream
-    pub fn cuda_zigzag_encode(
-        input: *const i64,
-        output: *mut u64,
-        n: c_int,
-        stream: CudaStreamPtr,
-    );
+    pub fn cuda_zigzag_encode(input: *const i64, output: *mut u64, n: c_int, stream: CudaStreamPtr);
 
     /// Zigzag decode unsigned u64 to signed i64
     ///
@@ -205,12 +200,7 @@ extern "C" {
     /// - `input` must point to valid device memory of `n` u64 values
     /// - `output` must point to valid device memory for `n` i64 values
     /// - `stream` must be a valid CUDA stream or null for default stream
-    pub fn cuda_zigzag_decode(
-        input: *const u64,
-        output: *mut i64,
-        n: c_int,
-        stream: CudaStreamPtr,
-    );
+    pub fn cuda_zigzag_decode(input: *const u64, output: *mut i64, n: c_int, stream: CudaStreamPtr);
 
     // ========================================================================
     // PForDelta encoding/decoding

@@ -19,9 +19,9 @@
 //! Optimizes flush operations for better performance and storage efficiency.
 //! Includes multi-batch sorting strategies and compression optimization.
 
-use std::collections::BinaryHeap;
-use std::cmp::Reverse;
 use anyhow::Result;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
@@ -59,12 +59,18 @@ impl FlushOptimizer {
         }
 
         // For larger multi-batch datasets, use batch-aware sorting
-        debug!("🔍 Using multi-batch sort strategy ({} batches)", batch_count);
+        debug!(
+            "🔍 Using multi-batch sort strategy ({} batches)",
+            batch_count
+        );
         self.multi_batch_sort(vector_records, batch_count).await
     }
 
     /// Simple sorting for small datasets
-    async fn simple_sort(&self, vector_records: Vec<VectorRecord>) -> Result<Vec<(String, VectorRecord)>> {
+    async fn simple_sort(
+        &self,
+        vector_records: Vec<VectorRecord>,
+    ) -> Result<Vec<(String, VectorRecord)>> {
         let mut sorted_records = Vec::with_capacity(vector_records.len());
 
         // Collect all records into Vec
@@ -180,12 +186,21 @@ impl FlushOptimizer {
         // Initialize heap with first item from each batch
         for (batch_idx, iter) in sorted_batches.iter_mut().enumerate() {
             if let Some((key, record)) = iter.next() {
-                heap.push(HeapItem { key, record, batch_idx });
+                heap.push(HeapItem {
+                    key,
+                    record,
+                    batch_idx,
+                });
             }
         }
 
         // Perform k-way merge
-        while let Some(HeapItem { key, record, batch_idx }) = heap.pop() {
+        while let Some(HeapItem {
+            key,
+            record,
+            batch_idx,
+        }) = heap.pop()
+        {
             result.push((key, record));
 
             // Add next item from same batch to heap
@@ -198,7 +213,10 @@ impl FlushOptimizer {
             }
         }
 
-        info!("✅ FlushOptimizer: K-way merge completed, {} records processed", result.len());
+        info!(
+            "✅ FlushOptimizer: K-way merge completed, {} records processed",
+            result.len()
+        );
         Ok(result)
     }
 
@@ -253,7 +271,10 @@ mod tests {
         ];
 
         let batch_ids = vec!["batch1".to_string(), "batch2".to_string()];
-        let sorted = optimizer.optimize_multi_batch_sort(vectors, &batch_ids).await.unwrap();
+        let sorted = optimizer
+            .optimize_multi_batch_sort(vectors, &batch_ids)
+            .await
+            .unwrap();
 
         // Should use simple sort for small dataset
         assert_eq!(sorted.len(), 4);

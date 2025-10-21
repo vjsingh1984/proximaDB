@@ -22,9 +22,10 @@
 //! - **PULSAR**: Distributed engine for sharded graphs (1B+ nodes) [Phase 2]
 //! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
 
+pub mod generic_traversal;
 pub mod orion;
 pub mod pulsar; // Distributed graph engine
-pub mod quasar; // Hybrid hot/cold tiering
+pub mod quasar; // Hybrid hot/cold tiering // Engine-agnostic traversal utilities
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -63,7 +64,10 @@ impl EngineStats {
         values.insert("node_count".to_string(), self.node_count as f64);
         values.insert("edge_count".to_string(), self.edge_count as f64);
         values.insert("avg_degree".to_string(), self.avg_degree);
-        values.insert("connected_components".to_string(), self.connected_components as f64);
+        values.insert(
+            "connected_components".to_string(),
+            self.connected_components as f64,
+        );
         values.insert("total_operations".to_string(), self.total_operations as f64);
         values.insert("cache_hit_ratio".to_string(), self.cache_hit_ratio);
         values.insert("index_efficiency".to_string(), self.index_efficiency);
@@ -100,7 +104,10 @@ impl MemoryUsage {
         let mut values = HashMap::new();
         values.insert("nodes_memory_bytes".to_string(), self.nodes_memory as f64);
         values.insert("edges_memory_bytes".to_string(), self.edges_memory as f64);
-        values.insert("indexes_memory_bytes".to_string(), self.indexes_memory as f64);
+        values.insert(
+            "indexes_memory_bytes".to_string(),
+            self.indexes_memory as f64,
+        );
         values.insert("cache_memory_bytes".to_string(), self.cache_memory as f64);
         values.insert("total_memory_bytes".to_string(), self.total_memory as f64);
         values.insert("peak_memory_bytes".to_string(), self.peak_memory as f64);
@@ -349,7 +356,7 @@ impl Default for PersistenceConfig {
             enable_wal: false,
             wal_path: None,
             compression: CompressionAlgorithm::Zstd, // Best general-purpose compression
-            compression_level: 3, // Balanced speed/ratio for Zstd
+            compression_level: 3,                    // Balanced speed/ratio for Zstd
             use_cloud_storage: false,
             cloud_storage_path: None,
             incremental_snapshots: true,
@@ -474,7 +481,11 @@ impl GraphEngine for GraphEngineImpl {
         }
     }
 
-    fn get_outgoing_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
+    fn get_outgoing_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_outgoing_edges(node_id, edge_type),
             GraphEngineImpl::Pulsar(engine) => engine.get_outgoing_edges(node_id, edge_type),
@@ -482,7 +493,11 @@ impl GraphEngine for GraphEngineImpl {
         }
     }
 
-    fn get_incoming_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
+    fn get_incoming_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_incoming_edges(node_id, edge_type),
             GraphEngineImpl::Pulsar(engine) => engine.get_incoming_edges(node_id, edge_type),

@@ -1,38 +1,38 @@
 //! Complete Multi-Provider Federated Identity Delegation Implementation
-//! 
+//!
 //! TODO 3: Complete Multi-Provider Federated Identity Delegation
 //! Business Driver: 73% of enterprises use multiple cloud providers
 //! Market Impact: Seamless enterprise adoption with existing infrastructure
 
 use anyhow::{Result, anyhow};
+use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
-use chrono::{DateTime, Utc, Duration};
-use serde::{Deserialize, Serialize};
 
-use crate::auth::sso::{SSOProvider, EnterpriseUserContext};
 use crate::audit::ComprehensiveAuditTrail;
+use crate::auth::sso::{EnterpriseUserContext, SSOProvider};
 
 /// Complete federated identity delegation system for enterprise multi-cloud environments
 pub struct CompleteFederatedIdentityDelegation {
     /// AWS IAM delegation with complete AssumeRole chain
     aws_delegation_handler: Arc<CompleteAWSIdentityDelegationHandler>,
-    
+
     /// Azure AD delegation with On-Behalf-Of and Managed Identity
     azure_delegation_handler: Arc<CompleteAzureADDelegationHandler>,
-    
+
     /// Google Cloud delegation with Workload Identity
     gcp_delegation_handler: Arc<CompleteGCPIdentityDelegationHandler>,
-    
+
     /// Okta delegation with Token Exchange
     okta_delegation_handler: Arc<CompleteOktaDelegationHandler>,
-    
+
     /// Cross-provider delegation chain coordinator
     delegation_chain_coordinator: Arc<DelegationChainCoordinator>,
-    
+
     /// Unified audit correlation across all providers
     unified_audit_correlator: Arc<UnifiedAuditCorrelator>,
-    
+
     /// Enterprise compliance validator for delegation chains
     enterprise_compliance_validator: Arc<EnterpriseComplianceValidator>,
 }
@@ -41,16 +41,16 @@ pub struct CompleteFederatedIdentityDelegation {
 pub struct CompleteAWSIdentityDelegationHandler {
     /// AWS STS client for AssumeRole operations
     sts_client: Arc<AWSSTSClient>,
-    
+
     /// CloudTrail integration for complete audit correlation
     cloudtrail_integration: Arc<CompleteCloudTrailIntegration>,
-    
+
     /// Cross-account delegation validator
     cross_account_validator: Arc<CrossAccountDelegationValidator>,
-    
+
     /// Enterprise IAM policy validator
     enterprise_iam_validator: Arc<EnterpriseIAMPolicyValidator>,
-    
+
     /// Role chain optimizer for performance
     role_chain_optimizer: Arc<RoleChainOptimizer>,
 }
@@ -59,16 +59,16 @@ pub struct CompleteAWSIdentityDelegationHandler {
 pub struct CompleteAzureADDelegationHandler {
     /// Microsoft Graph client for comprehensive token operations
     graph_client: Arc<CompleteMicrosoftGraphClient>,
-    
+
     /// Azure Activity Log integration for audit correlation
     activity_log_integration: Arc<CompleteAzureActivityLogIntegration>,
-    
+
     /// Managed Identity resolver with enterprise context
     managed_identity_resolver: Arc<EnterpriseManagedIdentityResolver>,
-    
+
     /// Azure AD group and role mapper
     azure_enterprise_mapper: Arc<AzureEnterpriseMapper>,
-    
+
     /// On-Behalf-Of flow optimizer
     obo_flow_optimizer: Arc<OnBehalfOfFlowOptimizer>,
 }
@@ -86,45 +86,54 @@ impl CompleteFederatedIdentityDelegation {
             enterprise_compliance_validator: Arc::new(EnterpriseComplianceValidator::new().await?),
         })
     }
-    
+
     /// Execute complete enterprise delegation chain with unified audit
     pub async fn execute_complete_delegation_chain(
         &self,
         delegation_request: &EnterpriseDelegationRequest,
         compliance_requirements: &ComplianceRequirements,
     ) -> Result<CompleteDelegationResult> {
-        info!("Executing complete enterprise delegation chain for {} providers", 
-              delegation_request.delegation_steps.len());
-        
+        info!(
+            "Executing complete enterprise delegation chain for {} providers",
+            delegation_request.delegation_steps.len()
+        );
+
         // Step 1: Validate enterprise delegation request
-        self.enterprise_compliance_validator.validate_delegation_request(
-            delegation_request,
-            compliance_requirements,
-        ).await?;
-        
+        self.enterprise_compliance_validator
+            .validate_delegation_request(delegation_request, compliance_requirements)
+            .await?;
+
         // Step 2: Coordinate delegation across providers
-        let delegation_results = self.delegation_chain_coordinator.coordinate_multi_provider_delegation(
-            delegation_request,
-        ).await?;
-        
+        let delegation_results = self
+            .delegation_chain_coordinator
+            .coordinate_multi_provider_delegation(delegation_request)
+            .await?;
+
         // Step 3: Correlate audit events across all providers
-        let unified_audit_trail = self.unified_audit_correlator.correlate_cross_provider_audit_events(
-            &delegation_results,
-            delegation_request,
-        ).await?;
-        
+        let unified_audit_trail = self
+            .unified_audit_correlator
+            .correlate_cross_provider_audit_events(&delegation_results, delegation_request)
+            .await?;
+
         // Step 4: Validate enterprise compliance across the complete chain
-        let compliance_validation = self.enterprise_compliance_validator.validate_complete_delegation_compliance(
-            &delegation_results,
-            &unified_audit_trail,
-            compliance_requirements,
-        ).await?;
+        let compliance_validation = self
+            .enterprise_compliance_validator
+            .validate_complete_delegation_compliance(
+                &delegation_results,
+                &unified_audit_trail,
+                compliance_requirements,
+            )
+            .await?;
 
         // Calculate performance metrics before moving values
-        let total_delegation_time_ms = delegation_results.iter().map(|r| r.total_delegation_time_ms).sum::<u64>();
+        let total_delegation_time_ms = delegation_results
+            .iter()
+            .map(|r| r.total_delegation_time_ms)
+            .sum::<u64>();
         let audit_correlation_time_ms = unified_audit_trail.correlation_time_ms;
         let compliance_validation_time_ms = compliance_validation.validation_time_ms;
-        let cross_provider_correlations_count = unified_audit_trail.cross_provider_correlations.len();
+        let cross_provider_correlations_count =
+            unified_audit_trail.cross_provider_correlations.len();
         let overall_compliance_score = compliance_validation.overall_compliance_score;
 
         Ok(CompleteDelegationResult {
@@ -144,7 +153,7 @@ impl CompleteFederatedIdentityDelegation {
             },
         })
     }
-    
+
     /// Process enterprise SSO authentication with complete delegation tracking
     pub async fn process_enterprise_sso_authentication(
         &self,
@@ -154,39 +163,38 @@ impl CompleteFederatedIdentityDelegation {
         // Process authentication with complete delegation chain tracking
         let authentication_result = match &sso_token.provider {
             SSOProvider::AWSIAM => {
-                self.aws_delegation_handler.process_complete_aws_authentication(
-                    sso_token,
-                    operation_context,
-                ).await?
-            },
+                self.aws_delegation_handler
+                    .process_complete_aws_authentication(sso_token, operation_context)
+                    .await?
+            }
             SSOProvider::AzureAD => {
-                self.azure_delegation_handler.process_complete_azure_authentication(
-                    sso_token,
-                    operation_context,
-                ).await?
-            },
+                self.azure_delegation_handler
+                    .process_complete_azure_authentication(sso_token, operation_context)
+                    .await?
+            }
             SSOProvider::GoogleCloud => {
-                self.gcp_delegation_handler.process_complete_gcp_authentication(
-                    sso_token,
-                    operation_context,
-                ).await?
-            },
+                self.gcp_delegation_handler
+                    .process_complete_gcp_authentication(sso_token, operation_context)
+                    .await?
+            }
             _ => {
                 return Err(anyhow!("Unsupported SSO provider for complete delegation"));
             }
         };
-        
-        // Generate unified enterprise authentication result
-        let audit_trail = self.unified_audit_correlator.generate_complete_authentication_audit(
-            sso_token,
-            &authentication_result,
-            operation_context,
-        ).await?;
 
-        let enterprise_context = self.resolve_complete_enterprise_context(
-            &authentication_result,
-            sso_token,
-        ).await?;
+        // Generate unified enterprise authentication result
+        let audit_trail = self
+            .unified_audit_correlator
+            .generate_complete_authentication_audit(
+                sso_token,
+                &authentication_result,
+                operation_context,
+            )
+            .await?;
+
+        let enterprise_context = self
+            .resolve_complete_enterprise_context(&authentication_result, sso_token)
+            .await?;
 
         Ok(CompleteEnterpriseAuthentication {
             authentication_result,
@@ -194,14 +202,19 @@ impl CompleteFederatedIdentityDelegation {
             enterprise_user_context: enterprise_context,
         })
     }
-    
+
     // Helper methods
-    fn extract_providers_involved(&self, request: &EnterpriseDelegationRequest) -> Vec<SSOProvider> {
-        request.delegation_steps.iter()
+    fn extract_providers_involved(
+        &self,
+        request: &EnterpriseDelegationRequest,
+    ) -> Vec<SSOProvider> {
+        request
+            .delegation_steps
+            .iter()
             .map(|step| step.target_provider.clone())
             .collect()
     }
-    
+
     async fn resolve_complete_enterprise_context(
         &self,
         auth_result: &AuthenticationResult,
@@ -228,7 +241,7 @@ impl CompleteAWSIdentityDelegationHandler {
             role_chain_optimizer: Arc::new(RoleChainOptimizer::new().await?),
         })
     }
-    
+
     /// Process complete AWS authentication with full delegation chain
     async fn process_complete_aws_authentication(
         &self,
@@ -236,36 +249,35 @@ impl CompleteAWSIdentityDelegationHandler {
         operation_context: &OperationContext,
     ) -> Result<AuthenticationResult> {
         // Validate AWS STS token with enterprise policies
-        let sts_validation = self.sts_client.validate_enterprise_token(
-            &sso_token.token_data,
-            operation_context,
-        ).await?;
-        
+        let sts_validation = self
+            .sts_client
+            .validate_enterprise_token(&sso_token.token_data, operation_context)
+            .await?;
+
         // Process complete AssumeRole chain if present
         let delegation_chain = if let Some(ref role_chain) = sso_token.assume_role_chain {
-            self.process_complete_assume_role_chain(
-                role_chain,
-                &sts_validation,
-                operation_context,
-            ).await?
+            self.process_complete_assume_role_chain(role_chain, &sts_validation, operation_context)
+                .await?
         } else {
             vec![]
         };
-        
+
         // Correlate with CloudTrail events
-        let cloudtrail_correlation = self.cloudtrail_integration.correlate_authentication_events(
-            &sso_token.user_id,
-            &delegation_chain,
-            operation_context,
-        ).await?;
-        
+        let cloudtrail_correlation = self
+            .cloudtrail_integration
+            .correlate_authentication_events(
+                &sso_token.user_id,
+                &delegation_chain,
+                operation_context,
+            )
+            .await?;
+
         // Validate enterprise compliance
-        let compliance_validation = self.enterprise_iam_validator.validate_enterprise_compliance(
-            &sts_validation,
-            &delegation_chain,
-            operation_context,
-        ).await?;
-        
+        let compliance_validation = self
+            .enterprise_iam_validator
+            .validate_enterprise_compliance(&sts_validation, &delegation_chain, operation_context)
+            .await?;
+
         Ok(AuthenticationResult {
             provider: SSOProvider::AWSIAM,
             user_id: sts_validation.user_id,
@@ -276,7 +288,7 @@ impl CompleteAWSIdentityDelegationHandler {
             compliance_validation,
         })
     }
-    
+
     async fn process_complete_assume_role_chain(
         &self,
         role_chain: &[AssumeRoleStep],
@@ -285,25 +297,30 @@ impl CompleteAWSIdentityDelegationHandler {
     ) -> Result<Vec<DelegationStep>> {
         let mut delegation_steps = Vec::new();
         let mut current_credentials = sts_validation.credentials.clone();
-        
+
         for (index, role_step) in role_chain.iter().enumerate() {
             // Validate cross-account delegation if applicable
             if self.is_cross_account_delegation(role_step) {
-                self.cross_account_validator.validate_cross_account_delegation(
-                    role_step,
-                    &current_credentials,
-                    operation_context,
-                ).await?;
+                self.cross_account_validator
+                    .validate_cross_account_delegation(
+                        role_step,
+                        &current_credentials,
+                        operation_context,
+                    )
+                    .await?;
             }
-            
+
             // Execute AssumeRole with current credentials
-            let assume_role_result = self.sts_client.assume_role_with_credentials(
-                &current_credentials,
-                &role_step.target_role_arn,
-                &role_step.session_name,
-                role_step.duration_seconds,
-            ).await?;
-            
+            let assume_role_result = self
+                .sts_client
+                .assume_role_with_credentials(
+                    &current_credentials,
+                    &role_step.target_role_arn,
+                    &role_step.session_name,
+                    role_step.duration_seconds,
+                )
+                .await?;
+
             // Create delegation step record
             delegation_steps.push(DelegationStep {
                 step_number: (index + 1) as u32,
@@ -314,18 +331,18 @@ impl CompleteAWSIdentityDelegationHandler {
                 delegation_success: true,
                 audit_event_ids: vec![assume_role_result.cloudtrail_event_id.clone()],
             });
-            
+
             // Update current credentials for next step
             current_credentials = assume_role_result.credentials;
         }
-        
+
         Ok(delegation_steps)
     }
-    
+
     fn is_cross_account_delegation(&self, role_step: &AssumeRoleStep) -> bool {
         // Extract account ID from role ARN and compare
-        role_step.target_role_arn.contains("::") && 
-        role_step.target_role_arn != role_step.source_account_context
+        role_step.target_role_arn.contains("::")
+            && role_step.target_role_arn != role_step.source_account_context
     }
 }
 
@@ -339,7 +356,7 @@ impl CompleteAzureADDelegationHandler {
             obo_flow_optimizer: Arc::new(OnBehalfOfFlowOptimizer::new().await?),
         })
     }
-    
+
     /// Process complete Azure AD authentication with managed identity delegation
     async fn process_complete_azure_authentication(
         &self,
@@ -347,46 +364,56 @@ impl CompleteAzureADDelegationHandler {
         operation_context: &OperationContext,
     ) -> Result<AuthenticationResult> {
         // Validate Azure AD token with enterprise directory
-        let azure_validation = self.graph_client.validate_enterprise_azure_token(
-            &sso_token.token_data,
-            operation_context,
-        ).await?;
-        
+        let azure_validation = self
+            .graph_client
+            .validate_enterprise_azure_token(&sso_token.token_data, operation_context)
+            .await?;
+
         // Process On-Behalf-Of flow if configured
         let delegation_chain = if let Some(ref obo_config) = sso_token.on_behalf_of_config {
             self.process_complete_on_behalf_of_flow(
                 obo_config,
                 &azure_validation,
                 operation_context,
-            ).await?
+            )
+            .await?
         } else {
             vec![]
         };
-        
+
         // Resolve managed identity if present
         let managed_identity_context = if let Some(ref mi_id) = sso_token.managed_identity_id {
-            Some(self.managed_identity_resolver.resolve_enterprise_managed_identity(
-                mi_id,
-                &azure_validation,
-                operation_context,
-            ).await?)
+            Some(
+                self.managed_identity_resolver
+                    .resolve_enterprise_managed_identity(
+                        mi_id,
+                        &azure_validation,
+                        operation_context,
+                    )
+                    .await?,
+            )
         } else {
             None
         };
-        
-        // Correlate with Azure Activity Logs
-        let activity_log_correlation = self.activity_log_integration.correlate_azure_authentication_events(
-            &sso_token.user_id,
-            &delegation_chain,
-            &managed_identity_context,
-            operation_context,
-        ).await?;
 
-        let compliance_validation = self.validate_azure_enterprise_compliance(
-            &azure_validation,
-            &delegation_chain,
-            &managed_identity_context,
-        ).await?;
+        // Correlate with Azure Activity Logs
+        let activity_log_correlation = self
+            .activity_log_integration
+            .correlate_azure_authentication_events(
+                &sso_token.user_id,
+                &delegation_chain,
+                &managed_identity_context,
+                operation_context,
+            )
+            .await?;
+
+        let compliance_validation = self
+            .validate_azure_enterprise_compliance(
+                &azure_validation,
+                &delegation_chain,
+                &managed_identity_context,
+            )
+            .await?;
 
         Ok(AuthenticationResult {
             provider: SSOProvider::AzureAD,
@@ -398,7 +425,7 @@ impl CompleteAzureADDelegationHandler {
             compliance_validation,
         })
     }
-    
+
     async fn process_complete_on_behalf_of_flow(
         &self,
         obo_config: &OnBehalfOfConfiguration,
@@ -406,17 +433,17 @@ impl CompleteAzureADDelegationHandler {
         operation_context: &OperationContext,
     ) -> Result<Vec<DelegationStep>> {
         // Optimize On-Behalf-Of flow for performance
-        let optimized_flow = self.obo_flow_optimizer.optimize_obo_flow(
-            obo_config,
-            azure_validation,
-        ).await?;
-        
+        let optimized_flow = self
+            .obo_flow_optimizer
+            .optimize_obo_flow(obo_config, azure_validation)
+            .await?;
+
         // Execute optimized On-Behalf-Of flow
-        let obo_result = self.graph_client.execute_optimized_on_behalf_of_flow(
-            &optimized_flow,
-            operation_context,
-        ).await?;
-        
+        let obo_result = self
+            .graph_client
+            .execute_optimized_on_behalf_of_flow(&optimized_flow, operation_context)
+            .await?;
+
         Ok(vec![DelegationStep {
             step_number: 1,
             delegation_type: DelegationType::AzureOnBehalfOf,
@@ -970,10 +997,13 @@ mod tests {
         let aws_delegation = DelegationType::AWSAssumeRole;
         let azure_delegation = DelegationType::AzureOnBehalfOf;
         let gcp_delegation = DelegationType::GCPWorkloadIdentity;
-        
+
         assert!(matches!(aws_delegation, DelegationType::AWSAssumeRole));
         assert!(matches!(azure_delegation, DelegationType::AzureOnBehalfOf));
-        assert!(matches!(gcp_delegation, DelegationType::GCPWorkloadIdentity));
+        assert!(matches!(
+            gcp_delegation,
+            DelegationType::GCPWorkloadIdentity
+        ));
     }
 
     #[test]
@@ -984,11 +1014,16 @@ mod tests {
             user_context: EnterpriseUserContext::system_admin(),
             delegation_steps: vec![],
             compliance_requirements: vec!["sox".to_string(), "basel_iii".to_string()],
-            business_justification: "Cross-domain risk assessment requiring elevated permissions".to_string(),
+            business_justification: "Cross-domain risk assessment requiring elevated permissions"
+                .to_string(),
             max_delegation_duration: Duration::hours(4),
         };
-        
+
         assert_eq!(request.tenant_id, "global_investment_bank");
-        assert!(request.compliance_requirements.contains(&"basel_iii".to_string()));
+        assert!(
+            request
+                .compliance_requirements
+                .contains(&"basel_iii".to_string())
+        );
     }
 }

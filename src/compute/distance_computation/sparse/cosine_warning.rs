@@ -27,8 +27,8 @@
 //!
 //! Actual data shows < 10% variation across all sparsity levels.
 
-use crate::compute::distance_computation::DistanceMetric;
 use super::detector::SparsityInfo;
+use crate::compute::distance_computation::DistanceMetric;
 use std::fmt;
 
 /// Warning about using cosine similarity on sparse vectors
@@ -90,11 +90,11 @@ impl Default for CosineWarningConfig {
             // CORRECTED: Based on bench_12_system_optimization.log analysis
             // Sparse cosine has minimal impact (< 10% variation), not 35x slower
             // Disable all warnings and fallbacks to avoid unnecessary complexity
-            enable_warnings: false,        // DISABLED: Impact is minimal (< 10%)
+            enable_warnings: false, // DISABLED: Impact is minimal (< 10%)
             warning_threshold: 0.7,
-            auto_fallback: false,          // DISABLED: No fallback needed
+            auto_fallback: false, // DISABLED: No fallback needed
             fallback_metric: DistanceMetric::Euclidean,
-            log_warnings: false,           // DISABLED: No warnings needed
+            log_warnings: false, // DISABLED: No warnings needed
         }
     }
 }
@@ -268,9 +268,9 @@ mod tests {
     fn test_cosine_unsafe_for_sparse() {
         // Test that when warnings are ENABLED and sparsity is high, it returns error
         let config = CosineWarningConfig {
-            enable_warnings: true,  // Explicitly enable warnings for this test
+            enable_warnings: true, // Explicitly enable warnings for this test
             warning_threshold: 0.7,
-            auto_fallback: false,   // Don't auto-fallback, return error
+            auto_fallback: false, // Don't auto-fallback, return error
             fallback_metric: DistanceMetric::Euclidean,
             log_warnings: false,
         };
@@ -285,7 +285,10 @@ mod tests {
         };
 
         let result = checker.check_cosine_safety(&info);
-        assert!(result.is_err(), "Should return error for 90% sparse with warnings enabled");
+        assert!(
+            result.is_err(),
+            "Should return error for 90% sparse with warnings enabled"
+        );
 
         if let Err(warning) = result {
             assert_eq!(warning.sparsity_ratio, 0.9);
@@ -344,9 +347,9 @@ mod tests {
     fn test_no_fallback() {
         // Test that when auto_fallback is disabled, it returns error instead of falling back
         let config = CosineWarningConfig {
-            enable_warnings: true,   // Enable warnings
+            enable_warnings: true, // Enable warnings
             warning_threshold: 0.7,
-            auto_fallback: false,    // Disable auto-fallback - should return error
+            auto_fallback: false, // Disable auto-fallback - should return error
             fallback_metric: DistanceMetric::Euclidean,
             log_warnings: false,
         };
@@ -360,14 +363,13 @@ mod tests {
             sample_size: None,
         };
 
-        let result = checker.cosine_with_fallback(
-            &info,
-            || 0.5,
-            || 0.8,
-        );
+        let result = checker.cosine_with_fallback(&info, || 0.5, || 0.8);
 
         // Should return error (no fallback)
-        assert!(result.is_err(), "Should return error when auto_fallback is disabled");
+        assert!(
+            result.is_err(),
+            "Should return error when auto_fallback is disabled"
+        );
     }
 
     #[test]

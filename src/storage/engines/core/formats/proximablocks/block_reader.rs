@@ -14,9 +14,11 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use crate::core::search::FilterExpression;
+use crate::storage::engines::core::formats::proximablocks::block_structures::{
+    ProximaBlockMetadata, ProximaDataBlock,
+};
+use crate::storage::persistence::filesystem::FileSystem; // Need this trait for read method
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::storage::persistence::filesystem::FileSystem;  // Need this trait for read method
-use crate::storage::engines::core::formats::proximablocks::block_structures::{ProximaDataBlock, ProximaBlockMetadata};
 
 /// ✅ Reading strategy for different access patterns
 #[derive(Debug, Clone)]
@@ -72,10 +74,7 @@ pub struct ProximaBlockReader {
 }
 
 impl ProximaBlockReader {
-    pub fn new(
-        filesystem: Arc<UnifiedCachingFilesystem>,
-        collection_id: String,
-    ) -> Self {
+    pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
         Self {
             filesystem,
             collection_id,
@@ -94,7 +93,8 @@ impl ProximaBlockReader {
                 use_block_cache,
                 prefetch_ahead,
             } => {
-                self.read_full_scan(file_path, *sequential_io, *use_block_cache, *prefetch_ahead).await
+                self.read_full_scan(file_path, *sequential_io, *use_block_cache, *prefetch_ahead)
+                    .await
             }
 
             ProximaReadStrategy::SelectiveRead {
@@ -109,7 +109,8 @@ impl ProximaBlockReader {
                     *use_metadata_stats,
                     *enable_cache,
                     filter_expression.as_ref(),
-                ).await
+                )
+                .await
             }
 
             ProximaReadStrategy::RangeRead {
@@ -124,7 +125,8 @@ impl ProximaBlockReader {
                     *end_block,
                     *use_bloom_filters,
                     *check_overlaps,
-                ).await
+                )
+                .await
             }
 
             ProximaReadStrategy::PointLookup {
@@ -137,7 +139,8 @@ impl ProximaBlockReader {
                     target_keys,
                     *use_bloom_filters,
                     *early_termination,
-                ).await
+                )
+                .await
             }
 
             ProximaReadStrategy::StreamingRead {
@@ -145,12 +148,8 @@ impl ProximaBlockReader {
                 parallel_streams,
                 memory_budget_mb,
             } => {
-                self.read_streaming(
-                    file_path,
-                    *batch_size,
-                    *parallel_streams,
-                    *memory_budget_mb,
-                ).await
+                self.read_streaming(file_path, *batch_size, *parallel_streams, *memory_budget_mb)
+                    .await
             }
         }
     }
@@ -165,7 +164,10 @@ impl ProximaBlockReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         // Read the entire file using the underlying filesystem
         // UnifiedCachingFilesystem implements FileSystem trait
-        let data = self.filesystem.read(file_path).await
+        let data = self
+            .filesystem
+            .read(file_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path, e))?;
 
         // Deserialize all blocks from the file
@@ -187,7 +189,10 @@ impl ProximaBlockReader {
         filter_expression: Option<&FilterExpression>,
     ) -> Result<Vec<ProximaDataBlock>> {
         // Read the entire file (could be optimized with metadata)
-        let data = self.filesystem.read(file_path).await
+        let data = self
+            .filesystem
+            .read(file_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path, e))?;
 
         // Deserialize all blocks
@@ -229,7 +234,10 @@ impl ProximaBlockReader {
         _check_overlaps: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         // Read the entire file
-        let data = self.filesystem.read(file_path).await
+        let data = self
+            .filesystem
+            .read(file_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path, e))?;
 
         // Deserialize all blocks
@@ -261,7 +269,10 @@ impl ProximaBlockReader {
         early_termination: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         // Read the entire file
-        let data = self.filesystem.read(file_path).await
+        let data = self
+            .filesystem
+            .read(file_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path, e))?;
 
         // Deserialize all blocks
@@ -278,7 +289,8 @@ impl ProximaBlockReader {
                     let mut has_match = false;
                     for key in target_keys {
                         // SstableBloomFilter uses might_contain_key() method
-                        if !found_keys.contains(key) && bloom.might_contain_key(key).unwrap_or(true) {
+                        if !found_keys.contains(key) && bloom.might_contain_key(key).unwrap_or(true)
+                        {
                             has_match = true;
                             found_keys.insert(key.clone());
                         }
@@ -310,7 +322,10 @@ impl ProximaBlockReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         // For streaming, we would ideally read in chunks
         // For now, read the entire file and return in batches
-        let data = self.filesystem.read(file_path).await
+        let data = self
+            .filesystem
+            .read(file_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read file {}: {}", file_path, e))?;
 
         // Deserialize blocks in batches to respect memory budget
@@ -364,11 +379,15 @@ impl ProximaBlockReader {
             }
             FilterExpression::And(exprs) => {
                 // All expressions must potentially match
-                exprs.iter().all(|expr| self.check_bloom_filter(bloom, &Some(expr)))
+                exprs
+                    .iter()
+                    .all(|expr| self.check_bloom_filter(bloom, &Some(expr)))
             }
             FilterExpression::Or(exprs) => {
                 // At least one expression must potentially match
-                exprs.iter().any(|expr| self.check_bloom_filter(bloom, &Some(expr)))
+                exprs
+                    .iter()
+                    .any(|expr| self.check_bloom_filter(bloom, &Some(expr)))
             }
             FilterExpression::Not(_) => {
                 // Cannot use bloom filter for NOT operations
@@ -393,12 +412,18 @@ impl ProximaBlockReader {
 
         // Use Proxima auto-generated column statistics for pruning
         match filter_expr {
-            FilterExpression::Comparison { field, operator, value } => {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 // Special handling for ID field
                 if field == "id" {
                     // Check column statistics for ID field if available
                     if let Some(col_stats) = metadata.column_stats.get("id") {
-                        if let (Some(min_id), Some(max_id)) = (&col_stats.min_value, &col_stats.max_value) {
+                        if let (Some(min_id), Some(max_id)) =
+                            (&col_stats.min_value, &col_stats.max_value)
+                        {
                             // Compare JSON values properly
                             // For now, do string comparison if both are strings
                             if let (Ok(val_str), Ok(min_str), Ok(max_str)) = (
@@ -411,15 +436,17 @@ impl ProximaBlockReader {
                                         // Value must be within range
                                         val_str >= min_str && val_str <= max_str
                                     }
-                                    ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
+                                    ComparisonOperator::GreaterThan
+                                    | ComparisonOperator::GreaterThanOrEqual => {
                                         // Max ID must be greater than value
                                         max_str > val_str
                                     }
-                                    ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
+                                    ComparisonOperator::LessThan
+                                    | ComparisonOperator::LessThanOrEqual => {
                                         // Min ID must be less than value
                                         min_str < val_str
                                     }
-                                    _ => true // Conservative for other operators
+                                    _ => true, // Conservative for other operators
                                 }
                             } else {
                                 // Can't compare, conservatively include
@@ -439,13 +466,12 @@ impl ProximaBlockReader {
                             ComparisonOperator::Equals => {
                                 ts_val >= block_start && ts_val <= block_end
                             }
-                            ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
-                                block_end > ts_val
-                            }
+                            ComparisonOperator::GreaterThan
+                            | ComparisonOperator::GreaterThanOrEqual => block_end > ts_val,
                             ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
                                 block_start < ts_val
                             }
-                            _ => true
+                            _ => true,
                         }
                     } else {
                         true
@@ -454,7 +480,9 @@ impl ProximaBlockReader {
                     // Check column statistics for other fields
                     if let Some(col_stats) = metadata.column_stats.get(field) {
                         // Use min/max values for range pruning
-                        if let (Some(min_val), Some(max_val)) = (&col_stats.min_value, &col_stats.max_value) {
+                        if let (Some(min_val), Some(max_val)) =
+                            (&col_stats.min_value, &col_stats.max_value)
+                        {
                             // Try numeric comparison first, fall back to string comparison
                             let can_include = if let (Ok(val_num), Ok(min_num), Ok(max_num)) = (
                                 serde_json::from_value::<f64>(value.clone()),
@@ -463,10 +491,14 @@ impl ProximaBlockReader {
                             ) {
                                 // Numeric comparison
                                 match operator {
-                                    ComparisonOperator::Equals => val_num >= min_num && val_num <= max_num,
-                                    ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => max_num > val_num,
-                                    ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => min_num < val_num,
-                                    _ => true
+                                    ComparisonOperator::Equals => {
+                                        val_num >= min_num && val_num <= max_num
+                                    }
+                                    ComparisonOperator::GreaterThan
+                                    | ComparisonOperator::GreaterThanOrEqual => max_num > val_num,
+                                    ComparisonOperator::LessThan
+                                    | ComparisonOperator::LessThanOrEqual => min_num < val_num,
+                                    _ => true,
                                 }
                             } else if let (Ok(val_str), Ok(min_str), Ok(max_str)) = (
                                 serde_json::from_value::<String>(value.clone()),
@@ -475,10 +507,14 @@ impl ProximaBlockReader {
                             ) {
                                 // String comparison
                                 match operator {
-                                    ComparisonOperator::Equals => val_str >= min_str && val_str <= max_str,
-                                    ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => max_str > val_str,
-                                    ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => min_str < val_str,
-                                    _ => true
+                                    ComparisonOperator::Equals => {
+                                        val_str >= min_str && val_str <= max_str
+                                    }
+                                    ComparisonOperator::GreaterThan
+                                    | ComparisonOperator::GreaterThanOrEqual => max_str > val_str,
+                                    ComparisonOperator::LessThan
+                                    | ComparisonOperator::LessThanOrEqual => min_str < val_str,
+                                    _ => true,
                                 }
                             } else {
                                 // Can't compare types, conservatively include
@@ -495,11 +531,15 @@ impl ProximaBlockReader {
             }
             FilterExpression::And(exprs) => {
                 // All expressions must potentially match
-                exprs.iter().all(|expr| self.check_metadata_stats(metadata, &Some(expr)))
+                exprs
+                    .iter()
+                    .all(|expr| self.check_metadata_stats(metadata, &Some(expr)))
             }
             FilterExpression::Or(exprs) => {
                 // At least one expression must potentially match
-                exprs.iter().any(|expr| self.check_metadata_stats(metadata, &Some(expr)))
+                exprs
+                    .iter()
+                    .any(|expr| self.check_metadata_stats(metadata, &Some(expr)))
             }
             FilterExpression::Not(_) => {
                 // Cannot use stats for NOT operations effectively
@@ -523,14 +563,11 @@ impl SstBlockReader {
     }
 
     /// SST compaction read - uses FullScan strategy
-    pub async fn read_for_compaction(
-        &self,
-        file_path: &str,
-    ) -> Result<Vec<ProximaDataBlock>> {
+    pub async fn read_for_compaction(&self, file_path: &str) -> Result<Vec<ProximaDataBlock>> {
         let strategy = ProximaReadStrategy::FullScan {
-            sequential_io: true,      // Sequential for compaction
-            use_block_cache: false,    // Don't pollute cache during compaction
-            prefetch_ahead: 8,         // Prefetch 8 blocks ahead
+            sequential_io: true,    // Sequential for compaction
+            use_block_cache: false, // Don't pollute cache during compaction
+            prefetch_ahead: 8,      // Prefetch 8 blocks ahead
         };
         self.inner.read_blocks(file_path, &strategy).await
     }
@@ -542,9 +579,9 @@ impl SstBlockReader {
         filter: Option<FilterExpression>,
     ) -> Result<Vec<ProximaDataBlock>> {
         let strategy = ProximaReadStrategy::SelectiveRead {
-            use_bloom_filters: true,   // Use Proxima bloom filters
-            use_metadata_stats: true,  // Use Proxima metadata stats
-            enable_cache: true,         // Cache for repeated queries
+            use_bloom_filters: true,  // Use Proxima bloom filters
+            use_metadata_stats: true, // Use Proxima metadata stats
+            enable_cache: true,       // Cache for repeated queries
             filter_expression: filter,
         };
         self.inner.read_blocks(file_path, &strategy).await
@@ -582,14 +619,11 @@ impl SwiftBlockReader {
     }
 
     /// SWIFT billion-scale read - uses StreamingRead
-    pub async fn read_for_analytics(
-        &self,
-        file_path: &str,
-    ) -> Result<Vec<ProximaDataBlock>> {
+    pub async fn read_for_analytics(&self, file_path: &str) -> Result<Vec<ProximaDataBlock>> {
         let strategy = ProximaReadStrategy::StreamingRead {
-            batch_size: 1000,          // Process 1000 blocks per batch
-            parallel_streams: 4,        // 4 parallel streams
-            memory_budget_mb: 1024,     // 1GB memory budget
+            batch_size: 1000,       // Process 1000 blocks per batch
+            parallel_streams: 4,    // 4 parallel streams
+            memory_budget_mb: 1024, // 1GB memory budget
         };
         self.inner.read_blocks(file_path, &strategy).await
     }
@@ -608,14 +642,11 @@ impl HelixBlockReader {
     }
 
     /// HELIX compaction read - uses FullScan with sequential I/O
-    pub async fn read_for_compaction(
-        &self,
-        file_path: &str,
-    ) -> Result<Vec<ProximaDataBlock>> {
+    pub async fn read_for_compaction(&self, file_path: &str) -> Result<Vec<ProximaDataBlock>> {
         let strategy = ProximaReadStrategy::FullScan {
-            sequential_io: true,       // Sequential for compaction
-            use_block_cache: false,     // Don't pollute cache during compaction
-            prefetch_ahead: 16,         // Prefetch more blocks for Hilbert patterns
+            sequential_io: true,    // Sequential for compaction
+            use_block_cache: false, // Don't pollute cache during compaction
+            prefetch_ahead: 16,     // Prefetch more blocks for Hilbert patterns
         };
         self.inner.read_blocks(file_path, &strategy).await
     }
@@ -640,11 +671,14 @@ impl HelixBlockReader {
 
         // Then apply Hilbert-specific pruning
         // This could be enhanced to use Proxima metadata for Hilbert ranges
-        let filtered_blocks = blocks.into_iter().filter(|block| {
-            // Check if block's Hilbert range overlaps with query
-            // This would use the HelixBlockMetadata that composes with Proxima
-            true // For now, pass all blocks
-        }).collect();
+        let filtered_blocks = blocks
+            .into_iter()
+            .filter(|block| {
+                // Check if block's Hilbert range overlaps with query
+                // This would use the HelixBlockMetadata that composes with Proxima
+                true // For now, pass all blocks
+            })
+            .collect();
 
         Ok(filtered_blocks)
     }
@@ -675,8 +709,8 @@ impl HelixBlockReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         let strategy = ProximaReadStrategy::PointLookup {
             target_keys,
-            use_bloom_filters: true,   // Use Proxima bloom filters
-            early_termination: true,    // Stop when all keys found
+            use_bloom_filters: true, // Use Proxima bloom filters
+            early_termination: true, // Stop when all keys found
         };
         self.inner.read_blocks(file_path, &strategy).await
     }

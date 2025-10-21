@@ -7,9 +7,8 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
-use proximadb::proto::proximadb_v1::{VectorRecord, StorageEngine, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, StorageEngine, VectorRecord, sql_value};
 use proximadb::storage::traits::UnifiedStorageEngine;
 use tracing::{debug, info};
 
@@ -101,12 +100,20 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
     // Flush directly to SST engine
     let flush_result = sst_engine.do_flush(&flush_params).await?;
     assert!(flush_result.success, "SST flush should succeed");
-    assert_eq!(flush_result.entries_flushed.unwrap_or(0), 3, "Should flush 3 vectors");
-    assert!(flush_result.files_created.unwrap_or(0) > 0, "Should create SST files");
+    assert_eq!(
+        flush_result.entries_flushed.unwrap_or(0),
+        3,
+        "Should flush 3 vectors"
+    );
+    assert!(
+        flush_result.files_created.unwrap_or(0) > 0,
+        "Should create SST files"
+    );
 
     debug!(
         "✅ Successfully flushed {} vectors to SST, created {} files",
-        flush_result.entries_flushed.unwrap_or(0), flush_result.files_created.unwrap_or(0)
+        flush_result.entries_flushed.unwrap_or(0),
+        flush_result.files_created.unwrap_or(0)
     );
 
     info!("Test 2: Verify SST files were created");
@@ -206,9 +213,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         },
     };
 
-    let search_results = sst_engine
-        .search_vectors_unified(&query_context)
-        .await?;
+    let search_results = sst_engine.search_vectors_unified(&query_context).await?;
 
     assert!(!search_results.is_empty(), "Should find search results");
     assert_eq!(search_results.len(), 3, "Should find all 3 vectors");
@@ -221,10 +226,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
 
     debug!("✅ Search returned {} results", search_results.len());
     for (i, result) in search_results.iter().enumerate() {
-        debug!(
-            "  Result {}: id={}, score={:?}",
-            i, result.id, result.score
-        );
+        debug!("  Result {}: id={}, score={:?}", i, result.id, result.score);
     }
 
     info!("Test 4: Metadata filtering");

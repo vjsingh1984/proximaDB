@@ -44,12 +44,22 @@ async fn test_insert_and_retrieve() -> Result<()> {
         id: "test_vec_1".to_string(),
         vector: vec![0.1, 0.2, 0.3, 0.4],
         metadata: HashMap::from([
-            ("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string())),
-            }),
-            ("version".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("1".to_string())),
-            }),
+            (
+                "category".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "test".to_string(),
+                    )),
+                },
+            ),
+            (
+                "version".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "1".to_string(),
+                    )),
+                },
+            ),
         ]),
         version: Some(1),
         timestamp: Some(1234567890),
@@ -89,8 +99,12 @@ async fn test_insert_and_retrieve() -> Result<()> {
     engine.do_flush(&flush_params).await?;
 
     // Retrieve vector - provide base_path for storage location
-    println!("TEST: About to call vector_by_id with collection='test_collection', base_path='file:///tmp', id='test_vec_1'");
-    let retrieved = engine.vector_by_id("test_collection", "file:///tmp", "test_vec_1").await?;
+    println!(
+        "TEST: About to call vector_by_id with collection='test_collection', base_path='file:///tmp', id='test_vec_1'"
+    );
+    let retrieved = engine
+        .vector_by_id("test_collection", "file:///tmp", "test_vec_1")
+        .await?;
 
     println!("TEST: vector_by_id returned: {:?}", retrieved.is_some());
     if retrieved.is_none() {
@@ -113,13 +127,22 @@ async fn test_insert_and_retrieve() -> Result<()> {
             println!("TEST: Could not read directory: {}", data_dir);
         }
     }
-    assert!(retrieved.is_some(), "Vector should have been found but was None");
+    assert!(
+        retrieved.is_some(),
+        "Vector should have been found but was None"
+    );
     println!("TEST: Vector was found!");
     let retrieved = retrieved.unwrap();
-    println!("TEST: Checking ID: expected '{}', got '{}'", vector.id, retrieved.id);
+    println!(
+        "TEST: Checking ID: expected '{}', got '{}'",
+        vector.id, retrieved.id
+    );
     assert_eq!(retrieved.id, vector.id);
     println!("TEST: ID matches!");
-    println!("TEST: Checking vector length: expected 4, got {}", retrieved.vector.len());
+    println!(
+        "TEST: Checking vector length: expected 4, got {}",
+        retrieved.vector.len()
+    );
     assert_eq!(retrieved.vector.len(), 4);
     println!("TEST: Vector length matches!");
 
@@ -191,10 +214,15 @@ async fn test_search_vectors() -> Result<()> {
     };
     println!("Calling do_flush...");
     let flush_result = engine.do_flush(&flush_params).await?;
-    println!("Flush result: success={}, entries_flushed={:?}, files_created={:?}",
-             flush_result.success, flush_result.entries_flushed, flush_result.files_created);
+    println!(
+        "Flush result: success={}, entries_flushed={:?}, files_created={:?}",
+        flush_result.success, flush_result.entries_flushed, flush_result.files_created
+    );
     assert!(flush_result.success, "Flush must succeed");
-    assert!(flush_result.entries_flushed.unwrap_or(0) > 0, "Must flush some entries");
+    assert!(
+        flush_result.entries_flushed.unwrap_or(0) > 0,
+        "Must flush some entries"
+    );
 
     // Search for similar vectors
     println!("\n=== Starting search phase ===");
@@ -234,23 +262,29 @@ async fn test_search_vectors() -> Result<()> {
         metadata,
     };
     println!("Calling search_vectors_unified...");
-    let results = engine
-        .search_vectors_unified(&query_context)
-        .await?;
+    let results = engine.search_vectors_unified(&query_context).await?;
 
     println!("Search returned {} results", results.len());
     for (i, result) in results.iter().enumerate() {
         println!("  Result {}: id={}, score={}", i, result.id, result.score);
     }
 
-    assert!(!results.is_empty(), "Expected non-empty results, got {} results", results.len());
+    assert!(
+        !results.is_empty(),
+        "Expected non-empty results, got {} results",
+        results.len()
+    );
     assert!(results.len() <= 2);
 
     // First result should be the exact match
     assert_eq!(results[0].id, "vec1");
     // score is a SIMILARITY score (higher = more similar), not distance
     // For an exact match with cosine similarity, score should be ~1.0
-    assert!(results[0].score > 0.99, "Expected similarity score > 0.99 for exact match, got {}", results[0].score);
+    assert!(
+        results[0].score > 0.99,
+        "Expected similarity score > 0.99 for exact match, got {}",
+        results[0].score
+    );
 
     Ok(())
 }
@@ -470,10 +504,9 @@ async fn test_cloud_io_optimization() -> Result<()> {
     let cache = Arc::new(
         crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(
             1024 * 1024 * 10, // 10MB cache
-        )
+        ),
     );
-    let cloud_engine = crate::storage::engines::impls::raptor::RaptorEngine::new()
-    .await?;
+    let cloud_engine = crate::storage::engines::impls::raptor::RaptorEngine::new().await?;
 
     // Note: is_cloud_storage() is private - removed assertion
 
@@ -482,9 +515,7 @@ async fn test_cloud_io_optimization() -> Result<()> {
 
 #[tokio::test]
 async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
-    use crate::storage::engines::impls::raptor::common::{
-        ColumnarCentroids, ProximaMetadata,
-    };
+    use crate::storage::engines::impls::raptor::common::{ColumnarCentroids, ProximaMetadata};
     use crate::storage::engines::impls::raptor::writer::RaptorWriter;
     use tempfile::TempDir;
 
@@ -685,10 +716,14 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
     // LARGE-SCALE SEARCH BENCHMARK
     // Single batch test with 5120 vectors - balances test coverage with execution time
 
+    // Clean up any existing test data to ensure fresh state
+    let test_dir = "/tmp/raptor_benchmark_5k";
+    let _ = std::fs::remove_dir_all(test_dir);
+
     // Create engine once - it's stateless and reads from disk
     let engine = create_test_engine().await?;
     let dimension = 128;
-    let num_vectors = 5120;  // Single sizeable batch for efficient testing
+    let num_vectors = 5120; // Single sizeable batch for efficient testing
 
     // Setup collection with unique ID
     let mut collection = create_test_collection_with_dimension(dimension);
@@ -711,11 +746,14 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
         test_vectors.push(VectorRecord {
             id: format!("vec_{:05}", i),
             vector,
-            metadata: HashMap::from([
-                ("index".to_string(), crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string())),
-                }),
-            ]),
+            metadata: HashMap::from([(
+                "index".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        i.to_string(),
+                    )),
+                },
+            )]),
             timestamp: Some(i as i64),
             updated_at: None,
             expires_at: None,
@@ -740,7 +778,10 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
 
     let flush_result = engine.do_flush(&flush_params).await?;
 
-    assert_eq!(flush_result.entries_flushed.unwrap_or(0), num_vectors as u64);
+    assert_eq!(
+        flush_result.entries_flushed.unwrap_or(0),
+        num_vectors as u64
+    );
     assert!(flush_result.bytes_written.unwrap_or(0) > 0);
 
     // Perform search test
@@ -753,7 +794,9 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
     });
 
     // Store storage path before moving collection
-    let storage_path = collection.storage_assignment.as_ref()
+    let storage_path = collection
+        .storage_assignment
+        .as_ref()
         .map(|s| s.primary_path.clone())
         .unwrap_or_else(|| "/tmp/raptor_benchmark_5k".to_string());
 
@@ -768,7 +811,7 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
         dimension,
         distance_metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
         storage_strategy: crate::storage::traits::StorageEngineStrategy::Raptor,
-        storage_path: storage_path.clone(),  // CRITICAL: This tells RAPTOR where to find files
+        storage_path: storage_path.clone(), // CRITICAL: This tells RAPTOR where to find files
         quantization_config: None,
         estimated_vector_count: num_vectors as u64,
         estimated_size_bytes: 0,
@@ -788,7 +831,10 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
     // Verify results
     assert!(!results.is_empty(), "Search should return results");
     assert!(results.len() <= 10, "Should return at most top_k results");
-    assert_eq!(results[0].id, "vec_00000", "First result should be exact match");
+    assert_eq!(
+        results[0].id, "vec_00000",
+        "First result should be exact match"
+    );
 
     // Score can be either distance (close to 0.0) or similarity (close to 1.0)
     assert!(

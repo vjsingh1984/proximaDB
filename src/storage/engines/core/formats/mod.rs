@@ -2,11 +2,11 @@
 //!
 //! Provides Proxima block-columnar and pure columnar storage formats shared by multiple engines
 
-pub mod columnar;
-pub mod proximablocks;
-pub mod common_quantization;
-pub mod quantized_schema;
 pub mod codebook_metadata;
+pub mod columnar;
+pub mod common_quantization;
+pub mod proximablocks;
+pub mod quantized_schema;
 
 #[cfg(test)]
 mod codebook_integration_test;
@@ -22,16 +22,16 @@ pub use columnar::{
 };
 
 pub use common_quantization::{
-    UnifiedQuantizedFile, QuantizedVectorData, QuantizationFileConfig,
-    EngineQuantizationConfig, ProximaBlockQuantizationStorage, QuantizationTrigger,
+    EngineQuantizationConfig, ProximaBlockQuantizationStorage, QuantizationFileConfig,
+    QuantizationTrigger, QuantizedVectorData, UnifiedQuantizedFile,
 };
 
 pub use quantized_schema::{
-    QuantizedVectorSchema, QuantizedVectorSchemaBuilder, SchemaStorageType,
-    QuantizedFieldDefinition, PhysicalFieldSpec, StorageMapping,
+    PhysicalFieldSpec, QuantizedFieldDefinition, QuantizedVectorSchema,
+    QuantizedVectorSchemaBuilder, SchemaStorageType, StorageMapping,
 };
 
 pub use codebook_metadata::{
-    QuantizationCodebookMetadata, CodebookSerializer, ProximaBlockFooter,
-    BinaryCodebook, Int8Codebook, PqCodebook, PqTrainingConfig,
+    BinaryCodebook, CodebookSerializer, Int8Codebook, PqCodebook, PqTrainingConfig,
+    ProximaBlockFooter, QuantizationCodebookMetadata,
 };

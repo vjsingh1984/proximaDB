@@ -161,7 +161,10 @@ async fn test_vector_mutation_operations() -> Result<()> {
 
     assert_eq!(update_request.get("operation").unwrap(), "UPDATE");
     assert_eq!(update_request.get("vector_id").unwrap(), "test_vector_1");
-    assert_eq!(update_request.get("metadata_updates").unwrap()["priority"], "medium");
+    assert_eq!(
+        update_request.get("metadata_updates").unwrap()["priority"],
+        "medium"
+    );
 
     assert_eq!(delete_request.get("operation").unwrap(), "DELETE");
     assert_eq!(delete_request.get("soft_delete").unwrap(), true);

@@ -2,9 +2,9 @@
 pub mod viper_pipeline_tests {
     use super::*;
     use crate::compute::quantization::types::QuantizationLevel;
-use crate::compute::quantization::types::*;
-    use crate::proto::proximadb_v1::VectorRecord;
+    use crate::compute::quantization::types::*;
     use crate::proto::proximadb_v1::SqlValue;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::engines::impls::viper::pipeline::*;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use chrono::Utc;
@@ -23,9 +23,16 @@ use crate::compute::quantization::types::*;
             vector,
             metadata: metadata
                 .into_iter()
-                .map(|(k, v)| (k, SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
-                }))
+                .map(|(k, v)| {
+                    (
+                        k,
+                        SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                v,
+                            )),
+                        },
+                    )
+                })
                 .collect(),
             timestamp: Some(now),
             updated_at: Some(now),
@@ -112,7 +119,9 @@ use crate::compute::quantization::types::*;
             batch_size: 50,
             compression: false,
             sorting_strategy: SortingStrategy::ById,
-            quantization_level: Some(crate::compute::quantization::types::UnifiedQuantizationLevel::Pq8),
+            quantization_level: Some(
+                crate::compute::quantization::types::UnifiedQuantizationLevel::Pq8,
+            ),
         };
 
         assert!(!config.enable_preprocessing);
@@ -266,8 +275,7 @@ use crate::compute::quantization::types::*;
             Err(e) => {
                 // Expected to fail in test environment - verify error is reasonable
                 assert!(
-                    e.to_string().contains("Failed")
-                        || e.to_string().contains("not implemented")
+                    e.to_string().contains("Failed") || e.to_string().contains("not implemented")
                 );
             }
         }

@@ -6,14 +6,14 @@
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::SimilarityResult;
-    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-    use crate::core::search::unified_interface::{SearchPlan, CollectionConfig, StorageInfo};
     use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+    use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
+    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::core::service_types::VectorSearchResponse;
+    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::core::formats::columnar::CollectionContext;
     use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use crate::core::service_types::VectorSearchResponse;
     use anyhow::Result;
     use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
@@ -26,7 +26,10 @@ mod tests {
 
     // Test helpers
     async fn create_test_reader() -> UnifiedParquetReader {
-        let file_paths = vec!["/tmp/test1.parquet".to_string(), "/tmp/test2.parquet".to_string()];
+        let file_paths = vec![
+            "/tmp/test1.parquet".to_string(),
+            "/tmp/test2.parquet".to_string(),
+        ];
         create_test_reader_with_files(file_paths).await
     }
 
@@ -36,7 +39,7 @@ mod tests {
         let filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
-                .unwrap()
+                .unwrap(),
         );
         let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
         let cached_filesystem = Arc::new(
@@ -44,7 +47,7 @@ mod tests {
                 base_fs,
                 "test_collection".to_string(),
                 "viper".to_string(),
-            )
+            ),
         );
         UnifiedParquetReader::new(
             file_paths,
@@ -53,7 +56,8 @@ mod tests {
             cached_filesystem,
             "test_collection".to_string(),
             "viper".to_string(),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     fn convert_search_params_to_plan(params: &SearchParams, collection_id: &str) -> SearchPlan {
@@ -79,7 +83,7 @@ mod tests {
             filter_expression: None,
             query_vector: params.vector.clone(),
             top_k: params.top_k.unwrap_or(100) as usize,
-            min_score: None,  // No minimum score filter for tests
+            min_score: None,                // No minimum score filter for tests
             enable_early_termination: true, // Enable optimizations by default
         }
     }
@@ -145,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn test_strategy_with_quantization() {
         let reader = create_test_reader().await;
-        let mut context = create_test_context();
+        let context = create_test_context();
         // Note: quantization_columns field removed from CollectionContext
 
         let params = SearchParams {
@@ -305,7 +309,9 @@ mod tests {
         vectors: Vec<VectorRecord>,
         vector_dim: usize,
     ) -> Result<()> {
-        use arrow_array::builder::{Float32Builder, ListBuilder, StringBuilder, FixedSizeListBuilder};
+        use arrow_array::builder::{
+            FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder,
+        };
         use tokio::fs;
         use tracing::{debug, error, info};
 
@@ -320,7 +326,10 @@ mod tests {
             Field::new("collection_id", DataType::Utf8, false),
             Field::new(
                 "vector_fp32",
-                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), vector_dim as i32),
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    vector_dim as i32,
+                ),
                 true,
             ),
             Field::new("version", DataType::Int8, true),
@@ -407,8 +416,8 @@ mod tests {
                         Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                             "null".to_string()
                         }
-                        _ => "unknown".to_string(),
                         None => String::new(),
+                        Some(_) => "unknown".to_string(),
                     };
                     struct_builder
                         .field_builder::<StringBuilder>(1)
@@ -464,12 +473,18 @@ mod tests {
 
         for i in 0..count {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("category".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
-            });
-            metadata.insert("score".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
-            });
+            metadata.insert(
+                "category".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
+                },
+            );
+            metadata.insert(
+                "score".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
+                },
+            );
 
             let vector = VectorRecord {
                 id: format!("vec_{}", i),
@@ -598,7 +613,11 @@ mod tests {
         println!("Search returned {} results", results.results.len());
         assert!(!results.results.is_empty(), "Should find results");
         // The reader now applies basic scoring and top_k filtering
-        assert!(results.results.len() <= 3, "Should return at most top_k=3 results (got {})", results.results.len());
+        assert!(
+            results.results.len() <= 3,
+            "Should return at most top_k=3 results (got {})",
+            results.results.len()
+        );
 
         // Debug output
         for (i, result) in results.results.iter().enumerate() {
@@ -614,7 +633,10 @@ mod tests {
             debug!("  {} -> {:?}", vec.id, vec.vector);
         }
 
-        assert_eq!(results.results[0].id, "vec_0", "First result should be exact match");
+        assert_eq!(
+            results.results[0].id, "vec_0",
+            "First result should be exact match"
+        );
 
         Ok(())
     }
@@ -649,7 +671,11 @@ mod tests {
         let results = reader.search_vectors(&search_plan, &context).await?;
 
         // Verify
-        assert_eq!(results.results.len(), 0, "Should handle empty file gracefully");
+        assert_eq!(
+            results.results.len(),
+            0,
+            "Should handle empty file gracefully"
+        );
 
         Ok(())
     }

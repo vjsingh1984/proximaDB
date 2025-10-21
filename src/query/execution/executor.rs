@@ -16,11 +16,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[cfg(test)]
-static TEST_VECTOR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
+static TEST_VECTOR_RESULTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
+> = std::sync::OnceLock::new();
 #[cfg(test)]
-static TEST_SIMILAR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
+static TEST_SIMILAR_RESULTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
+> = std::sync::OnceLock::new();
 #[cfg(test)]
-static TEST_GRAPH_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
+static TEST_GRAPH_RESULTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
+> = std::sync::OnceLock::new();
 
 /// Memory pool for reusing vectors to reduce allocations
 pub struct VectorPool {
@@ -48,9 +54,11 @@ impl VectorPool {
     /// Return a vector to the pool for reuse (clears it first)
     pub fn return_query_row_vec(&self, mut vec: Vec<QueryRow>) {
         vec.clear();
-        if vec.capacity() > 0 && vec.capacity() < 10000 { // Prevent memory bloat
+        if vec.capacity() > 0 && vec.capacity() < 10000 {
+            // Prevent memory bloat
             if let Ok(mut pool) = self.query_row_pool.lock() {
-                if pool.len() < 10 { // Limit pool size
+                if pool.len() < 10 {
+                    // Limit pool size
                     pool.push(vec);
                 }
             }
@@ -104,12 +112,13 @@ impl QueryExecutor {
         if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
             let seeds: Vec<String> = graph_rows
                 .iter()
-                .map(|r| r
-                    .fields
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string())
+                .map(|r| {
+                    r.fields
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string()
+                })
                 .filter(|id| !id.is_empty() && id != "unknown")
                 .take(100)
                 .collect();
@@ -120,10 +129,15 @@ impl QueryExecutor {
                     if let Some(first_vec_id) = vec_ids.first() {
                         if let Some(vec_values) = store.get_embedding(first_vec_id) {
                             let mut fields = std::collections::HashMap::new();
-                            fields.insert("id".to_string(), serde_json::Value::String(entity_id.clone()));
+                            fields.insert(
+                                "id".to_string(),
+                                serde_json::Value::String(entity_id.clone()),
+                            );
                             fields.insert(
                                 "embedding_dim".to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(vec_values.len() as u64)),
+                                serde_json::Value::Number(serde_json::Number::from(
+                                    vec_values.len() as u64,
+                                )),
                             );
                             derived.push(QueryRow {
                                 fields,
@@ -225,7 +239,13 @@ impl QueryExecutor {
                         self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
                     }
                 }
-                ExecutionOperation::Join { kind, left_keys, right_keys, left_alias: _, right_alias: _ } => {
+                ExecutionOperation::Join {
+                    kind,
+                    left_keys,
+                    right_keys,
+                    left_alias: _,
+                    right_alias: _,
+                } => {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
@@ -270,7 +290,10 @@ impl QueryExecutor {
                     let excepted = self.except_rows(&left, &right, !distinct)?;
                     buffers.push(excepted);
                 }
-                ExecutionOperation::CteMaterialization { cte_name, query_plan } => {
+                ExecutionOperation::CteMaterialization {
+                    cte_name,
+                    query_plan,
+                } => {
                     // Execute the CTE query plan and store results for reference
                     let cte_results = self.execute_hybrid_plan(*query_plan.clone()).await?;
                     // Store in a CTE context or buffer for later reference
@@ -316,13 +339,13 @@ impl QueryExecutor {
 
         for operation in &plan.operations {
             match operation {
-            ExecutionOperation::GraphTraversal {
-                start_nodes,
-                edge_types,
-                max_depth,
-                filters,
-                ..
-            } => {
+                ExecutionOperation::GraphTraversal {
+                    start_nodes,
+                    edge_types,
+                    max_depth,
+                    filters,
+                    ..
+                } => {
                     // Execute graph traversal with ORION engine
                     let traversal_results = self
                         .execute_graph_traversal_operation(
@@ -356,7 +379,13 @@ impl QueryExecutor {
                         self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
                     }
                 }
-                ExecutionOperation::Join { kind, left_keys, right_keys, left_alias: _, right_alias: _ } => {
+                ExecutionOperation::Join {
+                    kind,
+                    left_keys,
+                    right_keys,
+                    left_alias: _,
+                    right_alias: _,
+                } => {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
@@ -402,7 +431,11 @@ impl QueryExecutor {
         let mut vector_ops: Vec<ExecutionOperation> = Vec::new();
         let mut graph_ops: Vec<ExecutionOperation> = Vec::new();
         let mut fusion_strategy: Option<(crate::query::execution::FusionStrategy, Vec<f64>)> = None;
-        let mut join_request: Option<(crate::query::execution::JoinKind, Vec<String>, Vec<String>)> = None;
+        let mut join_request: Option<(
+            crate::query::execution::JoinKind,
+            Vec<String>,
+            Vec<String>,
+        )> = None;
         for op in &plan.operations {
             match op {
                 ExecutionOperation::VectorSearch { .. } => vector_ops.push(op.clone()),
@@ -410,7 +443,13 @@ impl QueryExecutor {
                 ExecutionOperation::Fusion { strategy, weights } => {
                     fusion_strategy = Some((strategy.clone(), weights.clone()))
                 }
-                ExecutionOperation::Join { kind, left_keys, right_keys, left_alias: _, right_alias: _ } => {
+                ExecutionOperation::Join {
+                    kind,
+                    left_keys,
+                    right_keys,
+                    left_alias: _,
+                    right_alias: _,
+                } => {
                     join_request = Some((kind.clone(), left_keys.clone(), right_keys.clone()));
                 }
                 _ => {}
@@ -503,15 +542,13 @@ impl QueryExecutor {
 
             // Use seeding strategy from plan
             let seeding = plan.seeding_strategy.clone();
-            let target_collection = graph_ops
-                .first()
-                .and_then(|op| match op {
-                    ExecutionOperation::GraphTraversal {
-                        vector_target_collection,
-                        ..
-                    } => vector_target_collection.clone(),
-                    _ => None,
-                });
+            let target_collection = graph_ops.first().and_then(|op| match op {
+                ExecutionOperation::GraphTraversal {
+                    vector_target_collection,
+                    ..
+                } => vector_target_collection.clone(),
+                _ => None,
+            });
             if let Some(collection_id) = target_collection {
                 if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
                     let seeds: Vec<String> = graph_results
@@ -774,7 +811,10 @@ impl QueryExecutor {
                     let mut fields = std::collections::HashMap::new();
 
                     // Add the id field to the result
-                    fields.insert("id".to_string(), serde_json::Value::String(record.id.clone()));
+                    fields.insert(
+                        "id".to_string(),
+                        serde_json::Value::String(record.id.clone()),
+                    );
 
                     // Add metadata fields with "metadata." prefix
                     for (key, sql_value) in &record.metadata {
@@ -812,7 +852,10 @@ impl QueryExecutor {
                     // Use record.similarity which is set by UnifiedDistanceCompute.normalized_score
                     // All engines should populate this field consistently via .with_similarity()
                     let display_score = record.similarity.unwrap_or(0.0) as f64;
-                    fields.insert("_similarity_score".to_string(), serde_json::json!(display_score));
+                    fields.insert(
+                        "_similarity_score".to_string(),
+                        serde_json::json!(display_score),
+                    );
 
                     QueryRow {
                         fields,
@@ -885,10 +928,10 @@ impl QueryExecutor {
         all: bool,
     ) -> Result<Vec<QueryRow>> {
         let mut result = Vec::new();
-        
+
         // Add all left rows
         result.extend(left.iter().cloned());
-        
+
         if all {
             // UNION ALL: Simply concatenate all rows
             result.extend(right.iter().cloned());
@@ -897,7 +940,7 @@ impl QueryExecutor {
             use std::collections::HashSet;
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
-            
+
             // Create a set of hashes from existing (left) rows
             let mut seen_hashes = HashSet::new();
             for row in left {
@@ -912,7 +955,7 @@ impl QueryExecutor {
                 }
                 seen_hashes.insert(hasher.finish());
             }
-            
+
             // Add right rows only if they're not duplicates
             for row in right {
                 let mut hasher = DefaultHasher::new();
@@ -923,14 +966,14 @@ impl QueryExecutor {
                     value.to_string().hash(&mut hasher);
                 }
                 let row_hash = hasher.finish();
-                
+
                 if !seen_hashes.contains(&row_hash) {
                     seen_hashes.insert(row_hash);
                     result.push(row.clone());
                 }
             }
         }
-        
+
         Ok(result)
     }
 
@@ -940,10 +983,10 @@ impl QueryExecutor {
         right: &Vec<QueryRow>,
         all: bool,
     ) -> Result<Vec<QueryRow>> {
-        use std::collections::{HashSet, HashMap};
         use std::collections::hash_map::DefaultHasher;
+        use std::collections::{HashMap, HashSet};
         use std::hash::{Hash, Hasher};
-        
+
         // Create hash map of right rows for efficient lookup
         let mut right_hashes = HashMap::new();
         for row in right {
@@ -955,12 +998,15 @@ impl QueryExecutor {
                 value.to_string().hash(&mut hasher);
             }
             let row_hash = hasher.finish();
-            right_hashes.entry(row_hash).or_insert_with(Vec::new).push(row.clone());
+            right_hashes
+                .entry(row_hash)
+                .or_insert_with(Vec::new)
+                .push(row.clone());
         }
-        
+
         let mut result = Vec::new();
         let mut seen_hashes = HashSet::new();
-        
+
         // Find intersection: left rows that exist in right
         for row in left {
             let mut hasher = DefaultHasher::new();
@@ -971,7 +1017,7 @@ impl QueryExecutor {
                 value.to_string().hash(&mut hasher);
             }
             let row_hash = hasher.finish();
-            
+
             if right_hashes.contains_key(&row_hash) {
                 if all || !seen_hashes.contains(&row_hash) {
                     seen_hashes.insert(row_hash);
@@ -979,7 +1025,7 @@ impl QueryExecutor {
                 }
             }
         }
-        
+
         Ok(result)
     }
 
@@ -992,7 +1038,7 @@ impl QueryExecutor {
         use std::collections::HashSet;
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         // Create hash set of right rows for efficient lookup
         let mut right_hashes = HashSet::new();
         for row in right {
@@ -1005,10 +1051,10 @@ impl QueryExecutor {
             }
             right_hashes.insert(hasher.finish());
         }
-        
+
         let mut result = Vec::new();
         let mut seen_hashes = HashSet::new();
-        
+
         // Find difference: left rows that don't exist in right
         for row in left {
             let mut hasher = DefaultHasher::new();
@@ -1019,7 +1065,7 @@ impl QueryExecutor {
                 value.to_string().hash(&mut hasher);
             }
             let row_hash = hasher.finish();
-            
+
             if !right_hashes.contains(&row_hash) {
                 if all || !seen_hashes.contains(&row_hash) {
                     seen_hashes.insert(row_hash);
@@ -1027,7 +1073,7 @@ impl QueryExecutor {
                 }
             }
         }
-        
+
         Ok(result)
     }
 
@@ -1064,7 +1110,11 @@ impl QueryExecutor {
         parts.join("\u{1F}")
     }
 
-    pub fn apply_limit_offset(rows: &mut Vec<QueryRow>, offset: Option<usize>, limit: Option<usize>) {
+    pub fn apply_limit_offset(
+        rows: &mut Vec<QueryRow>,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) {
         let off = offset.unwrap_or(0);
         if off > 0 && off < rows.len() {
             rows.drain(0..off);
@@ -1209,12 +1259,8 @@ impl QueryExecutor {
                     Op::IsNotNull => !lv.is_null(),
                 }
             }
-            FilterExpression::And(exprs) => {
-                exprs.iter().all(|expr| self.eval_having(row, expr))
-            }
-            FilterExpression::Or(exprs) => {
-                exprs.iter().any(|expr| self.eval_having(row, expr))
-            }
+            FilterExpression::And(exprs) => exprs.iter().all(|expr| self.eval_having(row, expr)),
+            FilterExpression::Or(exprs) => exprs.iter().any(|expr| self.eval_having(row, expr)),
             _ => true,
         }
     }
@@ -1247,13 +1293,18 @@ impl QueryExecutor {
                 for n in neighbors {
                     let mut fields = std::collections::HashMap::new();
                     fields.insert("id".to_string(), serde_json::Value::String(n.id.clone()));
-                    rows.push(QueryRow { fields, similarity_score: None, graph_distance: Some(1), provenance: None });
+                    rows.push(QueryRow {
+                        fields,
+                        similarity_score: None,
+                        graph_distance: Some(1),
+                        provenance: None,
+                    });
                     // Track access for caching optimization
                     if let Some(orch) = CrossCacheOrchestrator::global() {
                         // Track graph node access for cache optimization
                         orch.as_ref().track_access_async(
-                            format!("graph_node:{}", n.id), 
-                            crate::storage::cache::orchestrator::CacheType::GraphNode
+                            format!("graph_node:{}", n.id),
+                            crate::storage::cache::orchestrator::CacheType::GraphNode,
                         );
                     }
                 }
@@ -1262,8 +1313,8 @@ impl QueryExecutor {
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 // Track graph adjacency access for cache optimization
                 orch.as_ref().track_access_async(
-                    format!("graph_adj:{}", start), 
-                    crate::storage::cache::orchestrator::CacheType::GraphAdjacency
+                    format!("graph_adj:{}", start),
+                    crate::storage::cache::orchestrator::CacheType::GraphAdjacency,
                 );
             }
         }
@@ -1426,9 +1477,14 @@ impl QueryExecutor {
     ) {
         for row in rows.iter_mut() {
             // If "metadata" is requested (not metadata.field), create a nested object BEFORE filtering
-            if !columns.is_empty() && columns.contains(&"metadata".to_string()) && !columns.contains(&"*".to_string()) {
+            if !columns.is_empty()
+                && columns.contains(&"metadata".to_string())
+                && !columns.contains(&"*".to_string())
+            {
                 let mut metadata_obj = serde_json::Map::new();
-                let metadata_fields: Vec<String> = row.fields.keys()
+                let metadata_fields: Vec<String> = row
+                    .fields
+                    .keys()
                     .filter(|k| k.starts_with("metadata."))
                     .cloned()
                     .collect();
@@ -1443,7 +1499,10 @@ impl QueryExecutor {
 
                 // Add the nested metadata object
                 if !metadata_obj.is_empty() {
-                    row.fields.insert("metadata".to_string(), serde_json::Value::Object(metadata_obj));
+                    row.fields.insert(
+                        "metadata".to_string(),
+                        serde_json::Value::Object(metadata_obj),
+                    );
                 }
             }
 
@@ -1460,10 +1519,12 @@ impl QueryExecutor {
                         // O(1) access pattern vs O(n) linear scan
                         if let Some(metadata_value) = row.fields.get(field) {
                             // Clone the value for the specific field extraction
-                            row.fields.insert(format!("extracted_{}", field), metadata_value.clone());
+                            row.fields
+                                .insert(format!("extracted_{}", field), metadata_value.clone());
                         } else {
                             // Field not found - insert null value
-                            row.fields.insert(format!("extracted_{}", field), serde_json::Value::Null);
+                            row.fields
+                                .insert(format!("extracted_{}", field), serde_json::Value::Null);
                         }
                     }
                     crate::query::execution::ProjectionTransform::SimilarityScore => {
@@ -1473,12 +1534,19 @@ impl QueryExecutor {
                         // Format timestamp fields from int64_ms to ISO 8601 strings
                         let mut formatted_fields = HashMap::new();
                         for (key, value) in &row.fields {
-                            if key.contains("timestamp") || key.contains("_at") || key.contains("time") {
+                            if key.contains("timestamp")
+                                || key.contains("_at")
+                                || key.contains("time")
+                            {
                                 if let Some(timestamp_ms) = value.as_i64() {
-                                    let formatted = chrono::DateTime::from_timestamp_millis(timestamp_ms)
-                                        .map(|dt| dt.to_rfc3339())
-                                        .unwrap_or_else(|| "invalid_timestamp".to_string());
-                                    formatted_fields.insert(format!("{}_formatted", key), serde_json::Value::String(formatted));
+                                    let formatted =
+                                        chrono::DateTime::from_timestamp_millis(timestamp_ms)
+                                            .map(|dt| dt.to_rfc3339())
+                                            .unwrap_or_else(|| "invalid_timestamp".to_string());
+                                    formatted_fields.insert(
+                                        format!("{}_formatted", key),
+                                        serde_json::Value::String(formatted),
+                                    );
                                 }
                             }
                         }
@@ -1546,17 +1614,27 @@ impl QueryExecutor {
 #[cfg(test)]
 mod executor_tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::query::execution::{ExecutionPlan, ExecutionStrategy};
-    use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
+    use crate::storage::entity_store::{
+        CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
+    };
+    use async_trait::async_trait;
 
     #[test]
     fn test_apply_limit_offset_slices_rows() {
         let mut rows: Vec<QueryRow> = (0..10)
             .map(|i| {
                 let mut f = std::collections::HashMap::new();
-                f.insert("id".to_string(), serde_json::Value::String(format!("{}", i)));
-                QueryRow { fields: f, similarity_score: None, graph_distance: None, provenance: None }
+                f.insert(
+                    "id".to_string(),
+                    serde_json::Value::String(format!("{}", i)),
+                );
+                QueryRow {
+                    fields: f,
+                    similarity_score: None,
+                    graph_distance: None,
+                    provenance: None,
+                }
             })
             .collect();
 
@@ -1578,15 +1656,34 @@ mod executor_tests {
 
         // left: a.id
         let mut lfields = std::collections::HashMap::new();
-        lfields.insert("id".to_string(), serde_json::Value::String("x1".to_string()));
-        lfields.insert("name".to_string(), serde_json::Value::String("Alice".to_string()));
-        let left = vec![QueryRow { fields: lfields, similarity_score: None, graph_distance: None, provenance: None }];
+        lfields.insert(
+            "id".to_string(),
+            serde_json::Value::String("x1".to_string()),
+        );
+        lfields.insert(
+            "name".to_string(),
+            serde_json::Value::String("Alice".to_string()),
+        );
+        let left = vec![QueryRow {
+            fields: lfields,
+            similarity_score: None,
+            graph_distance: None,
+            provenance: None,
+        }];
 
         // right: b.entity_id
         let mut rfields = std::collections::HashMap::new();
-        rfields.insert("entity_id".to_string(), serde_json::Value::String("x1".to_string()));
+        rfields.insert(
+            "entity_id".to_string(),
+            serde_json::Value::String("x1".to_string()),
+        );
         rfields.insert("score".to_string(), serde_json::json!(0.9));
-        let right = vec![QueryRow { fields: rfields, similarity_score: None, graph_distance: None, provenance: None }];
+        let right = vec![QueryRow {
+            fields: rfields,
+            similarity_score: None,
+            graph_distance: None,
+            provenance: None,
+        }];
 
         let joined = exec
             .join_rows(
@@ -1610,7 +1707,10 @@ mod executor_tests {
             .and_then(|v| v.as_str())
             .map(|s| s == "x1")
             .unwrap_or(false);
-        assert!(has_entity_id, "joined row should include right entity_id field");
+        assert!(
+            has_entity_id,
+            "joined row should include right entity_id field"
+        );
     }
 
     #[test]
@@ -1618,21 +1718,54 @@ mod executor_tests {
         let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
         // left rows: (id, type)
         let mut l1 = std::collections::HashMap::new();
-        l1.insert("id".to_string(), serde_json::Value::String("x1".to_string()));
-        l1.insert("type".to_string(), serde_json::Value::String("A".to_string()));
+        l1.insert(
+            "id".to_string(),
+            serde_json::Value::String("x1".to_string()),
+        );
+        l1.insert(
+            "type".to_string(),
+            serde_json::Value::String("A".to_string()),
+        );
         let mut l2 = std::collections::HashMap::new();
-        l2.insert("id".to_string(), serde_json::Value::String("x2".to_string()));
-        l2.insert("type".to_string(), serde_json::Value::String("B".to_string()));
+        l2.insert(
+            "id".to_string(),
+            serde_json::Value::String("x2".to_string()),
+        );
+        l2.insert(
+            "type".to_string(),
+            serde_json::Value::String("B".to_string()),
+        );
         let left = vec![
-            QueryRow { fields: l1, similarity_score: None, graph_distance: None, provenance: None },
-            QueryRow { fields: l2, similarity_score: None, graph_distance: None, provenance: None },
+            QueryRow {
+                fields: l1,
+                similarity_score: None,
+                graph_distance: None,
+                provenance: None,
+            },
+            QueryRow {
+                fields: l2,
+                similarity_score: None,
+                graph_distance: None,
+                provenance: None,
+            },
         ];
 
         // right rows: (entity_id, type)
         let mut r1 = std::collections::HashMap::new();
-        r1.insert("entity_id".to_string(), serde_json::Value::String("x1".to_string()));
-        r1.insert("type".to_string(), serde_json::Value::String("A".to_string()));
-        let right = vec![QueryRow { fields: r1, similarity_score: None, graph_distance: None, provenance: None }];
+        r1.insert(
+            "entity_id".to_string(),
+            serde_json::Value::String("x1".to_string()),
+        );
+        r1.insert(
+            "type".to_string(),
+            serde_json::Value::String("A".to_string()),
+        );
+        let right = vec![QueryRow {
+            fields: r1,
+            similarity_score: None,
+            graph_distance: None,
+            provenance: None,
+        }];
 
         // Inner join on composite keys
         let inner = exec
@@ -1665,13 +1798,19 @@ mod executor_tests {
 
         // Set up mock test results for the collection
         let mut fields = std::collections::HashMap::new();
-        fields.insert("id".to_string(), serde_json::Value::String("test_vector_1".to_string()));
-        fields.insert("category".to_string(), serde_json::Value::String("electronics".to_string()));
+        fields.insert(
+            "id".to_string(),
+            serde_json::Value::String("test_vector_1".to_string()),
+        );
+        fields.insert(
+            "category".to_string(),
+            serde_json::Value::String("electronics".to_string()),
+        );
         let mock_rows = vec![QueryRow {
             fields,
             similarity_score: Some(0.95),
             graph_distance: None,
-            provenance: None
+            provenance: None,
         }];
 
         if let Some(map) = TEST_SIMILAR_RESULTS.get() {
@@ -1724,12 +1863,15 @@ mod executor_tests {
 
         // Set up mock test results for the collection
         let mut fields = std::collections::HashMap::new();
-        fields.insert("id".to_string(), serde_json::Value::String("test_vector_2".to_string()));
+        fields.insert(
+            "id".to_string(),
+            serde_json::Value::String("test_vector_2".to_string()),
+        );
         let mock_rows = vec![QueryRow {
             fields,
             similarity_score: Some(0.92),
             graph_distance: None,
-            provenance: None
+            provenance: None,
         }];
 
         if let Some(map) = TEST_SIMILAR_RESULTS.get() {
@@ -1794,13 +1936,19 @@ mod executor_tests {
 
         // Set up mock test results for the collection
         let mut fields = std::collections::HashMap::new();
-        fields.insert("id".to_string(), serde_json::Value::String("test_vector_3".to_string()));
-        fields.insert("brand".to_string(), serde_json::Value::String("apple".to_string()));
+        fields.insert(
+            "id".to_string(),
+            serde_json::Value::String("test_vector_3".to_string()),
+        );
+        fields.insert(
+            "brand".to_string(),
+            serde_json::Value::String("apple".to_string()),
+        );
         let mock_rows = vec![QueryRow {
             fields,
             similarity_score: Some(0.88),
             graph_distance: None,
-            provenance: None
+            provenance: None,
         }];
 
         if let Some(map) = TEST_SIMILAR_RESULTS.get() {
@@ -1865,15 +2013,50 @@ mod executor_tests {
         struct NoopEngine;
         #[async_trait]
         impl crate::storage::traits::UnifiedStorageEngine for NoopEngine {
-            fn engine_name(&self) -> &'static str { "noop" }
-            fn engine_version(&self) -> &'static str { "0" }
-            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Viper }
-            async fn do_flush(&self, _:&crate::storage::traits::FlushParameters)->anyhow::Result<crate::storage::traits::FlushResult>{ Ok(Default::default()) }
-            async fn do_compact(&self, _:&crate::storage::traits::CompactionParameters)->anyhow::Result<crate::storage::traits::CompactionResult>{ Ok(Default::default()) }
-            async fn collect_engine_metrics(&self)->anyhow::Result<std::collections::HashMap<String, serde_json::Value>>{ Ok(Default::default()) }
-            async fn vector_by_id(&self,_:&str,_:&str,_:&str)->anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>>{ Ok(None) }
-            async fn search_vectors_unified(&self,_:&crate::storage::traits::StorageQueryContext)->anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>>{ Ok(vec![]) }
-            fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+            fn engine_name(&self) -> &'static str {
+                "noop"
+            }
+            fn engine_version(&self) -> &'static str {
+                "0"
+            }
+            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
+                crate::storage::traits::StorageEngineStrategy::Viper
+            }
+            async fn do_flush(
+                &self,
+                _: &crate::storage::traits::FlushParameters,
+            ) -> anyhow::Result<crate::storage::traits::FlushResult> {
+                Ok(Default::default())
+            }
+            async fn do_compact(
+                &self,
+                _: &crate::storage::traits::CompactionParameters,
+            ) -> anyhow::Result<crate::storage::traits::CompactionResult> {
+                Ok(Default::default())
+            }
+            async fn collect_engine_metrics(
+                &self,
+            ) -> anyhow::Result<std::collections::HashMap<String, serde_json::Value>> {
+                Ok(Default::default())
+            }
+            async fn vector_by_id(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+                Ok(None)
+            }
+            async fn search_vectors_unified(
+                &self,
+                _: &crate::storage::traits::StorageQueryContext,
+            ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>>
+            {
+                Ok(vec![])
+            }
+            fn get_filesystem_factory(
+                &self,
+            ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
                 // TODO: Placeholder for test - FilesystemFactory::new is async
                 unimplemented!("Test method - requires async FilesystemFactory::new")
             }
@@ -1890,8 +2073,16 @@ mod executor_tests {
 
         // Build a fake graph row with id=node1
         let mut fields = std::collections::HashMap::new();
-        fields.insert("id".to_string(), serde_json::Value::String("node1".to_string()));
-        let graph_rows = vec![QueryRow { fields, similarity_score: None, graph_distance: None, provenance: None }];
+        fields.insert(
+            "id".to_string(),
+            serde_json::Value::String("node1".to_string()),
+        );
+        let graph_rows = vec![QueryRow {
+            fields,
+            similarity_score: None,
+            graph_distance: None,
+            provenance: None,
+        }];
 
         // Derive function is independent from services
         let derived = QueryExecutor::derive_vector_rows_from_graph_seeds(&graph_rows);
@@ -1899,11 +2090,15 @@ mod executor_tests {
         // Since we don't have actual embedding data in the mock store,
         // embedding_dim won't be present - only the id field
         assert!(derived[0].fields.get("id").is_some());
-        assert_eq!(derived[0].fields.get("id").unwrap(), &serde_json::Value::String("node1".to_string()));
+        assert_eq!(
+            derived[0].fields.get("id").unwrap(),
+            &serde_json::Value::String("node1".to_string())
+        );
     }
 
     fn set_test_vector_results(collection_id: &str, rows: Vec<QueryRow>) {
-        let map = TEST_VECTOR_RESULTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        let map = TEST_VECTOR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
         if let Ok(mut guard) = map.lock() {
             guard.insert(collection_id.to_string(), rows);
         }
@@ -1917,12 +2112,15 @@ mod executor_tests {
         // Skip graph collection creation for test - we'll use mock data
         // Set up mock graph traversal results
         let mut graph_fields = std::collections::HashMap::new();
-        graph_fields.insert("id".to_string(), serde_json::Value::String("n2".to_string()));
+        graph_fields.insert(
+            "id".to_string(),
+            serde_json::Value::String("n2".to_string()),
+        );
         let mock_graph_rows = vec![QueryRow {
             fields: graph_fields,
             similarity_score: None,
             graph_distance: Some(1),
-            provenance: None
+            provenance: None,
         }];
 
         if let Some(map) = TEST_GRAPH_RESULTS.get() {
@@ -1939,18 +2137,42 @@ mod executor_tests {
 
         // Mock vector search to return both n1 (for seeding) and vecA (for averaged embedding)
         let mut fields1 = std::collections::HashMap::new();
-        fields1.insert("id".to_string(), serde_json::Value::String("n1".to_string()));
+        fields1.insert(
+            "id".to_string(),
+            serde_json::Value::String("n1".to_string()),
+        );
         let mut fields2 = std::collections::HashMap::new();
-        fields2.insert("id".to_string(), serde_json::Value::String("vecA".to_string()));
+        fields2.insert(
+            "id".to_string(),
+            serde_json::Value::String("vecA".to_string()),
+        );
         let mock_vector_rows = vec![
-            QueryRow { fields: fields1, similarity_score: Some(1.0), graph_distance: None, provenance: None },
-            QueryRow { fields: fields2, similarity_score: Some(0.99), graph_distance: None, provenance: None }
+            QueryRow {
+                fields: fields1,
+                similarity_score: Some(1.0),
+                graph_distance: None,
+                provenance: None,
+            },
+            QueryRow {
+                fields: fields2,
+                similarity_score: Some(0.99),
+                graph_distance: None,
+                provenance: None,
+            },
         ];
         set_test_vector_results("c1", mock_vector_rows);
         // Also set similar results for averaged embedding path
         let mut sim_fields = std::collections::HashMap::new();
-        sim_fields.insert("id".to_string(), serde_json::Value::String("vecA".to_string()));
-        let mock_similar_rows = vec![QueryRow { fields: sim_fields, similarity_score: Some(0.99), graph_distance: None, provenance: None }];
+        sim_fields.insert(
+            "id".to_string(),
+            serde_json::Value::String("vecA".to_string()),
+        );
+        let mock_similar_rows = vec![QueryRow {
+            fields: sim_fields,
+            similarity_score: Some(0.99),
+            graph_distance: None,
+            provenance: None,
+        }];
         if let Some(map) = TEST_SIMILAR_RESULTS.get() {
             if let Ok(mut guard) = map.lock() {
                 guard.insert("c1".to_string(), mock_similar_rows);
@@ -1958,7 +2180,18 @@ mod executor_tests {
         } else {
             let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
                 let mut m = std::collections::HashMap::new();
-                m.insert("c1".to_string(), vec![QueryRow { fields: std::collections::HashMap::from([("id".to_string(), serde_json::Value::String("vecA".to_string()))]), similarity_score: Some(0.99), graph_distance: None, provenance: None }]);
+                m.insert(
+                    "c1".to_string(),
+                    vec![QueryRow {
+                        fields: std::collections::HashMap::from([(
+                            "id".to_string(),
+                            serde_json::Value::String("vecA".to_string()),
+                        )]),
+                        similarity_score: Some(0.99),
+                        graph_distance: None,
+                        provenance: None,
+                    }],
+                );
                 m
             }));
         }
@@ -1995,19 +2228,31 @@ mod executor_tests {
 
         let result = executor.execute_hybrid_plan(plan).await.unwrap();
         // Expect at least one graph-derived row (n2)
-        let has_n2 = result.rows.iter().any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("n2"));
-        assert!(has_n2, "graph traversal should produce neighbor node n2 seeded from vector results");
+        let has_n2 = result
+            .rows
+            .iter()
+            .any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("n2"));
+        assert!(
+            has_n2,
+            "graph traversal should produce neighbor node n2 seeded from vector results"
+        );
         // Expect averaged embedding similar result present (vecA)
-        let has_veca = result.rows.iter().any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("vecA"));
-        assert!(has_veca, "averaged embedding seeding should produce vector results via SIMILAR");
+        let has_veca = result
+            .rows
+            .iter()
+            .any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("vecA"));
+        assert!(
+            has_veca,
+            "averaged embedding seeding should produce vector results via SIMILAR"
+        );
     }
 
     async fn create_test_executor() -> QueryExecutor {
+        use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
         use crate::storage::engines::impls::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-        use crate::index::AxisManager;
 
         // Create temporary directory for storage
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -2017,35 +2262,48 @@ mod executor_tests {
         let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager with default config
-        use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory};
-        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
         let wal_config = WALConfig::default();
         let strategy = WALBatchFactory::create_batch_serialization_strategy(
             wal_config.strategy_type.clone(),
             &wal_config,
-            filesystem
-        ).await.expect("Failed to create WAL strategy");
-        let wal_manager = Arc::new(WriteAheadLogManager::new(
-            strategy,
-            wal_config
-        ).await.expect("Failed to create WAL manager"));
+            filesystem,
+        )
+        .await
+        .expect("Failed to create WAL strategy");
+        let wal_manager = Arc::new(
+            WriteAheadLogManager::new(strategy, wal_config)
+                .await
+                .expect("Failed to create WAL manager"),
+        );
 
         // Create Axis index manager with default config
         use crate::index::axis::AxisConfig;
         let axis_config = AxisConfig::default();
-        let axis_manager = Arc::new(AxisManager::new(
-            axis_config
-        ).await.expect("Failed to create Axis manager"));
+        let axis_manager = Arc::new(
+            AxisManager::new(axis_config)
+                .await
+                .expect("Failed to create Axis manager"),
+        );
 
         // Create collection service with universal metadata backend
+        use crate::core::config::StorageConfig;
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
         use crate::storage::traits::InternalCollectionProvider;
-        use crate::core::config::StorageConfig;
 
         let fs_config = FilesystemConfig::default();
-        let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem2 = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
 
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
         let metadata_config = UniversalMetadataConfig {
@@ -2057,18 +2315,20 @@ mod executor_tests {
             backup_url: None,
             temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
         };
-        let metadata_backend = Arc::new(UniversalMetadataBackend::new(
-            metadata_config,
-            filesystem2
-        ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+        let metadata_backend = Arc::new(
+            UniversalMetadataBackend::new(metadata_config, filesystem2)
+                .await
+                .expect("Failed to create metadata backend"),
+        ) as Arc<dyn InternalCollectionProvider>;
         let storage_config = StorageConfig {
             metadata_url: storage_url.clone(),
             ..Default::default()
         };
-        let collection_service = Arc::new(CollectionService::new(
-            metadata_backend,
-            storage_config
-        ).await.expect("Failed to create collection service"));
+        let collection_service = Arc::new(
+            CollectionService::new(metadata_backend, storage_config)
+                .await
+                .expect("Failed to create collection service"),
+        );
 
         // Create vector operations service with all dependencies
         let vector_service = Arc::new(VectorOperationsService::new(
@@ -2088,11 +2348,11 @@ mod executor_tests {
     }
 
     async fn create_test_executor_with_collection() -> QueryExecutor {
+        use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
         use crate::storage::engines::impls::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-        use crate::index::AxisManager;
 
         // Create temporary directory for storage
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -2102,35 +2362,48 @@ mod executor_tests {
         let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager with default config
-        use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory};
-        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
         let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
         let wal_config = WALConfig::default();
         let strategy = WALBatchFactory::create_batch_serialization_strategy(
             wal_config.strategy_type.clone(),
             &wal_config,
-            filesystem
-        ).await.expect("Failed to create WAL strategy");
-        let wal_manager = Arc::new(WriteAheadLogManager::new(
-            strategy,
-            wal_config
-        ).await.expect("Failed to create WAL manager"));
+            filesystem,
+        )
+        .await
+        .expect("Failed to create WAL strategy");
+        let wal_manager = Arc::new(
+            WriteAheadLogManager::new(strategy, wal_config)
+                .await
+                .expect("Failed to create WAL manager"),
+        );
 
         // Create Axis index manager with default config
         use crate::index::axis::AxisConfig;
         let axis_config = AxisConfig::default();
-        let axis_manager = Arc::new(AxisManager::new(
-            axis_config
-        ).await.expect("Failed to create Axis manager"));
+        let axis_manager = Arc::new(
+            AxisManager::new(axis_config)
+                .await
+                .expect("Failed to create Axis manager"),
+        );
 
         // Create collection service with universal metadata backend
+        use crate::core::config::StorageConfig;
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
         use crate::storage::traits::InternalCollectionProvider;
-        use crate::core::config::StorageConfig;
 
         let fs_config = FilesystemConfig::default();
-        let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+        let filesystem2 = Arc::new(
+            FilesystemFactory::create(fs_config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
 
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
         let metadata_config = UniversalMetadataConfig {
@@ -2142,24 +2415,26 @@ mod executor_tests {
             backup_url: None,
             temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
         };
-        let metadata_backend = Arc::new(UniversalMetadataBackend::new(
-            metadata_config,
-            filesystem2
-        ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+        let metadata_backend = Arc::new(
+            UniversalMetadataBackend::new(metadata_config, filesystem2)
+                .await
+                .expect("Failed to create metadata backend"),
+        ) as Arc<dyn InternalCollectionProvider>;
         let storage_config = StorageConfig {
             metadata_url: storage_url.clone(),
             ..Default::default()
         };
-        let collection_service = Arc::new(CollectionService::new(
-            metadata_backend,
-            storage_config
-        ).await.expect("Failed to create collection service"));
+        let collection_service = Arc::new(
+            CollectionService::new(metadata_backend, storage_config)
+                .await
+                .expect("Failed to create collection service"),
+        );
 
         // Create the test collection before creating the vector service
         use crate::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
         let config = CollectionConfig {
             name: "test_collection".to_string(),
-            dimension: 3,  // Match the test vector dimensions
+            dimension: 3, // Match the test vector dimensions
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
             tags: vec![],
@@ -2195,7 +2470,7 @@ mod executor_tests {
     #[test]
     fn test_vector_pool_basic_operations() {
         let pool = VectorPool::new();
-        
+
         // Test getting and returning query row vectors
         let mut vec1 = pool.get_query_row_vec();
         vec1.push(QueryRow {
@@ -2204,12 +2479,12 @@ mod executor_tests {
             graph_distance: None,
             provenance: None,
         });
-        
+
         assert_eq!(vec1.len(), 1);
-        
+
         // Return vector to pool
         pool.return_query_row_vec(vec1);
-        
+
         // Get vector again (should be reused from pool)
         let vec2 = pool.get_query_row_vec();
         assert_eq!(vec2.len(), 0); // Should be cleared when returned to pool
@@ -2219,16 +2494,19 @@ mod executor_tests {
     #[test]
     fn test_vector_pool_field_map_operations() {
         let pool = VectorPool::new();
-        
+
         // Test getting and returning field maps
         let mut map1 = pool.get_field_map();
-        map1.insert("test_key".to_string(), serde_json::Value::String("test_value".to_string()));
-        
+        map1.insert(
+            "test_key".to_string(),
+            serde_json::Value::String("test_value".to_string()),
+        );
+
         assert_eq!(map1.len(), 1);
-        
+
         // Return map to pool
         pool.return_field_map(map1);
-        
+
         // Get map again (should be reused from pool)
         let map2 = pool.get_field_map();
         assert_eq!(map2.len(), 0); // Should be cleared when returned to pool
@@ -2238,7 +2516,7 @@ mod executor_tests {
     #[test]
     fn test_vector_pool_memory_limits() {
         let pool = VectorPool::new();
-        
+
         // Test pool size limits by adding many vectors
         for i in 0..15 {
             let mut vec = pool.get_query_row_vec();
@@ -2256,7 +2534,7 @@ mod executor_tests {
             }
             pool.return_query_row_vec(vec);
         }
-        
+
         // Pool should limit size to prevent memory bloat
         // This test verifies the pool doesn't grow unbounded
         assert!(true); // Pool internal limits are working if no panic occurs
@@ -2265,7 +2543,7 @@ mod executor_tests {
     #[tokio::test]
     async fn test_set_operations_union() {
         let executor = create_test_executor().await;
-        
+
         let left_rows = vec![
             QueryRow {
                 fields: {
@@ -2288,7 +2566,7 @@ mod executor_tests {
                 provenance: None,
             },
         ];
-        
+
         let right_rows = vec![
             QueryRow {
                 fields: {
@@ -2311,11 +2589,11 @@ mod executor_tests {
                 provenance: None,
             },
         ];
-        
+
         // Test UNION ALL (should include duplicates)
         let union_all_result = executor.union_rows(&left_rows, &right_rows, true).unwrap();
         assert_eq!(union_all_result.len(), 4); // All rows included
-        
+
         // Test UNION DISTINCT (should remove duplicates)
         let union_distinct_result = executor.union_rows(&left_rows, &right_rows, false).unwrap();
         assert_eq!(union_distinct_result.len(), 3); // Duplicates removed
@@ -2324,13 +2602,16 @@ mod executor_tests {
     #[tokio::test]
     async fn test_set_operations_intersect() {
         let executor = create_test_executor().await;
-        
+
         let left_rows = vec![
             QueryRow {
                 fields: {
                     let mut fields = std::collections::HashMap::new();
                     fields.insert("id".to_string(), serde_json::Value::String("1".to_string()));
-                    fields.insert("value".to_string(), serde_json::Value::String("a".to_string()));
+                    fields.insert(
+                        "value".to_string(),
+                        serde_json::Value::String("a".to_string()),
+                    );
                     fields
                 },
                 similarity_score: Some(0.9),
@@ -2341,7 +2622,10 @@ mod executor_tests {
                 fields: {
                     let mut fields = std::collections::HashMap::new();
                     fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
-                    fields.insert("value".to_string(), serde_json::Value::String("b".to_string()));
+                    fields.insert(
+                        "value".to_string(),
+                        serde_json::Value::String("b".to_string()),
+                    );
                     fields
                 },
                 similarity_score: Some(0.8),
@@ -2349,13 +2633,16 @@ mod executor_tests {
                 provenance: None,
             },
         ];
-        
+
         let right_rows = vec![
             QueryRow {
                 fields: {
                     let mut fields = std::collections::HashMap::new();
                     fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
-                    fields.insert("value".to_string(), serde_json::Value::String("b".to_string()));
+                    fields.insert(
+                        "value".to_string(),
+                        serde_json::Value::String("b".to_string()),
+                    );
                     fields
                 },
                 similarity_score: Some(0.7),
@@ -2366,7 +2653,10 @@ mod executor_tests {
                 fields: {
                     let mut fields = std::collections::HashMap::new();
                     fields.insert("id".to_string(), serde_json::Value::String("3".to_string()));
-                    fields.insert("value".to_string(), serde_json::Value::String("c".to_string()));
+                    fields.insert(
+                        "value".to_string(),
+                        serde_json::Value::String("c".to_string()),
+                    );
                     fields
                 },
                 similarity_score: Some(0.6),
@@ -2374,23 +2664,22 @@ mod executor_tests {
                 provenance: None,
             },
         ];
-        
+
         // Test INTERSECT (should return only matching rows)
-        let intersect_result = executor.intersect_rows(&left_rows, &right_rows, false).unwrap();
+        let intersect_result = executor
+            .intersect_rows(&left_rows, &right_rows, false)
+            .unwrap();
         assert_eq!(intersect_result.len(), 1); // Only one matching row
-        
+
         // Verify the correct row is returned
         let result_row = &intersect_result[0];
-        assert_eq!(
-            result_row.fields.get("id").unwrap().as_str().unwrap(),
-            "2"
-        );
+        assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "2");
     }
 
     #[tokio::test]
     async fn test_set_operations_except() {
         let executor = create_test_executor().await;
-        
+
         let left_rows = vec![
             QueryRow {
                 fields: {
@@ -2413,29 +2702,26 @@ mod executor_tests {
                 provenance: None,
             },
         ];
-        
-        let right_rows = vec![
-            QueryRow {
-                fields: {
-                    let mut fields = std::collections::HashMap::new();
-                    fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
-                    fields
-                },
-                similarity_score: Some(0.7),
-                graph_distance: None,
-                provenance: None,
+
+        let right_rows = vec![QueryRow {
+            fields: {
+                let mut fields = std::collections::HashMap::new();
+                fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
+                fields
             },
-        ];
-        
+            similarity_score: Some(0.7),
+            graph_distance: None,
+            provenance: None,
+        }];
+
         // Test EXCEPT (should return left rows not in right)
-        let except_result = executor.except_rows(&left_rows, &right_rows, false).unwrap();
+        let except_result = executor
+            .except_rows(&left_rows, &right_rows, false)
+            .unwrap();
         assert_eq!(except_result.len(), 1); // Only non-matching row from left
-        
+
         // Verify the correct row is returned
         let result_row = &except_result[0];
-        assert_eq!(
-            result_row.fields.get("id").unwrap().as_str().unwrap(),
-            "1"
-        );
+        assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "1");
     }
 }

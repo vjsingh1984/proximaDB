@@ -6,13 +6,13 @@
 mod tests {
     use super::super::*;
     use crate::storage::engines::core::formats::codebook_metadata::{
-        CodebookSerializer, QuantizationCodebookMetadata, BinaryCodebook,
-        Int8Codebook, PqCodebook, PqTrainingConfig,
-    };
-    use crate::storage::engines::core::formats::common_quantization::{
-        QuantizedVectorData, QuantizationLevel,
+        BinaryCodebook, CodebookSerializer, Int8Codebook, PqCodebook, PqTrainingConfig,
+        QuantizationCodebookMetadata,
     };
     use crate::storage::engines::core::formats::columnar::constants::*;
+    use crate::storage::engines::core::formats::common_quantization::{
+        QuantizationLevel, QuantizedVectorData,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -80,7 +80,10 @@ mod tests {
         let deserialized_sidecar = serializer.deserialize_from_sidecar(&sidecar_json).unwrap();
 
         assert_eq!(deserialized_sidecar.collection_id, metadata.collection_id);
-        assert_eq!(deserialized_sidecar.training_samples, metadata.training_samples);
+        assert_eq!(
+            deserialized_sidecar.training_samples,
+            metadata.training_samples
+        );
     }
 
     #[test]

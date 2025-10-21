@@ -276,7 +276,11 @@ impl GraphHints {
                 total_nodes: stats.node_count as usize,
                 total_edges: stats.edge_count as usize,
                 avg_node_degree: stats.avg_node_degree,
-                label_selectivity: stats.label_selectivity.iter().map(|(k, v)| (k.clone(), *v as usize)).collect(),
+                label_selectivity: stats
+                    .label_selectivity
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v as usize))
+                    .collect(),
                 property_cardinality: HashMap::new(), // TODO: Add property stats
             });
         }

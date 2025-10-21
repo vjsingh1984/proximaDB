@@ -12,10 +12,10 @@ use std::sync::Arc;
 use tempfile::tempdir;
 
 use super::*;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::proto::proximadb_v1::SqlValue;
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Example: VIPER engine using optimized columnar infrastructure
 pub async fn viper_optimization_example() -> Result<()> {
@@ -75,13 +75,17 @@ pub async fn viper_optimization_example() -> Result<()> {
             metadata.insert(
                 "category".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 10))),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        format!("cat_{}", i % 10),
+                    )),
                 },
             );
             metadata.insert(
                 "batch_id".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i / 1000)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                        i / 1000,
+                    )),
                 },
             );
 
@@ -137,7 +141,8 @@ pub async fn viper_optimization_example() -> Result<()> {
             &filesystem_factory,
             None, // No filterable columns for this example
             None, // No metadata collector
-        ).await?;
+        )
+        .await?;
 
         eprintln!("✅ VIPER Write Complete:");
         eprintln!("  - File size: {} bytes", stats.file_size);
@@ -328,25 +333,33 @@ pub async fn nova_optimization_example() -> Result<()> {
             metadata.insert(
                 "department".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("dept_{}", i % 50))),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        format!("dept_{}", i % 50),
+                    )),
                 },
             );
             metadata.insert(
                 "project_id".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i / 5000)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                        i / 5000,
+                    )),
                 },
             );
             metadata.insert(
                 "data_source".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("analytics_pipeline".to_string())),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "analytics_pipeline".to_string(),
+                    )),
                 },
             );
             metadata.insert(
                 "embedding_model".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("text-embedding-ada-002".to_string())),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "text-embedding-ada-002".to_string(),
+                    )),
                 },
             );
 
@@ -402,7 +415,8 @@ pub async fn nova_optimization_example() -> Result<()> {
             &filesystem_factory,
             None, // No filterable columns for this example
             None, // No metadata collector for NOVA in this example
-        ).await?;
+        )
+        .await?;
 
         eprintln!("✅ NOVA Write Complete:");
         eprintln!(
@@ -422,7 +436,7 @@ pub async fn nova_optimization_example() -> Result<()> {
     // NOVA's analytical read patterns
     {
         let filesystem = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
-        let config = ColumnarConfig {
+        let _config = ColumnarConfig {
             max_cache_size_bytes: 1024 * 1024 * 1024, // 1GB cache for analytics
             optimization_thresholds: OptimizationThresholds {
                 row_group_pruning_threshold: 10_000, // More aggressive pruning
@@ -441,11 +455,11 @@ pub async fn nova_optimization_example() -> Result<()> {
                 base_fs,
                 "nova_collection".to_string(),
                 "nova".to_string(),
-            )
+            ),
         );
         let reader = UnifiedParquetReader::new(
             vec![file_path.to_str().unwrap().to_string()],
-            1024,  // dimension from the example
+            1024, // dimension from the example
             filesystem.clone(),
             cached_filesystem,
             "nova_collection".to_string(),

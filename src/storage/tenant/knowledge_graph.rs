@@ -1,38 +1,38 @@
 //! Domain knowledge graph implementation with business context
 
 use anyhow::{Result, anyhow};
-use dashmap::DashMap;
-use std::sync::Arc;
-use std::collections::HashMap;
-use tracing::info;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::info;
 
-use super::{DomainContext, BusinessContext, UserContext, TenantManager};
+use super::{BusinessContext, DomainContext, TenantManager, UserContext};
 use crate::proto::proximadb_v1::Entity;
 
 /// Domain knowledge graph with business intelligence
 pub struct DomainKnowledgeGraph {
     /// Domain identifier
     domain_id: String,
-    
+
     /// Tenant context
     tenant_id: String,
-    
+
     /// Business context for domain-specific logic
     business_context: BusinessContext,
-    
+
     /// Domain-specific entity storage
     entities: Arc<DashMap<String, Entity>>,
-    
+
     /// Entity relationships within domain
     relationships: Arc<DashMap<String, EntityRelationship>>,
-    
+
     /// Business intelligence engine for domain
     business_intelligence: Arc<DomainBusinessIntelligence>,
-    
+
     /// Domain query optimizer
     query_optimizer: Arc<DomainQueryOptimizer>,
-    
+
     /// Collection bridges
     collection_bridges: Arc<DashMap<String, CollectionDomainBridge>>,
 }
@@ -113,19 +113,15 @@ impl DomainKnowledgeGraph {
         let domain_id = domain_context.domain_id.clone();
         let tenant_id = domain_context.tenant_id.clone();
         let business_context = domain_context.business_context.clone();
-        
+
         // Create business intelligence engine
-        let business_intelligence = DomainBusinessIntelligence::new(
-            domain_id.clone(),
-            business_context.clone(),
-        );
-        
+        let business_intelligence =
+            DomainBusinessIntelligence::new(domain_id.clone(), business_context.clone());
+
         // Create query optimizer
-        let query_optimizer = DomainQueryOptimizer::new(
-            domain_id.clone(),
-            business_context.clone(),
-        );
-        
+        let query_optimizer =
+            DomainQueryOptimizer::new(domain_id.clone(), business_context.clone());
+
         Ok(Self {
             domain_id,
             tenant_id,
@@ -137,34 +133,33 @@ impl DomainKnowledgeGraph {
             collection_bridges: Arc::new(DashMap::new()),
         })
     }
-    
+
     /// Add entity to domain with business context validation
-    pub async fn add_entity(
-        &self,
-        entity: Entity,
-        user_context: &UserContext,
-    ) -> Result<String> {
+    pub async fn add_entity(&self, entity: Entity, user_context: &UserContext) -> Result<String> {
         // Validate user can add entities to this domain
         if user_context.tenant_id != self.tenant_id {
             return Err(anyhow!("User not authorized for tenant {}", self.tenant_id));
         }
-        
+
         // Apply business context validation
-        self.business_intelligence.validate_entity_for_business_context(&entity)?;
-        
+        self.business_intelligence
+            .validate_entity_for_business_context(&entity)?;
+
         // Store entity in domain
         let entity_key = format!("{}::{}", self.domain_id, entity.id);
         self.entities.insert(entity_key.clone(), entity.clone());
-        
+
         // Apply business intelligence analysis
         self.business_intelligence.analyze_entity(&entity).await?;
-        
-        info!("Added entity {} to domain {} with business context analysis", 
-              entity.id, self.domain_id);
-        
+
+        info!(
+            "Added entity {} to domain {} with business context analysis",
+            entity.id, self.domain_id
+        );
+
         Ok(entity_key)
     }
-    
+
     /// Query entities with business context optimization
     pub async fn query_entities_with_business_context(
         &self,
@@ -175,16 +170,21 @@ impl DomainKnowledgeGraph {
         if user_context.tenant_id != self.tenant_id {
             return Err(anyhow!("Access denied to domain {}", self.domain_id));
         }
-        
+
         // Apply business context optimization
         let optimized_query = self.query_optimizer.optimize_entity_query(&query)?;
-        
+
         // Execute query with business logic
-        let entities = self.execute_optimized_entity_query(&optimized_query).await?;
-        
+        let entities = self
+            .execute_optimized_entity_query(&optimized_query)
+            .await?;
+
         // Apply business intelligence analysis to results
-        let business_analysis = self.business_intelligence.analyze_query_results(&entities).await?;
-        
+        let business_analysis = self
+            .business_intelligence
+            .analyze_query_results(&entities)
+            .await?;
+
         Ok(BusinessContextEntityResult {
             entities,
             business_analysis,
@@ -196,7 +196,7 @@ impl DomainKnowledgeGraph {
             domain_context: self.business_context.clone(),
         })
     }
-    
+
     /// Link collection to domain with intelligent bridging
     pub async fn link_collection(
         &self,
@@ -208,13 +208,11 @@ impl DomainKnowledgeGraph {
         if user_context.tenant_id != self.tenant_id {
             return Err(anyhow!("User not authorized for tenant {}", self.tenant_id));
         }
-        
+
         // Create business mapping based on domain context
-        let business_mapping = self.create_business_mapping_for_collection(
-            collection_id,
-            &bridge_config,
-        )?;
-        
+        let business_mapping =
+            self.create_business_mapping_for_collection(collection_id, &bridge_config)?;
+
         // Create collection bridge
         let bridge = CollectionDomainBridge {
             collection_id: collection_id.to_string(),
@@ -224,16 +222,19 @@ impl DomainKnowledgeGraph {
             business_mapping,
             created_at: Utc::now(),
         };
-        
+
         // Store bridge
-        self.collection_bridges.insert(collection_id.to_string(), bridge.clone());
-        
-        info!("Linked collection {} to domain {} with business intelligence", 
-              collection_id, self.domain_id);
-        
+        self.collection_bridges
+            .insert(collection_id.to_string(), bridge.clone());
+
+        info!(
+            "Linked collection {} to domain {} with business intelligence",
+            collection_id, self.domain_id
+        );
+
         Ok(bridge)
     }
-    
+
     /// Execute cross-domain composition (foundation)
     pub async fn compose_with_other_domains(
         &self,
@@ -247,34 +248,36 @@ impl DomainKnowledgeGraph {
                 return Err(anyhow!("Cross-tenant domain access not allowed"));
             }
         }
-        
+
         // Execute composition with business context
         let mut composed_results = Vec::new();
-        
+
         // Get entities from this domain
-        let primary_entities = self.get_entities_for_composition(&composition_query).await?;
+        let primary_entities = self
+            .get_entities_for_composition(&composition_query)
+            .await?;
         composed_results.push(DomainCompositionResult {
             domain_id: self.domain_id.clone(),
             entities: primary_entities,
             business_context: self.business_context.clone(),
         });
-        
+
         // Get entities from target domains
         for domain in target_domains {
-            let domain_entities = domain.get_entities_for_composition(&composition_query).await?;
+            let domain_entities = domain
+                .get_entities_for_composition(&composition_query)
+                .await?;
             composed_results.push(DomainCompositionResult {
                 domain_id: domain.domain_id.clone(),
                 entities: domain_entities,
                 business_context: domain.business_context.clone(),
             });
         }
-        
+
         // Apply cross-domain business intelligence
-        let business_intelligence = self.apply_cross_domain_business_intelligence(
-            &composed_results,
-            &composition_query,
-        )?;
-        
+        let business_intelligence =
+            self.apply_cross_domain_business_intelligence(&composed_results, &composition_query)?;
+
         // Calculate entities analyzed before moving composed_results
         let entities_analyzed: usize = composed_results.iter().map(|r| r.entities.len()).sum();
 
@@ -290,11 +293,14 @@ impl DomainKnowledgeGraph {
             },
         })
     }
-    
+
     // Helper methods
-    async fn execute_optimized_entity_query(&self, query: &OptimizedDomainEntityQuery) -> Result<Vec<Entity>> {
+    async fn execute_optimized_entity_query(
+        &self,
+        query: &OptimizedDomainEntityQuery,
+    ) -> Result<Vec<Entity>> {
         let mut results = Vec::new();
-        
+
         // Simple implementation - iterate through domain entities
         for entry in self.entities.iter() {
             if self.entity_matches_query(entry.value(), query) {
@@ -304,10 +310,10 @@ impl DomainKnowledgeGraph {
                 }
             }
         }
-        
+
         Ok(results)
     }
-    
+
     fn entity_matches_query(&self, entity: &Entity, query: &OptimizedDomainEntityQuery) -> bool {
         // Simple matching logic - will be enhanced
         if let Some(ref entity_type_filter) = query.entity_type_filter {
@@ -317,22 +323,25 @@ impl DomainKnowledgeGraph {
             true
         }
     }
-    
-    async fn get_entities_for_composition(&self, query: &CrossDomainCompositionQuery) -> Result<Vec<Entity>> {
+
+    async fn get_entities_for_composition(
+        &self,
+        query: &CrossDomainCompositionQuery,
+    ) -> Result<Vec<Entity>> {
         // Simple implementation for cross-domain composition
         let mut entities = Vec::new();
         let limit = query.limit.unwrap_or(50);
-        
+
         for entry in self.entities.iter() {
             entities.push(entry.value().clone());
             if entities.len() >= limit {
                 break;
             }
         }
-        
+
         Ok(entities)
     }
-    
+
     fn create_business_mapping_for_collection(
         &self,
         collection_id: &str,
@@ -340,18 +349,16 @@ impl DomainKnowledgeGraph {
     ) -> Result<BusinessMapping> {
         // Create business mapping based on domain context
         Ok(BusinessMapping {
-            vector_to_entity_rules: vec![
-                MappingRule {
-                    rule_name: "default_vector_to_entity".to_string(),
-                    rule_logic: "vector.id -> entity.id".to_string(),
-                    business_context: self.business_context.primary_function.clone(),
-                },
-            ],
+            vector_to_entity_rules: vec![MappingRule {
+                rule_name: "default_vector_to_entity".to_string(),
+                rule_logic: "vector.id -> entity.id".to_string(),
+                business_context: self.business_context.primary_function.clone(),
+            }],
             metadata_extraction_rules: vec![],
             relationship_inference_rules: vec![],
         })
     }
-    
+
     fn apply_cross_domain_business_intelligence(
         &self,
         composed_results: &[DomainCompositionResult],
@@ -387,37 +394,42 @@ impl DomainBusinessIntelligence {
             pattern_analyzer: Arc::new(DomainPatternAnalyzer::new()),
         }
     }
-    
+
     /// Validate entity fits domain business context
     fn validate_entity_for_business_context(&self, entity: &Entity) -> Result<()> {
         // Business context validation based on domain type
         match self.business_context.primary_function.as_str() {
             "risk_management" => {
                 // Risk management domains require risk-related metadata
-                if !entity.flexible_metadata.contains_key("risk_score") &&
-                   !entity.flexible_metadata.contains_key("risk_category") {
+                if !entity.flexible_metadata.contains_key("risk_score")
+                    && !entity.flexible_metadata.contains_key("risk_category")
+                {
                     return Err(anyhow!("Entity missing risk management context"));
                 }
-            },
+            }
             "customer_intelligence" => {
                 // Customer domains require customer-related context
-                if !entity.flexible_metadata.contains_key("customer_id") &&
-                   !entity.flexible_metadata.contains_key("customer_segment") {
+                if !entity.flexible_metadata.contains_key("customer_id")
+                    && !entity.flexible_metadata.contains_key("customer_segment")
+                {
                     return Err(anyhow!("Entity missing customer intelligence context"));
                 }
-            },
+            }
             _ => {
                 // Generic validation for other business contexts
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Analyze entity for business intelligence
     async fn analyze_entity(&self, entity: &Entity) -> Result<EntityBusinessAnalysis> {
-        let analysis = self.pattern_analyzer.analyze_entity_patterns(entity).await?;
-        
+        let analysis = self
+            .pattern_analyzer
+            .analyze_entity_patterns(entity)
+            .await?;
+
         Ok(EntityBusinessAnalysis {
             entity_id: entity.id.clone(),
             business_relevance_score: analysis.relevance_score,
@@ -426,13 +438,14 @@ impl DomainBusinessIntelligence {
             analyzed_at: Utc::now(),
         })
     }
-    
+
     /// Analyze query results for business intelligence
     async fn analyze_query_results(&self, entities: &[Entity]) -> Result<QueryBusinessAnalysis> {
         // Foundation business analysis
         Ok(QueryBusinessAnalysis {
             entity_count: entities.len(),
-            business_relevance_scores: entities.iter()
+            business_relevance_scores: entities
+                .iter()
                 .map(|e| (e.id.clone(), 0.8)) // Placeholder scores
                 .collect(),
             domain_insights: DomainInsights {
@@ -454,19 +467,22 @@ impl DomainQueryOptimizer {
             performance_cache: Arc::new(DashMap::new()),
         }
     }
-    
+
     /// Optimize entity query for business context
-    fn optimize_entity_query(&self, query: &DomainEntityQuery) -> Result<OptimizedDomainEntityQuery> {
+    fn optimize_entity_query(
+        &self,
+        query: &DomainEntityQuery,
+    ) -> Result<OptimizedDomainEntityQuery> {
         // Apply business context optimization
         let optimization_key = format!("{}::{}", self.domain_id, query.query_hash());
-        
+
         // Check cache first
         if let Some(cached) = self.performance_cache.get(&optimization_key) {
             if !cached.is_expired() {
                 return Ok(cached.optimized_query.clone());
             }
         }
-        
+
         // Create optimized query based on business context
         let optimized = OptimizedDomainEntityQuery {
             original_query: query.clone(),
@@ -476,7 +492,7 @@ impl DomainQueryOptimizer {
             limit: query.limit,
             performance_improvement: 1.2, // 20% improvement expected
         };
-        
+
         // Cache optimization result
         self.performance_cache.insert(
             optimization_key,
@@ -485,10 +501,10 @@ impl DomainQueryOptimizer {
                 expires_at: Utc::now() + chrono::Duration::minutes(10),
             },
         );
-        
+
         Ok(optimized)
     }
-    
+
     fn extract_entity_type_filter(&self, query: &DomainEntityQuery) -> Option<String> {
         // Extract entity type based on business context
         match self.business_context.primary_function.as_str() {
@@ -497,25 +513,25 @@ impl DomainQueryOptimizer {
             _ => None,
         }
     }
-    
+
     fn generate_performance_hints(&self, query: &DomainEntityQuery) -> Vec<String> {
         let mut hints = Vec::new();
-        
+
         // Business context-specific performance hints
         match self.business_context.primary_function.as_str() {
             "risk_management" => {
                 hints.push("Use risk_score index for filtering".to_string());
                 hints.push("Apply risk_category clustering".to_string());
-            },
+            }
             "customer_intelligence" => {
                 hints.push("Use customer_segment index for grouping".to_string());
                 hints.push("Apply customer_tier optimization".to_string());
-            },
+            }
             _ => {
                 hints.push("Use general entity optimization".to_string());
             }
         }
-        
+
         hints
     }
 }
@@ -717,7 +733,7 @@ impl OptimizationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::{DataSensitivityLevel};
+    use crate::storage::tenant::DataSensitivityLevel;
     use crate::storage::tenant::context::PerformanceRequirements;
     use crate::storage::tenant::domain::DomainStatus;
 
@@ -732,7 +748,7 @@ mod tests {
                 availability_requirement: 0.999,
             },
         };
-        
+
         let domain_context = DomainContext {
             domain_id: "test_tenant::risk".to_string(),
             tenant_id: "test_tenant".to_string(),
@@ -742,13 +758,18 @@ mod tests {
             status: DomainStatus::Active,
             collections: Arc::new(DashMap::new()),
         };
-        
+
         let tenant_manager = Arc::new(TenantManager::new());
-        let knowledge_graph = DomainKnowledgeGraph::new(domain_context, tenant_manager).await.unwrap();
-        
+        let knowledge_graph = DomainKnowledgeGraph::new(domain_context, tenant_manager)
+            .await
+            .unwrap();
+
         assert_eq!(knowledge_graph.domain_id, "test_tenant::risk");
         assert_eq!(knowledge_graph.tenant_id, "test_tenant");
-        assert_eq!(knowledge_graph.business_context.primary_function, "risk_management");
+        assert_eq!(
+            knowledge_graph.business_context.primary_function,
+            "risk_management"
+        );
     }
 
     #[tokio::test]
@@ -763,29 +784,30 @@ mod tests {
             status: DomainStatus::Active,
             collections: Arc::new(DashMap::new()),
         };
-        
+
         let tenant_manager = Arc::new(TenantManager::new());
-        let knowledge_graph = DomainKnowledgeGraph::new(domain_context, tenant_manager).await.unwrap();
-        
+        let knowledge_graph = DomainKnowledgeGraph::new(domain_context, tenant_manager)
+            .await
+            .unwrap();
+
         let user_context = UserContext {
             user_id: "test_user".to_string(),
             tenant_id: "test_tenant".to_string(),
             roles: vec!["domain_admin".to_string()],
             permissions: vec!["collection_link".to_string()],
         };
-        
+
         let bridge_config = CollectionBridgeConfig {
             bridge_type: BridgeType::Direct,
             sync_policy: SyncPolicy::Realtime,
             auto_entity_creation: true,
         };
-        
-        let bridge = knowledge_graph.link_collection(
-            "customer_vectors",
-            bridge_config,
-            &user_context,
-        ).await.unwrap();
-        
+
+        let bridge = knowledge_graph
+            .link_collection("customer_vectors", bridge_config, &user_context)
+            .await
+            .unwrap();
+
         assert_eq!(bridge.collection_id, "customer_vectors");
         assert_eq!(bridge.domain_id, "test_tenant::customer");
     }

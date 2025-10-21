@@ -4,7 +4,7 @@
 //! where vectors are stored without explicit IDs and implicit IDs
 //! are generated from row group and row indices.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// ID-less vector lookup utilities
 pub struct IdLessLookup;
@@ -43,11 +43,7 @@ impl IdLessLookup {
     }
 
     /// Convert a batch of regular IDs to implicit IDs
-    pub fn convert_batch_to_implicit(
-        row_group: u32,
-        start_row: u32,
-        count: usize,
-    ) -> Vec<String> {
+    pub fn convert_batch_to_implicit(row_group: u32, start_row: u32, count: usize) -> Vec<String> {
         (0..count)
             .map(|i| Self::generate_implicit_id(row_group, start_row + i as u32))
             .collect()

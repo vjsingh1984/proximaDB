@@ -22,8 +22,8 @@
 //! | Nova | NOVA | Advanced analytics | Enhanced columnar |
 //! | Helix | HELIX | PCA+Hilbert | Dimension-reduced |
 
-use crate::storage::engines::impls::sst::error::SstError;
 use crate::storage::engines::impls::raptor;
+use crate::storage::engines::impls::sst::error::SstError;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -33,8 +33,7 @@ use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
 use super::impls::{
-    nova::NovaEngine, raptor::RaptorEngine, sst::SstEngine,
-    swift::SwiftEngine, viper::ViperEngine,
+    nova::NovaEngine, raptor::RaptorEngine, sst::SstEngine, swift::SwiftEngine, viper::ViperEngine,
 };
 
 /// Storage engine factory for creating engine instances
@@ -178,9 +177,7 @@ impl StorageEngineFactory {
     pub fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async {
-            ViperEngine::new().await
-        })?;
+        let engine = runtime.block_on(async { ViperEngine::new().await })?;
         Ok(Arc::new(engine))
     }
 
@@ -190,7 +187,6 @@ impl StorageEngineFactory {
         let engine = ViperEngine::new().await?;
         Ok(Arc::new(engine))
     }
-
 
     /// Create SST engine with default configuration
     ///
@@ -206,9 +202,7 @@ impl StorageEngineFactory {
     pub fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async {
-            SstEngine::new().await
-        })?;
+        let engine = runtime.block_on(async { SstEngine::new().await })?;
         Ok(Arc::new(engine))
     }
 
@@ -218,7 +212,6 @@ impl StorageEngineFactory {
         let engine = SstEngine::new().await?;
         Ok(Arc::new(engine))
     }
-
 
     /// Create SWIFT engine (Storage With Instant Fast Traversal)
     ///
@@ -234,9 +227,7 @@ impl StorageEngineFactory {
     pub fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async {
-            SwiftEngine::new().await
-        })?;
+        let engine = runtime.block_on(async { SwiftEngine::new().await })?;
         Ok(Arc::new(engine))
     }
 
@@ -246,7 +237,6 @@ impl StorageEngineFactory {
         let engine = SwiftEngine::new().await?;
         Ok(Arc::new(engine))
     }
-
 
     /// Create HELIX engine (Hierarchical Euclidean Layout with Indexed eXtensions)
     ///
@@ -277,7 +267,6 @@ impl StorageEngineFactory {
         Ok(Arc::new(engine))
     }
 
-
     /// Create NOVA engine (Next-gen Optimized Vector Analytics)
     ///
     /// ## NOVA Features:
@@ -303,7 +292,6 @@ impl StorageEngineFactory {
         Ok(Arc::new(engine))
     }
 
-
     /// Create RAPTOR engine (Row-Aligned Predicated Tensor Optimized Repository)
     ///
     /// ## RAPTOR Architecture:
@@ -318,9 +306,7 @@ impl StorageEngineFactory {
     /// Note: Requires async initialization with collection metadata.
     pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageEngine>> {
         let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async {
-            RaptorEngine::new().await
-        })?;
+        let engine = runtime.block_on(async { RaptorEngine::new().await })?;
         Ok(Arc::new(engine))
     }
 
@@ -330,7 +316,6 @@ impl StorageEngineFactory {
         let engine = RaptorEngine::new().await?;
         Ok(Arc::new(engine))
     }
-
 
     /// Create a storage engine with metrics integration
     pub fn create_with_metrics(

@@ -109,7 +109,7 @@ use anyhow::Result;
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, trace};
 
-use crate::core::hardware_capabilities::{get_hardware_capabilities, HardwareBackend};
+use crate::core::hardware_capabilities::{HardwareBackend, get_hardware_capabilities};
 use crate::core::memory::pool::{PoolConfig, VectorMemoryPool};
 
 // Platform-specific SIMD imports
@@ -152,8 +152,10 @@ fn get_memory_pool() -> Arc<VectorMemoryPool> {
                 },
 
                 // CPU SIMD: Medium pools
-                HardwareBackend::AVX512 | HardwareBackend::AVX2 |
-                HardwareBackend::NEON | HardwareBackend::SSE => PoolConfig {
+                HardwareBackend::AVX512
+                | HardwareBackend::AVX2
+                | HardwareBackend::NEON
+                | HardwareBackend::SSE => PoolConfig {
                     initial_size: 16,
                     max_size: 256,
                     min_size: 8,
@@ -220,7 +222,11 @@ pub fn get_simd_backend() -> HardwareBackend {
 pub fn get_cached_backend() -> HardwareBackend {
     *SIMD_BACKEND.get_or_init(|| {
         let backend = HardwareBackend::detect();
-        debug!("🚀 SIMD backend detected: {:?} ({}x f32 width)", backend, backend.vector_width());
+        debug!(
+            "🚀 SIMD backend detected: {:?} ({}x f32 width)",
+            backend,
+            backend.vector_width()
+        );
         backend
     })
 }
@@ -294,7 +300,11 @@ fn simd_delta_encode_avx2(values: &[f32], base: f32) -> Result<Vec<i64>> {
         *val -= base_bits;
     }
 
-    trace!("✅ AVX2 Delta encode: {} values → {} deltas", values.len(), result.len());
+    trace!(
+        "✅ AVX2 Delta encode: {} values → {} deltas",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -335,7 +345,11 @@ fn simd_delta_encode_neon(values: &[f32], base: f32) -> Result<Vec<i64>> {
         *val -= base_bits;
     }
 
-    trace!("✅ NEON Delta encode: {} values → {} deltas", values.len(), result.len());
+    trace!(
+        "✅ NEON Delta encode: {} values → {} deltas",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -351,7 +365,11 @@ fn simd_delta_encode_scalar(values: &[f32], base: f32) -> Result<Vec<i64>> {
         .map(|&v| (v.to_bits() as i32 as i64) - base_bits)
         .collect();
 
-    trace!("✅ Scalar Delta encode: {} values → {} deltas", values.len(), result.len());
+    trace!(
+        "✅ Scalar Delta encode: {} values → {} deltas",
+        values.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -490,7 +508,11 @@ fn simd_delta_decode_avx2(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
         }
     }
 
-    trace!("✅ AVX2 Delta decode: {} deltas → {} values", deltas.len(), result.len());
+    trace!(
+        "✅ AVX2 Delta decode: {} deltas → {} values",
+        deltas.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -534,7 +556,11 @@ fn simd_delta_decode_neon(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
         }
     }
 
-    trace!("✅ NEON Delta decode: {} deltas → {} values", deltas.len(), result.len());
+    trace!(
+        "✅ NEON Delta decode: {} deltas → {} values",
+        deltas.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -553,7 +579,11 @@ fn simd_delta_decode_scalar(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
         })
         .collect();
 
-    trace!("✅ Scalar Delta decode: {} deltas → {} values", deltas.len(), result.len());
+    trace!(
+        "✅ Scalar Delta decode: {} deltas → {} values",
+        deltas.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -669,7 +699,11 @@ fn bitunpack_bytes_to_i32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<i
 /// * `values` - Input f32 values
 /// * `reference` - Reference value to subtract
 /// * `bits` - Bit width per value (1-32)
-pub fn simd_frame_of_reference_encode_f32(values: &[f32], reference: i64, _bits: u8) -> Result<Vec<u8>> {
+pub fn simd_frame_of_reference_encode_f32(
+    values: &[f32],
+    reference: i64,
+    _bits: u8,
+) -> Result<Vec<u8>> {
     if values.is_empty() {
         return Ok(Vec::new());
     }
@@ -682,11 +716,7 @@ pub fn simd_frame_of_reference_encode_f32(values: &[f32], reference: i64, _bits:
     let offsets = compute_offsets_simd(values, base_i32);
 
     // Find optimal bit width for offsets
-    let max_offset_abs = offsets
-        .iter()
-        .map(|&o| o.unsigned_abs())
-        .max()
-        .unwrap_or(0);
+    let max_offset_abs = offsets.iter().map(|&o| o.unsigned_abs()).max().unwrap_or(0);
 
     let bits = if max_offset_abs == 0 {
         1
@@ -946,7 +976,12 @@ unsafe fn reconstruct_for_decode_neon(offsets: &[i32], base_i32: i32) -> Result<
 /// * `reference` - Reference value to add back
 /// * `bits` - Bit width per value (1-32)
 /// * `count` - Number of values to decode
-pub fn simd_frame_of_reference_decode_f32(packed: &[u8], _reference: i64, _bits: u8, count: usize) -> Result<Vec<f32>> {
+pub fn simd_frame_of_reference_decode_f32(
+    packed: &[u8],
+    _reference: i64,
+    _bits: u8,
+    count: usize,
+) -> Result<Vec<f32>> {
     use super::impls::baseline::functions::frame_of_ref;
 
     if count == 0 {
@@ -968,12 +1003,13 @@ pub fn simd_frame_of_reference_decode_f32(packed: &[u8], _reference: i64, _bits:
             reconstruct_for_decode_avx2(&offsets_i32, base_i32)
         },
         #[cfg(target_arch = "aarch64")]
-        HardwareBackend::NEON => unsafe {
-            reconstruct_for_decode_neon(&offsets_i32, base_i32)
-        },
+        HardwareBackend::NEON => unsafe { reconstruct_for_decode_neon(&offsets_i32, base_i32) },
         _ => {
             // Fallback to scalar (reuse baseline helper)
-            Ok(frame_of_ref::reconstruct_values_scalar_f32(&offsets_i32, base_i32))
+            Ok(frame_of_ref::reconstruct_values_scalar_f32(
+                &offsets_i32,
+                base_i32,
+            ))
         }
     }
 }
@@ -1060,7 +1096,11 @@ pub fn simd_zigzag_decode_f32(packed: &[u8], _bits: u8, count: usize) -> Result<
 /// * `values` - Input f32 values
 /// * `majority_bits` - Bit width for majority values (1-32)
 /// * `base` - Base value to subtract
-pub fn simd_pfor_delta_encode_f32(values: &[f32], _majority_bits: u8, base: i64) -> Result<Vec<u8>> {
+pub fn simd_pfor_delta_encode_f32(
+    values: &[f32],
+    _majority_bits: u8,
+    base: i64,
+) -> Result<Vec<u8>> {
     if values.is_empty() {
         return Ok(Vec::new());
     }
@@ -1073,10 +1113,7 @@ pub fn simd_pfor_delta_encode_f32(values: &[f32], _majority_bits: u8, base: i64)
     let deltas = compute_deltas_pfor_simd(values, base_i32);
 
     // Find optimal bit width for 90% of values (outliers will be patched)
-    let mut sorted_deltas: Vec<u32> = deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .collect();
+    let mut sorted_deltas: Vec<u32> = deltas.iter().map(|&d| d.unsigned_abs()).collect();
     sorted_deltas.sort_unstable();
 
     let percentile_90_idx = (sorted_deltas.len() * 90) / 100;
@@ -1282,7 +1319,12 @@ fn bitpack_i32_scalar(values: &[i32], bits: u8) -> Result<Vec<u8>> {
 /// * `majority_bits` - Bit width for majority values (1-32)
 /// * `base` - Base value to add back
 /// * `count` - Number of values to decode
-pub fn simd_pfor_delta_decode_f32(data: &[u8], _majority_bits: u8, _base: i64, count: usize) -> Result<Vec<f32>> {
+pub fn simd_pfor_delta_decode_f32(
+    data: &[u8],
+    _majority_bits: u8,
+    _base: i64,
+    count: usize,
+) -> Result<Vec<f32>> {
     use super::impls::baseline::functions::pfor_delta;
 
     if count == 0 {
@@ -1300,12 +1342,13 @@ pub fn simd_pfor_delta_decode_f32(data: &[u8], _majority_bits: u8, _base: i64, c
             reconstruct_pfor_decode_avx2(&deltas_i64, base_i32)
         },
         #[cfg(target_arch = "aarch64")]
-        HardwareBackend::NEON => unsafe {
-            reconstruct_pfor_decode_neon(&deltas_i64, base_i32)
-        },
+        HardwareBackend::NEON => unsafe { reconstruct_pfor_decode_neon(&deltas_i64, base_i32) },
         _ => {
             // Fallback to scalar (reuse baseline helper)
-            Ok(pfor_delta::reconstruct_values_scalar_f32(&deltas_i64, base_i32))
+            Ok(pfor_delta::reconstruct_values_scalar_f32(
+                &deltas_i64,
+                base_i32,
+            ))
         }
     }
 }
@@ -1463,7 +1506,7 @@ pub fn simd_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
     for i in 1..bits.len() {
         let curr = bits[i] as i64;
         let prev = bits[i - 1] as i64;
-        let delta = curr - prev;  // i64 arithmetic - no overflow!
+        let delta = curr - prev; // i64 arithmetic - no overflow!
         first_deltas.push(delta);
     }
 
@@ -1599,7 +1642,10 @@ mod tests {
             | HardwareBackend::MPS
             | HardwareBackend::OpenCL => {
                 println!("   ✅ GPU backend detected: {:?}", backend);
-                println!("   Vector width: {} (GPU threads/warps)", backend.vector_width());
+                println!(
+                    "   Vector width: {} (GPU threads/warps)",
+                    backend.vector_width()
+                );
                 assert!(backend.is_gpu());
             }
             HardwareBackend::AVX512
@@ -1640,7 +1686,10 @@ mod tests {
 
         {
             let buffer = pool.compression_buffers.acquire();
-            println!("   ✅ Acquired compression buffer (size: {})", buffer.capacity());
+            println!(
+                "   ✅ Acquired compression buffer (size: {})",
+                buffer.capacity()
+            );
         }
 
         println!("   ✅ Buffers returned to pool (RAII)");
@@ -1768,7 +1817,12 @@ mod tests {
             let expected_bits = values.len() * bits as usize;
             let expected_bytes = (expected_bits + 7) / 8;
 
-            assert_eq!(packed.len(), expected_bytes, "Size mismatch for {} bits", bits);
+            assert_eq!(
+                packed.len(),
+                expected_bytes,
+                "Size mismatch for {} bits",
+                bits
+            );
             println!("   ✅ {}-bit: {} bytes", bits, packed.len());
         }
     }
@@ -1808,7 +1862,11 @@ mod tests {
                 );
             }
 
-            println!("✅ Delta encoding test case {} passed ({} values)", i, values.len());
+            println!(
+                "✅ Delta encoding test case {} passed ({} values)",
+                i,
+                values.len()
+            );
         }
     }
 
@@ -1836,7 +1894,9 @@ mod tests {
 
     #[test]
     fn test_bitpack_encode_various_widths() {
-        let values = vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0];
+        let values = vec![
+            0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+        ];
 
         // Test different bit widths
         for bits in [1, 2, 4, 8, 16, 32] {
@@ -1853,7 +1913,12 @@ mod tests {
                 result.len()
             );
 
-            println!("✅ BitPack {} bits: {} values → {} bytes", bits, values.len(), result.len());
+            println!(
+                "✅ BitPack {} bits: {} values → {} bytes",
+                bits,
+                values.len(),
+                result.len()
+            );
         }
     }
 
@@ -1909,8 +1974,14 @@ mod tests {
             // 1. Encode with baseline (ProximaCodec)
             // Note: For f32, Delta base is the i32 bit representation, extended to i64
             let base_i64 = base.to_bits() as i32 as i64;
-            println!("\n🔍 Test {}: base_f32={}, base_bits=0x{:08X}, base_i32={}, base_i64={}",
-                     i, base, base.to_bits(), base.to_bits() as i32, base_i64);
+            println!(
+                "\n🔍 Test {}: base_f32={}, base_bits=0x{:08X}, base_i32={}, base_i64={}",
+                i,
+                base,
+                base.to_bits(),
+                base.to_bits() as i32,
+                base_i64
+            );
 
             let scheme = ProximaScheme::Delta { base: base_i64 };
             println!("   Scheme: {:?}", scheme);
@@ -1921,8 +1992,11 @@ mod tests {
             let baseline_decoded: Vec<f32> = codec.decode(&baseline_encoded).unwrap();
             println!("   Decoded {} values", baseline_decoded.len());
             if baseline_decoded.len() > 0 {
-                println!("   First decoded value: {} (bits: 0x{:08X})",
-                         baseline_decoded[0], baseline_decoded[0].to_bits());
+                println!(
+                    "   First decoded value: {} (bits: 0x{:08X})",
+                    baseline_decoded[0],
+                    baseline_decoded[0].to_bits()
+                );
             }
 
             // 3. Verify round-trip correctness
@@ -1933,13 +2007,18 @@ mod tests {
                 i
             );
 
-            for (j, (&original, &decoded)) in values.iter().zip(baseline_decoded.iter()).enumerate() {
+            for (j, (&original, &decoded)) in values.iter().zip(baseline_decoded.iter()).enumerate()
+            {
                 // Allow small floating-point error (1 ULP)
                 let diff = (original - decoded).abs();
                 assert!(
                     diff < 1e-6,
                     "Test {}, index {}: Round-trip mismatch: original={}, decoded={}, diff={}",
-                    i, j, original, decoded, diff
+                    i,
+                    j,
+                    original,
+                    decoded,
+                    diff
                 );
             }
 
@@ -1952,8 +2031,8 @@ mod tests {
         // Test that SIMD BitPacked encoding matches baseline
         let test_cases = vec![
             (vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], 4u8), // 4-bit width
-            (vec![0.0, 1.0, 2.0, 3.0], 2), // 2-bit width
-            (vec![0.0, 1.0], 1), // 1-bit width
+            (vec![0.0, 1.0, 2.0, 3.0], 2),                          // 2-bit width
+            (vec![0.0, 1.0], 1),                                    // 1-bit width
         ];
 
         let codec = ProximaCodec::global();
@@ -1974,7 +2053,8 @@ mod tests {
                 i
             );
 
-            for (j, (&original, &decoded)) in values.iter().zip(baseline_decoded.iter()).enumerate() {
+            for (j, (&original, &decoded)) in values.iter().zip(baseline_decoded.iter()).enumerate()
+            {
                 // BitPacked is lossy (truncates to integer), so just check truncated value matches
                 let original_int = original as i32;
                 let decoded_int = decoded as i32;
@@ -1985,7 +2065,12 @@ mod tests {
                 );
             }
 
-            println!("✅ Round-trip BitPack test {} passed: {} values, {} bits", i, values.len(), bits);
+            println!(
+                "✅ Round-trip BitPack test {} passed: {} values, {} bits",
+                i,
+                values.len(),
+                bits
+            );
         }
     }
 

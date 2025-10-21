@@ -278,10 +278,26 @@ fn test_mvcc_result_sorting() {
     assert_eq!(deduplicated.len(), 4);
 
     // Verify sorted by score (descending)
-    assert!((deduplicated[0].score - 0.9).abs() < 1e-6, "Expected ~0.9, got {}", deduplicated[0].score); // doc2
-    assert!((deduplicated[1].score - 0.7).abs() < 1e-6, "Expected ~0.7, got {}", deduplicated[1].score); // doc3
-    assert!((deduplicated[2].score - 0.5).abs() < 1e-6, "Expected ~0.5, got {}", deduplicated[2].score); // doc1
-    assert!((deduplicated[3].score - 0.3).abs() < 1e-6, "Expected ~0.3, got {}", deduplicated[3].score); // doc4
+    assert!(
+        (deduplicated[0].score - 0.9).abs() < 1e-6,
+        "Expected ~0.9, got {}",
+        deduplicated[0].score
+    ); // doc2
+    assert!(
+        (deduplicated[1].score - 0.7).abs() < 1e-6,
+        "Expected ~0.7, got {}",
+        deduplicated[1].score
+    ); // doc3
+    assert!(
+        (deduplicated[2].score - 0.5).abs() < 1e-6,
+        "Expected ~0.5, got {}",
+        deduplicated[2].score
+    ); // doc1
+    assert!(
+        (deduplicated[3].score - 0.3).abs() < 1e-6,
+        "Expected ~0.3, got {}",
+        deduplicated[3].score
+    ); // doc4
 }
 
 /// Test complex scenario with multiple version patterns

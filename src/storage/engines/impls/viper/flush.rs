@@ -12,9 +12,8 @@ use anyhow::{Context, Result};
 use uuid::Uuid;
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
 use crate::storage::engines::core::formats::columnar::{
+    ParquetWriterConfig, StreamingParquetWriter,
     constants::{FIELD_ID, FIELD_VECTOR_FP32},
-    ParquetWriterConfig,
-    StreamingParquetWriter,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -133,7 +132,7 @@ impl Flush {
     // constants::FIELD_VECTOR_INT8, constants::FIELD_VECTOR_PQ8 columns
     // The quantization config from collection should control whether these columns are created
 
-/// Core flush operation using proper staging pattern
+    /// Core flush operation using proper staging pattern
     pub async fn flush_vectors(
         &self,
         collection_id: &str,
@@ -276,7 +275,8 @@ impl Flush {
         // Quantization will be handled by the HybridWriter if enabled in config
         // The writer will automatically create vector_binary, vector_int8, vector_pq8 columns
         // based on the quantization config
-        let quantization_enabled = collection_config.as_ref()
+        let quantization_enabled = collection_config
+            .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|c| c.quantization.as_ref())
             .is_some();
@@ -324,7 +324,11 @@ impl Flush {
         debug!("🟩 VIPER: Ensuring directory exists: {}", dir_path);
         if let Err(e) = tokio::fs::create_dir_all(&dir_path).await {
             error!("❌ VIPER: Failed to create directory {}: {}", dir_path, e);
-            return Err(anyhow::anyhow!("Failed to create directory {}: {}", dir_path, e));
+            return Err(anyhow::anyhow!(
+                "Failed to create directory {}: {}",
+                dir_path,
+                e
+            ));
         }
 
         // Generate filename using FilenameCodec
@@ -333,7 +337,11 @@ impl Flush {
         let final_url = format!("{}/{}", data_url, filename);
 
         debug!("🟩 HYBRID_WRITER: Using columnar HybridParquetWriter::write_with_cache");
-        debug!("🟩 HYBRID_WRITER: Records: {}, Final URL: {}", sorted_records.len(), final_url);
+        debug!(
+            "🟩 HYBRID_WRITER: Records: {}, Final URL: {}",
+            sorted_records.len(),
+            final_url
+        );
 
         // Configure HybridParquetWriter like NOVA does
         use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
@@ -347,7 +355,10 @@ impl Flush {
             "brotli" => parquet::basic::Compression::BROTLI(Default::default()),
             "lzo" => parquet::basic::Compression::LZO,
             _ => {
-                debug!("Unknown compression '{}', defaulting to ZSTD", viper_config.compression);
+                debug!(
+                    "Unknown compression '{}', defaulting to ZSTD",
+                    viper_config.compression
+                );
                 parquet::basic::Compression::ZSTD(Default::default())
             }
         };
@@ -421,11 +432,14 @@ impl Flush {
 
         // Since HybridWriter handled everything, create a marker to indicate completion
         let final_file_path = stats.file_path.clone();
-        let file_size_for_stats = stats.file_size;  // Capture file size from stats
+        let file_size_for_stats = stats.file_size; // Capture file size from stats
         let mut parquet_data_or_path = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Magic bytes to indicate already written
         parquet_data_or_path.extend_from_slice(final_file_path.as_bytes());
 
-        debug!("🟩 HYBRID_WRITER: HybridWriter completed, file at: {}", final_file_path);
+        debug!(
+            "🟩 HYBRID_WRITER: HybridWriter completed, file at: {}",
+            final_file_path
+        );
         info!("✅ VIPER: Step 2 - HybridParquetWriter completed successfully");
 
         // Step 3: Check if HybridParquetWriter already handled atomic write
@@ -434,7 +448,10 @@ impl Flush {
         {
             // HybridParquetWriter already wrote the file atomically
             let path_str = String::from_utf8_lossy(&parquet_data_or_path[4..]);
-            info!("✅ VIPER: Step 3 - Parquet already written atomically by HybridParquetWriter: {}", path_str);
+            info!(
+                "✅ VIPER: Step 3 - Parquet already written atomically by HybridParquetWriter: {}",
+                path_str
+            );
             path_str.to_string()
         } else if parquet_data_or_path.len() > 4
             && &parquet_data_or_path[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E]
@@ -458,7 +475,8 @@ impl Flush {
                     // Clean up temp file if it still exists using filesystem API
                     let temp_path_str = temp_path.to_str().unwrap_or("");
                     if !temp_path_str.is_empty() {
-                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str) {
+                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
+                        {
                             if let Err(e) = local_fs.delete(temp_path_str).await {
                                 debug!("Temp file already moved or deleted: {}", e);
                             }
@@ -470,7 +488,8 @@ impl Flush {
                     // Clean up temp file on error using filesystem API
                     let temp_path_str = temp_path.to_str().unwrap_or("");
                     if !temp_path_str.is_empty() {
-                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str) {
+                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
+                        {
                             if let Err(cleanup_err) = local_fs.delete(temp_path_str).await {
                                 debug!("Failed to clean up temp file: {}", cleanup_err);
                             }
@@ -599,7 +618,6 @@ impl Flush {
         })
     }
 
-
     /// INT8 Quantization for Parquet columnar storage
     /// Delegates to unified quantization engine for consistency across all engines
     fn quantize_to_int8(
@@ -652,7 +670,9 @@ impl Flush {
         collection_config: &Option<crate::proto::proximadb_v1::Collection>,
     ) -> Result<String> {
         // Get local filesystem for temp file (cloud-compatible)
-        let temp_path_str = temp_file_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid temp file path"))?;
+        let temp_path_str = temp_file_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid temp file path"))?;
         let local_fs = self.filesystem_factory.get_filesystem(temp_path_str)?;
         let file_size = local_fs.metadata(temp_path_str).await?.size;
 

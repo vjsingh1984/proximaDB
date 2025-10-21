@@ -11,26 +11,40 @@
 //! - Set operations (UNION, INTERSECT, EXCEPT)
 //! - Vector pool memory management
 
-use crate::query::execution::{ExecutionPlan, ExecutionStrategy, ExecutionOperation, QueryRow};
-use crate::query::execution::executor::QueryExecutor;
 use crate::core::search::FilterExpression;
 use crate::graph::service::GraphOperationsService;
+use crate::query::execution::executor::QueryExecutor;
+use crate::query::execution::{ExecutionOperation, ExecutionPlan, ExecutionStrategy, QueryRow};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 // Test static globals for mocking results
-static TEST_VECTOR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
-static TEST_SIMILAR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
-static TEST_GRAPH_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
+static TEST_VECTOR_RESULTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
+> = std::sync::OnceLock::new();
+static TEST_SIMILAR_RESULTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
+> = std::sync::OnceLock::new();
+static TEST_GRAPH_RESULTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
+> = std::sync::OnceLock::new();
 
 #[test]
 fn test_apply_limit_offset_slices_rows() {
     let mut rows: Vec<QueryRow> = (0..10)
         .map(|i| {
             let mut f = std::collections::HashMap::new();
-            f.insert("id".to_string(), serde_json::Value::String(format!("{}", i)));
-            QueryRow { fields: f, similarity_score: None, graph_distance: None, provenance: None }
+            f.insert(
+                "id".to_string(),
+                serde_json::Value::String(format!("{}", i)),
+            );
+            QueryRow {
+                fields: f,
+                similarity_score: None,
+                graph_distance: None,
+                provenance: None,
+            }
         })
         .collect();
 
@@ -52,15 +66,34 @@ fn test_join_rows_with_qualified_keys() {
 
     // left: a.id
     let mut lfields = std::collections::HashMap::new();
-    lfields.insert("id".to_string(), serde_json::Value::String("x1".to_string()));
-    lfields.insert("name".to_string(), serde_json::Value::String("Alice".to_string()));
-    let left = vec![QueryRow { fields: lfields, similarity_score: None, graph_distance: None, provenance: None }];
+    lfields.insert(
+        "id".to_string(),
+        serde_json::Value::String("x1".to_string()),
+    );
+    lfields.insert(
+        "name".to_string(),
+        serde_json::Value::String("Alice".to_string()),
+    );
+    let left = vec![QueryRow {
+        fields: lfields,
+        similarity_score: None,
+        graph_distance: None,
+        provenance: None,
+    }];
 
     // right: b.entity_id
     let mut rfields = std::collections::HashMap::new();
-    rfields.insert("entity_id".to_string(), serde_json::Value::String("x1".to_string()));
+    rfields.insert(
+        "entity_id".to_string(),
+        serde_json::Value::String("x1".to_string()),
+    );
     rfields.insert("score".to_string(), serde_json::json!(0.9));
-    let right = vec![QueryRow { fields: rfields, similarity_score: None, graph_distance: None, provenance: None }];
+    let right = vec![QueryRow {
+        fields: rfields,
+        similarity_score: None,
+        graph_distance: None,
+        provenance: None,
+    }];
 
     let joined = exec
         .join_rows(
@@ -84,7 +117,10 @@ fn test_join_rows_with_qualified_keys() {
         .and_then(|v| v.as_str())
         .map(|s| s == "x1")
         .unwrap_or(false);
-    assert!(has_entity_id, "joined row should include right entity_id field");
+    assert!(
+        has_entity_id,
+        "joined row should include right entity_id field"
+    );
 }
 
 #[test]
@@ -92,21 +128,54 @@ fn test_join_rows_composite_keys_and_left_join() {
     let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
     // left rows: (id, type)
     let mut l1 = std::collections::HashMap::new();
-    l1.insert("id".to_string(), serde_json::Value::String("x1".to_string()));
-    l1.insert("type".to_string(), serde_json::Value::String("A".to_string()));
+    l1.insert(
+        "id".to_string(),
+        serde_json::Value::String("x1".to_string()),
+    );
+    l1.insert(
+        "type".to_string(),
+        serde_json::Value::String("A".to_string()),
+    );
     let mut l2 = std::collections::HashMap::new();
-    l2.insert("id".to_string(), serde_json::Value::String("x2".to_string()));
-    l2.insert("type".to_string(), serde_json::Value::String("B".to_string()));
+    l2.insert(
+        "id".to_string(),
+        serde_json::Value::String("x2".to_string()),
+    );
+    l2.insert(
+        "type".to_string(),
+        serde_json::Value::String("B".to_string()),
+    );
     let left = vec![
-        QueryRow { fields: l1, similarity_score: None, graph_distance: None, provenance: None },
-        QueryRow { fields: l2, similarity_score: None, graph_distance: None, provenance: None },
+        QueryRow {
+            fields: l1,
+            similarity_score: None,
+            graph_distance: None,
+            provenance: None,
+        },
+        QueryRow {
+            fields: l2,
+            similarity_score: None,
+            graph_distance: None,
+            provenance: None,
+        },
     ];
 
     // right rows: (entity_id, type)
     let mut r1 = std::collections::HashMap::new();
-    r1.insert("entity_id".to_string(), serde_json::Value::String("x1".to_string()));
-    r1.insert("type".to_string(), serde_json::Value::String("A".to_string()));
-    let right = vec![QueryRow { fields: r1, similarity_score: None, graph_distance: None, provenance: None }];
+    r1.insert(
+        "entity_id".to_string(),
+        serde_json::Value::String("x1".to_string()),
+    );
+    r1.insert(
+        "type".to_string(),
+        serde_json::Value::String("A".to_string()),
+    );
+    let right = vec![QueryRow {
+        fields: r1,
+        similarity_score: None,
+        graph_distance: None,
+        provenance: None,
+    }];
 
     // Inner join on composite keys
     let inner = exec
@@ -139,13 +208,19 @@ async fn test_vector_execution_with_hashmap_filtering() {
 
     // Set up mock test results for the collection
     let mut fields = std::collections::HashMap::new();
-    fields.insert("id".to_string(), serde_json::Value::String("test_vector_1".to_string()));
-    fields.insert("category".to_string(), serde_json::Value::String("electronics".to_string()));
+    fields.insert(
+        "id".to_string(),
+        serde_json::Value::String("test_vector_1".to_string()),
+    );
+    fields.insert(
+        "category".to_string(),
+        serde_json::Value::String("electronics".to_string()),
+    );
     let mock_rows = vec![QueryRow {
         fields,
         similarity_score: Some(0.95),
         graph_distance: None,
-        provenance: None
+        provenance: None,
     }];
 
     if let Some(map) = TEST_SIMILAR_RESULTS.get() {
@@ -198,12 +273,15 @@ async fn test_hybrid_fusion_execution() {
 
     // Set up mock test results for the collection
     let mut fields = std::collections::HashMap::new();
-    fields.insert("id".to_string(), serde_json::Value::String("test_vector_2".to_string()));
+    fields.insert(
+        "id".to_string(),
+        serde_json::Value::String("test_vector_2".to_string()),
+    );
     let mock_rows = vec![QueryRow {
         fields,
         similarity_score: Some(0.92),
         graph_distance: None,
-        provenance: None
+        provenance: None,
     }];
 
     if let Some(map) = TEST_SIMILAR_RESULTS.get() {
@@ -238,9 +316,7 @@ async fn test_hybrid_fusion_execution() {
                 vector_target_collection: None,
             },
             ExecutionOperation::Fusion {
-                strategy: crate::query::execution::FusionStrategy::ReciprocalRankFusion {
-                    k: 60.0,
-                },
+                strategy: crate::query::execution::FusionStrategy::ReciprocalRankFusion { k: 60.0 },
                 weights: vec![0.6, 0.4],
             },
         ],
@@ -268,13 +344,19 @@ async fn test_metadata_filtering_performance() {
 
     // Set up mock test results for the collection
     let mut fields = std::collections::HashMap::new();
-    fields.insert("id".to_string(), serde_json::Value::String("test_vector_3".to_string()));
-    fields.insert("brand".to_string(), serde_json::Value::String("apple".to_string()));
+    fields.insert(
+        "id".to_string(),
+        serde_json::Value::String("test_vector_3".to_string()),
+    );
+    fields.insert(
+        "brand".to_string(),
+        serde_json::Value::String("apple".to_string()),
+    );
     let mock_rows = vec![QueryRow {
         fields,
         similarity_score: Some(0.88),
         graph_distance: None,
-        provenance: None
+        provenance: None,
     }];
 
     if let Some(map) = TEST_SIMILAR_RESULTS.get() {
@@ -335,21 +417,57 @@ async fn test_metadata_filtering_performance() {
 
 #[tokio::test]
 async fn test_derive_vector_rows_from_graph_seeds() {
-    use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
+    use crate::storage::entity_store::{
+        CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
+    };
 
     // Setup global SKS store with one entity embedding
     struct NoopEngine;
     #[async_trait]
     impl crate::storage::traits::UnifiedStorageEngine for NoopEngine {
-        fn engine_name(&self) -> &'static str { "noop" }
-        fn engine_version(&self) -> &'static str { "0" }
-        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Viper }
-        async fn do_flush(&self, _:&crate::storage::traits::FlushParameters)->anyhow::Result<crate::storage::traits::FlushResult>{ Ok(Default::default()) }
-        async fn do_compact(&self, _:&crate::storage::traits::CompactionParameters)->anyhow::Result<crate::storage::traits::CompactionResult>{ Ok(Default::default()) }
-        async fn collect_engine_metrics(&self)->anyhow::Result<std::collections::HashMap<String, serde_json::Value>>{ Ok(Default::default()) }
-        async fn vector_by_id(&self,_:&str,_:&str,_:&str)->anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>>{ Ok(None) }
-        async fn search_vectors_unified(&self,_:&crate::storage::traits::StorageQueryContext)->anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>>{ Ok(vec![]) }
-        fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+        fn engine_name(&self) -> &'static str {
+            "noop"
+        }
+        fn engine_version(&self) -> &'static str {
+            "0"
+        }
+        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
+            crate::storage::traits::StorageEngineStrategy::Viper
+        }
+        async fn do_flush(
+            &self,
+            _: &crate::storage::traits::FlushParameters,
+        ) -> anyhow::Result<crate::storage::traits::FlushResult> {
+            Ok(Default::default())
+        }
+        async fn do_compact(
+            &self,
+            _: &crate::storage::traits::CompactionParameters,
+        ) -> anyhow::Result<crate::storage::traits::CompactionResult> {
+            Ok(Default::default())
+        }
+        async fn collect_engine_metrics(
+            &self,
+        ) -> anyhow::Result<std::collections::HashMap<String, serde_json::Value>> {
+            Ok(Default::default())
+        }
+        async fn vector_by_id(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+            Ok(None)
+        }
+        async fn search_vectors_unified(
+            &self,
+            _: &crate::storage::traits::StorageQueryContext,
+        ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+            Ok(vec![])
+        }
+        fn get_filesystem_factory(
+            &self,
+        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
             // TODO: Placeholder for test - FilesystemFactory::new is async
             unimplemented!("Test method - requires async FilesystemFactory::new")
         }
@@ -366,8 +484,16 @@ async fn test_derive_vector_rows_from_graph_seeds() {
 
     // Build a fake graph row with id=node1
     let mut fields = std::collections::HashMap::new();
-    fields.insert("id".to_string(), serde_json::Value::String("node1".to_string()));
-    let graph_rows = vec![QueryRow { fields, similarity_score: None, graph_distance: None, provenance: None }];
+    fields.insert(
+        "id".to_string(),
+        serde_json::Value::String("node1".to_string()),
+    );
+    let graph_rows = vec![QueryRow {
+        fields,
+        similarity_score: None,
+        graph_distance: None,
+        provenance: None,
+    }];
 
     // Derive function is independent from services
     let derived = QueryExecutor::derive_vector_rows_from_graph_seeds(&graph_rows);
@@ -375,11 +501,15 @@ async fn test_derive_vector_rows_from_graph_seeds() {
     // Since we don't have actual embedding data in the mock store,
     // embedding_dim won't be present - only the id field
     assert!(derived[0].fields.get("id").is_some());
-    assert_eq!(derived[0].fields.get("id").unwrap(), &serde_json::Value::String("node1".to_string()));
+    assert_eq!(
+        derived[0].fields.get("id").unwrap(),
+        &serde_json::Value::String("node1".to_string())
+    );
 }
 
 fn set_test_vector_results(collection_id: &str, rows: Vec<QueryRow>) {
-    let map = TEST_VECTOR_RESULTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let map =
+        TEST_VECTOR_RESULTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     if let Ok(mut guard) = map.lock() {
         guard.insert(collection_id.to_string(), rows);
     }
@@ -393,12 +523,15 @@ async fn test_vector_to_graph_seeding_integration() {
     // Skip graph collection creation for test - we'll use mock data
     // Set up mock graph traversal results
     let mut graph_fields = std::collections::HashMap::new();
-    graph_fields.insert("id".to_string(), serde_json::Value::String("n2".to_string()));
+    graph_fields.insert(
+        "id".to_string(),
+        serde_json::Value::String("n2".to_string()),
+    );
     let mock_graph_rows = vec![QueryRow {
         fields: graph_fields,
         similarity_score: None,
         graph_distance: Some(1),
-        provenance: None
+        provenance: None,
     }];
 
     if let Some(map) = TEST_GRAPH_RESULTS.get() {
@@ -415,18 +548,42 @@ async fn test_vector_to_graph_seeding_integration() {
 
     // Mock vector search to return both n1 (for seeding) and vecA (for averaged embedding)
     let mut fields1 = std::collections::HashMap::new();
-    fields1.insert("id".to_string(), serde_json::Value::String("n1".to_string()));
+    fields1.insert(
+        "id".to_string(),
+        serde_json::Value::String("n1".to_string()),
+    );
     let mut fields2 = std::collections::HashMap::new();
-    fields2.insert("id".to_string(), serde_json::Value::String("vecA".to_string()));
+    fields2.insert(
+        "id".to_string(),
+        serde_json::Value::String("vecA".to_string()),
+    );
     let mock_vector_rows = vec![
-        QueryRow { fields: fields1, similarity_score: Some(1.0), graph_distance: None, provenance: None },
-        QueryRow { fields: fields2, similarity_score: Some(0.99), graph_distance: None, provenance: None }
+        QueryRow {
+            fields: fields1,
+            similarity_score: Some(1.0),
+            graph_distance: None,
+            provenance: None,
+        },
+        QueryRow {
+            fields: fields2,
+            similarity_score: Some(0.99),
+            graph_distance: None,
+            provenance: None,
+        },
     ];
     set_test_vector_results("c1", mock_vector_rows);
     // Also set similar results for averaged embedding path
     let mut sim_fields = std::collections::HashMap::new();
-    sim_fields.insert("id".to_string(), serde_json::Value::String("vecA".to_string()));
-    let mock_similar_rows = vec![QueryRow { fields: sim_fields, similarity_score: Some(0.99), graph_distance: None, provenance: None }];
+    sim_fields.insert(
+        "id".to_string(),
+        serde_json::Value::String("vecA".to_string()),
+    );
+    let mock_similar_rows = vec![QueryRow {
+        fields: sim_fields,
+        similarity_score: Some(0.99),
+        graph_distance: None,
+        provenance: None,
+    }];
     if let Some(map) = TEST_SIMILAR_RESULTS.get() {
         if let Ok(mut guard) = map.lock() {
             guard.insert("c1".to_string(), mock_similar_rows);
@@ -434,7 +591,18 @@ async fn test_vector_to_graph_seeding_integration() {
     } else {
         let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
             let mut m = std::collections::HashMap::new();
-            m.insert("c1".to_string(), vec![QueryRow { fields: std::collections::HashMap::from([("id".to_string(), serde_json::Value::String("vecA".to_string()))]), similarity_score: Some(0.99), graph_distance: None, provenance: None }]);
+            m.insert(
+                "c1".to_string(),
+                vec![QueryRow {
+                    fields: std::collections::HashMap::from([(
+                        "id".to_string(),
+                        serde_json::Value::String("vecA".to_string()),
+                    )]),
+                    similarity_score: Some(0.99),
+                    graph_distance: None,
+                    provenance: None,
+                }],
+            );
             m
         }));
     }
@@ -471,19 +639,31 @@ async fn test_vector_to_graph_seeding_integration() {
 
     let result = executor.execute_hybrid_plan(plan).await.unwrap();
     // Expect at least one graph-derived row (n2)
-    let has_n2 = result.rows.iter().any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("n2"));
-    assert!(has_n2, "graph traversal should produce neighbor node n2 seeded from vector results");
+    let has_n2 = result
+        .rows
+        .iter()
+        .any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("n2"));
+    assert!(
+        has_n2,
+        "graph traversal should produce neighbor node n2 seeded from vector results"
+    );
     // Expect averaged embedding similar result present (vecA)
-    let has_veca = result.rows.iter().any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("vecA"));
-    assert!(has_veca, "averaged embedding seeding should produce vector results via SIMILAR");
+    let has_veca = result
+        .rows
+        .iter()
+        .any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("vecA"));
+    assert!(
+        has_veca,
+        "averaged embedding seeding should produce vector results via SIMILAR"
+    );
 }
 
 async fn create_test_executor() -> QueryExecutor {
+    use crate::index::AxisManager;
     use crate::services::collection::manager::CollectionService;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-    use crate::index::AxisManager;
 
     // Create temporary directory for storage
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -493,35 +673,48 @@ async fn create_test_executor() -> QueryExecutor {
     let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
     // Create WAL manager with default config
-    use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory};
-    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem = Arc::new(
+        FilesystemFactory::create(fs_config)
+            .await
+            .expect("Failed to create filesystem"),
+    );
     let wal_config = WALConfig::default();
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         wal_config.strategy_type.clone(),
         &wal_config,
-        filesystem
-    ).await.expect("Failed to create WAL strategy");
-    let wal_manager = Arc::new(WriteAheadLogManager::new(
-        strategy,
-        wal_config
-    ).await.expect("Failed to create WAL manager"));
+        filesystem,
+    )
+    .await
+    .expect("Failed to create WAL strategy");
+    let wal_manager = Arc::new(
+        WriteAheadLogManager::new(strategy, wal_config)
+            .await
+            .expect("Failed to create WAL manager"),
+    );
 
     // Create Axis index manager with default config
     use crate::index::axis::AxisConfig;
     let axis_config = AxisConfig::default();
-    let axis_manager = Arc::new(AxisManager::new(
-        axis_config
-    ).await.expect("Failed to create Axis manager"));
+    let axis_manager = Arc::new(
+        AxisManager::new(axis_config)
+            .await
+            .expect("Failed to create Axis manager"),
+    );
 
     // Create collection service with universal metadata backend
+    use crate::core::config::StorageConfig;
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
     use crate::storage::traits::InternalCollectionProvider;
-    use crate::core::config::StorageConfig;
 
     let fs_config = FilesystemConfig::default();
-    let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem2 = Arc::new(
+        FilesystemFactory::create(fs_config)
+            .await
+            .expect("Failed to create filesystem"),
+    );
 
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
     let metadata_config = UniversalMetadataConfig {
@@ -533,18 +726,20 @@ async fn create_test_executor() -> QueryExecutor {
         backup_url: None,
         temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
     };
-    let metadata_backend = Arc::new(UniversalMetadataBackend::new(
-        metadata_config,
-        filesystem2
-    ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+    let metadata_backend = Arc::new(
+        UniversalMetadataBackend::new(metadata_config, filesystem2)
+            .await
+            .expect("Failed to create metadata backend"),
+    ) as Arc<dyn InternalCollectionProvider>;
     let storage_config = StorageConfig {
         metadata_url: storage_url.clone(),
         ..Default::default()
     };
-    let collection_service = Arc::new(CollectionService::new(
-        metadata_backend,
-        storage_config
-    ).await.expect("Failed to create collection service"));
+    let collection_service = Arc::new(
+        CollectionService::new(metadata_backend, storage_config)
+            .await
+            .expect("Failed to create collection service"),
+    );
 
     // Create vector operations service with all dependencies
     let vector_service = Arc::new(VectorOperationsService::new(
@@ -564,11 +759,11 @@ async fn create_test_executor() -> QueryExecutor {
 }
 
 async fn create_test_executor_with_collection() -> QueryExecutor {
+    use crate::index::AxisManager;
     use crate::services::collection::manager::CollectionService;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
-    use crate::index::AxisManager;
 
     // Create temporary directory for storage
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -578,35 +773,48 @@ async fn create_test_executor_with_collection() -> QueryExecutor {
     let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
     // Create WAL manager with default config
-    use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory};
-    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::persistence::write_ahead_log::{WALBatchFactory, WALConfig};
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem = Arc::new(
+        FilesystemFactory::create(fs_config)
+            .await
+            .expect("Failed to create filesystem"),
+    );
     let wal_config = WALConfig::default();
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         wal_config.strategy_type.clone(),
         &wal_config,
-        filesystem
-    ).await.expect("Failed to create WAL strategy");
-    let wal_manager = Arc::new(WriteAheadLogManager::new(
-        strategy,
-        wal_config
-    ).await.expect("Failed to create WAL manager"));
+        filesystem,
+    )
+    .await
+    .expect("Failed to create WAL strategy");
+    let wal_manager = Arc::new(
+        WriteAheadLogManager::new(strategy, wal_config)
+            .await
+            .expect("Failed to create WAL manager"),
+    );
 
     // Create Axis index manager with default config
     use crate::index::axis::AxisConfig;
     let axis_config = AxisConfig::default();
-    let axis_manager = Arc::new(AxisManager::new(
-        axis_config
-    ).await.expect("Failed to create Axis manager"));
+    let axis_manager = Arc::new(
+        AxisManager::new(axis_config)
+            .await
+            .expect("Failed to create Axis manager"),
+    );
 
     // Create collection service with universal metadata backend
+    use crate::core::config::StorageConfig;
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
     use crate::storage::traits::InternalCollectionProvider;
-    use crate::core::config::StorageConfig;
 
     let fs_config = FilesystemConfig::default();
-    let filesystem2 = Arc::new(FilesystemFactory::create(fs_config).await.expect("Failed to create filesystem"));
+    let filesystem2 = Arc::new(
+        FilesystemFactory::create(fs_config)
+            .await
+            .expect("Failed to create filesystem"),
+    );
 
     use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
     let metadata_config = UniversalMetadataConfig {
@@ -618,24 +826,26 @@ async fn create_test_executor_with_collection() -> QueryExecutor {
         backup_url: None,
         temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
     };
-    let metadata_backend = Arc::new(UniversalMetadataBackend::new(
-        metadata_config,
-        filesystem2
-    ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+    let metadata_backend = Arc::new(
+        UniversalMetadataBackend::new(metadata_config, filesystem2)
+            .await
+            .expect("Failed to create metadata backend"),
+    ) as Arc<dyn InternalCollectionProvider>;
     let storage_config = StorageConfig {
         metadata_url: storage_url.clone(),
         ..Default::default()
     };
-    let collection_service = Arc::new(CollectionService::new(
-        metadata_backend,
-        storage_config
-    ).await.expect("Failed to create collection service"));
+    let collection_service = Arc::new(
+        CollectionService::new(metadata_backend, storage_config)
+            .await
+            .expect("Failed to create collection service"),
+    );
 
     // Create the test collection before creating the vector service
     use crate::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
     let config = CollectionConfig {
         name: "test_collection".to_string(),
-        dimension: 3,  // Match the test vector dimensions
+        dimension: 3, // Match the test vector dimensions
         distance_metric: Some(DistanceMetric::Cosine as i32),
         storage_engine: Some(StorageEngine::Sst as i32),
         tags: vec![],
@@ -702,7 +912,10 @@ fn test_vector_pool_field_map_operations() {
 
     // Test getting and returning field maps
     let mut map1 = pool.get_field_map();
-    map1.insert("test_key".to_string(), serde_json::Value::String("test_value".to_string()));
+    map1.insert(
+        "test_key".to_string(),
+        serde_json::Value::String("test_value".to_string()),
+    );
 
     assert_eq!(map1.len(), 1);
 
@@ -812,7 +1025,10 @@ async fn test_set_operations_intersect() {
             fields: {
                 let mut fields = std::collections::HashMap::new();
                 fields.insert("id".to_string(), serde_json::Value::String("1".to_string()));
-                fields.insert("value".to_string(), serde_json::Value::String("a".to_string()));
+                fields.insert(
+                    "value".to_string(),
+                    serde_json::Value::String("a".to_string()),
+                );
                 fields
             },
             similarity_score: Some(0.9),
@@ -823,7 +1039,10 @@ async fn test_set_operations_intersect() {
             fields: {
                 let mut fields = std::collections::HashMap::new();
                 fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
-                fields.insert("value".to_string(), serde_json::Value::String("b".to_string()));
+                fields.insert(
+                    "value".to_string(),
+                    serde_json::Value::String("b".to_string()),
+                );
                 fields
             },
             similarity_score: Some(0.8),
@@ -837,7 +1056,10 @@ async fn test_set_operations_intersect() {
             fields: {
                 let mut fields = std::collections::HashMap::new();
                 fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
-                fields.insert("value".to_string(), serde_json::Value::String("b".to_string()));
+                fields.insert(
+                    "value".to_string(),
+                    serde_json::Value::String("b".to_string()),
+                );
                 fields
             },
             similarity_score: Some(0.7),
@@ -848,7 +1070,10 @@ async fn test_set_operations_intersect() {
             fields: {
                 let mut fields = std::collections::HashMap::new();
                 fields.insert("id".to_string(), serde_json::Value::String("3".to_string()));
-                fields.insert("value".to_string(), serde_json::Value::String("c".to_string()));
+                fields.insert(
+                    "value".to_string(),
+                    serde_json::Value::String("c".to_string()),
+                );
                 fields
             },
             similarity_score: Some(0.6),
@@ -858,15 +1083,14 @@ async fn test_set_operations_intersect() {
     ];
 
     // Test INTERSECT (should return only matching rows)
-    let intersect_result = executor.intersect_rows(&left_rows, &right_rows, false).unwrap();
+    let intersect_result = executor
+        .intersect_rows(&left_rows, &right_rows, false)
+        .unwrap();
     assert_eq!(intersect_result.len(), 1); // Only one matching row
 
     // Verify the correct row is returned
     let result_row = &intersect_result[0];
-    assert_eq!(
-        result_row.fields.get("id").unwrap().as_str().unwrap(),
-        "2"
-    );
+    assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "2");
 }
 
 #[tokio::test]
@@ -896,27 +1120,24 @@ async fn test_set_operations_except() {
         },
     ];
 
-    let right_rows = vec![
-        QueryRow {
-            fields: {
-                let mut fields = std::collections::HashMap::new();
-                fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
-                fields
-            },
-            similarity_score: Some(0.7),
-            graph_distance: None,
-            provenance: None,
+    let right_rows = vec![QueryRow {
+        fields: {
+            let mut fields = std::collections::HashMap::new();
+            fields.insert("id".to_string(), serde_json::Value::String("2".to_string()));
+            fields
         },
-    ];
+        similarity_score: Some(0.7),
+        graph_distance: None,
+        provenance: None,
+    }];
 
     // Test EXCEPT (should return left rows not in right)
-    let except_result = executor.except_rows(&left_rows, &right_rows, false).unwrap();
+    let except_result = executor
+        .except_rows(&left_rows, &right_rows, false)
+        .unwrap();
     assert_eq!(except_result.len(), 1); // Only non-matching row from left
 
     // Verify the correct row is returned
     let result_row = &except_result[0];
-    assert_eq!(
-        result_row.fields.get("id").unwrap().as_str().unwrap(),
-        "1"
-    );
+    assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "1");
 }

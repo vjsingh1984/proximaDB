@@ -3,10 +3,8 @@
 pub mod intelligence_platform;
 
 pub use intelligence_platform::{
-    ExecutiveIntelligencePlatform,
+    AutomatedBoardReport, ExecutiveIntelligenceDashboard, ExecutiveIntelligencePlatform,
     ExecutiveRole,
-    ExecutiveIntelligenceDashboard,
-    AutomatedBoardReport,
 };
 
 use anyhow::Result;
@@ -21,10 +19,11 @@ impl ExecutiveIntelligenceCoordinator {
     /// Create executive intelligence coordinator
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            intelligence_platform: intelligence_platform::ExecutiveIntelligencePlatform::new().await?,
+            intelligence_platform: intelligence_platform::ExecutiveIntelligencePlatform::new()
+                .await?,
         })
     }
-    
+
     /// Get executive intelligence platform
     pub fn get_platform(&self) -> &intelligence_platform::ExecutiveIntelligencePlatform {
         &self.intelligence_platform

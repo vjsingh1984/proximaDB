@@ -417,10 +417,14 @@ mod tests {
         assert!(
             new_scan_count < old_scan_count,
             "New implementation should scan WAL fewer times than old: {} >= {}",
-            new_scan_count, old_scan_count
+            new_scan_count,
+            old_scan_count
         );
 
-        info!("✅ WAL scan optimization verified: {} → {} scans", old_scan_count, new_scan_count);
+        info!(
+            "✅ WAL scan optimization verified: {} → {} scans",
+            old_scan_count, new_scan_count
+        );
         Ok(())
     }
 }

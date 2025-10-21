@@ -22,6 +22,11 @@
 #![warn(clippy::panic)]
 #![warn(clippy::unimplemented)]
 #![warn(clippy::todo)]
+#![warn(clippy::too_many_arguments)]
+#![warn(clippy::type_complexity)]
+#![warn(clippy::large_enum_variant)]
+#![warn(clippy::result_large_err)]
+#![warn(clippy::missing_docs_in_private_items)]
 
 //! # ProximaDB - Cloud-Native Vector Database
 //!
@@ -197,7 +202,8 @@ impl ProximaDB {
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
         let cache_config = config.cache.clone().unwrap_or_default();
         let cache_budget_mb = cache_config.total_memory_mb;
-        let mut orchestrator = CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize);
+        let mut orchestrator =
+            CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize);
 
         // Start cache eviction service if enabled
         if cache_config.eviction.enabled {
@@ -218,7 +224,10 @@ impl ProximaDB {
 
         // Start periodic memory rebalancing service if enabled
         if cache_config.rebalancing.enabled {
-            info!("Starting cache memory rebalancing service (interval: {}s)", cache_config.rebalancing.interval_seconds);
+            info!(
+                "Starting cache memory rebalancing service (interval: {}s)",
+                cache_config.rebalancing.interval_seconds
+            );
             orchestrator.clone().start_rebalancing_service();
         }
         CrossCacheOrchestrator::register_global(orchestrator.clone());
@@ -239,7 +248,8 @@ impl ProximaDB {
         wal_config.multi_disk.data_directories = config.storage.storage_urls();
 
         // Initialize global WAL manifest using WALConfig
-        let _manifest_service = storage::persistence::write_ahead_log::manifest::init(&wal_config).await?;
+        let _manifest_service =
+            storage::persistence::write_ahead_log::manifest::init(&wal_config).await?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
         // Step 4: Create StorageEngine using the CollectionService from SharedServices

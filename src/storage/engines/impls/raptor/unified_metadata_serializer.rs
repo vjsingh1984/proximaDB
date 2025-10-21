@@ -86,7 +86,7 @@ impl EngineMetadataSerializer for RaptorUnifiedMetadataSerializer {
             return None;
         }
 
-        let footer_size_bytes = &data[data.len()-8..];
+        let footer_size_bytes = &data[data.len() - 8..];
         let footer_size = u64::from_le_bytes([
             footer_size_bytes[0],
             footer_size_bytes[1],
@@ -105,18 +105,18 @@ impl EngineMetadataSerializer for RaptorUnifiedMetadataSerializer {
 
         // Extract footer data
         let footer_start = data.len() - 8 - footer_size;
-        let footer_data = &data[footer_start..data.len()-8];
+        let footer_data = &data[footer_start..data.len() - 8];
 
         Some(Bytes::copy_from_slice(footer_data))
     }
 
     fn should_cache_metadata(&self, file_path: &str) -> bool {
         // Cache metadata for RAPTOR files
-        file_path.ends_with(".raptor") ||
-        file_path.contains("/raptor/") ||
-        file_path.contains("_raptor_") ||
-        file_path.contains("/rowgroups/") ||
-        file_path.contains("/centroids/")
+        file_path.ends_with(".raptor")
+            || file_path.contains("/raptor/")
+            || file_path.contains("_raptor_")
+            || file_path.contains("/rowgroups/")
+            || file_path.contains("/centroids/")
     }
 }
 

@@ -184,7 +184,7 @@ impl SharedSstFormatReader {
             unified_filesystem,
             collection_id,
             stats: Arc::new(ReaderStats::default()),
-            distance_compute: Arc::new(UnifiedDistanceCompute::default()),  // ✅ Create once and reuse
+            distance_compute: Arc::new(UnifiedDistanceCompute::default()), // ✅ Create once and reuse
         }
     }
 
@@ -194,78 +194,96 @@ impl SharedSstFormatReader {
         file_path: &'a str,
         strategy: &'a crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy,
         filter_expression: Option<&'a crate::core::search::FilterExpression>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>>{
         Box::pin(async move {
-        use crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy;
+            use crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy;
 
-        match strategy {
-            SstableReadingStrategy::FullScan { use_block_cache } => {
-                self.full_scan_read(file_path, *use_block_cache).await
-            }
-            SstableReadingStrategy::SelectiveWithCache {
-                use_range_reads,
-                enable_bloom_filters,
-                enable_cache_lookup,
-                enable_metadata_cache,
-            } => {
-                self.selective_cache_read(
-                    file_path,
-                    *use_range_reads,
-                    *enable_bloom_filters,
-                    *enable_cache_lookup,
-                    *enable_metadata_cache,
-                    filter_expression,
-                ).await
-            }
-            SstableReadingStrategy::CompactionFullRead {
-                skip_bloom_filters,
-                skip_indexes,
-                bypass_write_cache,
-                use_disk_cache_if_exists,
-                sequential_io,
-            } => {
-                self.compaction_read(
-                    file_path,
-                    *skip_bloom_filters,
-                    *skip_indexes,
-                    *bypass_write_cache,
-                    *use_disk_cache_if_exists,
-                    *sequential_io,
-                ).await
-            }
-            SstableReadingStrategy::IndexRangeScan {
-                start_block,
-                end_block,
-                use_bloom_filter,
-            } => {
-                self.range_scan_read(file_path, *start_block as u32, *end_block as u32, *use_bloom_filter).await
-            }
-            SstableReadingStrategy::MetadataFiltered {
-                selected_blocks,
-                skip_bloom_check,
-            } => {
-                // Convert Vec<usize> to Vec<u32>
-                let blocks_u32: Vec<u32> = selected_blocks.iter().map(|&b| b as u32).collect();
-                self.metadata_filtered_read(file_path, &blocks_u32, *skip_bloom_check, filter_expression).await
-            }
-            SstableReadingStrategy::Hybrid {
-                primary_strategy,
-                fallback_blocks,
-            } => {
-                // Try primary strategy first, then fallback for specific blocks
-                let mut primary_results = self.read_with_strategy(file_path, primary_strategy, filter_expression).await?;
-
-                // Add fallback blocks if needed
-                if !fallback_blocks.is_empty() {
-                    // Convert Vec<usize> to Vec<u32>
-                    let fallback_u32: Vec<u32> = fallback_blocks.iter().map(|&b| b as u32).collect();
-                    let fallback_results = self.read_specific_blocks(file_path, &fallback_u32).await?;
-                    primary_results.extend(fallback_results);
+            match strategy {
+                SstableReadingStrategy::FullScan { use_block_cache } => {
+                    self.full_scan_read(file_path, *use_block_cache).await
                 }
+                SstableReadingStrategy::SelectiveWithCache {
+                    use_range_reads,
+                    enable_bloom_filters,
+                    enable_cache_lookup,
+                    enable_metadata_cache,
+                } => {
+                    self.selective_cache_read(
+                        file_path,
+                        *use_range_reads,
+                        *enable_bloom_filters,
+                        *enable_cache_lookup,
+                        *enable_metadata_cache,
+                        filter_expression,
+                    )
+                    .await
+                }
+                SstableReadingStrategy::CompactionFullRead {
+                    skip_bloom_filters,
+                    skip_indexes,
+                    bypass_write_cache,
+                    use_disk_cache_if_exists,
+                    sequential_io,
+                } => {
+                    self.compaction_read(
+                        file_path,
+                        *skip_bloom_filters,
+                        *skip_indexes,
+                        *bypass_write_cache,
+                        *use_disk_cache_if_exists,
+                        *sequential_io,
+                    )
+                    .await
+                }
+                SstableReadingStrategy::IndexRangeScan {
+                    start_block,
+                    end_block,
+                    use_bloom_filter,
+                } => {
+                    self.range_scan_read(
+                        file_path,
+                        *start_block as u32,
+                        *end_block as u32,
+                        *use_bloom_filter,
+                    )
+                    .await
+                }
+                SstableReadingStrategy::MetadataFiltered {
+                    selected_blocks,
+                    skip_bloom_check,
+                } => {
+                    // Convert Vec<usize> to Vec<u32>
+                    let blocks_u32: Vec<u32> = selected_blocks.iter().map(|&b| b as u32).collect();
+                    self.metadata_filtered_read(
+                        file_path,
+                        &blocks_u32,
+                        *skip_bloom_check,
+                        filter_expression,
+                    )
+                    .await
+                }
+                SstableReadingStrategy::Hybrid {
+                    primary_strategy,
+                    fallback_blocks,
+                } => {
+                    // Try primary strategy first, then fallback for specific blocks
+                    let mut primary_results = self
+                        .read_with_strategy(file_path, primary_strategy, filter_expression)
+                        .await?;
 
-                Ok(primary_results)
+                    // Add fallback blocks if needed
+                    if !fallback_blocks.is_empty() {
+                        // Convert Vec<usize> to Vec<u32>
+                        let fallback_u32: Vec<u32> =
+                            fallback_blocks.iter().map(|&b| b as u32).collect();
+                        let fallback_results =
+                            self.read_specific_blocks(file_path, &fallback_u32).await?;
+                        primary_results.extend(fallback_results);
+                    }
+
+                    Ok(primary_results)
+                }
             }
-        }
         })
     }
 
@@ -274,7 +292,7 @@ impl SharedSstFormatReader {
         &self,
         file_path: &str,
         use_block_cache: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         use crate::storage::persistence::filesystem::FileSystem;
 
         // Read data from file
@@ -283,8 +301,10 @@ impl SharedSstFormatReader {
             self.unified_filesystem.read(file_path).await?
         } else {
             // Direct read without caching
-            self.filesystem.get_filesystem(file_path)?
-                .read(file_path).await?
+            self.filesystem
+                .get_filesystem(file_path)?
+                .read(file_path)
+                .await?
         };
 
         // Deserialize blocks from raw data
@@ -309,7 +329,7 @@ impl SharedSstFormatReader {
         enable_cache_lookup: bool,
         enable_metadata_cache: bool,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         use crate::storage::persistence::filesystem::FileSystem;
 
         // Use unified filesystem with selective caching
@@ -319,7 +339,10 @@ impl SharedSstFormatReader {
         let data = if enable_cache_lookup {
             self.unified_filesystem.read(file_path).await?
         } else {
-            self.filesystem.get_filesystem(file_path)?.read(file_path).await?
+            self.filesystem
+                .get_filesystem(file_path)?
+                .read(file_path)
+                .await?
         };
 
         // Deserialize blocks
@@ -358,7 +381,7 @@ impl SharedSstFormatReader {
         bypass_write_cache: bool,
         use_disk_cache_if_exists: bool,
         sequential_io: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Compaction needs all blocks for merging
         use crate::storage::persistence::filesystem::FileSystem;
 
@@ -383,7 +406,7 @@ impl SharedSstFormatReader {
         start_block: u32,
         end_block: u32,
         use_bloom_filter: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         use crate::storage::persistence::filesystem::FileSystem;
 
         // For now, read the entire file and filter blocks in memory
@@ -416,7 +439,7 @@ impl SharedSstFormatReader {
         selected_blocks: &[u32],
         skip_bloom_check: bool,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Read only selected blocks
         let mut blocks = Vec::new();
         use crate::storage::persistence::filesystem::FileSystem;
@@ -446,7 +469,7 @@ impl SharedSstFormatReader {
         &self,
         file_path: &str,
         block_ids: &[u32],
-    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         let mut blocks = Vec::new();
         use crate::storage::persistence::filesystem::FileSystem;
 
@@ -478,7 +501,7 @@ impl SharedSstFormatReader {
         filter_expression: Option<&crate::core::search::FilterExpression>,
         k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
-        distance_compute: &crate::compute::distance_computation::engine::UnifiedDistanceCompute,  // ✅ Pass from caller for reuse
+        distance_compute: &crate::compute::distance_computation::engine::UnifiedDistanceCompute, // ✅ Pass from caller for reuse
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, ProximaDBError> {
         let mut all_results = Vec::new();
 
@@ -492,7 +515,10 @@ impl SharedSstFormatReader {
                 // Apply filter expression if provided (type-safe SqlValue filtering)
                 // Uses centralized utility from core::search::sql_value_filter
                 if let Some(filter) = filter_expression {
-                    if !crate::core::search::sql_value_filter::evaluate_filter(filter, &record.metadata) {
+                    if !crate::core::search::sql_value_filter::evaluate_filter(
+                        filter,
+                        &record.metadata,
+                    ) {
                         continue; // Skip records that don't match filter
                     }
                 }
@@ -505,7 +531,7 @@ impl SharedSstFormatReader {
                 let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,
                     &block_vectors,
-                    &distance_metric
+                    &distance_metric,
                 );
 
                 // Create search records with batch distances
@@ -535,7 +561,11 @@ impl SharedSstFormatReader {
         }
 
         // Sort and truncate to top-k
-        all_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all_results.truncate(k);
 
         Ok(all_results)

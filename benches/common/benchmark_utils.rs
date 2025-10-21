@@ -1,23 +1,22 @@
 /// Common utilities for benchmarks including standard dimensions and system info
-
 use std::sync::Once;
 
 static INIT: Once = Once::new();
 
 /// Standard embedding dimensions from popular models
 pub const STANDARD_DIMENSIONS: &[usize] = &[
-    384,   // sentence-transformers/all-MiniLM-L6-v2
-    768,   // BERT, all-mpnet-base-v2
-    1024,  // Common dimension
-    1536,  // OpenAI text-embedding-ada-002
-    3072,  // OpenAI text-embedding-3-large
+    384,  // sentence-transformers/all-MiniLM-L6-v2
+    768,  // BERT, all-mpnet-base-v2
+    1024, // Common dimension
+    1536, // OpenAI text-embedding-ada-002
+    3072, // OpenAI text-embedding-3-large
 ];
 
 /// Standard batch sizes for realistic workloads
 pub const STANDARD_BATCH_SIZES: &[usize] = &[
-    1024,   // Small batch
-    4096,   // Medium batch
-    10240,  // Large batch
+    1024,  // Small batch
+    4096,  // Medium batch
+    10240, // Large batch
 ];
 
 /// Print system information for benchmark reproducibility
@@ -90,10 +89,20 @@ pub fn print_system_info(benchmark_name: &str) {
 
         // Build info
         eprintln!("\nBUILD INFO:");
-        eprintln!("  Profile: {}", if cfg!(debug_assertions) { "Debug" } else { "Release" });
+        eprintln!(
+            "  Profile: {}",
+            if cfg!(debug_assertions) {
+                "Debug"
+            } else {
+                "Release"
+            }
+        );
 
         // Timestamp
-        eprintln!("\nBENCHMARK STARTED AT: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+        eprintln!(
+            "\nBENCHMARK STARTED AT: {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        );
 
         eprintln!("\nSTANDARD CONFIGURATIONS:");
         eprintln!("  Dimensions: {:?}", STANDARD_DIMENSIONS);

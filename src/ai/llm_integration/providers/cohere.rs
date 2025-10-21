@@ -3,7 +3,9 @@
 //! Complete Cohere API integration for command and chat models.
 
 use super::{LLMClient, RateLimitStatus, validate_request_safety};
-use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason};
+use crate::ai::llm_integration::types::{
+    FinishReason, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -51,13 +53,17 @@ struct CohereBilledUnits {
 impl CohereClient {
     pub async fn new(api_key: &str) -> Result<Self, LLMError> {
         if api_key.is_empty() {
-            return Err(LLMError::ConfigurationError("Cohere API key is required".to_string()));
+            return Err(LLMError::ConfigurationError(
+                "Cohere API key is required".to_string(),
+            ));
         }
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
-            .map_err(|e| LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let cohere_client = Self {
             client,
@@ -72,13 +78,20 @@ impl CohereClient {
 
 #[async_trait]
 impl LLMClient for CohereClient {
-    async fn query(&self, request: &LLMRequest, _context: &LLMRequestContext) -> Result<LLMResponse, LLMError> {
+    async fn query(
+        &self,
+        request: &LLMRequest,
+        _context: &LLMRequestContext,
+    ) -> Result<LLMResponse, LLMError> {
         let start_time = Instant::now();
         validate_request_safety(request)?;
 
         let cohere_request = CohereRequest {
             message: request.prompt.clone(),
-            model: request.model.clone().or_else(|| Some("command".to_string())),
+            model: request
+                .model
+                .clone()
+                .or_else(|| Some("command".to_string())),
             max_tokens: request.max_tokens,
             temperature: request.temperature,
             k: None,
@@ -86,7 +99,8 @@ impl LLMClient for CohereClient {
             stream: false,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&format!("{}/generate", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -96,11 +110,17 @@ impl LLMClient for CohereClient {
             .map_err(|e| LLMError::NetworkError(format!("Request failed: {}", e)))?;
 
         let status = response.status();
-        let response_body = response.text().await
+        let response_body = response
+            .text()
+            .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to read response: {}", e)))?;
 
         if !status.is_success() {
-            return Err(super::handle_http_error(status, &response_body, LLMProvider::Cohere));
+            return Err(super::handle_http_error(
+                status,
+                &response_body,
+                LLMProvider::Cohere,
+            ));
         }
 
         let cohere_response: CohereResponse = serde_json::from_str(&response_body)
@@ -111,13 +131,28 @@ impl LLMClient for CohereClient {
         Ok(LLMResponse {
             content: cohere_response.text,
             provider: LLMProvider::Cohere,
-            model_used: cohere_request.model.unwrap_or_else(|| "command".to_string()),
+            model_used: cohere_request
+                .model
+                .unwrap_or_else(|| "command".to_string()),
             tokens_used: TokenUsage {
-                prompt_tokens: cohere_response.meta.billed_units.as_ref().and_then(|b| b.input_tokens).unwrap_or(0),
-                completion_tokens: cohere_response.meta.billed_units.as_ref().and_then(|b| b.output_tokens).unwrap_or(0),
-                total_tokens: cohere_response.meta.billed_units.as_ref().map(|b| {
-                    b.input_tokens.unwrap_or(0) + b.output_tokens.unwrap_or(0)
-                }).unwrap_or(0),
+                prompt_tokens: cohere_response
+                    .meta
+                    .billed_units
+                    .as_ref()
+                    .and_then(|b| b.input_tokens)
+                    .unwrap_or(0),
+                completion_tokens: cohere_response
+                    .meta
+                    .billed_units
+                    .as_ref()
+                    .and_then(|b| b.output_tokens)
+                    .unwrap_or(0),
+                total_tokens: cohere_response
+                    .meta
+                    .billed_units
+                    .as_ref()
+                    .map(|b| b.input_tokens.unwrap_or(0) + b.output_tokens.unwrap_or(0))
+                    .unwrap_or(0),
             },
             confidence_score: Some(0.85),
             finish_reason: FinishReason::Stop,
@@ -149,7 +184,8 @@ impl LLMClient for CohereClient {
             stream: false,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&format!("{}/generate", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")

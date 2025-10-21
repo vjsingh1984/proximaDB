@@ -9,15 +9,15 @@
 //! Run with: cargo bench --bench proximadb_consolidated_bench
 
 mod common;
-use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+use common::benchmark_utils::{STANDARD_BATCH_SIZES, STANDARD_DIMENSIONS, print_system_info};
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::{
-    compute::distance_computation::{engine::UnifiedDistanceCompute, DistanceMetric},
+    compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute},
     index::axis::{
         AxisVectorIndex,
         indexes::{
-            hnsw_index::{create_hnsw_index, AxisHnswConfig},
+            hnsw_index::{AxisHnswConfig, create_hnsw_index},
             lsh_index::{AxisLshConfig, AxisLshIndex},
         },
     },
@@ -117,8 +117,8 @@ fn bench_vector_operations(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     // Use subset of standard dimensions and batch sizes
-    let dimensions = vec![384, 768, 1536];  // MiniLM, BERT, OpenAI
-    let vector_counts = STANDARD_BATCH_SIZES.to_vec();  // [250, 1000, 5000]
+    let dimensions = vec![384, 768, 1536]; // MiniLM, BERT, OpenAI
+    let vector_counts = STANDARD_BATCH_SIZES.to_vec(); // [250, 1000, 5000]
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -160,10 +160,14 @@ fn bench_vector_operations(c: &mut Criterion) {
             );
 
             // Benchmark batch distance computation
-            if count <= 1024 {  // Limit for larger operations
+            if count <= 1024 {
+                // Limit for larger operations
                 let query = vec![0.5f32; dimension];
                 group.bench_with_input(
-                    BenchmarkId::new("batch_distance", format!("dim_{}_count_{}", dimension, count)),
+                    BenchmarkId::new(
+                        "batch_distance",
+                        format!("dim_{}_count_{}", dimension, count),
+                    ),
                     &(&query, &vectors),
                     |bencher, (q, vecs)| {
                         bencher.iter(|| {
@@ -194,8 +198,8 @@ fn bench_hnsw_index(c: &mut Criterion) {
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // Use subset of standard dimensions for index tests
-    let dimensions = vec![384, 768];  // MiniLM, BERT (smaller for index tests)
-    let vector_counts = vec![256, 1024];  // Smaller batch sizes for index operations (power of 2)
+    let dimensions = vec![384, 768]; // MiniLM, BERT (smaller for index tests)
+    let vector_counts = vec![256, 1024]; // Smaller batch sizes for index operations (power of 2)
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -275,8 +279,8 @@ fn bench_lsh_index(c: &mut Criterion) {
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // Use subset of standard dimensions for index tests
-    let dimensions = vec![384, 768];  // MiniLM, BERT (smaller for index tests)
-    let vector_counts = vec![256, 1024];  // Smaller batch sizes for index operations (power of 2)
+    let dimensions = vec![384, 768]; // MiniLM, BERT (smaller for index tests)
+    let vector_counts = vec![256, 1024]; // Smaller batch sizes for index operations (power of 2)
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -355,7 +359,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(5));
 
-    let dimension = 768;  // BERT dimension
+    let dimension = 768; // BERT dimension
     let num_threads = vec![1, 2, 4, 8];
     let operations_per_thread = 128;
 
@@ -373,11 +377,14 @@ fn bench_concurrent_operations(c: &mut Criterion) {
                         .map(|_| {
                             std::thread::spawn(move || {
                                 let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
-                                let a: Vec<f32> = (0..dimension).map(|i| (i as f32).sin()).collect();
-                                let b: Vec<f32> = (0..dimension).map(|i| (i as f32).cos()).collect();
+                                let a: Vec<f32> =
+                                    (0..dimension).map(|i| (i as f32).sin()).collect();
+                                let b: Vec<f32> =
+                                    (0..dimension).map(|i| (i as f32).cos()).collect();
 
                                 for _ in 0..operations_per_thread {
-                                    let result = compute.calculate_distance(&a, &b, &DistanceMetric::Cosine);
+                                    let result =
+                                        compute.calculate_distance(&a, &b, &DistanceMetric::Cosine);
                                     black_box(result);
                                 }
                             })

@@ -3,9 +3,7 @@
 mod common;
 
 use anyhow::Result;
-use proximadb::compute::quantization::{
-    ProductQuantization as PqConfig, UnifiedQuantizationLevel,
-};
+use proximadb::compute::quantization::{ProductQuantization as PqConfig, UnifiedQuantizationLevel};
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::engines::impls::sst::SstEngine;
@@ -58,11 +56,12 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
             scheme_mapping: std::collections::HashMap::new(),
         };
         let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
-        let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
-            proximadb::compute::distance_computation::DistanceMetric::Cosine,
-        ));
-        let mut sst_storage =
-            SstEngine::new().await?;
+        let distance_compute = Arc::new(
+            proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
+                proximadb::compute::distance_computation::DistanceMetric::Cosine,
+            ),
+        );
+        let mut sst_storage = SstEngine::new().await?;
 
         // Calculate how many vectors fit per block
         let vector_bytes = dimension * 4; // FP32
@@ -96,7 +95,10 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
 
         // Calculate compression ratio
         let uncompressed_size = num_vectors * vector_bytes;
-        let compression_ratio = uncompressed_size as f64 / flush_result.bytes_written.unwrap_or(uncompressed_size as u64) as f64;
+        let compression_ratio = uncompressed_size as f64
+            / flush_result
+                .bytes_written
+                .unwrap_or(uncompressed_size as u64) as f64;
 
         info!("\n  📈 Compression Metrics:");
         info!(
@@ -166,12 +168,14 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
 
     // Setup quantization adapter (for future use when SstQuantizationAdapter is available)
     let _pq_config = UnifiedQuantizationLevel {
-        level_type: Some(proximadb::compute::quantization::QuantizationLevel::Pq(PqConfig {
-            num_subvectors: 8,
-            bits_per_code: 8,
-            codebook_id: None,
-            adaptive_subvectors: false,
-        })),
+        level_type: Some(proximadb::compute::quantization::QuantizationLevel::Pq(
+            PqConfig {
+                num_subvectors: 8,
+                bits_per_code: 8,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            },
+        )),
     };
 
     // TODO: Implement SstQuantizationAdapter when available
@@ -228,9 +232,11 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
         scheme_mapping: std::collections::HashMap::new(),
     };
     let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
-    let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
-        proximadb::compute::distance_computation::DistanceMetric::Cosine,
-    ));
+    let distance_compute = Arc::new(
+        proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
+            proximadb::compute::distance_computation::DistanceMetric::Cosine,
+        ),
+    );
     let mut sst_storage = SstEngine::new().await?;
 
     // Flush with vectors

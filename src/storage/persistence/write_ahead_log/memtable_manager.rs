@@ -163,9 +163,14 @@ impl MemtableManager {
     pub async fn get_collection_memory_usage(&self, collection_id: &str) -> Result<u64> {
         // Prefer cached stats, fall back to sum
         let stats = self.stats.read().await;
-        if let Some(b) = stats.per_collection_bytes.get(collection_id) { return Ok(*b); }
+        if let Some(b) = stats.per_collection_bytes.get(collection_id) {
+            return Ok(*b);
+        }
         drop(stats);
-        let batches = self.wal_behavior.get_unflushed_batches(collection_id).await?;
+        let batches = self
+            .wal_behavior
+            .get_unflushed_batches(collection_id)
+            .await?;
         Ok(batches.iter().map(|b| b.total_size_bytes as u64).sum())
     }
 

@@ -1018,7 +1018,9 @@ impl AxisEventLogConsumer {
                             let cache = self.cache_orchestrator.clone();
 
                             // Create UnifiedCachingFilesystem for RAPTOR
-                            use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+                            use crate::storage::persistence::filesystem::{
+                                FilesystemConfig, FilesystemFactory,
+                            };
 
                             // Create filesystem factory
                             let fs_config = FilesystemConfig::default();

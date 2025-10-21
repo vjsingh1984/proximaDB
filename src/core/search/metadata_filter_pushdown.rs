@@ -363,7 +363,9 @@ impl MetadataFilterPushdown {
             if let Some(ref proto_value) = entry.value {
                 // No longer need sql_value module - using optional fields directly
                 let json_value = match proto_value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Value::String(s.clone()),
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                        Value::String(s.clone())
+                    }
                     crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                         if let Some(num) = serde_json::Number::from_f64(*n) {
                             Value::Number(num)
@@ -379,10 +381,16 @@ impl MetadataFilterPushdown {
                             continue;
                         }
                     }
-                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => Value::String("[binary]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
+                        Value::String("[binary]".to_string())
+                    }
                     crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => Value::Null,
-                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => Value::String("[array]".to_string()),
-                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => Value::String("[object]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
+                        Value::String("[array]".to_string())
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
+                        Value::String("[object]".to_string())
+                    }
                 };
                 metadata.insert(key.clone(), json_value);
             }
@@ -611,7 +619,9 @@ impl MetadataBloomBuilder {
             // Serialize the metadata value for the bloom filter
             if let Some(ref value) = entry.value {
                 // Create parent SqlValue to use custom serde implementation
-                let sql_value = crate::proto::proximadb_v1::SqlValue { value: Some(value.clone()) };
+                let sql_value = crate::proto::proximadb_v1::SqlValue {
+                    value: Some(value.clone()),
+                };
                 let serialized = serde_json::to_vec(&sql_value).unwrap_or_default();
                 builder.add(&serialized);
             }
@@ -663,12 +673,22 @@ mod tests {
             vector: vec![1.0, 2.0, 3.0],
             metadata: {
                 let mut map = std::collections::HashMap::new();
-                map.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())),
-                });
-                map.insert("price".to_string(), crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(99.99)),
-                });
+                map.insert(
+                    "category".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "electronics".to_string(),
+                        )),
+                    },
+                );
+                map.insert(
+                    "price".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                            99.99,
+                        )),
+                    },
+                );
                 map
             },
             timestamp: Some(0),

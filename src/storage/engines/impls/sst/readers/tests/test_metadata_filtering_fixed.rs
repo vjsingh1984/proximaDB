@@ -22,9 +22,7 @@ fn get_metadata_string(
     metadata
         .get(key)
         .and_then(|sql_value| match &sql_value.value {
-            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                Some(s.clone())
-            }
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => Some(s.clone()),
             _ => None,
         })
 }
@@ -61,15 +59,30 @@ async fn test_metadata_filtering_with_sstable_reader() {
     // Category A records
     for i in 0..5 {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("A".to_string())),
-        });
-        metadata.insert("score".to_string(), crate::proto::proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue((i * 10) as f64)),
-        });
-        metadata.insert("type".to_string(), crate::proto::proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("document".to_string())),
-        });
+        metadata.insert(
+            "category".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "A".to_string(),
+                )),
+            },
+        );
+        metadata.insert(
+            "score".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                    (i * 10) as f64,
+                )),
+            },
+        );
+        metadata.insert(
+            "type".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "document".to_string(),
+                )),
+            },
+        );
 
         let record = VectorRecord {
             id: format!("vec_a_{}", i),
@@ -87,15 +100,30 @@ async fn test_metadata_filtering_with_sstable_reader() {
     // Category B records
     for i in 0..5 {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("B".to_string())),
-        });
-        metadata.insert("score".to_string(), crate::proto::proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue((i * 10 + 5) as f64)),
-        });
-        metadata.insert("type".to_string(), crate::proto::proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("image".to_string())),
-        });
+        metadata.insert(
+            "category".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "B".to_string(),
+                )),
+            },
+        );
+        metadata.insert(
+            "score".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                    (i * 10 + 5) as f64,
+                )),
+            },
+        );
+        metadata.insert(
+            "type".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "image".to_string(),
+                )),
+            },
+        );
 
         let record = VectorRecord {
             id: format!("vec_b_{}", i),
@@ -169,8 +197,10 @@ async fn test_metadata_filtering_with_sstable_reader() {
     let multi_filter_records: Vec<_> = test_records
         .iter()
         .filter(|r| {
-            let category_match = get_metadata_string(&r.metadata, "category").map_or(false, |s| s == "B");
-            let type_match = get_metadata_string(&r.metadata, "type").map_or(false, |s| s == "image");
+            let category_match =
+                get_metadata_string(&r.metadata, "category").map_or(false, |s| s == "B");
+            let type_match =
+                get_metadata_string(&r.metadata, "type").map_or(false, |s| s == "image");
             category_match && type_match
         })
         .collect();

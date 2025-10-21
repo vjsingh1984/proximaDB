@@ -10,17 +10,13 @@
 use anyhow::Result;
 use tracing::{debug, trace};
 
+use crate::core::hardware_capabilities::HardwareBackend;
+use crate::storage::engines::core::ops::proximacodec::simd::{
+    get_simd_backend, simd_bitpack_decode_f32, simd_delta_decode_f32,
+    simd_frame_of_reference_decode_f32, simd_pfor_delta_decode_f32, simd_zigzag_decode_f32,
+};
 use crate::storage::engines::core::ops::proximacodec::traits::RawDecoder;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
-use crate::storage::engines::core::ops::proximacodec::simd::{
-    get_simd_backend,
-    simd_delta_decode_f32,
-    simd_bitpack_decode_f32,
-    simd_frame_of_reference_decode_f32,
-    simd_zigzag_decode_f32,
-    simd_pfor_delta_decode_f32,
-};
-use crate::core::hardware_capabilities::HardwareBackend;
 
 // Import GPU kernels
 #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
@@ -49,7 +45,12 @@ pub struct GpuDecoder;
 
 impl GpuDecoder {
     /// Dispatch Delta decoding to appropriate GPU backend
-    fn gpu_delta_decode(&self, deltas: &[i64], base: f32, backend: &HardwareBackend) -> Result<Vec<f32>> {
+    fn gpu_delta_decode(
+        &self,
+        deltas: &[i64],
+        base: f32,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<f32>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
             HardwareBackend::CUDA => cuda::cuda_delta_decode_f32(deltas, base),
@@ -64,14 +65,23 @@ impl GpuDecoder {
             HardwareBackend::OpenCL => opencl::opencl_delta_decode_f32(deltas, base),
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_delta_decode_f32(deltas, base)
             }
         }
     }
 
     /// Dispatch BitPacked decoding to appropriate GPU backend
-    fn gpu_bitpack_decode(&self, packed: &[u8], bits: u8, count: usize, backend: &HardwareBackend) -> Result<Vec<f32>> {
+    fn gpu_bitpack_decode(
+        &self,
+        packed: &[u8],
+        bits: u8,
+        count: usize,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<f32>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
             HardwareBackend::CUDA => cuda::cuda_bitpack_decode_f32(packed, bits, count),
@@ -86,36 +96,63 @@ impl GpuDecoder {
             HardwareBackend::OpenCL => opencl::opencl_bitpack_decode_f32(packed, bits, count),
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_bitpack_decode_f32(packed, bits, count)
             }
         }
     }
 
     /// Dispatch FrameOfReference decoding to appropriate GPU backend
-    fn gpu_frame_of_reference_decode(&self, packed: &[u8], reference: i64, bits: u8, count: usize, backend: &HardwareBackend) -> Result<Vec<f32>> {
+    fn gpu_frame_of_reference_decode(
+        &self,
+        packed: &[u8],
+        reference: i64,
+        bits: u8,
+        count: usize,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<f32>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
-            HardwareBackend::CUDA => cuda::cuda_frame_of_reference_decode_f32(packed, reference, bits, count),
+            HardwareBackend::CUDA => {
+                cuda::cuda_frame_of_reference_decode_f32(packed, reference, bits, count)
+            }
 
             #[cfg(all(feature = "gpu", target_os = "linux"))]
-            HardwareBackend::ROCm => rocm::rocm_frame_of_reference_decode_f32(packed, reference, bits, count),
+            HardwareBackend::ROCm => {
+                rocm::rocm_frame_of_reference_decode_f32(packed, reference, bits, count)
+            }
 
             #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
-            HardwareBackend::MPS => metal::metal_frame_of_reference_decode_f32(packed, reference, bits, count),
+            HardwareBackend::MPS => {
+                metal::metal_frame_of_reference_decode_f32(packed, reference, bits, count)
+            }
 
             #[cfg(feature = "gpu")]
-            HardwareBackend::OpenCL => opencl::opencl_frame_of_reference_decode_f32(packed, reference, bits, count),
+            HardwareBackend::OpenCL => {
+                opencl::opencl_frame_of_reference_decode_f32(packed, reference, bits, count)
+            }
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_frame_of_reference_decode_f32(packed, reference, bits, count)
             }
         }
     }
 
     /// Dispatch Zigzag decoding to appropriate GPU backend
-    fn gpu_zigzag_decode(&self, packed: &[u8], bits: u8, count: usize, backend: &HardwareBackend) -> Result<Vec<f32>> {
+    fn gpu_zigzag_decode(
+        &self,
+        packed: &[u8],
+        bits: u8,
+        count: usize,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<f32>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
             HardwareBackend::CUDA => cuda::cuda_zigzag_decode_f32(packed, bits, count),
@@ -130,29 +167,50 @@ impl GpuDecoder {
             HardwareBackend::OpenCL => opencl::opencl_zigzag_decode_f32(packed, bits, count),
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_zigzag_decode_f32(packed, bits, count)
             }
         }
     }
 
     /// Dispatch PForDelta decoding to appropriate GPU backend
-    fn gpu_pfor_delta_decode(&self, data: &[u8], majority_bits: u8, base: i64, count: usize, backend: &HardwareBackend) -> Result<Vec<f32>> {
+    fn gpu_pfor_delta_decode(
+        &self,
+        data: &[u8],
+        majority_bits: u8,
+        base: i64,
+        count: usize,
+        backend: &HardwareBackend,
+    ) -> Result<Vec<f32>> {
         match backend {
             #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
-            HardwareBackend::CUDA => cuda::cuda_pfor_delta_decode_f32(data, majority_bits, base, count),
+            HardwareBackend::CUDA => {
+                cuda::cuda_pfor_delta_decode_f32(data, majority_bits, base, count)
+            }
 
             #[cfg(all(feature = "gpu", target_os = "linux"))]
-            HardwareBackend::ROCm => rocm::rocm_pfor_delta_decode_f32(data, majority_bits, base, count),
+            HardwareBackend::ROCm => {
+                rocm::rocm_pfor_delta_decode_f32(data, majority_bits, base, count)
+            }
 
             #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
-            HardwareBackend::MPS => metal::metal_pfor_delta_decode_f32(data, majority_bits, base, count),
+            HardwareBackend::MPS => {
+                metal::metal_pfor_delta_decode_f32(data, majority_bits, base, count)
+            }
 
             #[cfg(feature = "gpu")]
-            HardwareBackend::OpenCL => opencl::opencl_pfor_delta_decode_f32(data, majority_bits, base, count),
+            HardwareBackend::OpenCL => {
+                opencl::opencl_pfor_delta_decode_f32(data, majority_bits, base, count)
+            }
 
             _ => {
-                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                trace!(
+                    "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
+                    backend
+                );
                 simd_pfor_delta_decode_f32(data, majority_bits, base, count)
             }
         }
@@ -191,49 +249,100 @@ impl RawDecoder for GpuDecoder {
 
         match scheme {
             ProximaScheme::Delta { .. } => {
-                trace!("🚀 [GPU] Decoding {} bytes with Delta (count={})", data.len(), count);
+                trace!(
+                    "🚀 [GPU] Decoding {} bytes with Delta (count={})",
+                    data.len(),
+                    count
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_f32(data, count)?;
 
-                debug!("✅ [GPU] Delta decoded {} bytes → {} values (using baseline format)", data.len(), values.len());
+                debug!(
+                    "✅ [GPU] Delta decoded {} bytes → {} values (using baseline format)",
+                    data.len(),
+                    values.len()
+                );
                 Ok(values)
             }
 
             ProximaScheme::BitPacked { bits } => {
-                trace!("🚀 [GPU] Decoding {} bytes with BitPacked ({}b/val, count={})", data.len(), bits, count);
+                trace!(
+                    "🚀 [GPU] Decoding {} bytes with BitPacked ({}b/val, count={})",
+                    data.len(),
+                    bits,
+                    count
+                );
 
                 let values = self.gpu_bitpack_decode(data, *bits, count, &backend)?;
 
-                debug!("✅ [GPU] BitPacked decoded {} bytes → {} values", data.len(), values.len());
+                debug!(
+                    "✅ [GPU] BitPacked decoded {} bytes → {} values",
+                    data.len(),
+                    values.len()
+                );
                 Ok(values)
             }
 
             ProximaScheme::FrameOfReference { reference, bits } => {
-                trace!("🚀 [GPU] Decoding {} bytes with FrameOfReference (ref={}, {}b/val, count={})", data.len(), reference, bits, count);
+                trace!(
+                    "🚀 [GPU] Decoding {} bytes with FrameOfReference (ref={}, {}b/val, count={})",
+                    data.len(),
+                    reference,
+                    bits,
+                    count
+                );
 
-                let values = self.gpu_frame_of_reference_decode(data, *reference, *bits, count, &backend)?;
+                let values =
+                    self.gpu_frame_of_reference_decode(data, *reference, *bits, count, &backend)?;
 
-                debug!("✅ [GPU] FrameOfReference decoded {} bytes → {} values", data.len(), values.len());
+                debug!(
+                    "✅ [GPU] FrameOfReference decoded {} bytes → {} values",
+                    data.len(),
+                    values.len()
+                );
                 Ok(values)
             }
 
             ProximaScheme::Zigzag { bits } => {
-                trace!("🚀 [GPU] Decoding {} bytes with Zigzag ({}b/val, count={})", data.len(), bits, count);
+                trace!(
+                    "🚀 [GPU] Decoding {} bytes with Zigzag ({}b/val, count={})",
+                    data.len(),
+                    bits,
+                    count
+                );
 
                 let values = self.gpu_zigzag_decode(data, *bits, count, &backend)?;
 
-                debug!("✅ [GPU] Zigzag decoded {} bytes → {} values", data.len(), values.len());
+                debug!(
+                    "✅ [GPU] Zigzag decoded {} bytes → {} values",
+                    data.len(),
+                    values.len()
+                );
                 Ok(values)
             }
 
-            ProximaScheme::PForDelta { majority_bits, base } => {
-                trace!("🚀 [GPU] Decoding {} bytes with PForDelta ({}b majority, base={}, count={})", data.len(), majority_bits, base, count);
+            ProximaScheme::PForDelta {
+                majority_bits,
+                base,
+            } => {
+                trace!(
+                    "🚀 [GPU] Decoding {} bytes with PForDelta ({}b majority, base={}, count={})",
+                    data.len(),
+                    majority_bits,
+                    base,
+                    count
+                );
 
-                let values = self.gpu_pfor_delta_decode(data, *majority_bits, *base, count, &backend)?;
+                let values =
+                    self.gpu_pfor_delta_decode(data, *majority_bits, *base, count, &backend)?;
 
-                debug!("✅ [GPU] PForDelta decoded {} bytes → {} values", data.len(), values.len());
+                debug!(
+                    "✅ [GPU] PForDelta decoded {} bytes → {} values",
+                    data.len(),
+                    values.len()
+                );
                 Ok(values)
             }
 
@@ -246,18 +355,29 @@ impl RawDecoder for GpuDecoder {
     fn decode_i64(&self, data: &[u8], scheme: &ProximaScheme, count: usize) -> Result<Vec<i64>> {
         match scheme {
             ProximaScheme::Delta { .. } => {
-                trace!("🚀 [GPU] Decoding {} bytes as i64 with Delta (count={})", data.len(), count);
+                trace!(
+                    "🚀 [GPU] Decoding {} bytes as i64 with Delta (count={})",
+                    data.len(),
+                    count
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_i64(data, count)?;
 
-                debug!("✅ [GPU] Delta decoded {} bytes → {} values (using baseline format)", data.len(), values.len());
+                debug!(
+                    "✅ [GPU] Delta decoded {} bytes → {} values (using baseline format)",
+                    data.len(),
+                    values.len()
+                );
                 Ok(values)
             }
 
             _ => {
-                anyhow::bail!("GPU decoder does not support scheme: {} for i64", scheme.name())
+                anyhow::bail!(
+                    "GPU decoder does not support scheme: {} for i64",
+                    scheme.name()
+                )
             }
         }
     }
@@ -265,18 +385,29 @@ impl RawDecoder for GpuDecoder {
     fn decode_i32(&self, data: &[u8], scheme: &ProximaScheme, count: usize) -> Result<Vec<i32>> {
         match scheme {
             ProximaScheme::Delta { .. } => {
-                trace!("🚀 [GPU] Decoding {} bytes as i32 with Delta (count={})", data.len(), count);
+                trace!(
+                    "🚀 [GPU] Decoding {} bytes as i32 with Delta (count={})",
+                    data.len(),
+                    count
+                );
 
                 // Use baseline implementation for wire format compatibility
                 use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_i32(data, count)?;
 
-                debug!("✅ [GPU] Delta decoded {} bytes → {} values (using baseline format)", data.len(), values.len());
+                debug!(
+                    "✅ [GPU] Delta decoded {} bytes → {} values (using baseline format)",
+                    data.len(),
+                    values.len()
+                );
                 Ok(values)
             }
 
             _ => {
-                anyhow::bail!("GPU decoder does not support scheme: {} for i32", scheme.name())
+                anyhow::bail!(
+                    "GPU decoder does not support scheme: {} for i32",
+                    scheme.name()
+                )
             }
         }
     }
@@ -300,9 +431,15 @@ mod tests {
         // Should support: Delta, BitPacked, FrameOfReference, Zigzag, PForDelta
         assert!(decoder.supports(&ProximaScheme::Delta { base: 0 }));
         assert!(decoder.supports(&ProximaScheme::BitPacked { bits: 8 }));
-        assert!(decoder.supports(&ProximaScheme::FrameOfReference { reference: 0, bits: 8 }));
+        assert!(decoder.supports(&ProximaScheme::FrameOfReference {
+            reference: 0,
+            bits: 8
+        }));
         assert!(decoder.supports(&ProximaScheme::Zigzag { bits: 8 }));
-        assert!(decoder.supports(&ProximaScheme::PForDelta { majority_bits: 8, base: 0 }));
+        assert!(decoder.supports(&ProximaScheme::PForDelta {
+            majority_bits: 8,
+            base: 0
+        }));
 
         // Should not support other schemes
         assert!(!decoder.supports(&ProximaScheme::RunLength));
@@ -330,10 +467,14 @@ mod tests {
         let values: Vec<f32> = (0..32).map(|i| i as f32 * 0.1).collect();
 
         // Encode
-        let encoded = encoder.encode_f32(&values, &ProximaScheme::Delta { base: 0 }).unwrap();
+        let encoded = encoder
+            .encode_f32(&values, &ProximaScheme::Delta { base: 0 })
+            .unwrap();
 
         // Decode (count = number of values)
-        let decoded = decoder.decode_f32(&encoded, &ProximaScheme::Delta { base: 0 }, values.len()).unwrap();
+        let decoded = decoder
+            .decode_f32(&encoded, &ProximaScheme::Delta { base: 0 }, values.len())
+            .unwrap();
 
         // Verify round-trip
         assert_eq!(values, decoded);

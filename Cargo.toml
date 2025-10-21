@@ -30,8 +30,6 @@ path = "src/bin/proximadb-bench-consolidated.rs"
 # Core async runtime
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = "0.1"
-# tokio-util = "0.7"  # Unused - no imports found in codebase
-# tokio-stream = "0.1"  # Unused - no imports found in codebase
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -52,16 +50,12 @@ crc32fast = "1.4"  # Used for SST codebook checksum
 libc = "0.2"
 
 # Data structures
-# art-tree = "0.2.0"  # Disabled - x86_64 specific, incompatible with ARM64
-# Alternative: Use HashMap for ART implementation (already done in art.rs)
 once_cell = "1.19"
 lazy_static = "1.5"
-# dashmap = "6.1.0"     # High-performance concurrent hashmap for ART alternative (already defined below)
 
 # Networking & gRPC
 tonic = { version = "0.10", features = ["gzip"] }
-tonic-build = "0.10"
-tonic-reflection = "0.10"
+# tonic-reflection = "0.10"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
 prost = "0.12"
 prost-types = { version = "0.12" }
 hyper = "0.14"  # Used internally by axum and tonic
@@ -75,7 +69,6 @@ memmap2 = "0.9"
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
-# # glob = "0.3"  # Replaced with internal glob implementation - replaced with internal implementation
 # Parquet and Arrow dependencies - using v56+ for improved performance
 parquet = { version = "56.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
 # Arrow dependencies matching parquet v56
@@ -96,14 +89,12 @@ flate2 = { version = "1.0", default-features = true }  # Gzip/Deflate/Zlib compr
 brotli = "6.0"           # Brotli compression - Updated from 3.5
 bzip2 = "0.5"            # Bzip2 compression - Updated from 0.4
 xz2 = "0.1"              # XZ/LZMA2 compression
-# proxima = "0.2"        # Removed - replaced with internal ProximaDB encoding
 
 # System monitoring
 sysinfo = "0.30"
 
 # Avro serialization with schema evolution
 apache-avro = "0.16"
-# serde_bytes = "0.11"  # Unused - no imports found in codebase
 bytes = "1.5"
 
 # Cloud storage SDKs (optional for testing)
@@ -113,20 +104,8 @@ azure_storage = { version = "0.19", optional = true }
 azure_storage_blobs = { version = "0.19", optional = true }
 google-cloud-storage = { version = "0.15", optional = true }
 
-# ML clustering algorithms for VIPER (unused - basic clustering implemented)
-# linfa = "0.7"
-# linfa-clustering = "0.7"
-# smartcore = "0.3"
-
-# Consensus (temporarily disabled for testing)
-# raft = "0.7"
-# raft-proto = "0.7"
-
 # Vector operations & SIMD
-# ndarray = "0.15"  # Unused - no imports found, only referenced in logs
 nalgebra = "0.32"  # For PCA eigendecomposition in HELIX engine
-# faiss = { version = "0.11", optional = true }  # Unused - no FAISS integration implemented
-# hnsw = "0.11"  # Unused - ProximaDB has custom HNSW implementation in src/index/axis/indexes/hnsw_index.rs
 
 # CPU optimization
 num_cpus = "1.16"
@@ -137,28 +116,18 @@ rand = "0.8"
 rand_chacha = "0.3"
 rand_distr = "0.4"  # For generating realistic probability distributions
 
-# Fast non-cryptographic hashing
-# fasthash = "0.4"  # Has ARM64 compatibility issues
-# ahash = "0.8"  # Using internal XXHash instead - already optimized and stable
-
 # Cryptographic hashing
 sha2 = "0.10"
-
-# GPU acceleration (removed - was placeholder code)
-
-# Intel MKL (optional) - Disabled on ARM64
-# intel-mkl-src = { version = "0.8", features = ["mkl-static-lp64-iomp"], optional = true }
 
 # Logging & Monitoring
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-prometheus = "0.13"
+prometheus = "0.14"
 metrics = "0.21"
-# metrics-prometheus = "0.6"  # Unused - using prometheus crate directly
 
 # Configuration
-config = "0.13"
+config = "0.15"
 clap = { version = "4.0", features = ["derive"] }
 toml = "0.8"
 
@@ -171,33 +140,19 @@ thiserror = "1.0"
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
 jsonwebtoken = "9.2"  # JWT token creation and validation
-# # blake3 = "1.5"  # Replaced with internal hash implementation - replaced with internal implementation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
-# base64 = "0.21"  # Using internal implementation in utils::encoding
-crossbeam = "0.8"
-crossbeam-epoch = "0.9"
+# crossbeam = "0.8"  # REMOVED: Unused dependency (confirmed by cargo-udeps)
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
 nom = "7"
 
-# slog = "2.7"  # Unused - using tracing instead
-# slog-stdlog = "4.1"  # Unused - using tracing instead
-
 # REST API
 axum = { version = "0.6", features = ["json"] }
-# axum-macros = "0.3"  # Unused - no imports found in codebase
 urlencoding = "2.1.3"
-# # crossbeam-skiplist = "0.1.3"  # Replaced with internal skiplist implementation  # Replaced with internal implementation
 dashmap = "6.1.0"
-# # bplustree = "0.1.0"  # Replaced with internal btree implementation  # Replaced with internal implementation
-# # lru = "0.12"  # Replaced with internal cache implementation  # Replaced with internal implementation
 moka = { version = "0.12", features = ["future"] }
-# # roaring = "0.10"  # Replaced with internal bitmap implementation - replaced with internal implementation
-
-# Lock-free data structures for Phase 2 optimization
-# arc-swap = "1.7"  # Unused - no imports found in codebase
 
 # GPU acceleration dependencies (platform-specific)
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
@@ -216,8 +171,7 @@ tracing-subscriber = "0.3"
 [dev-dependencies]
 criterion = "0.5"
 proptest = "1.0"
-tempdir = "0.3"
-reqwest = { version = "0.11", features = ["json"] }
+# tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
 
 [features]
@@ -380,12 +334,23 @@ path = "benches/bench_13_complete_suite.rs"
 # harness = false
 # path = "benches/metadata_lifecycle.rs"
 
-# 6. GRAPH OPERATIONS BENCHMARKS (14 - Disabled)
-# Requires storage backend configuration, disabled until storage is properly initialized
-# [[bench]]
-# name = "bench_14_graph_operations"
-# harness = false
-# path = "benches/bench_14_graph_operations.rs"
+# 6. GRAPH OPERATIONS BENCHMARKS
+[[bench]]
+name = "bench_14_graph_operations"
+harness = false
+path = "benches/bench_14_graph_operations.rs"
+
+# 7. GRAPH ENGINES COMPARISON (17)
+[[bench]]
+name = "bench_17_graph_engines"
+harness = false
+path = "benches/bench_17_graph_engines.rs"
+
+# 8. GRAPH ENGINE REPORTER (CSV)
+[[bench]]
+name = "graph_engine_reporter"
+harness = false
+path = "benches/graph_engine_reporter.rs"
 
 [[bench]]
 name = "bench_15_memory_pool"
@@ -499,4 +464,3 @@ opt-level = 3
 
 [profile.test.package.arrow-buffer]
 opt-level = 3
-

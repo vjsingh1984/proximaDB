@@ -196,7 +196,9 @@ impl VectorRecordSerialization for VectorRecord {
         let vector_bytes = cast_slice(&self.vector);
 
         // 2. Serialize remaining fields using fast bincode (faster than protobuf)
-        let metadata_json: Vec<serde_json::Value> = self.metadata.iter()
+        let metadata_json: Vec<serde_json::Value> = self
+            .metadata
+            .iter()
             .map(|(key, sql_value)| {
                 serde_json::json!({
                     "key": key,
@@ -280,7 +282,9 @@ impl VectorRecordSerialization for VectorRecord {
         let mut metadata = std::collections::HashMap::new();
         for json_value in other_fields.metadata {
             if let (Some(key), Some(value)) = (json_value.get("key"), json_value.get("value")) {
-                if let (Some(key_str), Ok(sql_value)) = (key.as_str(), serde_json::from_value(value.clone())) {
+                if let (Some(key_str), Ok(sql_value)) =
+                    (key.as_str(), serde_json::from_value(value.clone()))
+                {
                     metadata.insert(key_str.to_string(), sql_value);
                 }
             }

@@ -445,14 +445,19 @@ impl SearchCandidate {
             let mut metadata_map = std::collections::HashMap::new();
             for (key, sql_value) in &self.record.metadata {
                 if let Some(value) = &sql_value.value {
-                    
                     let typed_value = match value {
                         crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                             MetadataValue::String(Arc::from(s.as_str()))
                         }
-                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => MetadataValue::Number(*f),
-                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => MetadataValue::Number(*i as f64),
-                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                            MetadataValue::Number(*f)
+                        }
+                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                            MetadataValue::Number(*i as f64)
+                        }
+                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                            MetadataValue::Bool(*b)
+                        }
                         _ => continue, // Skip other variants for now
                     };
                     metadata_map.insert(key.clone(), typed_value);
@@ -466,7 +471,10 @@ impl SearchCandidate {
         let mut result = OptimizedSearchRecord::new(self.record.id.clone(), self.score)
             .with_similarity(self.score)
             .with_metadata(HashMap::new()) // TODO: Fix metadata conversion
-            .with_version_info(self.record.version.unwrap_or(0), self.record.timestamp.unwrap_or(0));
+            .with_version_info(
+                self.record.version.unwrap_or(0),
+                self.record.timestamp.unwrap_or(0),
+            );
 
         if self.include_vectors {
             result = result.add_vector(self.record.vector.clone());

@@ -2,8 +2,8 @@
 //!
 //! Analyzes data trends and patterns for business intelligence.
 
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Trend analyzer for business data
 #[derive(Debug, Clone)]
@@ -47,7 +47,10 @@ impl TrendAnalyzer {
         })
     }
 
-    pub async fn analyze_business_trends(&self, _metrics: &super::engine::BusinessMetrics) -> Result<Vec<TrendAnalysis>> {
+    pub async fn analyze_business_trends(
+        &self,
+        _metrics: &super::engine::BusinessMetrics,
+    ) -> Result<Vec<TrendAnalysis>> {
         // Placeholder implementation
         Ok(vec![])
     }

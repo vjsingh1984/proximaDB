@@ -16,21 +16,13 @@
 //! - **L2 Distance (90% sparse)**: ~8x faster than dense
 //! - **Cosine (99% sparse)**: 1.479ms vs 41.92µs dense = 35x SLOWER (avoided!)
 
+pub mod cosine_warning;
 pub mod detector;
 pub mod l2_kernel;
-pub mod cosine_warning;
 
-pub use detector::{SparsityAnalyzer, SparsityConfig, SparsityInfo};
-pub use l2_kernel::{
-    sparse_l2_distance,
-    sparse_l2_distance_scalar,
-    sparse_l2_distance_squared,
-};
 pub use cosine_warning::{
-    CosineSparsityChecker,
-    CosineSparsityWarning,
-    CosineWarningConfig,
-    SparseDistanceResult,
-    is_cosine_safe,
-    estimate_cosine_degradation,
+    CosineSparsityChecker, CosineSparsityWarning, CosineWarningConfig, SparseDistanceResult,
+    estimate_cosine_degradation, is_cosine_safe,
 };
+pub use detector::{SparsityAnalyzer, SparsityConfig, SparsityInfo};
+pub use l2_kernel::{sparse_l2_distance, sparse_l2_distance_scalar, sparse_l2_distance_squared};

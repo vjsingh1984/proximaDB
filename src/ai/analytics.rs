@@ -3,11 +3,11 @@
 //! This module provides analytics capabilities for business intelligence
 //! and automated insight generation as part of the ProximaDB AI implementation.
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
 
 /// Predictive Analytics Engine for business forecasting and trend analysis
 #[derive(Debug, Clone)]
@@ -209,8 +209,10 @@ impl PredictiveAnalyticsEngine {
         _user_context: &crate::storage::tenant::UserContext,
     ) -> Result<String> {
         // TODO: Implement actual business prediction logic
-        Ok(format!("Business prediction for scenario '{}' with horizon '{}': Placeholder result",
-                   _business_scenario, _prediction_horizon))
+        Ok(format!(
+            "Business prediction for scenario '{}' with horizon '{}': Placeholder result",
+            _business_scenario, _prediction_horizon
+        ))
     }
 }
 
@@ -219,7 +221,9 @@ impl ConversationalAnalyticsEngine {
         Self {
             config,
             query_processor: Arc::new(QueryProcessor::new(QueryProcessorConfig::default())),
-            response_generator: Arc::new(ResponseGenerator::new(ResponseGeneratorConfig::default())),
+            response_generator: Arc::new(
+                ResponseGenerator::new(ResponseGeneratorConfig::default()),
+            ),
         }
     }
 
@@ -240,8 +244,10 @@ impl ConversationalAnalyticsEngine {
         _user_context: &crate::storage::tenant::UserContext,
     ) -> Result<String> {
         // TODO: Implement actual conversational session logic
-        Ok(format!("Started conversational session of type '{}' with context '{}'",
-                   _session_type, _context))
+        Ok(format!(
+            "Started conversational session of type '{}' with context '{}'",
+            _session_type, _context
+        ))
     }
 }
 
@@ -293,9 +299,7 @@ impl ResponseGenerator {
 
 impl ComplianceTracker {
     pub fn new() -> Self {
-        Self {
-            frameworks: vec![],
-        }
+        Self { frameworks: vec![] }
     }
 }
 

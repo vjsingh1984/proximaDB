@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use proximadb::storage::persistence::write_ahead_log::config::{
-    WALConfig, CollectionWalConfig, PerformanceConfig, MemTableConfig
+    CollectionWalConfig, MemTableConfig, PerformanceConfig, WALConfig,
 };
 use std::collections::HashMap;
 
@@ -14,12 +14,21 @@ fn test_default_flush_configuration() {
 
     // Test default performance settings
     let perf = config.performance;
-    assert!(perf.memory_flush_size_bytes > 0, "Should have positive memory flush size");
-    assert!(perf.disk_segment_size > 0, "Should have positive disk segment size");
+    assert!(
+        perf.memory_flush_size_bytes > 0,
+        "Should have positive memory flush size"
+    );
+    assert!(
+        perf.disk_segment_size > 0,
+        "Should have positive disk segment size"
+    );
 
     // Test default memtable settings
     let memtable = config.memtable;
-    assert!(memtable.global_memory_limit > 0, "Should have positive global memory limit");
+    assert!(
+        memtable.global_memory_limit > 0,
+        "Should have positive global memory limit"
+    );
 
     println!("✅ Default flush configuration test passed");
 }
@@ -30,28 +39,40 @@ fn test_collection_specific_overrides() {
     let mut collection_configs = HashMap::new();
 
     // Large collection needs higher threshold
-    collection_configs.insert("embeddings".to_string(), CollectionWalConfig {
-        memory_flush_size_bytes: Some(50 * 1024 * 1024), // 50MB
-        disk_segment_size: Some(1024 * 1024 * 1024), // 1GB
-        compression: None,
-        default_ttl_days: Some(30),
-    });
+    collection_configs.insert(
+        "embeddings".to_string(),
+        CollectionWalConfig {
+            memory_flush_size_bytes: Some(50 * 1024 * 1024), // 50MB
+            disk_segment_size: Some(1024 * 1024 * 1024),     // 1GB
+            compression: None,
+            default_ttl_days: Some(30),
+        },
+    );
 
     // Small collection can use lower threshold
-    collection_configs.insert("metadata".to_string(), CollectionWalConfig {
-        memory_flush_size_bytes: Some(5 * 1024 * 1024), // 5MB
-        disk_segment_size: Some(100 * 1024 * 1024), // 100MB
-        compression: None,
-        default_ttl_days: Some(7),
-    });
+    collection_configs.insert(
+        "metadata".to_string(),
+        CollectionWalConfig {
+            memory_flush_size_bytes: Some(5 * 1024 * 1024), // 5MB
+            disk_segment_size: Some(100 * 1024 * 1024),     // 100MB
+            compression: None,
+            default_ttl_days: Some(7),
+        },
+    );
 
     // Verify overrides
     let embeddings_config = collection_configs.get("embeddings").unwrap();
-    assert_eq!(embeddings_config.memory_flush_size_bytes, Some(50 * 1024 * 1024));
+    assert_eq!(
+        embeddings_config.memory_flush_size_bytes,
+        Some(50 * 1024 * 1024)
+    );
     assert_eq!(embeddings_config.default_ttl_days, Some(30));
 
     let metadata_config = collection_configs.get("metadata").unwrap();
-    assert_eq!(metadata_config.memory_flush_size_bytes, Some(5 * 1024 * 1024));
+    assert_eq!(
+        metadata_config.memory_flush_size_bytes,
+        Some(5 * 1024 * 1024)
+    );
     assert_eq!(metadata_config.default_ttl_days, Some(7));
 
     println!("✅ Collection-specific overrides test passed");
@@ -92,26 +113,29 @@ fn test_effective_config_resolution() {
     // Test how collection-specific configs override defaults
     let default_config = CollectionWalConfig {
         memory_flush_size_bytes: Some(10 * 1024 * 1024), // 10MB default
-        disk_segment_size: Some(256 * 1024 * 1024), // 256MB default
+        disk_segment_size: Some(256 * 1024 * 1024),      // 256MB default
         compression: None,
         default_ttl_days: None,
     };
 
     let override_config = CollectionWalConfig {
         memory_flush_size_bytes: Some(20 * 1024 * 1024), // Override to 20MB
-        disk_segment_size: None, // Keep default
+        disk_segment_size: None,                         // Keep default
         compression: None,
         default_ttl_days: Some(14), // Add TTL
     };
 
     // Simulate resolving effective config
-    let effective_memory = override_config.memory_flush_size_bytes
+    let effective_memory = override_config
+        .memory_flush_size_bytes
         .or(default_config.memory_flush_size_bytes)
         .unwrap();
-    let effective_disk = override_config.disk_segment_size
+    let effective_disk = override_config
+        .disk_segment_size
         .or(default_config.disk_segment_size)
         .unwrap();
-    let effective_ttl = override_config.default_ttl_days
+    let effective_ttl = override_config
+        .default_ttl_days
         .or(default_config.default_ttl_days);
 
     assert_eq!(effective_memory, 20 * 1024 * 1024, "Should use override");

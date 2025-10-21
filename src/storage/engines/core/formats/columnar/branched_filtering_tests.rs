@@ -95,7 +95,7 @@ mod tests {
             128,
             config,
             None,
-        )?;
+        ).await?;
 
         writer.write_batch(&records).await?;
         writer.finalize().await?;

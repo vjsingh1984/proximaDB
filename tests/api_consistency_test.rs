@@ -7,10 +7,10 @@
 //! 4. Provide equivalent functionality
 
 use proximadb::proto::proximadb_v1::{
-    CollectionConfig, CollectionRequest, CollectionResponse, DistanceMetric,
-    StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
-    MetadataFilter, FilterClause, ComparisonOp, SqlValue, sql_value, LogicalOp,
-    SearchQuery, SearchParams, SearchOptimization, IncludeFields, filter_clause,
+    CollectionConfig, CollectionRequest, CollectionResponse, ComparisonOp, DistanceMetric,
+    FilterClause, IncludeFields, LogicalOp, MetadataFilter, SearchOptimization, SearchParams,
+    SearchQuery, SqlValue, StorageEngine, VectorBatchRequest, VectorOperationResponse,
+    VectorRecord, VectorSearchRequest, filter_clause, sql_value,
 };
 use std::time::Duration;
 use tokio;
@@ -166,7 +166,13 @@ mod api_consistency_tests {
     #[tokio::test]
     async fn test_collection_operations_consistency() {
         let fixture = ApiTestFixture::new().await;
-        let collection_id = format!("test_collection_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+        let collection_id = format!(
+            "test_collection_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        );
 
         // Test CREATE operation
         let create_request = CollectionRequest {
@@ -336,7 +342,13 @@ mod api_consistency_tests {
     #[tokio::test]
     async fn test_batch_operations_consistency() {
         let fixture = ApiTestFixture::new().await;
-        let collection_id = format!("test_batch_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+        let collection_id = format!(
+            "test_batch_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        );
 
         // Create batch request with multiple records
         let batch_request = VectorBatchRequest {
@@ -373,14 +385,19 @@ mod api_consistency_tests {
             Ok(response) => {
                 // If the operation succeeded, metrics should be present
                 if response.success {
-                    assert!(response.metrics.is_some(), "Should have metrics for successful batch operation");
+                    assert!(
+                        response.metrics.is_some(),
+                        "Should have metrics for successful batch operation"
+                    );
                     if let Some(metrics) = response.metrics {
                         assert_eq!(metrics.total_processed, 2, "Should process 2 records");
                     }
                 } else {
                     // If operation failed (e.g., collection doesn't exist), that's expected in test environment
-                    assert!(response.error_message.is_some() || !response.success,
-                        "Failed operation should have error message or success=false");
+                    assert!(
+                        response.error_message.is_some() || !response.success,
+                        "Failed operation should have error message or success=false"
+                    );
                 }
             }
             Err(_e) => {
@@ -401,22 +418,19 @@ mod api_consistency_tests {
                 vector: vec![0.1, 0.2, 0.3, 0.4],
                 filters: {
                     let mut filters = std::collections::HashMap::new();
-                    filters.insert("category".to_string(), SqlValue {
-                        value: Some(
-                            sql_value::Value::StringValue(
-                                "electronics".to_string(),
-                            ),
-                        ),
-                    });
+                    filters.insert(
+                        "category".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue("electronics".to_string())),
+                        },
+                    );
                     filters
                 },
                 advanced_filter: Some(MetadataFilter {
                     clauses: vec![FilterClause {
                         field: "category".to_string(),
                         op: ComparisonOp::Eq as i32,
-                        value: Some(filter_clause::Value::StringValue(
-                            "electronics".to_string(),
-                        )),
+                        value: Some(filter_clause::Value::StringValue("electronics".to_string())),
                     }],
                     op: LogicalOp::And as i32,
                 }),

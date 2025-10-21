@@ -15,8 +15,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::index::axis::{AxisManager, AxisVectorIndex};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::CompactionResult;
 
 /// AXIS index updater for compaction operations

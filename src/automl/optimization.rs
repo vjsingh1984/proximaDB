@@ -13,9 +13,9 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
+use super::prediction::{FeatureVector, PerformancePredictor};
 use super::service::AutoMLConfig;
 use super::workload::WorkloadPattern;
-use super::prediction::{FeatureVector, PerformancePredictor};
 
 /// Optimization goals
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -151,7 +151,10 @@ pub enum OptimizationStrategy {
     /// Bayesian optimization
     BayesianOptimization { n_iterations: usize },
     /// Genetic algorithm
-    GeneticAlgorithm { population_size: usize, generations: usize },
+    GeneticAlgorithm {
+        population_size: usize,
+        generations: usize,
+    },
 }
 
 impl OptimizationPipeline {
@@ -209,21 +212,36 @@ impl OptimizationPipeline {
         // Run optimization based on strategy
         let best_config = match strategy {
             OptimizationStrategy::GridSearch => {
-                self.grid_search(collection_id, &goal, &config_space).await?
+                self.grid_search(collection_id, &goal, &config_space)
+                    .await?
             }
             OptimizationStrategy::RandomSearch { budget } => {
-                self.random_search(collection_id, &goal, &config_space, budget).await?
+                self.random_search(collection_id, &goal, &config_space, budget)
+                    .await?
             }
             OptimizationStrategy::BayesianOptimization { n_iterations } => {
-                self.bayesian_optimization(collection_id, &goal, &config_space, n_iterations).await?
+                self.bayesian_optimization(collection_id, &goal, &config_space, n_iterations)
+                    .await?
             }
-            OptimizationStrategy::GeneticAlgorithm { population_size, generations } => {
-                self.genetic_algorithm(collection_id, &goal, &config_space, population_size, generations).await?
+            OptimizationStrategy::GeneticAlgorithm {
+                population_size,
+                generations,
+            } => {
+                self.genetic_algorithm(
+                    collection_id,
+                    &goal,
+                    &config_space,
+                    population_size,
+                    generations,
+                )
+                .await?
             }
         };
 
         // Calculate improvement
-        let improvement = self.calculate_improvement(collection_id, &best_config).await?;
+        let improvement = self
+            .calculate_improvement(collection_id, &best_config)
+            .await?;
 
         // Record optimization run
         let run = OptimizationRun {
@@ -255,34 +273,35 @@ impl OptimizationPipeline {
                     parameters: [
                         ("M".to_string(), 16.0),
                         ("ef_construction".to_string(), 200.0),
-                    ].into_iter().collect(),
+                    ]
+                    .into_iter()
+                    .collect(),
                 },
                 IndexConfiguration {
                     algorithm: "IVF".to_string(),
-                    parameters: [
-                        ("nlist".to_string(), 100.0),
-                        ("nprobe".to_string(), 10.0),
-                    ].into_iter().collect(),
+                    parameters: [("nlist".to_string(), 100.0), ("nprobe".to_string(), 10.0)]
+                        .into_iter()
+                        .collect(),
                 },
             ],
-            WorkloadPattern::WriteHeavy => vec![
-                IndexConfiguration {
-                    algorithm: "LSH".to_string(),
-                    parameters: [
-                        ("n_tables".to_string(), 8.0),
-                        ("n_projections".to_string(), 128.0),
-                    ].into_iter().collect(),
-                },
-            ],
-            _ => vec![
-                IndexConfiguration {
-                    algorithm: "HNSW".to_string(),
-                    parameters: [
-                        ("M".to_string(), 12.0),
-                        ("ef_construction".to_string(), 150.0),
-                    ].into_iter().collect(),
-                },
-            ],
+            WorkloadPattern::WriteHeavy => vec![IndexConfiguration {
+                algorithm: "LSH".to_string(),
+                parameters: [
+                    ("n_tables".to_string(), 8.0),
+                    ("n_projections".to_string(), 128.0),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+            _ => vec![IndexConfiguration {
+                algorithm: "HNSW".to_string(),
+                parameters: [
+                    ("M".to_string(), 12.0),
+                    ("ef_construction".to_string(), 150.0),
+                ]
+                .into_iter()
+                .collect(),
+            }],
         };
 
         let quantization_configs = vec![
@@ -363,7 +382,9 @@ impl OptimizationPipeline {
                             cache: cache_config.clone(),
                         };
 
-                        let score = self.evaluate_configuration(collection_id, &config, goal).await?;
+                        let score = self
+                            .evaluate_configuration(collection_id, &config, goal)
+                            .await?;
 
                         if score > best_score {
                             best_score = score;
@@ -394,12 +415,22 @@ impl OptimizationPipeline {
         for _ in 0..budget {
             let config = Configuration {
                 index: config_space.index_configs.choose(&mut rng).unwrap().clone(),
-                quantization: config_space.quantization_configs.choose(&mut rng).unwrap().clone(),
-                engine: config_space.engine_configs.choose(&mut rng).unwrap().clone(),
+                quantization: config_space
+                    .quantization_configs
+                    .choose(&mut rng)
+                    .unwrap()
+                    .clone(),
+                engine: config_space
+                    .engine_configs
+                    .choose(&mut rng)
+                    .unwrap()
+                    .clone(),
                 cache: config_space.cache_configs.choose(&mut rng).unwrap().clone(),
             };
 
-            let score = self.evaluate_configuration(collection_id, &config, goal).await?;
+            let score = self
+                .evaluate_configuration(collection_id, &config, goal)
+                .await?;
 
             if score > best_score {
                 best_score = score;
@@ -433,12 +464,15 @@ impl OptimizationPipeline {
                 self.select_next_config(&observations, config_space)?
             };
 
-            let score = self.evaluate_configuration(collection_id, &config, goal).await?;
+            let score = self
+                .evaluate_configuration(collection_id, &config, goal)
+                .await?;
             observations.push((config, score));
         }
 
         // Return best observed configuration
-        observations.into_iter()
+        observations
+            .into_iter()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(config, _)| config)
             .ok_or_else(|| anyhow::anyhow!("No valid configuration found"))
@@ -460,7 +494,9 @@ impl OptimizationPipeline {
         let mut population: Vec<(Configuration, f64)> = Vec::new();
         for _ in 0..population_size {
             let config = self.sample_random_config(config_space)?;
-            let score = self.evaluate_configuration(collection_id, &config, goal).await?;
+            let score = self
+                .evaluate_configuration(collection_id, &config, goal)
+                .await?;
             population.push((config, score));
         }
 
@@ -481,7 +517,9 @@ impl OptimizationPipeline {
                 let mutated = self.mutate(&child, config_space)?;
 
                 // Evaluate
-                let score = self.evaluate_configuration(collection_id, &mutated, goal).await?;
+                let score = self
+                    .evaluate_configuration(collection_id, &mutated, goal)
+                    .await?;
                 new_population.push((mutated, score));
             }
 
@@ -490,7 +528,8 @@ impl OptimizationPipeline {
         }
 
         // Return best individual
-        population.into_iter()
+        population
+            .into_iter()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(config, _)| config)
             .ok_or_else(|| anyhow::anyhow!("No valid configuration found"))
@@ -503,8 +542,16 @@ impl OptimizationPipeline {
 
         Ok(Configuration {
             index: config_space.index_configs.choose(&mut rng).unwrap().clone(),
-            quantization: config_space.quantization_configs.choose(&mut rng).unwrap().clone(),
-            engine: config_space.engine_configs.choose(&mut rng).unwrap().clone(),
+            quantization: config_space
+                .quantization_configs
+                .choose(&mut rng)
+                .unwrap()
+                .clone(),
+            engine: config_space
+                .engine_configs
+                .choose(&mut rng)
+                .unwrap()
+                .clone(),
             cache: config_space.cache_configs.choose(&mut rng).unwrap().clone(),
         })
     }
@@ -530,10 +577,26 @@ impl OptimizationPipeline {
         let mut rng = rand::thread_rng();
 
         Ok(Configuration {
-            index: if rng.gen_bool(0.5) { parent1.index.clone() } else { parent2.index.clone() },
-            quantization: if rng.gen_bool(0.5) { parent1.quantization.clone() } else { parent2.quantization.clone() },
-            engine: if rng.gen_bool(0.5) { parent1.engine.clone() } else { parent2.engine.clone() },
-            cache: if rng.gen_bool(0.5) { parent1.cache.clone() } else { parent2.cache.clone() },
+            index: if rng.gen_bool(0.5) {
+                parent1.index.clone()
+            } else {
+                parent2.index.clone()
+            },
+            quantization: if rng.gen_bool(0.5) {
+                parent1.quantization.clone()
+            } else {
+                parent2.quantization.clone()
+            },
+            engine: if rng.gen_bool(0.5) {
+                parent1.engine.clone()
+            } else {
+                parent2.engine.clone()
+            },
+            cache: if rng.gen_bool(0.5) {
+                parent1.cache.clone()
+            } else {
+                parent2.cache.clone()
+            },
         })
     }
 
@@ -553,10 +616,18 @@ impl OptimizationPipeline {
             mutated.index = config_space.index_configs.choose(&mut rng).unwrap().clone();
         }
         if rng.gen_bool(0.1) {
-            mutated.quantization = config_space.quantization_configs.choose(&mut rng).unwrap().clone();
+            mutated.quantization = config_space
+                .quantization_configs
+                .choose(&mut rng)
+                .unwrap()
+                .clone();
         }
         if rng.gen_bool(0.1) {
-            mutated.engine = config_space.engine_configs.choose(&mut rng).unwrap().clone();
+            mutated.engine = config_space
+                .engine_configs
+                .choose(&mut rng)
+                .unwrap()
+                .clone();
         }
         if rng.gen_bool(0.1) {
             mutated.cache = config_space.cache_configs.choose(&mut rng).unwrap().clone();
@@ -576,7 +647,10 @@ impl OptimizationPipeline {
         let features = self.config_to_features(config)?;
 
         // Predict performance
-        let prediction = self.predictor.predict(collection_id, &features).await
+        let prediction = self
+            .predictor
+            .predict(collection_id, &features)
+            .await
             .unwrap_or_else(|_| super::prediction::PredictionResult {
                 value: 100.0, // Default value
                 confidence: 0.0,
@@ -592,8 +666,7 @@ impl OptimizationPipeline {
             OptimizationGoal::Balanced => prediction.value / 2.0,
             OptimizationGoal::Custom(weights) => {
                 // Weighted combination
-                weights.latency * (-prediction.value) +
-                weights.throughput * prediction.value
+                weights.latency * (-prediction.value) + weights.throughput * prediction.value
             }
         };
 
@@ -621,13 +694,13 @@ impl OptimizationPipeline {
         };
 
         Ok(FeatureVector {
-            vector_count: 10000.0, // Default
+            vector_count: 10000.0,   // Default
             vector_dimension: 128.0, // Default
-            sparsity: 0.1, // Default
-            read_ratio: 0.8, // Default
-            write_ratio: 0.2, // Default
-            query_complexity: 1.0, // Default
-            batch_size: 100.0, // Default
+            sparsity: 0.1,           // Default
+            read_ratio: 0.8,         // Default
+            write_ratio: 0.2,        // Default
+            query_complexity: 1.0,   // Default
+            batch_size: 100.0,       // Default
             index_type: index_encoding,
             quantization_level: quant_encoding,
             cache_size_mb: config.cache.cache_size_mb,
@@ -638,7 +711,11 @@ impl OptimizationPipeline {
     }
 
     /// Calculate improvement from optimization
-    async fn calculate_improvement(&self, _collection_id: &str, _config: &Configuration) -> Result<f64> {
+    async fn calculate_improvement(
+        &self,
+        _collection_id: &str,
+        _config: &Configuration,
+    ) -> Result<f64> {
         // Placeholder - would compare with baseline
         Ok(15.0) // 15% improvement
     }
@@ -667,40 +744,35 @@ mod tests {
         pipeline.start().await.unwrap();
 
         let config_space = ConfigurationSpace {
-            index_configs: vec![
-                IndexConfiguration {
-                    algorithm: "HNSW".to_string(),
-                    parameters: HashMap::new(),
-                },
-            ],
-            quantization_configs: vec![
-                QuantizationConfiguration {
-                    level: "None".to_string(),
-                    codebook_size: 0,
-                    training_samples: 0,
-                },
-            ],
-            engine_configs: vec![
-                EngineConfiguration {
-                    engine_type: "SST".to_string(),
-                    flush_threshold_mb: 64.0,
-                    compaction_interval_secs: 300,
-                },
-            ],
-            cache_configs: vec![
-                CacheConfiguration {
-                    cache_size_mb: 512.0,
-                    eviction_policy: "LRU".to_string(),
-                    prefetch_enabled: false,
-                },
-            ],
+            index_configs: vec![IndexConfiguration {
+                algorithm: "HNSW".to_string(),
+                parameters: HashMap::new(),
+            }],
+            quantization_configs: vec![QuantizationConfiguration {
+                level: "None".to_string(),
+                codebook_size: 0,
+                training_samples: 0,
+            }],
+            engine_configs: vec![EngineConfiguration {
+                engine_type: "SST".to_string(),
+                flush_threshold_mb: 64.0,
+                compaction_interval_secs: 300,
+            }],
+            cache_configs: vec![CacheConfiguration {
+                cache_size_mb: 512.0,
+                eviction_policy: "LRU".to_string(),
+                prefetch_enabled: false,
+            }],
         };
 
-        let best = pipeline.grid_search(
-            "test_collection",
-            &OptimizationGoal::MinimizeLatency,
-            &config_space,
-        ).await.unwrap();
+        let best = pipeline
+            .grid_search(
+                "test_collection",
+                &OptimizationGoal::MinimizeLatency,
+                &config_space,
+            )
+            .await
+            .unwrap();
 
         assert_eq!(best.index.algorithm, "HNSW");
     }

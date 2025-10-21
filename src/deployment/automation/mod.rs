@@ -3,6 +3,6 @@
 pub mod provisioner;
 
 pub use provisioner::{
-    DeploymentProvisioner, EnterpriseDeploymentRequest, DeploymentResult,
-    DeploymentStatus, DeploymentEndpoints, HealthCheck, HealthStatus
+    DeploymentEndpoints, DeploymentProvisioner, DeploymentResult, DeploymentStatus,
+    EnterpriseDeploymentRequest, HealthCheck, HealthStatus,
 };

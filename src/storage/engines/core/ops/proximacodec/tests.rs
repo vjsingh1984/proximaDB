@@ -36,7 +36,7 @@ fn test_complete_roundtrip_f32_delta() {
     assert_eq!(parsed_header.type_id, TypeId::F32);
     assert_eq!(parsed_header.count, values.len());
     match parsed_header.scheme {
-        ProximaScheme::Delta { .. } => {}, // Success
+        ProximaScheme::Delta { .. } => {} // Success
         _ => panic!("Expected Delta scheme"),
     }
 
@@ -44,7 +44,9 @@ fn test_complete_roundtrip_f32_delta() {
     let raw_data = &with_header[parsed_header.data_offset..];
 
     // Decode raw data
-    let decoded = decoder.decode_f32(raw_data, &parsed_header.scheme, parsed_header.count).unwrap();
+    let decoded = decoder
+        .decode_f32(raw_data, &parsed_header.scheme, parsed_header.count)
+        .unwrap();
 
     assert_eq!(decoded, values);
 }
@@ -74,7 +76,7 @@ fn test_complete_roundtrip_i64_delta() {
     assert_eq!(parsed_header.type_id, TypeId::I64);
     assert_eq!(parsed_header.count, values.len());
     match parsed_header.scheme {
-        ProximaScheme::Delta { .. } => {}, // Success
+        ProximaScheme::Delta { .. } => {} // Success
         _ => panic!("Expected Delta scheme"),
     }
 
@@ -82,7 +84,9 @@ fn test_complete_roundtrip_i64_delta() {
     let raw_data = &with_header[parsed_header.data_offset..];
 
     // Decode raw data
-    let decoded = decoder.decode_i64(raw_data, &parsed_header.scheme, parsed_header.count).unwrap();
+    let decoded = decoder
+        .decode_i64(raw_data, &parsed_header.scheme, parsed_header.count)
+        .unwrap();
 
     assert_eq!(decoded, values);
 }
@@ -112,7 +116,7 @@ fn test_complete_roundtrip_i32_delta() {
     assert_eq!(parsed_header.type_id, TypeId::I32);
     assert_eq!(parsed_header.count, values.len());
     match parsed_header.scheme {
-        ProximaScheme::Delta { .. } => {}, // Success
+        ProximaScheme::Delta { .. } => {} // Success
         _ => panic!("Expected Delta scheme"),
     }
 
@@ -120,7 +124,9 @@ fn test_complete_roundtrip_i32_delta() {
     let raw_data = &with_header[parsed_header.data_offset..];
 
     // Decode raw data
-    let decoded = decoder.decode_i32(raw_data, &parsed_header.scheme, parsed_header.count).unwrap();
+    let decoded = decoder
+        .decode_i32(raw_data, &parsed_header.scheme, parsed_header.count)
+        .unwrap();
 
     assert_eq!(decoded, values);
 }

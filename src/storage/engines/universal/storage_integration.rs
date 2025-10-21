@@ -701,7 +701,7 @@ macro_rules! create_simple_adapter {
                         updated_at: Some(chrono::Utc::now().timestamp()),
                         expires_at: None,
                         source: None,
-                            });
+                    });
                 }
                 Ok(vectors)
             }

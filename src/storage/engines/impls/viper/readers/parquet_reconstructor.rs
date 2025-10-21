@@ -400,7 +400,10 @@ impl ParquetReconstructor {
                     let dimension = 128; // Default dimension
                     fields.push(Field::new(
                         "vector",
-                        DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), dimension),
+                        DataType::FixedSizeList(
+                            Arc::new(Field::new("item", DataType::Float32, false)),
+                            dimension,
+                        ),
                         false,
                     ));
                     // Create a simple float array for now
@@ -451,8 +454,10 @@ impl ParquetReconstructor {
         // Get column indices
         let id_column = record_batch.column_by_name("id");
         // Use the constants for field names
-        let vector_column = record_batch.column_by_name(crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32);
-        let metadata_column = record_batch.column_by_name(crate::storage::engines::core::formats::columnar::FIELD_EXTRA_META);
+        let vector_column = record_batch
+            .column_by_name(crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32);
+        let metadata_column = record_batch
+            .column_by_name(crate::storage::engines::core::formats::columnar::FIELD_EXTRA_META);
 
         for row_idx in 0..record_batch.num_rows() {
             // Extract ID
@@ -477,8 +482,9 @@ impl ParquetReconstructor {
             };
 
             // Convert Vec<MetadataItem> to HashMap<String, SqlValue>
-            let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_sqlvalue_hashmap(&metadata);
-            
+            let metadata_map =
+                crate::core::proto_metadata_helper::proto_metadata_to_sqlvalue_hashmap(&metadata);
+
             vector_records.push(VectorRecord {
                 id,
                 vector,
@@ -552,7 +558,10 @@ impl ParquetReconstructor {
 
     fn extract_vector_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<f32>> {
         // First check for FixedSizeBinary arrays (how vectors are actually stored)
-        if let Some(binary_array) = column.as_any().downcast_ref::<arrow_array::FixedSizeBinaryArray>() {
+        if let Some(binary_array) = column
+            .as_any()
+            .downcast_ref::<arrow_array::FixedSizeBinaryArray>()
+        {
             // Get the binary data for this row
             let bytes = binary_array.value(row_idx);
 
@@ -571,7 +580,8 @@ impl ParquetReconstructor {
         } else if let Some(list_array) = column.as_any().downcast_ref::<arrow_array::ListArray>() {
             // Extract vector from list array (alternative format)
             let values = list_array.values();
-            if let Some(float_values) = values.as_any().downcast_ref::<arrow_array::Float32Array>() {
+            if let Some(float_values) = values.as_any().downcast_ref::<arrow_array::Float32Array>()
+            {
                 let offsets = list_array.offsets();
                 let start = offsets[row_idx] as usize;
                 let end = offsets[row_idx + 1] as usize;
@@ -582,7 +592,9 @@ impl ParquetReconstructor {
                     return Ok(vector);
                 }
             }
-        } else if let Some(float_array) = column.as_any().downcast_ref::<arrow_array::Float32Array>() {
+        } else if let Some(float_array) =
+            column.as_any().downcast_ref::<arrow_array::Float32Array>()
+        {
             // Fallback for flat arrays
             let num_rows = column.len();
             if num_rows > 0 {
@@ -608,8 +620,8 @@ impl ParquetReconstructor {
         column: &Arc<dyn Array>,
         row_idx: usize,
     ) -> Result<Vec<crate::proto::proximadb_v1::MetadataItem>> {
-        use arrow_array::{StringArray, MapArray};
         use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
+        use arrow_array::{MapArray, StringArray};
 
         // Check if this is a Map array
         if let Some(map_array) = column.as_any().downcast_ref::<MapArray>() {
@@ -622,9 +634,17 @@ impl ParquetReconstructor {
             if start < end {
                 let entries = map_array.values();
                 // Map entries are stored as a struct array with key and value fields
-                if let Some(struct_array) = entries.as_any().downcast_ref::<arrow_array::StructArray>() {
-                    let keys = struct_array.column(0).as_any().downcast_ref::<StringArray>();
-                    let values = struct_array.column(1).as_any().downcast_ref::<StringArray>();
+                if let Some(struct_array) =
+                    entries.as_any().downcast_ref::<arrow_array::StructArray>()
+                {
+                    let keys = struct_array
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<StringArray>();
+                    let values = struct_array
+                        .column(1)
+                        .as_any()
+                        .downcast_ref::<StringArray>();
 
                     if let (Some(keys), Some(values)) = (keys, values) {
                         for i in start..end {
@@ -639,7 +659,9 @@ impl ParquetReconstructor {
                                 // Direct Map entry
                                 let item = MetadataItem {
                                     key: key.to_string(),
-                                    value: Some(metadata_item::Value::StringValue(value.to_string())),
+                                    value: Some(metadata_item::Value::StringValue(
+                                        value.to_string(),
+                                    )),
                                 };
                                 metadata_items.push(item);
                             }

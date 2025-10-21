@@ -13,15 +13,11 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-
-
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb_v1::{
-    VectorRecord, StorageEngine, SqlValue, sql_value,
-};
+use proximadb::proto::proximadb_v1::{SqlValue, StorageEngine, VectorRecord, sql_value};
 use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
@@ -72,16 +68,18 @@ fn create_compressible_test_vectors(
                 None,
                 {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("category".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(
-                            format!("cat_{}", i % 3)
-                        ))
-                    });
-                    metadata.insert("timestamp".to_string(), SqlValue {
-                        value: Some(sql_value::Value::NumberValue(
-                            i as f64
-                        ))
-                    });
+                    metadata.insert(
+                        "category".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
+                        },
+                    );
+                    metadata.insert(
+                        "timestamp".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue(i as f64)),
+                        },
+                    );
                     metadata
                 },
             )
@@ -109,13 +107,19 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     let sst_records: Vec<_> = vectors
         .iter()
         .enumerate()
-        .map(|(i, v)| proximadb::storage::engines::impls::sst::SstEntry::from_vector_record(v.clone(), i as u64, 0))
+        .map(|(i, v)| {
+            proximadb::storage::engines::impls::sst::SstEntry::from_vector_record(
+                v.clone(),
+                i as u64,
+                0,
+            )
+        })
         .collect();
 
     // Create SST storage to test compression
     let collection = std::sync::Arc::new(env.create_test_collection());
     let distance_compute = std::sync::Arc::new(
-        proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::default()
+        proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
     );
     let sst_storage = proximadb::storage::engines::impls::sst::SstEngine::new().await?;
 
@@ -130,7 +134,10 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
         ..Default::default()
     };
     let flush_result = sst_storage.do_flush(&flush_params).await?;
-    debug!("SST compression test - flush completed with {} bytes", flush_result.bytes_written.unwrap_or(0));
+    debug!(
+        "SST compression test - flush completed with {} bytes",
+        flush_result.bytes_written.unwrap_or(0)
+    );
 
     // Verify records can be retrieved after compression
     assert_eq!(sst_records.len(), 100, "Should have 100 SST records");
@@ -157,7 +164,10 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
         compression_ratio
     );
 
-    info!("ProximaDataBlock compression ratio: {:.2}", compression_ratio);
+    info!(
+        "ProximaDataBlock compression ratio: {:.2}",
+        compression_ratio
+    );
     Ok(())
 }
 
@@ -190,7 +200,8 @@ async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
     assert_eq!(
-        result.entries_flushed, Some(1000),
+        result.entries_flushed,
+        Some(1000),
         "Should flush all 1000 vectors"
     );
     info!(
@@ -351,11 +362,16 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
             None,
             {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("type".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "sparse".to_string()
-                    ))
-                });
+                metadata.insert(
+                    "type".to_string(),
+                    proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(
+                            proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                                "sparse".to_string(),
+                            ),
+                        ),
+                    },
+                );
                 metadata
             },
         ));
@@ -371,11 +387,16 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
             None,
             {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("type".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "dense".to_string()
-                    ))
-                });
+                metadata.insert(
+                    "type".to_string(),
+                    proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(
+                            proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                                "dense".to_string(),
+                            ),
+                        ),
+                    },
+                );
                 metadata
             },
         ));
@@ -391,7 +412,11 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
         operations::build_flush_params(&env, all_vectors, StorageEngine::Sst).await?;
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
-    assert_eq!(result.entries_flushed, Some(200), "Should flush all 200 vectors");
+    assert_eq!(
+        result.entries_flushed,
+        Some(200),
+        "Should flush all 200 vectors"
+    );
     info!(
         "✅ Flushed {} mixed vectors with compression",
         result.entries_flushed.unwrap_or(0)
@@ -469,8 +494,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         .compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstEngine::new()
-    .await?;
+    let compressed_engine = SstEngine::new().await?;
 
     // Flush with compression
     let flush_params_compressed =
@@ -479,7 +503,8 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     let compressed_result = compressed_engine.do_flush(&flush_params_compressed).await?;
     assert!(compressed_result.success, "Compressed flush should succeed");
     assert_eq!(
-        compressed_result.entries_flushed, Some(500),
+        compressed_result.entries_flushed,
+        Some(500),
         "Should flush all 500 vectors"
     );
 
@@ -493,8 +518,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     config_uncompressed.compression = "none".to_string();
     config_uncompressed.compression_level = 0;
 
-    let uncompressed_engine = SstEngine::new()
-    .await?;
+    let uncompressed_engine = SstEngine::new().await?;
 
     // Flush without compression
     let flush_params_uncompressed =
@@ -508,7 +532,8 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         "Uncompressed flush should succeed"
     );
     assert_eq!(
-        uncompressed_result.entries_flushed, Some(500),
+        uncompressed_result.entries_flushed,
+        Some(500),
         "Should flush all 500 vectors"
     );
 
@@ -696,8 +721,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
-        let engine =
-            SstEngine::new().await?;
+        let engine = SstEngine::new().await?;
 
         let start = std::time::Instant::now();
 

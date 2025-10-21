@@ -23,12 +23,12 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 // Health status handled internally
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
+use super::operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 use super::optimized_operations::OptimizedNovaOperations;
-use super::operations::{NovaFlushOperations, NovaCompactionOperations, NovaSearchOperations};
 use crate::core::compression::CompressionAlgorithm;
 // Arrow schema handled by parquet reader
 
@@ -318,7 +318,7 @@ impl NovaEngine {
             search_ops,
             statistics: Arc::new(RwLock::new(EngineStatistics {
                 engine_name: "NOVA".to_string(),
-                engine_version: "1.0.0".to_string(),  // Release 1 version
+                engine_version: "1.0.0".to_string(), // Release 1 version
                 total_storage_bytes: 0,
                 memory_usage_bytes: 0,
                 collection_count: 0,
@@ -382,7 +382,10 @@ impl NovaEngine {
 
         // Filter for NOVA Parquet files (using NOVA_FILE_EXT constant)
         for file_path in files {
-            if file_path.name.ends_with(crate::storage::engines::constants::NOVA_FILE_EXT) {
+            if file_path
+                .name
+                .ends_with(crate::storage::engines::constants::NOVA_FILE_EXT)
+            {
                 // Create a reader for this file based on query type
                 let reader = super::unified_strategy_reader::UnifiedNOVAReader::for_search(
                     self.filesystem.clone(),
@@ -396,17 +399,23 @@ impl NovaEngine {
                 let nova_file = super::NovaFile {
                     quantized_columns: super::quantized_columns::QuantizedColumnMetadata::default(),
                     schema: Arc::new(arrow_schema::Schema::empty()),
-                    metadata: crate::storage::engines::core::formats::columnar::ColumnarFileMetadata {
-                        collection_id: collection_id.to_string(),
-                        num_vectors: vectors.len() as u64,
-                        dimension: if !vectors.is_empty() { vectors[0].vector.len() } else { 0 },
-                        distance_metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
-                        quantization: Default::default(),
-                        column_stats: Default::default(),
-                        version: 1,
-                        timestamp: chrono::Utc::now(),
-                        modified_at: chrono::Utc::now(),
-                    },
+                    metadata:
+                        crate::storage::engines::core::formats::columnar::ColumnarFileMetadata {
+                            collection_id: collection_id.to_string(),
+                            num_vectors: vectors.len() as u64,
+                            dimension: if !vectors.is_empty() {
+                                vectors[0].vector.len()
+                            } else {
+                                0
+                            },
+                            distance_metric:
+                                crate::compute::distance_computation::DistanceMetric::Euclidean,
+                            quantization: Default::default(),
+                            column_stats: Default::default(),
+                            version: 1,
+                            timestamp: chrono::Utc::now(),
+                            modified_at: chrono::Utc::now(),
+                        },
                     row_groups: Vec::new(),
                     enhanced_stats: Vec::new(),
                     superblocks: Vec::new(),
@@ -419,10 +428,17 @@ impl NovaEngine {
 
         // If no files found, return empty vec (normal for new collections)
         if nova_files.is_empty() {
-            debug!("No NOVA files found for collection {} in {}", collection_id, storage_path);
+            debug!(
+                "No NOVA files found for collection {} in {}",
+                collection_id, storage_path
+            );
         } else {
-            info!("Loaded {} NOVA files for collection {} from {} (cached)",
-                nova_files.len(), collection_id, storage_path);
+            info!(
+                "Loaded {} NOVA files for collection {} from {} (cached)",
+                nova_files.len(),
+                collection_id,
+                storage_path
+            );
         }
 
         Ok(nova_files)
@@ -729,11 +745,11 @@ impl NovaEngine {
         params: &FlushParameters,
         collection_id: &str,
     ) -> Result<u64> {
+        use super::nova_meta_collector::{NovaCollectorConfig, NovaMetadataCollector};
         use crate::storage::engines::core::formats::columnar::{
-            parquet_write_engine::ParquetWriterConfig,
             hybrid_writer::{HybridParquetWriter, HybridWriterConfig},
+            parquet_write_engine::ParquetWriterConfig,
         };
-        use super::nova_meta_collector::{NovaMetadataCollector, NovaCollectorConfig};
 
         // Get filterable columns from collection config (use proto type directly)
         let filterable_columns = params
@@ -741,13 +757,16 @@ impl NovaEngine {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.filterable_columns.clone())
-            .unwrap_or_else(|| vec![crate::proto::proximadb_v1::FilterableColumnSpec {
-                name: FIELD_ID.to_string(),
-                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
-                indexed: true,
-                supports_range: false,
-                estimated_cardinality: Some(1000000),
-            }]);
+            .unwrap_or_else(|| {
+                vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                    name: FIELD_ID.to_string(),
+                    data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString
+                        as i32,
+                    indexed: true,
+                    supports_range: false,
+                    estimated_cardinality: Some(1000000),
+                }]
+            });
 
         // Configure writer with NOVA-specific settings
         // Include both ID and filterable columns in bloom filters
@@ -759,7 +778,7 @@ impl NovaEngine {
             row_group_size: 50_000, // 50K vectors per row group
             write_batch_size: 10_000,
             enable_bloom_filters: true,
-            bloom_filter_fpp: 0.01, // 1% false positive rate
+            bloom_filter_fpp: 0.01,    // 1% false positive rate
             bloom_filter_ndv: 1000000, // Expect up to 1M unique IDs
             enable_statistics: true,
             enable_page_index: true,
@@ -768,7 +787,9 @@ impl NovaEngine {
             id_less_storage: false, // Keep IDs for compatibility
             page_size: 8192,
             sort_columns: vec![], // No sorting for now
-            filterable_metadata_columns: Some(filterable_columns.iter().map(|c| c.name.clone()).collect()),
+            filterable_metadata_columns: Some(
+                filterable_columns.iter().map(|c| c.name.clone()).collect(),
+            ),
             compression_level: None,
             max_records_per_file: None,
             target_file_size_bytes: None,
@@ -804,7 +825,8 @@ impl NovaEngine {
             &self.filesystem,
             Some(filterable_columns),
             Some(Box::new(nova_collector)),
-        ).await?;
+        )
+        .await?;
 
         let bytes_written = stats.file_size;
 
@@ -814,11 +836,16 @@ impl NovaEngine {
             let sidecar_data = collector.serialize_metadata()?;
 
             // Write sidecar using filesystem (this also gets cached)
-            let fs = self.filesystem.get_filesystem(&self.determine_fs_url(file_path))?;
+            let fs = self
+                .filesystem
+                .get_filesystem(&self.determine_fs_url(file_path))?;
             fs.write(&sidecar_path, &sidecar_data, None).await?;
 
-            info!("NOVA: Wrote sidecar metadata ({} bytes) to {} with disk cache",
-                  sidecar_data.len(), sidecar_path);
+            info!(
+                "NOVA: Wrote sidecar metadata ({} bytes) to {} with disk cache",
+                sidecar_data.len(),
+                sidecar_path
+            );
         }
 
         debug!(
@@ -828,8 +855,10 @@ impl NovaEngine {
             bytes_written / 1024 / 1024
         );
 
-        info!("NOVA: Successfully wrote {} bytes to {} with {} row groups",
-              bytes_written, file_path, stats.total_row_groups);
+        info!(
+            "NOVA: Successfully wrote {} bytes to {} with {} row groups",
+            bytes_written, file_path, stats.total_row_groups
+        );
         Ok(bytes_written)
     }
 
@@ -845,20 +874,23 @@ impl NovaEngine {
         records: &[VectorRecord],
         schema: &Arc<arrow_schema::Schema>,
     ) -> Result<arrow_array::RecordBatch> {
-        use arrow_array::{Float32Array, StringArray, Int64Array, Float64Array, BooleanArray, builder::*};
-        use arrow_array::builder::{FixedSizeBinaryBuilder, Int8Builder, FixedSizeListBuilder};
+        use arrow_array::builder::{FixedSizeBinaryBuilder, FixedSizeListBuilder, Int8Builder};
+        use arrow_array::{
+            BooleanArray, Float32Array, Float64Array, Int64Array, StringArray, builder::*,
+        };
         use std::sync::Arc;
 
         // Build arrays for each field
         let mut id_builder = StringBuilder::new();
 
         // Get dimension from schema for the vector field
-        let dimension = if let arrow_schema::DataType::FixedSizeList(_, dim) = schema.fields()[1].data_type() {
-            *dim as usize
-        } else {
-            // Fallback: use first record's vector dimension
-            records.first().map(|r| r.vector.len()).unwrap_or(0)
-        };
+        let dimension =
+            if let arrow_schema::DataType::FixedSizeList(_, dim) = schema.fields()[1].data_type() {
+                *dim as usize
+            } else {
+                // Fallback: use first record's vector dimension
+                records.first().map(|r| r.vector.len()).unwrap_or(0)
+            };
 
         // Build vector column as FixedSizeList
         let values_builder = Float32Builder::new();
@@ -870,7 +902,10 @@ impl NovaEngine {
         // Check if quantization fields are present in schema (they would be after the 4 core fields)
         let mut quantization_field_count = 0;
         for field in schema.fields().iter().skip(4) {
-            if field.name().starts_with("vector_") || field.name() == "int8_scale" || field.name() == "int8_zero_point" {
+            if field.name().starts_with("vector_")
+                || field.name() == "int8_scale"
+                || field.name() == "int8_zero_point"
+            {
                 quantization_field_count += 1;
             } else {
                 break; // Stop when we hit the first non-quantization field
@@ -919,10 +954,15 @@ impl NovaEngine {
                 // Append value based on field type
                 match field.data_type() {
                     arrow_schema::DataType::Utf8 => {
-                        let string_builder = builder.as_any_mut().downcast_mut::<StringBuilder>().unwrap();
+                        let string_builder = builder
+                            .as_any_mut()
+                            .downcast_mut::<StringBuilder>()
+                            .unwrap();
                         if let Some(value) = metadata_value {
                             if let Some(s) = value.value.as_ref().and_then(|v| match v {
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Some(s.as_str()),
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                                    Some(s.as_str())
+                                }
                                 _ => None,
                             }) {
                                 string_builder.append_value(s);
@@ -934,10 +974,13 @@ impl NovaEngine {
                         }
                     }
                     arrow_schema::DataType::Int64 => {
-                        let int_builder = builder.as_any_mut().downcast_mut::<Int64Builder>().unwrap();
+                        let int_builder =
+                            builder.as_any_mut().downcast_mut::<Int64Builder>().unwrap();
                         if let Some(value) = metadata_value {
                             if let Some(i) = value.value.as_ref().and_then(|v| match v {
-                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => Some(*i),
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                    Some(*i)
+                                }
                                 _ => None,
                             }) {
                                 int_builder.append_value(i);
@@ -949,10 +992,15 @@ impl NovaEngine {
                         }
                     }
                     arrow_schema::DataType::Float64 => {
-                        let float_builder = builder.as_any_mut().downcast_mut::<Float64Builder>().unwrap();
+                        let float_builder = builder
+                            .as_any_mut()
+                            .downcast_mut::<Float64Builder>()
+                            .unwrap();
                         if let Some(value) = metadata_value {
                             if let Some(f) = value.value.as_ref().and_then(|v| match v {
-                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f),
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                                    Some(*f)
+                                }
                                 _ => None,
                             }) {
                                 float_builder.append_value(f);
@@ -964,10 +1012,15 @@ impl NovaEngine {
                         }
                     }
                     arrow_schema::DataType::Boolean => {
-                        let bool_builder = builder.as_any_mut().downcast_mut::<BooleanBuilder>().unwrap();
+                        let bool_builder = builder
+                            .as_any_mut()
+                            .downcast_mut::<BooleanBuilder>()
+                            .unwrap();
                         if let Some(value) = metadata_value {
                             if let Some(b) = value.value.as_ref().and_then(|v| match v {
-                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Some(*b),
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                                    Some(*b)
+                                }
                                 _ => None,
                             }) {
                                 bool_builder.append_value(b);
@@ -980,7 +1033,10 @@ impl NovaEngine {
                     }
                     _ => {
                         // Default to string representation
-                        let string_builder = builder.as_any_mut().downcast_mut::<StringBuilder>().unwrap();
+                        let string_builder = builder
+                            .as_any_mut()
+                            .downcast_mut::<StringBuilder>()
+                            .unwrap();
                         string_builder.append_null();
                     }
                 }
@@ -1044,8 +1100,11 @@ impl NovaEngine {
 
     /// Determine filesystem URL from path
     fn determine_fs_url(&self, path: &str) -> String {
-        if path.starts_with("s3://") || path.starts_with("gs://")
-            || path.starts_with("azure://") || path.starts_with("wasbs://") {
+        if path.starts_with("s3://")
+            || path.starts_with("gs://")
+            || path.starts_with("azure://")
+            || path.starts_with("wasbs://")
+        {
             path.to_string()
         } else {
             "file://".to_string()
@@ -1055,16 +1114,22 @@ impl NovaEngine {
     /// Check if we should use persistent quantization for this operation
     /// Returns true for collection-based operations with quantization enabled
     pub fn should_use_persistent_quantization(&self, params: &FlushParameters) -> bool {
-        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(params, "NOVA")
+        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(
+            params, "NOVA",
+        )
     }
 
     /// Get the storage quantization engine for persistent collection operations
-    pub fn get_storage_quantization_engine(&self) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
+    pub fn get_storage_quantization_engine(
+        &self,
+    ) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
         &self.storage_quantization_engine
     }
 
     /// Get the fallback quantization engine for stateless operations
-    pub fn get_fallback_quantization_engine(&self) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+    pub fn get_fallback_quantization_engine(
+        &self,
+    ) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
         &self.fallback_quantization_engine
     }
 
@@ -1141,13 +1206,20 @@ impl NovaEngine {
         };
 
         let internal_results = self.search_vectors_unified(&ctx).await?;
-        debug!("search_vectors_unified returned {} results", internal_results.len());
+        debug!(
+            "search_vectors_unified returned {} results",
+            internal_results.len()
+        );
 
         // Convert OptimizedSearchRecord to SearchVectorRecord and wrap in SearchResult
         let search_records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = internal_results
             .into_iter()
             .map(|r| {
-                let vector = r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default();
+                let vector = r
+                    .vector
+                    .as_ref()
+                    .map(|arc| (**arc).clone())
+                    .unwrap_or_default();
                 crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id,
                     score: r.score as f64,
@@ -1156,22 +1228,38 @@ impl NovaEngine {
                     version: None,
                     similarity: r.similarity,
                     timestamp: None,
-                    source: r.source.and_then(|sc| {
-                        match sc.data {
-                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => Some(text),
-                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => Some(url),
-                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => Some("[Binary Content]".to_string()),
-                            None => Some("[Empty Content]".to_string()),
-                        }
+                    source: r.source.and_then(|sc| match sc.data {
+                        Some(crate::proto::proximadb_v1::source_content::Data::TextContent(
+                            text,
+                        )) => Some(text),
+                        Some(
+                            crate::proto::proximadb_v1::source_content::Data::ExternalReference(
+                                url,
+                            ),
+                        ) => Some(url),
+                        Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(
+                            _,
+                        )) => Some("[Binary Content]".to_string()),
+                        None => Some("[Empty Content]".to_string()),
                     }),
-                    expanded_context: r.expanded_context.iter().map(|sc| {
-                        match &sc.data {
-                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => url.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => "[Binary Content]".to_string(),
+                    expanded_context: r
+                        .expanded_context
+                        .iter()
+                        .map(|sc| match &sc.data {
+                            Some(
+                                crate::proto::proximadb_v1::source_content::Data::TextContent(text),
+                            ) => text.clone(),
+                            Some(
+                                crate::proto::proximadb_v1::source_content::Data::ExternalReference(
+                                    url,
+                                ),
+                            ) => url.clone(),
+                            Some(
+                                crate::proto::proximadb_v1::source_content::Data::BinaryContent(_),
+                            ) => "[Binary Content]".to_string(),
                             None => "[Empty Content]".to_string(),
-                        }
-                    }).collect(),
+                        })
+                        .collect(),
                     semantic_similarity: None,
                     quantization_info: None,
                     engine_stats: std::collections::HashMap::new(),
@@ -1198,7 +1286,7 @@ impl UnifiedStorageEngine for NovaEngine {
     }
 
     fn engine_version(&self) -> &'static str {
-        "1.0.0"  // Release 1 version
+        "1.0.0" // Release 1 version
     }
 
     fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
@@ -1217,12 +1305,10 @@ impl UnifiedStorageEngine for NovaEngine {
         self.flush_ops.flush(params).await
     }
 
-
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         // Delegate to modularized compaction operations
         self.compaction_ops.compact(params).await
     }
-
 
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
@@ -1269,7 +1355,9 @@ impl UnifiedStorageEngine for NovaEngine {
     ) -> Result<Option<VectorRecord>> {
         // Access global unified cache through CrossCacheOrchestrator
         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
-        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+        if let Some(orchestrator) =
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+        {
             // Try to get from vector cache first
             if let Some(vector_cache) = orchestrator.get_vector_cache() {
                 if let Some(cached_vector) = vector_cache.get(&cache_key).await {

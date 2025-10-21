@@ -99,7 +99,6 @@ pub mod artus_bloom;
 pub mod rowgroup_manager;
 pub mod smart_rowgroup_sizing;
 
-
 // Re-export commonly used types from common module
 pub use common::{
     BloomFilterMetadata,
@@ -113,7 +112,6 @@ pub use common::{
     ConfidenceAssessment,
     ConfidenceSignals,
     CorrectionStrategy,
-    ProximaScheme,
     FieldDescriptor,
     IoStrategy,
     K2Matrix,
@@ -124,6 +122,7 @@ pub use common::{
     P2Matrix,
     Predicate,
     PredicateOp,
+    ProximaScheme,
     RaptorFileMetadata,
     ReadPattern,
     RowGroup,
@@ -145,8 +144,8 @@ pub use writer::RaptorWriter; // Use consolidated compactor
 // IvfManager removed - Matrix Trinity handles clustering via centroids
 pub use adaptive_pxk::{AdaptivePxKStorage, BoundaryInfo, SelectionReason, VectorSelection};
 pub use common::{
-    ColumnarBlock, ProximaEncodedData, MetadataColumns, QuantizationParams,
-    QuantizedColumnarData, TransposedVectors,
+    ColumnarBlock, MetadataColumns, ProximaEncodedData, QuantizationParams, QuantizedColumnarData,
+    TransposedVectors,
 };
 pub use rowgroup_manager::RowGroups;
 pub use smart_rowgroup_sizing::{

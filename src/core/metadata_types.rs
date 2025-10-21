@@ -276,9 +276,7 @@ impl From<&MetadataValue> for crate::proto::proximadb_v1::SqlValue {
             MetadataValue::Null => Some(Value::NullValue(prost_types::NullValue::default().into())),
         };
 
-        crate::proto::proximadb_v1::SqlValue {
-            value: proto_value,
-        }
+        crate::proto::proximadb_v1::SqlValue { value: proto_value }
     }
 }
 

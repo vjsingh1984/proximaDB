@@ -25,9 +25,12 @@ fn create_test_vector(id: &str) -> VectorRecord {
         vector: vec![0.1; 128],
         metadata: {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("atomic_test".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue("true".to_string()))
-            });
+            metadata.insert(
+                "atomic_test".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue("true".to_string())),
+                },
+            );
             metadata
         },
         timestamp: Some(chrono::Utc::now().timestamp()),

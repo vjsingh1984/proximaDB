@@ -36,7 +36,7 @@ pub struct DomainSearchResult {
 // Note: Using string representations instead of proto enums for JSON serialization
 // Proto enums don't derive Serialize/Deserialize by default
 pub type DistanceMetric = String;
-pub type IndexingAlgorithm = String;  
+pub type IndexingAlgorithm = String;
 pub type StorageEngine = String;
 /// Compression algorithms for data storage and transmission
 #[derive(Debug, Clone)]
@@ -462,10 +462,7 @@ impl CollectionResponse {
     }
 
     /// Set the multiple collections result
-    pub fn with_collections(
-        mut self,
-        collections: Vec<Collection>,
-    ) -> Self {
+    pub fn with_collections(mut self, collections: Vec<Collection>) -> Self {
         self.affected_count = collections.len() as i64;
         self.collections = collections;
         self

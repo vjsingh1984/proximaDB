@@ -15,21 +15,21 @@
  */
 
 //! Unified Authentication and Authorization Framework for ProximaDB
-//! 
+//!
 //! This module provides enterprise-grade authentication and authorization
 //! capabilities including API keys, JWT tokens, and role-based access control.
 
 pub mod config;
 pub mod jwt;
-pub mod rbac;
 pub mod middleware;
 pub mod providers;
+pub mod rbac;
 
 pub use config::*;
 pub use jwt::*;
-pub use rbac::*;
 pub use middleware::*;
 pub use providers::*;
+pub use rbac::*;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -68,29 +68,29 @@ pub enum Permission {
     ListCollections,
     ReadCollectionMetadata,
     UpdateCollectionMetadata,
-    
-    // Vector permissions  
+
+    // Vector permissions
     InsertVectors,
     DeleteVectors,
     SearchVectors,
     UpdateVectors,
     ReadVectors,
-    
+
     // Graph permissions
     CreateGraphRelations,
     DeleteGraphRelations,
     TraverseGraph,
     ReadGraphRelations,
-    
+
     // Query permissions
     ExecuteSqlQueries,
     ExecuteSksFunctions,
-    
+
     // System permissions
     ViewSystemMetrics,
     ViewSystemHealth,
     ConfigureSystem,
-    
+
     // Administrative permissions
     ManageUsers,
     ManageRoles,
@@ -103,22 +103,22 @@ pub enum Permission {
 pub enum AuthError {
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
-    
+
     #[error("Authorization denied: missing permission {0:?}")]
     AuthorizationDenied(Permission),
-    
+
     #[error("Invalid token: {0}")]
     InvalidToken(String),
-    
+
     #[error("Token expired")]
     TokenExpired,
-    
+
     #[error("Invalid credentials")]
     InvalidCredentials,
-    
+
     #[error("User not found: {0}")]
     UserNotFound(String),
-    
+
     #[error("Role not found: {0}")]
     RoleNotFound(String),
 }
@@ -137,7 +137,7 @@ impl AuthService {
         let rbac = RbacService::new();
         let jwt_service = JwtService::new(config.jwt.clone())?;
         let providers = HashMap::new();
-        
+
         Ok(Self {
             config,
             rbac,
@@ -145,7 +145,7 @@ impl AuthService {
             providers,
         })
     }
-    
+
     /// Authenticate a request and return user information
     pub async fn authenticate(&self, auth_header: &str) -> Result<AuthResult, AuthError> {
         if let Some(token) = auth_header.strip_prefix("Bearer ") {
@@ -159,44 +159,53 @@ impl AuthService {
             self.authenticate_api_key(auth_header).await
         }
     }
-    
+
     /// Check if user has permission for an operation
-    pub fn authorize(&self, auth_result: &AuthResult, permission: Permission) -> Result<(), AuthError> {
+    pub fn authorize(
+        &self,
+        auth_result: &AuthResult,
+        permission: Permission,
+    ) -> Result<(), AuthError> {
         if auth_result.permissions.contains(&permission) {
             Ok(())
         } else {
             Err(AuthError::AuthorizationDenied(permission))
         }
     }
-    
+
     /// Authenticate using JWT token
     async fn authenticate_jwt(&self, token: &str) -> Result<AuthResult, AuthError> {
         let claims = self.jwt_service.verify_token(token).await?;
-        
+
         // Get user roles and permissions
         let roles = self.rbac.get_user_roles(&claims.sub)?;
         let permissions = self.rbac.get_permissions_for_roles(&roles)?;
-        
+
         Ok(AuthResult {
             user_id: claims.sub,
             tenant_id: claims.tenant_id,
             roles,
             permissions,
             auth_method: AuthMethod::JwtToken,
-            token_expires_at: Some(chrono::DateTime::from_timestamp(claims.exp, 0)
-                .unwrap_or_default()
-                .into()),
+            token_expires_at: Some(
+                chrono::DateTime::from_timestamp(claims.exp, 0)
+                    .unwrap_or_default()
+                    .into(),
+            ),
         })
     }
-    
+
     /// Authenticate using API key
     async fn authenticate_api_key(&self, api_key: &str) -> Result<AuthResult, AuthError> {
-        let api_key_info = self.config.api_keys.get(api_key)
+        let api_key_info = self
+            .config
+            .api_keys
+            .get(api_key)
             .ok_or_else(|| AuthError::InvalidCredentials)?;
-            
+
         let roles = self.rbac.get_user_roles(&api_key_info.user_id)?;
         let permissions = self.rbac.get_permissions_for_roles(&roles)?;
-        
+
         Ok(AuthResult {
             user_id: api_key_info.user_id.clone(),
             tenant_id: api_key_info.tenant_id.clone(),
@@ -218,7 +227,7 @@ pub trait AuthProvider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_auth_service_creation() {
         let mut config = AuthConfig::default();
@@ -227,7 +236,7 @@ mod tests {
         let auth_service = AuthService::new(config);
         assert!(auth_service.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_permission_check() {
         let auth_result = AuthResult {
@@ -238,16 +247,24 @@ mod tests {
             auth_method: AuthMethod::ApiKey,
             token_expires_at: None,
         };
-        
+
         let mut config = AuthConfig::default();
         // Provide a test JWT secret to make service creation succeed
         config.jwt.secret = Some("test_secret_key_for_jwt_signing_in_tests".to_string());
         let auth_service = AuthService::new(config).unwrap();
-        
+
         // Should succeed for granted permission
-        assert!(auth_service.authorize(&auth_result, Permission::ReadVectors).is_ok());
-        
+        assert!(
+            auth_service
+                .authorize(&auth_result, Permission::ReadVectors)
+                .is_ok()
+        );
+
         // Should fail for denied permission
-        assert!(auth_service.authorize(&auth_result, Permission::DeleteVectors).is_err());
+        assert!(
+            auth_service
+                .authorize(&auth_result, Permission::DeleteVectors)
+                .is_err()
+        );
     }
 }

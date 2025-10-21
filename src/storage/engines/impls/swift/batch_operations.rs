@@ -232,7 +232,8 @@ async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<Pro
         enable_metadata_compression: true,
         compression_threshold_bytes: 1024,
         dictionary_compression: false,
-        vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+        vector_layout:
+            crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
         metadata_algorithm: None, // Use main algorithm for metadata
     };
 
@@ -400,7 +401,8 @@ mod tests {
             encoding_metadata: None,
             block_id: 0,
             encoded_vectors: None,
-            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             records: vec![VectorRecord {
                 id: "test".to_string(),
                 vector: vec![1.0; 768],

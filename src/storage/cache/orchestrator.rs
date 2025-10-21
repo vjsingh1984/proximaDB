@@ -19,6 +19,7 @@
 //! 3. **Predictive Loading**: Learn correlations to prefetch related data
 //! 4. **Dynamic Adaptation**: Continuously adjust to changing workloads
 
+use crate::utils::hash::XxHash64;
 use anyhow::Result;
 use dashmap::DashMap;
 use std::collections::{HashMap, VecDeque};
@@ -27,13 +28,14 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, info, warn};
-use crate::utils::hash::XxHash64;
 
 use crate::metrics::collectors::AccessPatternMetricsCollector;
-use crate::storage::cache::eviction::{CacheEvictor, CacheEvictionConfig, EvictionPolicy};
+use crate::storage::cache::eviction::{CacheEvictionConfig, CacheEvictor, EvictionPolicy};
 use crate::storage::cache::metrics::CacheMetrics;
 use crate::storage::cache::warming::{CacheWarmer, CacheWarmingConfig, WarmingStrategy};
-use crate::storage::cache::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache};
+use crate::storage::cache::{
+    BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache,
+};
 
 /// String interner for metadata deduplication
 ///
@@ -66,7 +68,9 @@ struct InternerStats {
 impl StringInterner {
     pub fn new() -> Self {
         Self {
-            strings: Arc::new(DashMap::with_hasher(BuildHasherDefault::<XxHash64>::default())),
+            strings: Arc::new(DashMap::with_hasher(
+                BuildHasherDefault::<XxHash64>::default(),
+            )),
             stats: Arc::new(RwLock::new(InternerStats::default())),
         }
     }
@@ -238,7 +242,8 @@ pub enum CacheOperation {
     Remove(String),
 }
 
-static GLOBAL_ORCHESTRATOR: std::sync::OnceLock<Arc<CrossCacheOrchestrator>> = std::sync::OnceLock::new();
+static GLOBAL_ORCHESTRATOR: std::sync::OnceLock<Arc<CrossCacheOrchestrator>> =
+    std::sync::OnceLock::new();
 
 impl CrossCacheOrchestrator {
     /// Register a global orchestrator reference for cross-cutting cache access tracking
@@ -510,7 +515,8 @@ impl AccessPatternTracker {
 
     /// Get the most popular keys based on access count
     pub fn get_popular_keys(&self, top_count: usize, min_access_count: u64) -> Vec<(String, u64)> {
-        let mut key_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        let mut key_counts: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
 
         // Count accesses for each key from correlation matrix (which tracks all accesses)
         for entry in self.correlation_matrix.iter() {
@@ -537,17 +543,21 @@ impl AccessPatternTracker {
     pub async fn get_summary_stats(&self) -> serde_json::Value {
         let history = self.access_history.lock().await;
         let correlation_count = self.correlation_matrix.len();
-        
+
         // Calculate basic statistics
         let total_accesses = history.len();
-        let unique_keys = history.iter().map(|r| &r.key).collect::<std::collections::HashSet<_>>().len();
-        
+        let unique_keys = history
+            .iter()
+            .map(|r| &r.key)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+
         // Calculate cache type distribution
         let mut cache_type_counts = std::collections::HashMap::new();
         for record in history.iter() {
             *cache_type_counts.entry(&record.cache_type).or_insert(0) += 1;
         }
-        
+
         serde_json::json!({
             "total_accesses": total_accesses,
             "unique_keys": unique_keys,
@@ -664,14 +674,20 @@ impl DynamicMemoryAllocator {
     /// Get current allocations for all cache types
     pub async fn get_allocations(&self) -> serde_json::Value {
         let mut allocations = serde_json::Map::new();
-        
+
         for entry in self.allocations.iter() {
             let cache_type_name = format!("{:?}", entry.key());
-            allocations.insert(cache_type_name, serde_json::Value::Number((*entry.value()).into()));
+            allocations.insert(
+                cache_type_name,
+                serde_json::Value::Number((*entry.value()).into()),
+            );
         }
-        
-        allocations.insert("total_budget".to_string(), serde_json::Value::Number(self.total_budget.into()));
-        
+
+        allocations.insert(
+            "total_budget".to_string(),
+            serde_json::Value::Number(self.total_budget.into()),
+        );
+
         serde_json::Value::Object(allocations)
     }
 }
@@ -920,7 +936,10 @@ impl CrossCacheOrchestrator {
         cache_type: CacheType,
         provider: Arc<dyn CacheStatsProvider + Send + Sync>,
     ) {
-        self.cache_providers.entry(cache_type).or_default().push(provider);
+        self.cache_providers
+            .entry(cache_type)
+            .or_default()
+            .push(provider);
     }
 
     /// Register vector data cache
@@ -1196,14 +1215,17 @@ impl CrossCacheOrchestrator {
     }
 
     /// Execute batch cache operations for improved performance
-    pub async fn execute_batch(&self, batch: BatchCacheOperation) -> Result<Vec<Option<Vec<u8>>>, anyhow::Error> {
+    pub async fn execute_batch(
+        &self,
+        batch: BatchCacheOperation,
+    ) -> Result<Vec<Option<Vec<u8>>>, anyhow::Error> {
         let mut results = Vec::with_capacity(batch.operations.len());
-        
+
         // Group operations by type for optimization
         let mut gets = Vec::new();
         let mut puts = Vec::new();
         let mut removes = Vec::new();
-        
+
         for (idx, op) in batch.operations.iter().enumerate() {
             match op {
                 CacheOperation::Get(key) => gets.push((idx, key)),
@@ -1211,29 +1233,36 @@ impl CrossCacheOrchestrator {
                 CacheOperation::Remove(key) => removes.push((idx, key)),
             }
         }
-        
+
         // Initialize results vector
         results.resize(batch.operations.len(), None);
-        
+
         // Execute gets in batch
         for (idx, key) in gets {
             if let Ok(value) = self.get(&batch.cache_type, key).await {
                 results[idx] = value;
             }
         }
-        
+
         // Execute puts in batch
         for (idx, key, value, ttl) in puts {
-            let _ = self.put(batch.cache_type.clone(), key.clone(), value.clone(), ttl.clone()).await;
+            let _ = self
+                .put(
+                    batch.cache_type.clone(),
+                    key.clone(),
+                    value.clone(),
+                    ttl.clone(),
+                )
+                .await;
             results[idx] = Some(Vec::new()); // Indicate success
         }
-        
-        // Execute removes in batch  
+
+        // Execute removes in batch
         for (idx, key) in removes {
             let _ = self.remove(&batch.cache_type, key).await;
             results[idx] = Some(Vec::new()); // Indicate success
         }
-        
+
         Ok(results)
     }
 
@@ -1245,7 +1274,8 @@ impl CrossCacheOrchestrator {
     /// Get value from cache by type and key
     pub async fn get(&self, cache_type: &CacheType, key: &str) -> Result<Option<Vec<u8>>> {
         // Track access for pattern learning
-        self.pattern_tracker.track_access_async(key.to_string(), cache_type.clone());
+        self.pattern_tracker
+            .track_access_async(key.to_string(), cache_type.clone());
 
         // Route to appropriate cache based on type
         match cache_type {
@@ -1256,7 +1286,7 @@ impl CrossCacheOrchestrator {
                 } else {
                     Ok(None)
                 }
-            },
+            }
             CacheType::FilterBitmap => {
                 if let Some(_cache) = &self.filter_cache {
                     // TODO: Implement get method for BitmapFilterCache
@@ -1264,7 +1294,7 @@ impl CrossCacheOrchestrator {
                 } else {
                     Ok(None)
                 }
-            },
+            }
             CacheType::IndexStructure => {
                 if let Some(_cache) = &self.index_cache {
                     // TODO: Implement get method for IndexNodeCache
@@ -1272,7 +1302,7 @@ impl CrossCacheOrchestrator {
                 } else {
                     Ok(None)
                 }
-            },
+            }
             CacheType::Metadata => {
                 if let Some(cache) = &self.metadata_cache {
                     // Convert Option<Value> to Result<Option<Vec<u8>>, Error>
@@ -1280,13 +1310,13 @@ impl CrossCacheOrchestrator {
                         Some(value) => {
                             // TODO: Convert Value to Vec<u8> properly
                             Ok(Some(Vec::new()))
-                        },
+                        }
                         None => Ok(None),
                     }
                 } else {
                     Ok(None)
                 }
-            },
+            }
             _ => {
                 // For other cache types, return None for now
                 // Could be extended to support additional cache types
@@ -1296,9 +1326,16 @@ impl CrossCacheOrchestrator {
     }
 
     /// Put value into cache by type and key
-    pub async fn put(&self, cache_type: CacheType, key: String, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
+    pub async fn put(
+        &self,
+        cache_type: CacheType,
+        key: String,
+        value: Vec<u8>,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
         // Track access for pattern learning
-        self.pattern_tracker.track_access_async(key.clone(), cache_type.clone());
+        self.pattern_tracker
+            .track_access_async(key.clone(), cache_type.clone());
 
         // Route to appropriate cache based on type
         match cache_type {
@@ -1309,7 +1346,7 @@ impl CrossCacheOrchestrator {
                 } else {
                     Ok(())
                 }
-            },
+            }
             CacheType::FilterBitmap => {
                 if let Some(_cache) = &self.filter_cache {
                     // TODO: Implement put method for BitmapFilterCache
@@ -1317,7 +1354,7 @@ impl CrossCacheOrchestrator {
                 } else {
                     Ok(())
                 }
-            },
+            }
             CacheType::IndexStructure => {
                 if let Some(_cache) = &self.index_cache {
                     // TODO: Implement put method for IndexNodeCache
@@ -1325,16 +1362,17 @@ impl CrossCacheOrchestrator {
                 } else {
                     Ok(())
                 }
-            },
+            }
             CacheType::Metadata => {
                 if let Some(cache) = &self.metadata_cache {
                     // TODO: Fix method signature - put might only take key and value
-                    let json_value = serde_json::from_slice(&value).unwrap_or(serde_json::Value::Null);
+                    let json_value =
+                        serde_json::from_slice(&value).unwrap_or(serde_json::Value::Null);
                     cache.put(&key, json_value).await
                 } else {
                     Ok(())
                 }
-            },
+            }
             _ => {
                 // For other cache types, do nothing for now
                 // Could be extended to support additional cache types
@@ -1351,22 +1389,22 @@ impl CrossCacheOrchestrator {
                 if let Some(cache) = &self.query_cache {
                     cache.invalidate(key).await;
                 }
-            },
+            }
             CacheType::FilterBitmap => {
                 if let Some(cache) = &self.filter_cache {
                     cache.invalidate(key).await;
                 }
-            },
+            }
             CacheType::IndexStructure => {
                 if let Some(cache) = &self.index_cache {
                     cache.invalidate(key).await;
                 }
-            },
+            }
             CacheType::Metadata => {
                 if let Some(cache) = &self.metadata_cache {
                     cache.invalidate(key).await;
                 }
-            },
+            }
             _ => {
                 // For other cache types, do nothing for now
             }
@@ -1380,10 +1418,13 @@ impl CrossCacheOrchestrator {
         let mut metrics = serde_json::Map::new();
 
         // Add orchestrator-level metrics
-        metrics.insert("orchestrator_metrics".to_string(), serde_json::json!({
-            "memory_allocations": self.memory_allocator.get_allocations().await,
-            "access_patterns": self.pattern_tracker.get_summary_stats().await,
-        }));
+        metrics.insert(
+            "orchestrator_metrics".to_string(),
+            serde_json::json!({
+                "memory_allocations": self.memory_allocator.get_allocations().await,
+                "access_patterns": self.pattern_tracker.get_summary_stats().await,
+            }),
+        );
 
         // Add cache-specific metrics
         if let Some(cache) = &self.query_cache {
@@ -1528,7 +1569,10 @@ impl CrossCacheOrchestrator {
         });
 
         self.cache_warmer = Some(warmer);
-        tracing::info!("Cache warming service started with {} strategies", warming_config.strategies.len());
+        tracing::info!(
+            "Cache warming service started with {} strategies",
+            warming_config.strategies.len()
+        );
     }
 
     /// Trigger immediate cache eviction if capacity exceeded
@@ -1539,8 +1583,10 @@ impl CrossCacheOrchestrator {
             let memory_budget = self.memory_allocator.total_budget;
 
             if current_usage > (memory_budget * 90 / 100) {
-                tracing::info!("Memory usage at {}%, triggering cache eviction",
-                    (current_usage * 100) / memory_budget);
+                tracing::info!(
+                    "Memory usage at {}%, triggering cache eviction",
+                    (current_usage * 100) / memory_budget
+                );
                 evictor.trigger_immediate_eviction().await?;
             }
         }
@@ -1622,14 +1668,14 @@ mod tests {
     #[tokio::test]
     async fn test_batch_cache_operations() {
         let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
-        
+
         // Create batch operation
         let batch = CrossCacheOrchestrator::create_batch(CacheType::VectorData)
             .put("key1".to_string(), b"value1".to_vec(), None)
             .put("key2".to_string(), b"value2".to_vec(), None)
             .get("key1".to_string())
             .build();
-        
+
         // Execute batch
         let results = orchestrator.execute_batch(batch).await.unwrap();
         assert_eq!(results.len(), 3); // 2 puts + 1 get
@@ -1654,21 +1700,21 @@ mod tests {
             CacheType::DistanceTable,
             CacheType::MetricsSnapshot,
         ];
-        
+
         assert_eq!(cache_types.len(), 14); // Verify we have all expected cache types
     }
 
     #[tokio::test]
     async fn test_access_pattern_tracking() {
         let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
-        
+
         // Track access patterns
         orchestrator.track_access_async("test_key".to_string(), CacheType::VectorData);
         orchestrator.track_access_async("related_key".to_string(), CacheType::VectorData);
-        
+
         // Allow some time for async processing
         sleep(Duration::from_millis(150)).await;
-        
+
         // Pattern tracking should be working (internal implementation)
         assert!(true); // Basic validation that the function executes without panic
     }
@@ -1676,12 +1722,12 @@ mod tests {
     #[tokio::test]
     async fn test_memory_allocation() {
         let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
-        
+
         let initial_allocation = orchestrator
             .memory_allocator()
             .get_allocation(CacheType::VectorData)
             .await;
-        
+
         // Should have some initial allocation
         assert!(initial_allocation > 0);
     }
@@ -1694,7 +1740,7 @@ mod tests {
             .get("test_key".to_string())
             .remove("old_key".to_string())
             .build();
-        
+
         assert_eq!(batch.operations.len(), 3);
         assert_eq!(batch.cache_type, CacheType::QueryResult);
     }
@@ -1703,7 +1749,7 @@ mod tests {
     async fn test_global_orchestrator_registration() {
         let orchestrator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024));
         CrossCacheOrchestrator::register_global(orchestrator.clone());
-        
+
         let global_ref = CrossCacheOrchestrator::global();
         assert!(global_ref.is_some());
     }
@@ -1713,18 +1759,18 @@ mod tests {
         let get_op = CacheOperation::Get("test".to_string());
         let put_op = CacheOperation::Put("test".to_string(), vec![1, 2, 3], None);
         let remove_op = CacheOperation::Remove("test".to_string());
-        
+
         // Verify operations can be created and are properly typed
         match get_op {
             CacheOperation::Get(_) => assert!(true),
             _ => assert!(false, "Should be Get operation"),
         }
-        
+
         match put_op {
             CacheOperation::Put(_, _, _) => assert!(true),
             _ => assert!(false, "Should be Put operation"),
         }
-        
+
         match remove_op {
             CacheOperation::Remove(_) => assert!(true),
             _ => assert!(false, "Should be Remove operation"),
@@ -1734,10 +1780,12 @@ mod tests {
     #[tokio::test]
     async fn test_predictive_prefetch() {
         let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
-        
+
         // Test prefetch request
-        orchestrator.request_prefetch("test_key", CacheType::VectorData).await;
-        
+        orchestrator
+            .request_prefetch("test_key", CacheType::VectorData)
+            .await;
+
         // Should not panic and execute successfully
         assert!(true);
     }
@@ -1745,13 +1793,13 @@ mod tests {
     #[tokio::test]
     async fn test_memory_rebalancing() {
         let allocator = DynamicMemoryAllocator::new(1024 * 1024);
-        
+
         // Test memory rebalancing
         let allocations = allocator.rebalance().await;
-        
+
         // Should return some allocations
         assert!(!allocations.is_empty());
-        
+
         // Total allocations should not exceed budget
         let total: usize = allocations.values().sum();
         assert!(total <= 1024 * 1024);

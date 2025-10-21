@@ -46,12 +46,12 @@ pub struct WalFileInfo {
 
 impl WriteAheadLogDiskManager {
     /// Create a new disk manager
-    pub fn new(
-        filesystem_factory: Arc<FilesystemFactory>,
-        wal_base_url: impl AsRef<str>,
-    ) -> Self {
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>, wal_base_url: impl AsRef<str>) -> Self {
         let wal_base_url = wal_base_url.as_ref().to_string();
-        info!("🎯 Creating WriteAheadLogDiskManager with base URL: {}", wal_base_url);
+        info!(
+            "🎯 Creating WriteAheadLogDiskManager with base URL: {}",
+            wal_base_url
+        );
 
         Self {
             filesystem_factory,
@@ -68,8 +68,7 @@ impl WriteAheadLogDiskManager {
             base.to_string()
         } else {
             // For file:// URIs, usually base already has file:///path or file://./path
-            base.trim_end_matches('/')
-                .to_string()
+            base.trim_end_matches('/').to_string()
         };
 
         for seg in segments {
@@ -120,7 +119,11 @@ impl WriteAheadLogDiskManager {
     /// Build manifest URL: .../{collection_id}/wal/manifest.log
     pub fn manifest_url(&self, collection_id: &str) -> String {
         // Use collection_id directly - collection IDs are already short base62 UUIDs
-        Self::join_url(&self.wal_base_url, &[collection_id, "wal", "manifest.log"], false)
+        Self::join_url(
+            &self.wal_base_url,
+            &[collection_id, "wal", "manifest.log"],
+            false,
+        )
     }
 
     /// Write a serialized batch to disk
@@ -185,11 +188,7 @@ impl WriteAheadLogDiskManager {
 
         // Register in global manifest
         let checksum = Crc32::checksum(data);
-        let file_name = file_url
-            .split('/')
-            .last()
-            .unwrap_or("")
-            .to_string();
+        let file_name = file_url.split('/').last().unwrap_or("").to_string();
 
         use crate::storage::persistence::write_ahead_log::manifest;
         if let Some(manifest_service) = manifest::get_service() {
@@ -199,15 +198,15 @@ impl WriteAheadLogDiskManager {
                 SerializationFormat::Avro => "avro",
             };
             let entry = manifest::GlobalManifestEntry::new(
-                0,  // LSN will be auto-allocated
-                collection_id.to_string(),  // collection_id
-                batch_id,  // batch_id (pass reference)
-                file_name,  // file_name
-                data.len() as u64,  // size_bytes
-                checksum,  // checksum_crc32
-                SerializationFormat::from_str(format_str).unwrap_or(SerializationFormat::Bincode),  // format enum
-                0,  // vector_count (unknown at this point)
-                self.wal_base_url.clone(),  // storage_url
+                0,                         // LSN will be auto-allocated
+                collection_id.to_string(), // collection_id
+                batch_id,                  // batch_id (pass reference)
+                file_name,                 // file_name
+                data.len() as u64,         // size_bytes
+                checksum,                  // checksum_crc32
+                SerializationFormat::from_str(format_str).unwrap_or(SerializationFormat::Bincode), // format enum
+                0,                         // vector_count (unknown at this point)
+                self.wal_base_url.clone(), // storage_url
             );
             // Async append (non-blocking, high performance)
             manifest_service.append_async(entry).await?;
@@ -261,10 +260,7 @@ impl WriteAheadLogDiskManager {
     }
 
     /// List all WAL files for a collection
-    pub async fn list_collection_files(
-        &self,
-        collection_id: &str,
-    ) -> Result<Vec<WalFileInfo>> {
+    pub async fn list_collection_files(&self, collection_id: &str) -> Result<Vec<WalFileInfo>> {
         let dir_url = self.collection_wal_url(collection_id);
 
         debug!(
@@ -299,12 +295,15 @@ impl WriteAheadLogDiskManager {
         // Backward-compat: if none found, fall back to legacy write_buffer path
         if wal_files.is_empty() {
             // Backward-compat path: {base}/{collection_id}/write_buffer/
-            let legacy_url = Self::join_url(&self.wal_base_url, &[collection_id, "write_buffer"], true);
+            let legacy_url =
+                Self::join_url(&self.wal_base_url, &[collection_id, "write_buffer"], true);
             if filesystem.exists(&legacy_url).await.unwrap_or(false) {
                 if let Ok(legacy_fs) = self.filesystem_factory.get_filesystem(&legacy_url) {
                     if let Ok(entries) = legacy_fs.list(&legacy_url).await {
                         for entry in entries {
-                            if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
+                            if let Some(file_info) =
+                                self.parse_wal_filename(&entry.url, collection_id)
+                            {
                                 wal_files.push(file_info);
                             }
                         }
@@ -313,7 +312,11 @@ impl WriteAheadLogDiskManager {
             }
         }
 
-        debug!("Found {} WAL files for collection {}", wal_files.len(), collection_id);
+        debug!(
+            "Found {} WAL files for collection {}",
+            wal_files.len(),
+            collection_id
+        );
         Ok(wal_files)
     }
 
@@ -440,7 +443,8 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let manager = WriteAheadLogDiskManager::new(filesystem_factory, temp_dir.path().to_str().unwrap());
+        let manager =
+            WriteAheadLogDiskManager::new(filesystem_factory, temp_dir.path().to_str().unwrap());
 
         (manager, temp_dir)
     }

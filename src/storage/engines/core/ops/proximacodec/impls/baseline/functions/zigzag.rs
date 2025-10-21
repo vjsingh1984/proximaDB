@@ -25,10 +25,7 @@ fn encode_zigzag_i32_wire(wire_values: &[i32], bits: u8) -> Result<Vec<u8>> {
     result.push(bits);
 
     // Apply zigzag encoding
-    let zigzag_values: Vec<u32> = wire_values
-        .iter()
-        .map(|&v| zigzag_encode_i32(v))
-        .collect();
+    let zigzag_values: Vec<u32> = wire_values.iter().map(|&v| zigzag_encode_i32(v)).collect();
 
     // Bit-pack the zigzag encoded values
     let packed = bitpack_u32(&zigzag_values, bits)?;
@@ -47,10 +44,7 @@ fn encode_zigzag_i64_wire(wire_values: &[i64], bits: u8) -> Result<Vec<u8>> {
     result.push(bits);
 
     // Apply zigzag encoding
-    let zigzag_values: Vec<u64> = wire_values
-        .iter()
-        .map(|&v| zigzag_encode_i64(v))
-        .collect();
+    let zigzag_values: Vec<u64> = wire_values.iter().map(|&v| zigzag_encode_i64(v)).collect();
 
     // Bit-pack the zigzag encoded values
     let packed = bitpack_u64(&zigzag_values, bits)?;
@@ -450,15 +444,7 @@ mod tests {
     #[test]
     fn test_zigzag_large_range() {
         // Values with large positive and negative values
-        let values = vec![
-            i32::MIN,
-            i32::MIN / 2,
-            -1,
-            0,
-            1,
-            i32::MAX / 2,
-            i32::MAX,
-        ];
+        let values = vec![i32::MIN, i32::MIN / 2, -1, 0, 1, i32::MAX / 2, i32::MAX];
 
         let encoded = encode_i32(&values, 32).unwrap();
         let decoded = decode_i32(&encoded, values.len()).unwrap();

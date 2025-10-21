@@ -5,15 +5,14 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{VectorRecord, FilterableColumnSpec};
+use crate::proto::proximadb_v1::{FilterableColumnSpec, VectorRecord};
 use crate::storage::engines::core::formats::columnar::metadata_collector::MetadataCollector;
 
 use super::{
-    writer_config::ParquetWriterConfig,
+    streaming_writer::StreamingParquetWriter, writer_config::ParquetWriterConfig,
     writer_statistics::StreamingParquetWriterStats,
-    streaming_writer::StreamingParquetWriter,
 };
 
 /// Batch Parquet writer for bulk operations
@@ -57,7 +56,10 @@ impl BatchParquetWriter {
     pub async fn write_all(
         &mut self,
         records: &[VectorRecord],
-    ) -> Result<(StreamingParquetWriterStats, Option<Box<dyn MetadataCollector>>)> {
+    ) -> Result<(
+        StreamingParquetWriterStats,
+        Option<Box<dyn MetadataCollector>>,
+    )> {
         info!(
             "Batch writing {} records to {}",
             records.len(),
@@ -70,7 +72,8 @@ impl BatchParquetWriter {
             self.dimension,
             self.config.clone(),
             self.filterable_columns.as_deref(),
-        )?;
+        )
+        .await?;
 
         // Add metadata collector if provided
         if let Some(collector) = self.metadata_collector.take() {
@@ -82,7 +85,9 @@ impl BatchParquetWriter {
 
         // Write records in batches
         for chunk in records.chunks(batch_size) {
-            writer.write_batch(chunk).await
+            writer
+                .write_batch(chunk)
+                .await
                 .context("Failed to write batch")?;
         }
 
@@ -154,9 +159,11 @@ impl BatchWriterBuilder {
 
     /// Build the writer
     pub fn build(self) -> Result<BatchParquetWriter> {
-        let file_path = self.file_path
+        let file_path = self
+            .file_path
             .ok_or_else(|| anyhow::anyhow!("File path is required"))?;
-        let dimension = self.dimension
+        let dimension = self
+            .dimension
             .ok_or_else(|| anyhow::anyhow!("Dimension is required"))?;
 
         let mut writer = BatchParquetWriter::new(file_path, dimension, self.config);
@@ -214,38 +221,34 @@ mod tests {
         let file_path = dir.path().join("test_batch_filterable.parquet");
 
         let config = ParquetWriterConfig::default();
-        let columns = vec![
-            FilterableColumnSpec {
-                name: "category".to_string(),
-                data_type: 0, // STRING type
-                indexed: false,
-                supports_range: false,
-                estimated_cardinality: Some(100),
-            },
-        ];
+        let columns = vec![FilterableColumnSpec {
+            name: "category".to_string(),
+            data_type: 0, // STRING type
+            indexed: false,
+            supports_range: false,
+            estimated_cardinality: Some(100),
+        }];
 
-        let mut writer = BatchParquetWriter::new(&file_path, 64, config)
-            .with_filterable_columns(columns);
+        let mut writer =
+            BatchParquetWriter::new(&file_path, 64, config).with_filterable_columns(columns);
 
         let mut metadata = std::collections::HashMap::new();
         metadata.insert(
             "category".to_string(),
             crate::proto::proximadb_v1::SqlValue {
                 value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "test_category".to_string()
+                    "test_category".to_string(),
                 )),
             },
         );
 
-        let records = vec![
-            VectorRecord {
-                id: "test_1".to_string(),
-                vector: vec![1.0; 64],
-                metadata: metadata.clone(),
-                timestamp: Some(0),
-                ..Default::default()
-            },
-        ];
+        let records = vec![VectorRecord {
+            id: "test_1".to_string(),
+            vector: vec![1.0; 64],
+            metadata: metadata.clone(),
+            timestamp: Some(0),
+            ..Default::default()
+        }];
 
         let stats = writer.write_all_simple(&records).await.unwrap();
         assert_eq!(stats.total_records, 1);

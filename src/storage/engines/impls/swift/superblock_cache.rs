@@ -15,7 +15,6 @@ use tracing::info;
 // Block structures handled internally
 // Bloom filter handled internally
 
-
 /// SWIFT-specific superblock cache optimized for tree navigation and instant traversal
 pub struct SwiftSuperBlockCache {
     /// SuperBlock metadata cache (always in memory for fast tree navigation)

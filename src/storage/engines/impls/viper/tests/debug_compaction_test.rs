@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::{debug, error, info};
 
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
@@ -109,8 +109,8 @@ fn create_test_collection(
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
             dimension: 128,
-            distance_metric: Some(0),            // Cosine
-            storage_engine: Some(1),             // VIPER
+            distance_metric: Some(0), // Cosine
+            storage_engine: Some(1),  // VIPER
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -139,9 +139,12 @@ fn create_test_collection(
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
     let mut metadata = std::collections::HashMap::new();
-    metadata.insert("test_key".to_string(), SqlValue {
-        value: Some(sql_value::Value::StringValue("test_value".to_string())),
-    });
+    metadata.insert(
+        "test_key".to_string(),
+        SqlValue {
+            value: Some(sql_value::Value::StringValue("test_value".to_string())),
+        },
+    );
 
     VectorRecord {
         id: id.to_string(),
@@ -197,7 +200,10 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
     fs::create_dir_all(&wal_dir).await?;
 
-    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
+    let data_url = format!(
+        "file://{}",
+        StoragePath::collection_data_path(base_path, &collection_id)
+    );
     debug!("📍 Data directory: {}", data_url);
 
     // Step 1: Create and flush vectors
@@ -224,7 +230,8 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     let flush_result = engine.do_flush(&flush_params).await?;
     info!(
         "✅ Flush complete: {} files created, {} entries flushed",
-        flush_result.files_created.unwrap_or(0), flush_result.entries_flushed.unwrap_or(0)
+        flush_result.files_created.unwrap_or(0),
+        flush_result.entries_flushed.unwrap_or(0)
     );
 
     // Step 2: List and inspect flushed files
@@ -277,7 +284,9 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     let compact_result = engine.do_compact(&compact_params).await?;
     info!(
         "✅ Compaction complete: {} input files, {} output files, {} entries processed",
-        compact_result.input_files.unwrap_or(0), compact_result.output_files.unwrap_or(0), compact_result.entries_processed.unwrap_or(0)
+        compact_result.input_files.unwrap_or(0),
+        compact_result.output_files.unwrap_or(0),
+        compact_result.entries_processed.unwrap_or(0)
     );
 
     // Step 5: List files after compaction
@@ -304,7 +313,10 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     // Step 7: Try to search
     debug!("\n🔍 Step 7: Testing search on compacted data");
 
-    let storage_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
+    let storage_url = format!(
+        "file://{}",
+        StoragePath::collection_data_path(base_path, &collection_id)
+    );
     let search_results = engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 10)
         .await?;

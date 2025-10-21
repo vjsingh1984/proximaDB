@@ -6,7 +6,7 @@ pub use crate::metrics::collectors::UnifiedMetricsCollector as MetricsCollector;
 
 pub use dashboard::{DashboardState, create_dashboard_router};
 pub use opentelemetry::{
-    OpenTelemetryConfig, OpenTelemetryManager, SpanData, MetricData,
-    initialize_opentelemetry, is_opentelemetry_initialized,
-    export_global_metrics, start_global_span, global_opentelemetry_manager,
+    MetricData, OpenTelemetryConfig, OpenTelemetryManager, SpanData, export_global_metrics,
+    global_opentelemetry_manager, initialize_opentelemetry, is_opentelemetry_initialized,
+    start_global_span,
 };

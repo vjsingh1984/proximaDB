@@ -106,21 +106,30 @@ impl OptimizedNovaOperations {
             // TODO: file_path should be derived from nova_file when properly integrated
             let file_path = "placeholder.parquet"; // Temporary placeholder
             let parquet_metadata = self.load_parquet_metadata(&file_path).await?;
-            let candidate_row_groups = self.prune_row_groups_with_metadata(&parquet_metadata, &query)?;
-            debug!("Pruned to {} row groups using actual metadata", candidate_row_groups.len());
-            
+            let candidate_row_groups =
+                self.prune_row_groups_with_metadata(&parquet_metadata, &query)?;
+            debug!(
+                "Pruned to {} row groups using actual metadata",
+                candidate_row_groups.len()
+            );
+
             // Phase 2: Columnar filtering with SIMD using actual Parquet metadata
-            return Ok(self.execute_columnar_search_with_metadata(
-                &parquet_metadata,
-                &candidate_row_groups,
-                &query,
-                top_k
-            ).await?);
+            return Ok(self
+                .execute_columnar_search_with_metadata(
+                    &parquet_metadata,
+                    &candidate_row_groups,
+                    &query,
+                    top_k,
+                )
+                .await?);
         }
     }
 
     /// Load Parquet metadata from file system
-    async fn load_parquet_metadata(&self, file_path: &str) -> Result<parquet::file::metadata::ParquetMetaData> {
+    async fn load_parquet_metadata(
+        &self,
+        file_path: &str,
+    ) -> Result<parquet::file::metadata::ParquetMetaData> {
         use parquet::file::reader::{FileReader, SerializedFileReader};
         use std::fs::File;
 
@@ -161,17 +170,21 @@ impl OptimizedNovaOperations {
         // Build search candidates from row groups
         let config = ColumnarSearchConfig::default();
         let projection = self.build_projection_mask(&config);
-        
-        let candidates = self.columnar_filter_simd(
-            parquet_metadata,
-            query,
-            candidate_row_groups,
-            &projection,
-            top_k * 2, // Get more candidates for better accuracy
-        ).await?;
+
+        let candidates = self
+            .columnar_filter_simd(
+                parquet_metadata,
+                query,
+                candidate_row_groups,
+                &projection,
+                top_k * 2, // Get more candidates for better accuracy
+            )
+            .await?;
 
         // Compute distances and return top-k results
-        let results = self.batch_compute_distances(candidates, query, top_k).await?;
+        let results = self
+            .batch_compute_distances(candidates, query, top_k)
+            .await?;
         Ok(results.into_iter().map(|(record, _)| record).collect())
     }
 
@@ -328,7 +341,7 @@ pub async fn batch_id_lookup_optimized(
 ) -> Result<Vec<VectorRecord>> {
     // Implement ID index lookup using existing infrastructure
     let mut locations: Vec<Option<(usize, u32)>> = Vec::with_capacity(ids.len());
-    
+
     // Use existing ID index infrastructure for lookups
     for id in ids {
         // This would integrate with the actual NovaFile ID index when available
@@ -446,7 +459,8 @@ mod tests {
         let config = ColumnarSearchConfig {
             enable_progressive_search: true,
             max_candidates: 10000,
-            search_mode: crate::storage::engines::impls::nova::columnar_search::SearchMode::Progressive,
+            search_mode:
+                crate::storage::engines::impls::nova::columnar_search::SearchMode::Progressive,
             ..Default::default()
         };
 

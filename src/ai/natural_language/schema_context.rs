@@ -3,9 +3,9 @@
 //! Builds database schema context for natural language query translation
 //! with tenant-aware table access and security validation.
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::Result;
 use tracing::debug;
 
 /// Schema context for natural language translation
@@ -100,8 +100,13 @@ impl SchemaContext {
             context.push_str("TABLE RELATIONSHIPS:\n");
             context.push_str("==================\n");
 
-            let relevant_relationships: Vec<&TableRelationship> = self.relationships.iter()
-                .filter(|rel| accessible_tables.contains(&rel.from_table) && accessible_tables.contains(&rel.to_table))
+            let relevant_relationships: Vec<&TableRelationship> = self
+                .relationships
+                .iter()
+                .filter(|rel| {
+                    accessible_tables.contains(&rel.from_table)
+                        && accessible_tables.contains(&rel.to_table)
+                })
                 .collect();
 
             for relationship in relevant_relationships {
@@ -147,11 +152,17 @@ impl SchemaContext {
                 "  - {} ({}) {}",
                 column.column_name,
                 column.data_type,
-                if column.is_nullable { "NULL" } else { "NOT NULL" }
+                if column.is_nullable {
+                    "NULL"
+                } else {
+                    "NOT NULL"
+                }
             ));
 
             if column.is_foreign_key {
-                if let (Some(ref_table), Some(ref_col)) = (&column.references_table, &column.references_column) {
+                if let (Some(ref_table), Some(ref_col)) =
+                    (&column.references_table, &column.references_column)
+                {
                     description.push_str(&format!(" -> {}.{}", ref_table, ref_col));
                 }
             }
@@ -162,7 +173,9 @@ impl SchemaContext {
 
             // Add sample values if configured and available
             if self.config.include_sample_values && !column.sample_values.is_empty() {
-                let samples: Vec<&str> = column.sample_values.iter()
+                let samples: Vec<&str> = column
+                    .sample_values
+                    .iter()
                     .map(|s| s.as_str())
                     .take(self.config.max_sample_values_per_column)
                     .collect();
@@ -227,147 +240,169 @@ impl SchemaContextBuilder {
         let mut schemas = HashMap::new();
 
         // Collections table
-        schemas.insert("collections".to_string(), TableSchema {
-            table_name: "collections".to_string(),
-            description: Some("Vector collections in the database".to_string()),
-            columns: vec![
-                ColumnSchema {
-                    column_name: "id".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Unique collection identifier".to_string()),
-                    sample_values: vec!["coll_1".to_string(), "user_vectors".to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-                ColumnSchema {
-                    column_name: "name".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Human-readable collection name".to_string()),
-                    sample_values: vec!["Product Embeddings".to_string(), "Customer Vectors".to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-                ColumnSchema {
-                    column_name: "tenant_id".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Tenant identifier for multi-tenant isolation".to_string()),
-                    sample_values: vec!["tenant_1".to_string(), "company_abc".to_string()],
-                    is_foreign_key: true,
-                    references_table: Some("tenants".to_string()),
-                    references_column: Some("id".to_string()),
-                },
-                ColumnSchema {
-                    column_name: "created_at".to_string(),
-                    data_type: "TIMESTAMP".to_string(),
-                    is_nullable: false,
-                    description: Some("Collection creation timestamp".to_string()),
-                    sample_values: vec!["2024-01-15 10:30:00".to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-            ],
-            primary_key: Some("id".to_string()),
-            indexes: vec!["idx_tenant_id".to_string(), "idx_created_at".to_string()],
-            row_count_estimate: Some(1000),
-        });
+        schemas.insert(
+            "collections".to_string(),
+            TableSchema {
+                table_name: "collections".to_string(),
+                description: Some("Vector collections in the database".to_string()),
+                columns: vec![
+                    ColumnSchema {
+                        column_name: "id".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some("Unique collection identifier".to_string()),
+                        sample_values: vec!["coll_1".to_string(), "user_vectors".to_string()],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                    ColumnSchema {
+                        column_name: "name".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some("Human-readable collection name".to_string()),
+                        sample_values: vec![
+                            "Product Embeddings".to_string(),
+                            "Customer Vectors".to_string(),
+                        ],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                    ColumnSchema {
+                        column_name: "tenant_id".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some(
+                            "Tenant identifier for multi-tenant isolation".to_string(),
+                        ),
+                        sample_values: vec!["tenant_1".to_string(), "company_abc".to_string()],
+                        is_foreign_key: true,
+                        references_table: Some("tenants".to_string()),
+                        references_column: Some("id".to_string()),
+                    },
+                    ColumnSchema {
+                        column_name: "created_at".to_string(),
+                        data_type: "TIMESTAMP".to_string(),
+                        is_nullable: false,
+                        description: Some("Collection creation timestamp".to_string()),
+                        sample_values: vec!["2024-01-15 10:30:00".to_string()],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                ],
+                primary_key: Some("id".to_string()),
+                indexes: vec!["idx_tenant_id".to_string(), "idx_created_at".to_string()],
+                row_count_estimate: Some(1000),
+            },
+        );
 
         // Vectors table
-        schemas.insert("vectors".to_string(), TableSchema {
-            table_name: "vectors".to_string(),
-            description: Some("Individual vector records with embeddings and metadata".to_string()),
-            columns: vec![
-                ColumnSchema {
-                    column_name: "id".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Unique vector identifier".to_string()),
-                    sample_values: vec!["vec_1".to_string(), "product_123".to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-                ColumnSchema {
-                    column_name: "collection_id".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Collection this vector belongs to".to_string()),
-                    sample_values: vec!["coll_1".to_string()],
-                    is_foreign_key: true,
-                    references_table: Some("collections".to_string()),
-                    references_column: Some("id".to_string()),
-                },
-                ColumnSchema {
-                    column_name: "tenant_id".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Tenant identifier for isolation".to_string()),
-                    sample_values: vec!["tenant_1".to_string()],
-                    is_foreign_key: true,
-                    references_table: Some("tenants".to_string()),
-                    references_column: Some("id".to_string()),
-                },
-                ColumnSchema {
-                    column_name: "metadata".to_string(),
-                    data_type: "JSONB".to_string(),
-                    is_nullable: true,
-                    description: Some("Metadata associated with the vector".to_string()),
-                    sample_values: vec![r#"{"category": "electronics", "price": 299.99}"#.to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-            ],
-            primary_key: Some("id".to_string()),
-            indexes: vec!["idx_collection_id".to_string(), "idx_tenant_id".to_string()],
-            row_count_estimate: Some(1000000),
-        });
+        schemas.insert(
+            "vectors".to_string(),
+            TableSchema {
+                table_name: "vectors".to_string(),
+                description: Some(
+                    "Individual vector records with embeddings and metadata".to_string(),
+                ),
+                columns: vec![
+                    ColumnSchema {
+                        column_name: "id".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some("Unique vector identifier".to_string()),
+                        sample_values: vec!["vec_1".to_string(), "product_123".to_string()],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                    ColumnSchema {
+                        column_name: "collection_id".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some("Collection this vector belongs to".to_string()),
+                        sample_values: vec!["coll_1".to_string()],
+                        is_foreign_key: true,
+                        references_table: Some("collections".to_string()),
+                        references_column: Some("id".to_string()),
+                    },
+                    ColumnSchema {
+                        column_name: "tenant_id".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some("Tenant identifier for isolation".to_string()),
+                        sample_values: vec!["tenant_1".to_string()],
+                        is_foreign_key: true,
+                        references_table: Some("tenants".to_string()),
+                        references_column: Some("id".to_string()),
+                    },
+                    ColumnSchema {
+                        column_name: "metadata".to_string(),
+                        data_type: "JSONB".to_string(),
+                        is_nullable: true,
+                        description: Some("Metadata associated with the vector".to_string()),
+                        sample_values: vec![
+                            r#"{"category": "electronics", "price": 299.99}"#.to_string(),
+                        ],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                ],
+                primary_key: Some("id".to_string()),
+                indexes: vec!["idx_collection_id".to_string(), "idx_tenant_id".to_string()],
+                row_count_estimate: Some(1000000),
+            },
+        );
 
         // Tenants table
-        schemas.insert("tenants".to_string(), TableSchema {
-            table_name: "tenants".to_string(),
-            description: Some("Multi-tenant organizations and their configurations".to_string()),
-            columns: vec![
-                ColumnSchema {
-                    column_name: "id".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Unique tenant identifier".to_string()),
-                    sample_values: vec!["tenant_1".to_string(), "company_abc".to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-                ColumnSchema {
-                    column_name: "name".to_string(),
-                    data_type: "VARCHAR(255)".to_string(),
-                    is_nullable: false,
-                    description: Some("Tenant organization name".to_string()),
-                    sample_values: vec!["Acme Corp".to_string(), "TechStart Inc".to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-                ColumnSchema {
-                    column_name: "subscription_tier".to_string(),
-                    data_type: "VARCHAR(50)".to_string(),
-                    is_nullable: false,
-                    description: Some("Subscription tier: basic, professional, enterprise".to_string()),
-                    sample_values: vec!["enterprise".to_string(), "professional".to_string()],
-                    is_foreign_key: false,
-                    references_table: None,
-                    references_column: None,
-                },
-            ],
-            primary_key: Some("id".to_string()),
-            indexes: vec!["idx_subscription_tier".to_string()],
-            row_count_estimate: Some(100),
-        });
+        schemas.insert(
+            "tenants".to_string(),
+            TableSchema {
+                table_name: "tenants".to_string(),
+                description: Some(
+                    "Multi-tenant organizations and their configurations".to_string(),
+                ),
+                columns: vec![
+                    ColumnSchema {
+                        column_name: "id".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some("Unique tenant identifier".to_string()),
+                        sample_values: vec!["tenant_1".to_string(), "company_abc".to_string()],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                    ColumnSchema {
+                        column_name: "name".to_string(),
+                        data_type: "VARCHAR(255)".to_string(),
+                        is_nullable: false,
+                        description: Some("Tenant organization name".to_string()),
+                        sample_values: vec!["Acme Corp".to_string(), "TechStart Inc".to_string()],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                    ColumnSchema {
+                        column_name: "subscription_tier".to_string(),
+                        data_type: "VARCHAR(50)".to_string(),
+                        is_nullable: false,
+                        description: Some(
+                            "Subscription tier: basic, professional, enterprise".to_string(),
+                        ),
+                        sample_values: vec!["enterprise".to_string(), "professional".to_string()],
+                        is_foreign_key: false,
+                        references_table: None,
+                        references_column: None,
+                    },
+                ],
+                primary_key: Some("id".to_string()),
+                indexes: vec!["idx_subscription_tier".to_string()],
+                row_count_estimate: Some(100),
+            },
+        );
 
         Ok(schemas)
     }
@@ -420,12 +455,12 @@ mod tests {
     fn test_schema_context_creation() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-        let schema_context = SchemaContext::new().await.unwrap();
+            let schema_context = SchemaContext::new().await.unwrap();
 
-        assert!(!schema_context.table_schemas.is_empty());
-        assert!(schema_context.table_schemas.contains_key("collections"));
-        assert!(schema_context.table_schemas.contains_key("vectors"));
-        assert!(schema_context.table_schemas.contains_key("tenants"));
+            assert!(!schema_context.table_schemas.is_empty());
+            assert!(schema_context.table_schemas.contains_key("collections"));
+            assert!(schema_context.table_schemas.contains_key("vectors"));
+            assert!(schema_context.table_schemas.contains_key("tenants"));
         });
     }
 
@@ -433,18 +468,24 @@ mod tests {
     fn test_schema_context_building() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-        let schema_context = SchemaContext::new().await.unwrap();
-        let accessible_tables = vec!["collections".to_string(), "vectors".to_string()];
+            let schema_context = SchemaContext::new().await.unwrap();
+            let accessible_tables = vec!["collections".to_string(), "vectors".to_string()];
 
-        let context_description = schema_context.build_context(&accessible_tables).await.unwrap();
+            let context_description = schema_context
+                .build_context(&accessible_tables)
+                .await
+                .unwrap();
 
-        assert!(context_description.contains("DATABASE SCHEMA"));
-        assert!(context_description.contains("collections"));
-        assert!(context_description.contains("vectors"));
-        assert!(context_description.contains("tenant_id"));
+            assert!(context_description.contains("DATABASE SCHEMA"));
+            assert!(context_description.contains("collections"));
+            assert!(context_description.contains("vectors"));
+            assert!(context_description.contains("tenant_id"));
 
-        // Check that the tenants table is not included (should not appear as "TABLE: tenants")
-        assert!(!context_description.contains("TABLE: tenants"), "Context should not contain 'tenants' table as it's not in accessible_tables");
+            // Check that the tenants table is not included (should not appear as "TABLE: tenants")
+            assert!(
+                !context_description.contains("TABLE: tenants"),
+                "Context should not contain 'tenants' table as it's not in accessible_tables"
+            );
         });
     }
 

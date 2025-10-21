@@ -10,18 +10,18 @@
 //! This replaces the fragmented test utilities scattered across different modules
 //! and provides a consistent, reliable test infrastructure.
 
-use uuid::Uuid;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 // Core ProximaDB imports
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
-use proximadb::core::config::{BloomFilterConfig, SstConfig};
 use proximadb::core::config::ViperConfig;
+use proximadb::core::config::{BloomFilterConfig, SstConfig};
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, CompressionAlgorithm, DistanceMetric, SqlValue,
     StorageEngine, VectorRecord, sql_value,
@@ -138,8 +138,8 @@ impl UnifiedTestEnvironment {
         ));
 
         SstEngine::new()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create SST storage: {}", e))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create SST storage: {}", e))
     }
 
     /// Create a VIPER storage engine for this environment
@@ -149,8 +149,7 @@ impl UnifiedTestEnvironment {
             self.collection_id
         );
 
-        ViperEngine::new()
-        .await
+        ViperEngine::new().await
     }
 
     /// Get the data directory path for SST operations
@@ -301,7 +300,8 @@ impl UnifiedTestEnvironment {
 
         debug!(
             "✅ SST flush successful: {} entries flushed, {} files created",
-            flush_result.entries_flushed.unwrap_or(0), flush_result.files_created.unwrap_or(0)
+            flush_result.entries_flushed.unwrap_or(0),
+            flush_result.files_created.unwrap_or(0)
         );
 
         // Find created SST files
@@ -400,27 +400,28 @@ impl UnifiedTestEnvironment {
                 source: None,
                 vector: (0..dimension).map(|j| (i + j) as f32).collect(),
                 metadata: std::collections::HashMap::from([
-                    ("category".to_string(), SqlValue {
-                        value: Some(
-                            sql_value::Value::StringValue(
+                    (
+                        "category".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(
                                 categories[i % categories.len()].to_string(),
-                            ),
-                        ),
-                    }),
-                    ("type".to_string(), SqlValue {
-                        value: Some(
-                            sql_value::Value::StringValue(
+                            )),
+                        },
+                    ),
+                    (
+                        "type".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(
                                 types[i % types.len()].to_string(),
-                            ),
-                        ),
-                    }),
-                    ("test_id".to_string(), SqlValue {
-                        value: Some(
-                            sql_value::Value::StringValue(
-                                self.collection_id.clone(),
-                            ),
-                        ),
-                    }),
+                            )),
+                        },
+                    ),
+                    (
+                        "test_id".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(self.collection_id.clone())),
+                        },
+                    ),
                 ]),
                 ..Default::default()
             })
@@ -626,7 +627,6 @@ impl MultiUnifiedEnvironmentTest {
 /// Tests should call production code directly with these parameters
 pub mod operations {
     use super::*;
-    
 
     /// Build correct FlushParameters - the critical configuration that was causing failures
     pub async fn build_flush_params(
@@ -638,11 +638,10 @@ pub mod operations {
         environment.ensure_all_directories().await?;
 
         // Detect dimension from vectors
-        let dimension = vectors.first()
-            .map(|v| v.vector.len() as i32)
-            .unwrap_or(3); // Fallback to 3 if no vectors
+        let dimension = vectors.first().map(|v| v.vector.len() as i32).unwrap_or(3); // Fallback to 3 if no vectors
 
-        let collection_config = environment.create_test_collection_with_settings(engine, dimension, None);
+        let collection_config =
+            environment.create_test_collection_with_settings(engine, dimension, None);
 
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
@@ -767,15 +766,22 @@ pub mod operations {
                 collection_id: collection.id.clone(),
                 use_axis_indexes: false,
                 has_quantization: false,
-                dimension: collection.config.as_ref()
-                    .map(|c| c.dimension)
-                    .unwrap_or(0) as usize,
-                distance_metric: collection.config.as_ref()
+                dimension: collection.config.as_ref().map(|c| c.dimension).unwrap_or(0) as usize,
+                distance_metric: collection
+                    .config
+                    .as_ref()
                     .and_then(|c| c.distance_metric)
-                    .and_then(|dm| std::convert::TryInto::<proximadb::compute::distance_computation::DistanceMetric>::try_into(dm).ok())
+                    .and_then(|dm| {
+                        std::convert::TryInto::<
+                            proximadb::compute::distance_computation::DistanceMetric,
+                        >::try_into(dm)
+                        .ok()
+                    })
                     .unwrap_or(proximadb::compute::distance_computation::DistanceMetric::Cosine),
                 storage_strategy: proximadb::storage::engines::StorageEngineStrategy::Sst,
-                storage_path: collection.storage_assignment.as_ref()
+                storage_path: collection
+                    .storage_assignment
+                    .as_ref()
                     .map(|sa| sa.base_location.clone())
                     .unwrap_or_default(),
                 quantization_config: None,
@@ -788,24 +794,24 @@ pub mod operations {
         };
 
         // Direct production call using unified search
-        let results = engine
-            .search_vectors_unified(&query_context)
-            .await?;
+        let results = engine.search_vectors_unified(&query_context).await?;
 
         // Convert OptimizedSearchRecord to VectorRecord
         let vector_records: Vec<VectorRecord> = results
             .into_iter()
-            .map(|record| {
-                VectorRecord {
-                    id: record.id,
-                    vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
-                    metadata: record.metadata,
-                    timestamp: Some(record.timestamp.unwrap_or(0)),
-                    updated_at: None,
-                    expires_at: None,
-                    version: Some(1),
-                    source: None,
-                }
+            .map(|record| VectorRecord {
+                id: record.id,
+                vector: record
+                    .vector
+                    .as_ref()
+                    .map(|v| (**v).clone())
+                    .unwrap_or_default(),
+                metadata: record.metadata,
+                timestamp: Some(record.timestamp.unwrap_or(0)),
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                source: None,
             })
             .collect();
 
@@ -829,15 +835,22 @@ pub mod operations {
                 collection_id: collection.id.clone(),
                 use_axis_indexes: false,
                 has_quantization: false,
-                dimension: collection.config.as_ref()
-                    .map(|c| c.dimension)
-                    .unwrap_or(0) as usize,
-                distance_metric: collection.config.as_ref()
+                dimension: collection.config.as_ref().map(|c| c.dimension).unwrap_or(0) as usize,
+                distance_metric: collection
+                    .config
+                    .as_ref()
                     .and_then(|c| c.distance_metric)
-                    .and_then(|dm| std::convert::TryInto::<proximadb::compute::distance_computation::DistanceMetric>::try_into(dm).ok())
+                    .and_then(|dm| {
+                        std::convert::TryInto::<
+                            proximadb::compute::distance_computation::DistanceMetric,
+                        >::try_into(dm)
+                        .ok()
+                    })
                     .unwrap_or(proximadb::compute::distance_computation::DistanceMetric::Cosine),
                 storage_strategy: proximadb::storage::engines::StorageEngineStrategy::Viper,
-                storage_path: collection.storage_assignment.as_ref()
+                storage_path: collection
+                    .storage_assignment
+                    .as_ref()
                     .map(|sa| sa.base_location.clone())
                     .unwrap_or_default(),
                 quantization_config: None,
@@ -850,24 +863,24 @@ pub mod operations {
         };
 
         // Direct production call using VIPER's unified search
-        let results = engine
-            .search_vectors_unified(&query_context)
-            .await?;
+        let results = engine.search_vectors_unified(&query_context).await?;
 
         // Convert OptimizedSearchRecord to VectorRecord
         let vector_records: Vec<VectorRecord> = results
             .into_iter()
-            .map(|record| {
-                VectorRecord {
-                    id: record.id,
-                    vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
-                    metadata: record.metadata,
-                    timestamp: Some(record.timestamp.unwrap_or(0)),
-                    updated_at: None,
-                    expires_at: None,
-                    version: Some(1),
-                    source: None,
-                }
+            .map(|record| VectorRecord {
+                id: record.id,
+                vector: record
+                    .vector
+                    .as_ref()
+                    .map(|v| (**v).clone())
+                    .unwrap_or_default(),
+                metadata: record.metadata,
+                timestamp: Some(record.timestamp.unwrap_or(0)),
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                source: None,
             })
             .collect();
 
@@ -896,7 +909,8 @@ pub mod operations {
         engine: StorageEngine,
         dimension: i32,
     ) -> CompactionParameters {
-        let collection_config = environment.create_test_collection_with_settings(engine, dimension, None);
+        let collection_config =
+            environment.create_test_collection_with_settings(engine, dimension, None);
         CompactionParameters {
             collection_id: Some(environment.collection_id().to_string()),
             force: true,
@@ -934,15 +948,12 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
             id: format!("{}_{}", prefix, i),
             vector: (0..dimension).map(|j| (i + j) as f32 * 0.1).collect(),
             timestamp: Some((1000 + i) as i64),
-            metadata: std::collections::HashMap::from([
-                ("test_type".to_string(), SqlValue {
-                    value: Some(
-                        sql_value::Value::StringValue(
-                            prefix.to_string(),
-                        ),
-                    ),
-                }),
-            ]),
+            metadata: std::collections::HashMap::from([(
+                "test_type".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue(prefix.to_string())),
+                },
+            )]),
             version: Some(1),
             source: None,
             updated_at: None,
@@ -1055,7 +1066,7 @@ pub async fn flush_sst_with_block_stats(
 
     let fs_config = FilesystemConfig::default();
     let _filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+    let _distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Euclidean,
     ));
 
@@ -1174,34 +1185,7 @@ pub async fn flush_sst_with_pq_sorting(
 
 /// Create VectorOperationsService with WAL manager for testing
 pub async fn create_test_vector_operations_service() -> Result<VectorOperationsService> {
-    setup_hardware_capabilities();
-
-    // Create test environment
-    let env = UnifiedTestEnvironment::new().await?;
-
-    // Create SST storage engine
-    let sst_storage = env.create_sst_engine().await?;
-
-    // Create WAL manager
-    let wal_config = WALConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
-    let strategy_type = WriteBufferStrategyType::AvroBatch;
-    let strategy = WALBatchFactory::create_batch_serialization_strategy(
-        strategy_type,
-        &wal_config,
-        filesystem_factory.clone(),
-    )
-    .await?;
-    let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
-    let axis_manager = Arc::new(proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default()).await?);
-
-    Ok(VectorOperationsService::new(
-        Arc::new(sst_storage),
-        wal_manager,
-        axis_manager,
-        // TODO: Create proper CollectionService for tests - requires metadata_backend and storage_config
-        todo!("CollectionService creation requires complex setup - implement test-specific version"),
-    ))
+    todo!("CollectionService creation requires complex setup - implement test-specific version")
 }
 
 /// Create VectorOperationsService with custom storage for testing
@@ -1212,7 +1196,8 @@ pub async fn create_test_vector_operations_service_with_storage(
 
     // Create WAL manager
     let wal_config = WALConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
+    let filesystem_factory =
+        Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
     let strategy_type = WriteBufferStrategyType::AvroBatch;
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,
@@ -1221,7 +1206,10 @@ pub async fn create_test_vector_operations_service_with_storage(
     )
     .await?;
     let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
-    let axis_manager = Arc::new(proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default()).await?);
+    let axis_manager = Arc::new(
+        proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default())
+            .await?,
+    );
 
     // TODO: VectorOperationsService creation requires CollectionService which needs complex setup
     // For now, return an error to indicate this test helper needs implementation

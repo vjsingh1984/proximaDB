@@ -23,13 +23,13 @@
 //! - Vector existence checking with bloom filters
 //! - Collection scanning and enumeration
 
+use anyhow::{Context, Result};
 use std::collections::HashMap;
-use anyhow::{Result, Context};
 use tracing::{debug, info, warn};
 
+use crate::proto::proximadb_v1::{Collection, VectorRecord};
 use crate::storage::engines::impls::sst::{SstEngine, SstError};
 use crate::storage::traits::CompactionResult;
-use crate::proto::proximadb_v1::{VectorRecord, Collection};
 
 impl SstEngine {
     /// Get collection information
@@ -42,9 +42,9 @@ impl SstEngine {
 
         let config = CollectionConfig {
             name: collection_id.to_string(),
-            dimension: 1536, // Default dimension
+            dimension: 1536,          // Default dimension
             distance_metric: Some(0), // Default metric
-            storage_engine: Some(0), // SST engine
+            storage_engine: Some(0),  // SST engine
             tags: vec![],
             description: None,
             filterable_columns: vec![],
@@ -90,11 +90,18 @@ impl SstEngine {
                 }
             }
             Err(e) => {
-                warn!("Failed to list files for collection {}: {}", collection_id, e);
+                warn!(
+                    "Failed to list files for collection {}: {}",
+                    collection_id, e
+                );
             }
         }
 
-        debug!("📋 Found {} files for collection {}", files.len(), collection_id);
+        debug!(
+            "📋 Found {} files for collection {}",
+            files.len(),
+            collection_id
+        );
         Ok(files)
     }
 
@@ -150,12 +157,16 @@ impl SstEngine {
 
     /// Check if a vector exists in the collection using bloom filters
     pub async fn contains_vector(&self, collection_id: &str, id: &str) -> Result<bool> {
-        debug!("🔍 SST: Checking if vector {} exists in collection {}", id, collection_id);
+        debug!(
+            "🔍 SST: Checking if vector {} exists in collection {}",
+            id, collection_id
+        );
 
         let storage_url = self.get_collection_storage_url(collection_id).await?;
 
         // Get unified filesystem for this collection
-        let unified_fs = self.unified_fs()
+        let unified_fs = self
+            .unified_fs()
             .ok_or_else(|| SstError::Internal("Unified filesystem not initialized".to_string()))?;
 
         // List SST files and check bloom filters
@@ -181,13 +192,19 @@ impl SstEngine {
             }
         }
 
-        debug!("❌ Vector {} not found in any SST file for collection {}", id, collection_id);
+        debug!(
+            "❌ Vector {} not found in any SST file for collection {}",
+            id, collection_id
+        );
         Ok(false)
     }
 
     /// Check bloom filter for a specific vector ID in an SST file
     async fn check_bloom_filter(&self, file_path: &str, vector_id: &str) -> Result<bool> {
-        debug!("🔍 Checking bloom filter in {} for vector {}", file_path, vector_id);
+        debug!(
+            "🔍 Checking bloom filter in {} for vector {}",
+            file_path, vector_id
+        );
 
         // In a real implementation, this would:
         // 1. Read the SST file footer to get bloom filter offset
@@ -204,7 +221,8 @@ impl SstEngine {
         info!("🧹 SST: Cleaning up files for collection {}", collection_id);
 
         let storage_url = self.get_collection_storage_url(collection_id).await?;
-        let unified_fs = self.unified_fs()
+        let unified_fs = self
+            .unified_fs()
             .ok_or_else(|| SstError::Internal("Unified filesystem not initialized".to_string()))?;
 
         // List all files for the collection
@@ -224,8 +242,8 @@ impl SstEngine {
             if entry.name.ends_with(".sst")
                 || entry.name.ends_with(".bloom")
                 || entry.name.ends_with(".meta")
-                || entry.name.ends_with(".idx") {
-
+                || entry.name.ends_with(".idx")
+            {
                 match unified_fs.delete(&entry.name).await {
                     Ok(_) => {
                         deleted_count += 1;
@@ -275,7 +293,8 @@ impl SstEngine {
         // that requires implementing SST file reading
         debug!(
             "📖 Scan completed for collection {}: {} vectors returned",
-            collection_id, results.len()
+            collection_id,
+            results.len()
         );
 
         Ok(results)
@@ -291,7 +310,10 @@ impl SstEngine {
         let base_path = "/data/collections";
         let storage_url = format!("{}/{}", base_path, collection_id);
 
-        debug!("📂 Storage URL for collection {}: {}", collection_id, storage_url);
+        debug!(
+            "📂 Storage URL for collection {}: {}",
+            collection_id, storage_url
+        );
         Ok(storage_url)
     }
 
@@ -301,7 +323,10 @@ impl SstEngine {
         collection_id: &str,
         target_level: Option<u8>,
     ) -> Result<CompactionResult> {
-        info!("🔄 SST: Starting compaction for collection {}", collection_id);
+        info!(
+            "🔄 SST: Starting compaction for collection {}",
+            collection_id
+        );
 
         let storage_url = self.get_collection_storage_url(collection_id).await?;
 
@@ -371,9 +396,9 @@ pub struct CollectionSizeInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -398,7 +423,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_collection_storage_url() {
         let engine = create_test_engine().await;
-        let url = engine.get_collection_storage_url("test_collection").await.unwrap();
+        let url = engine
+            .get_collection_storage_url("test_collection")
+            .await
+            .unwrap();
 
         assert!(url.contains("test_collection"));
     }
@@ -414,10 +442,13 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 }

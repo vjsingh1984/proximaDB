@@ -3,19 +3,19 @@
 //! Main engine for AI-powered business intelligence, implementing
 //! automated insight generation and executive dashboard creation.
 
-use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest};
+use super::insight_generator::{BusinessInsight, InsightGenerator};
+use super::report_generator::ReportGenerator;
+use super::trend_analyzer::{TrendAnalysis, TrendAnalyzer};
 use crate::ai::llm_integration::types::LLMRequestContext;
+use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest};
 use crate::ai::natural_language::NLQueryTranslator;
 use crate::ai::natural_language::translator::UserContext;
-use super::insight_generator::{InsightGenerator, BusinessInsight};
-use super::report_generator::ReportGenerator;
-use super::trend_analyzer::{TrendAnalyzer, TrendAnalysis};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 /// Main Business Intelligence Engine
 #[derive(Clone)]
@@ -186,14 +186,17 @@ impl BusinessIntelligenceEngine {
         nl_translator: Arc<NLQueryTranslator>,
         config: BIEngineConfig,
     ) -> Result<Self, BIError> {
-        let insight_generator = Arc::new(InsightGenerator::new(llm_engine.clone()).await
-            .map_err(|e| BIError::ConfigurationError(format!("Failed to create insight generator: {}", e)))?);
+        let insight_generator = Arc::new(InsightGenerator::new(llm_engine.clone()).await.map_err(
+            |e| BIError::ConfigurationError(format!("Failed to create insight generator: {}", e)),
+        )?);
 
-        let report_generator = Arc::new(ReportGenerator::new(llm_engine.clone()).await
-            .map_err(|e| BIError::ConfigurationError(format!("Failed to create report generator: {}", e)))?);
+        let report_generator = Arc::new(ReportGenerator::new(llm_engine.clone()).await.map_err(
+            |e| BIError::ConfigurationError(format!("Failed to create report generator: {}", e)),
+        )?);
 
-        let trend_analyzer = Arc::new(TrendAnalyzer::new().await
-            .map_err(|e| BIError::ConfigurationError(format!("Failed to create trend analyzer: {}", e)))?);
+        let trend_analyzer = Arc::new(TrendAnalyzer::new().await.map_err(|e| {
+            BIError::ConfigurationError(format!("Failed to create trend analyzer: {}", e))
+        })?);
 
         Ok(Self {
             llm_engine,
@@ -206,39 +209,60 @@ impl BusinessIntelligenceEngine {
     }
 
     /// Generate comprehensive executive dashboard
-    pub async fn generate_executive_dashboard(&self, user_context: &UserContext) -> Result<ExecutiveDashboard, BIError> {
-        info!("Generating executive dashboard for user: {}", user_context.user_id);
+    pub async fn generate_executive_dashboard(
+        &self,
+        user_context: &UserContext,
+    ) -> Result<ExecutiveDashboard, BIError> {
+        info!(
+            "Generating executive dashboard for user: {}",
+            user_context.user_id
+        );
 
         // Step 1: Extract business metrics
         let business_metrics = self.extract_business_metrics(user_context).await?;
 
         // Step 2: Perform trend analysis
         let trends = if self.config.enable_trend_analysis {
-            self.trend_analyzer.analyze_business_trends(&business_metrics).await
-                .map_err(|e| BIError::TrendAnalysisFailed { reason: e.to_string() })?
+            self.trend_analyzer
+                .analyze_business_trends(&business_metrics)
+                .await
+                .map_err(|e| BIError::TrendAnalysisFailed {
+                    reason: e.to_string(),
+                })?
         } else {
             vec![]
         };
 
         // Step 3: Generate automated insights
         let insights = if self.config.enable_automated_insights {
-            self.insight_generator.generate_business_insights(&business_metrics, &trends).await
-                .map_err(|e| BIError::InsightGenerationFailed { reason: e.to_string() })?
+            self.insight_generator
+                .generate_business_insights(&business_metrics, &trends)
+                .await
+                .map_err(|e| BIError::InsightGenerationFailed {
+                    reason: e.to_string(),
+                })?
         } else {
             vec![]
         };
 
         // Step 4: Generate executive summary
-        let summary = self.generate_executive_summary(&business_metrics, &insights).await?;
+        let summary = self
+            .generate_executive_summary(&business_metrics, &insights)
+            .await?;
 
         // Step 5: Generate recommendations
-        let recommendations = self.generate_business_recommendations(&insights, &trends).await?;
+        let recommendations = self
+            .generate_business_recommendations(&insights, &trends)
+            .await?;
 
         let dashboard = ExecutiveDashboard {
             summary,
             key_metrics: business_metrics,
             trends,
-            insights: insights.into_iter().take(self.config.max_insights_per_report).collect(),
+            insights: insights
+                .into_iter()
+                .take(self.config.max_insights_per_report)
+                .collect(),
             recommendations,
             generated_at: Utc::now(),
             tenant_id: user_context.tenant_id.clone().unwrap_or_default(),
@@ -256,8 +280,14 @@ impl BusinessIntelligenceEngine {
     }
 
     /// Extract key business metrics using natural language queries
-    async fn extract_business_metrics(&self, user_context: &UserContext) -> Result<BusinessMetrics, BIError> {
-        debug!("Extracting business metrics for tenant: {:?}", user_context.tenant_id);
+    async fn extract_business_metrics(
+        &self,
+        user_context: &UserContext,
+    ) -> Result<BusinessMetrics, BIError> {
+        debug!(
+            "Extracting business metrics for tenant: {:?}",
+            user_context.tenant_id
+        );
 
         // Define business intelligence queries
         let bi_queries = vec![
@@ -301,7 +331,11 @@ impl BusinessIntelligenceEngine {
 
         // Execute business intelligence queries
         for query in bi_queries {
-            match self.nl_translator.translate_to_sql(query, user_context).await {
+            match self
+                .nl_translator
+                .translate_to_sql(query, user_context)
+                .await
+            {
                 Ok(translation) => {
                     debug!("Translated BI query: {} -> {}", query, translation.sql);
 
@@ -406,15 +440,20 @@ impl BusinessIntelligenceEngine {
         let performance_status = self.calculate_performance_status(metrics);
 
         // Extract key achievements from insights
-        let key_achievements = insights.iter()
+        let key_achievements = insights
+            .iter()
             .filter(|insight| insight.impact_score > 0.8)
             .map(|insight| insight.title.clone())
             .take(5)
             .collect();
 
         // Extract critical alerts
-        let critical_alerts = insights.iter()
-            .filter(|insight| insight.confidence_score < 0.5 || insight.description.to_lowercase().contains("critical"))
+        let critical_alerts = insights
+            .iter()
+            .filter(|insight| {
+                insight.confidence_score < 0.5
+                    || insight.description.to_lowercase().contains("critical")
+            })
             .map(|insight| insight.description.clone())
             .take(3)
             .collect();
@@ -443,37 +482,57 @@ impl BusinessIntelligenceEngine {
         // Revenue performance
         if let Some(revenue_growth) = metrics.revenue_metrics.revenue_growth_percent {
             factors += 1;
-            if revenue_growth > 20.0 { score += 2; }
-            else if revenue_growth > 10.0 { score += 1; }
-            else if revenue_growth < -5.0 { score -= 1; }
+            if revenue_growth > 20.0 {
+                score += 2;
+            } else if revenue_growth > 10.0 {
+                score += 1;
+            } else if revenue_growth < -5.0 {
+                score -= 1;
+            }
         }
 
         // Customer metrics
         if let Some(churn_rate) = metrics.customer_metrics.churn_rate_percent {
             factors += 1;
-            if churn_rate < 5.0 { score += 2; }
-            else if churn_rate < 10.0 { score += 1; }
-            else if churn_rate > 20.0 { score -= 1; }
+            if churn_rate < 5.0 {
+                score += 2;
+            } else if churn_rate < 10.0 {
+                score += 1;
+            } else if churn_rate > 20.0 {
+                score -= 1;
+            }
         }
 
         // System performance
         if let Some(uptime) = metrics.operational_metrics.system_uptime_percent {
             factors += 1;
-            if uptime > 99.9 { score += 2; }
-            else if uptime > 99.0 { score += 1; }
-            else if uptime < 95.0 { score -= 2; }
+            if uptime > 99.9 {
+                score += 2;
+            } else if uptime > 99.0 {
+                score += 1;
+            } else if uptime < 95.0 {
+                score -= 2;
+            }
         }
 
         // Response time
         if let Some(response_time) = metrics.operational_metrics.average_response_time_ms {
             factors += 1;
-            if response_time < 100.0 { score += 2; }
-            else if response_time < 500.0 { score += 1; }
-            else if response_time > 2000.0 { score -= 1; }
+            if response_time < 100.0 {
+                score += 2;
+            } else if response_time < 500.0 {
+                score += 1;
+            } else if response_time > 2000.0 {
+                score -= 1;
+            }
         }
 
         // Calculate average score
-        let avg_score = if factors > 0 { score as f64 / factors as f64 } else { 0.0 };
+        let avg_score = if factors > 0 {
+            score as f64 / factors as f64
+        } else {
+            0.0
+        };
 
         match avg_score {
             s if s >= 1.5 => PerformanceStatus::Excellent,
@@ -530,7 +589,10 @@ impl BusinessIntelligenceEngine {
     }
 
     /// Generate recommendation from business insight
-    async fn generate_recommendation_from_insight(&self, insight: &BusinessInsight) -> Result<BusinessRecommendation, BIError> {
+    async fn generate_recommendation_from_insight(
+        &self,
+        insight: &BusinessInsight,
+    ) -> Result<BusinessRecommendation, BIError> {
         // Use LLM to generate actionable recommendation
         let prompt = format!(
             "Based on this business insight, generate a specific, actionable recommendation:
@@ -546,9 +608,7 @@ Generate a business recommendation that includes:
 4. Required resources
 
 Recommendation:",
-            insight.title,
-            insight.description,
-            insight.impact_score
+            insight.title, insight.description, insight.impact_score
         );
 
         let llm_request = LLMRequest::new(prompt)
@@ -557,17 +617,19 @@ Recommendation:",
 
         let context = LLMRequestContext::new(uuid::Uuid::new_v4().to_string());
 
-        match self.llm_engine.query_with_fallback_and_context(&llm_request, &context).await {
-            Ok(response) => {
-                Ok(BusinessRecommendation {
-                    title: insight.title.clone(),
-                    description: response.content,
-                    priority: self.map_impact_to_priority(insight.impact_score),
-                    estimated_impact: format!("Impact Score: {:.2}", insight.impact_score),
-                    implementation_effort: ImplementationEffort::Medium,
-                    timeline: "2-4 weeks".to_string(),
-                })
-            }
+        match self
+            .llm_engine
+            .query_with_fallback_and_context(&llm_request, &context)
+            .await
+        {
+            Ok(response) => Ok(BusinessRecommendation {
+                title: insight.title.clone(),
+                description: response.content,
+                priority: self.map_impact_to_priority(insight.impact_score),
+                estimated_impact: format!("Impact Score: {:.2}", insight.impact_score),
+                implementation_effort: ImplementationEffort::Medium,
+                timeline: "2-4 weeks".to_string(),
+            }),
             Err(e) => {
                 warn!("Failed to generate recommendation from LLM: {}", e);
                 // Fallback to template-based recommendation
@@ -584,7 +646,10 @@ Recommendation:",
     }
 
     /// Generate recommendation from trend analysis
-    async fn generate_recommendation_from_trend(&self, trend: &TrendAnalysis) -> Result<Option<BusinessRecommendation>, BIError> {
+    async fn generate_recommendation_from_trend(
+        &self,
+        trend: &TrendAnalysis,
+    ) -> Result<Option<BusinessRecommendation>, BIError> {
         // Only generate recommendations for significant trends
         if trend.confidence_score < 0.7 {
             return Ok(None);
@@ -592,7 +657,10 @@ Recommendation:",
 
         let recommendation = BusinessRecommendation {
             title: format!("Address {} trend in {}", trend.direction, trend.metric_name),
-            description: format!("Trend analysis shows {} trend with {:.1}% change", trend.direction, trend.change_percentage),
+            description: format!(
+                "Trend analysis shows {} trend with {:.1}% change",
+                trend.direction, trend.change_percentage
+            ),
             priority: if trend.change_percentage.abs() > 20.0 {
                 RecommendationPriority::High
             } else {
@@ -640,8 +708,7 @@ pub struct QueryResult {
 impl QueryResult {
     pub fn extract_numeric_value(&self) -> Option<f64> {
         // Extract first numeric value from first row
-        self.rows.first()?.values().next()?
-            .parse().ok()
+        self.rows.first()?.values().next()?.parse().ok()
     }
 }
 

@@ -21,7 +21,7 @@
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
-use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -152,8 +152,7 @@ impl UnifiedWALEntry {
     pub fn is_graph_operation(&self) -> bool {
         matches!(
             &self.operation,
-            UnifiedWALOperation::GraphOp(_) |
-            UnifiedWALOperation::HybridOp { .. }
+            UnifiedWALOperation::GraphOp(_) | UnifiedWALOperation::HybridOp { .. }
         )
     }
 
@@ -161,8 +160,7 @@ impl UnifiedWALEntry {
     pub fn is_vector_operation(&self) -> bool {
         matches!(
             &self.operation,
-            UnifiedWALOperation::VectorOp(_) |
-            UnifiedWALOperation::HybridOp { .. }
+            UnifiedWALOperation::VectorOp(_) | UnifiedWALOperation::HybridOp { .. }
         )
     }
 }
@@ -198,11 +196,15 @@ impl UnifiedWALWriter {
         let filesystem = Arc::new(
             FilesystemFactory::create(FilesystemConfig::default())
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
+                .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?,
         );
 
-        // Ensure base directory exists
-        let base_url = format!("file://{}", base_path);
+        // Ensure base directory exists. If caller passed a URL, don't prefix again.
+        let base_url = if base_path.contains("://") {
+            base_path.clone()
+        } else {
+            format!("file://{}", base_path)
+        };
         let fs = filesystem.get_filesystem(&base_url)?;
         fs.create_dir_all(&base_url).await?;
 
@@ -242,12 +244,18 @@ impl UnifiedWALWriter {
 
         // Append to buffer
         // Write size header (4 bytes)
-        self.current_segment_data.extend_from_slice(&(size as u32).to_le_bytes());
+        self.current_segment_data
+            .extend_from_slice(&(size as u32).to_le_bytes());
         // Write serialized entry
         self.current_segment_data.extend_from_slice(&serialized);
 
         // If requires immediate fsync, flush to disk
-        if entry.metadata.as_ref().map(|m| m.requires_fsync).unwrap_or(false) {
+        if entry
+            .metadata
+            .as_ref()
+            .map(|m| m.requires_fsync)
+            .unwrap_or(false)
+        {
             self.flush_current_segment().await?;
         }
 
@@ -334,10 +342,13 @@ impl UnifiedWALReader {
         let filesystem = Arc::new(
             FilesystemFactory::create(FilesystemConfig::default())
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
+                .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?,
         );
 
-        Ok(Self { base_path, filesystem })
+        Ok(Self {
+            base_path,
+            filesystem,
+        })
     }
 
     /// Read all WAL entries from a segment
@@ -416,7 +427,7 @@ impl UnifiedWALReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{Node, Edge};
+    use crate::graph::{Edge, Node};
 
     #[tokio::test]
     async fn test_unified_wal_operations() {
@@ -475,34 +486,30 @@ mod tests {
     #[test]
     fn test_hybrid_operation() {
         let hybrid_op = UnifiedWALOperation::HybridOp {
-            vector_ops: vec![
-                VectorOperation::AddVector {
-                    collection_id: "coll1".to_string(),
-                    vector: VectorRecord {
-                        id: "vec1".to_string(),
-                        vector: vec![0.1, 0.2],
-                        metadata: Default::default(),
-                        timestamp: Some(0),
-                        updated_at: None,
-                        expires_at: None,
-                        version: None,
-                        source: None,
-                    },
+            vector_ops: vec![VectorOperation::AddVector {
+                collection_id: "coll1".to_string(),
+                vector: VectorRecord {
+                    id: "vec1".to_string(),
+                    vector: vec![0.1, 0.2],
+                    metadata: Default::default(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
                 },
-            ],
-            graph_ops: vec![
-                GraphOperation::CreateNode {
-                    graph_id: "graph1".to_string(),
-                    node: Node {
-                        id: "node1".to_string(),
-                        labels: vec!["Label".to_string()],
-                        properties: Default::default(),
-                        embedding: None,
-                        created_at_ms: 0,
-                        updated_at_ms: 0,
-                    },
+            }],
+            graph_ops: vec![GraphOperation::CreateNode {
+                graph_id: "graph1".to_string(),
+                node: Node {
+                    id: "node1".to_string(),
+                    labels: vec!["Label".to_string()],
+                    properties: Default::default(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
                 },
-            ],
+            }],
             transaction_id: "tx123".to_string(),
         };
 

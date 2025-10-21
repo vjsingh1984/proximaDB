@@ -2,12 +2,12 @@
 //!
 //! Tests the actual clustering implementation from the production code.
 
+use anyhow::Result;
+use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::index::axis::clustering::{
     ClusterManager, ClusteringAlgorithm, ClusteringConfig, KMeansConfig, KMeansInit,
 };
-use proximadb::compute::distance_computation::DistanceMetric;
 use tokio::test;
-use anyhow::Result;
 
 /// Generate test vectors for clustering
 fn generate_test_vectors(count: usize, dimension: usize, num_clusters: usize) -> Vec<Vec<f32>> {
@@ -76,7 +76,11 @@ async fn test_kmeans_clustering() -> Result<()> {
     let assignments = manager.cluster_vectors(&vectors).await?;
 
     // Verify we got assignments for all vectors
-    assert_eq!(assignments.len(), vectors.len(), "Should assign all vectors");
+    assert_eq!(
+        assignments.len(),
+        vectors.len(),
+        "Should assign all vectors"
+    );
 
     // Check that we have 3 distinct clusters
     let mut unique_clusters = std::collections::HashSet::new();
@@ -85,8 +89,14 @@ async fn test_kmeans_clustering() -> Result<()> {
     }
 
     // We should have approximately 3 clusters (allow some variance)
-    assert!(unique_clusters.len() <= 5, "Should find approximately 3 clusters");
-    assert!(unique_clusters.len() >= 2, "Should find at least 2 clusters");
+    assert!(
+        unique_clusters.len() <= 5,
+        "Should find approximately 3 clusters"
+    );
+    assert!(
+        unique_clusters.len() >= 2,
+        "Should find at least 2 clusters"
+    );
 
     Ok(())
 }
@@ -135,7 +145,10 @@ async fn test_empty_vector_clustering() -> Result<()> {
     let empty_vectors: Vec<Vec<f32>> = Vec::new();
     let assignments = manager.cluster_vectors(&empty_vectors).await?;
 
-    assert!(assignments.is_empty(), "Empty input should produce empty assignments");
+    assert!(
+        assignments.is_empty(),
+        "Empty input should produce empty assignments"
+    );
 
     Ok(())
 }
@@ -157,7 +170,10 @@ async fn test_single_vector_clustering() -> Result<()> {
     let assignments = manager.cluster_vectors(&vectors).await?;
 
     assert_eq!(assignments.len(), 1, "Should have one assignment");
-    assert_eq!(assignments[0].cluster_id, 0, "Single vector should be in cluster 0");
+    assert_eq!(
+        assignments[0].cluster_id, 0,
+        "Single vector should be in cluster 0"
+    );
 
     Ok(())
 }
@@ -166,7 +182,11 @@ async fn test_single_vector_clustering() -> Result<()> {
 async fn test_different_distance_metrics() -> Result<()> {
     let vectors = generate_test_vectors(100, 32, 3);
 
-    for metric in [DistanceMetric::Euclidean, DistanceMetric::Cosine, DistanceMetric::Manhattan] {
+    for metric in [
+        DistanceMetric::Euclidean,
+        DistanceMetric::Cosine,
+        DistanceMetric::Manhattan,
+    ] {
         let config = ClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                 k: 3,

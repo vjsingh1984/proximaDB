@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
-use super::clustering::HilbertKey;
 use super::SStableMetadata;
+use super::clustering::HilbertKey;
 
 /// Unified HELIX reader that implements strategy-aware reading
 ///
@@ -102,7 +102,9 @@ impl UnifiedHELIXReader {
         Self::new(
             filesystem_factory,
             collection_id,
-            ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            ReadAccessStrategy::CachedSearch {
+                prefetch_metadata: true,
+            },
         )
     }
 
@@ -127,7 +129,7 @@ impl UnifiedHELIXReader {
             ReadAccessStrategy::CachedSearch { .. } => HelixSearchStrategy::ZoneMapPruning,
             ReadAccessStrategy::CachedMetadataOnly => HelixSearchStrategy::HilbertRange,
             ReadAccessStrategy::Adaptive { .. } => HelixSearchStrategy::LiquidClustering {
-                pattern_threshold: 100
+                pattern_threshold: 100,
             },
         }
     }
@@ -139,11 +141,10 @@ impl UnifiedHELIXReader {
         query_hilbert: Option<HilbertKey>,
     ) -> Result<Vec<VectorRecord>> {
         match &self.strategy {
-            ReadAccessStrategy::DirectStream => {
-                self.read_direct_streaming(file_path).await
-            }
+            ReadAccessStrategy::DirectStream => self.read_direct_streaming(file_path).await,
             _ => {
-                self.read_with_hilbert_pruning(file_path, query_hilbert).await
+                self.read_with_hilbert_pruning(file_path, query_hilbert)
+                    .await
             }
         }
     }
@@ -165,7 +166,9 @@ impl UnifiedHELIXReader {
         file_path: &str,
         query_hilbert: Option<HilbertKey>,
     ) -> Result<Vec<VectorRecord>> {
-        let cached_fs = self.cached_filesystem.as_ref()
+        let cached_fs = self
+            .cached_filesystem
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Cached filesystem not initialized"))?;
 
         let _data = cached_fs.read(file_path).await?;
@@ -232,7 +235,10 @@ pub struct DirectHELIXReader {
 
 impl DirectHELIXReader {
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String) -> Self {
-        Self { filesystem_factory, collection_id }
+        Self {
+            filesystem_factory,
+            collection_id,
+        }
     }
 
     /// Stream Proxima blocks directly for compaction
@@ -245,7 +251,10 @@ impl DirectHELIXReader {
     }
 
     /// Stream SSTables with Hilbert sorting for compaction
-    pub async fn stream_sorted_by_hilbert(&self, sstables: &[SStableMetadata]) -> Result<Vec<VectorRecord>> {
+    pub async fn stream_sorted_by_hilbert(
+        &self,
+        sstables: &[SStableMetadata],
+    ) -> Result<Vec<VectorRecord>> {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let mut all_records = Vec::new();
 
@@ -351,16 +360,24 @@ mod tests {
         let search_strategy = UnifiedHELIXReader::to_helix_search_strategy(&direct);
         assert!(matches!(search_strategy, HelixSearchStrategy::NoPruning));
 
-        let search = ReadAccessStrategy::CachedSearch { prefetch_metadata: true };
+        let search = ReadAccessStrategy::CachedSearch {
+            prefetch_metadata: true,
+        };
         let search_strategy = UnifiedHELIXReader::to_helix_search_strategy(&search);
-        assert!(matches!(search_strategy, HelixSearchStrategy::ZoneMapPruning));
+        assert!(matches!(
+            search_strategy,
+            HelixSearchStrategy::ZoneMapPruning
+        ));
 
         let adaptive = ReadAccessStrategy::Adaptive {
             initial_strategy: Box::new(ReadAccessStrategy::DirectStream),
-            fallback_threshold: 100
+            fallback_threshold: 100,
         };
         let search_strategy = UnifiedHELIXReader::to_helix_search_strategy(&adaptive);
-        assert!(matches!(search_strategy, HelixSearchStrategy::LiquidClustering { .. }));
+        assert!(matches!(
+            search_strategy,
+            HelixSearchStrategy::LiquidClustering { .. }
+        ));
     }
 
     #[tokio::test]
@@ -373,23 +390,26 @@ mod tests {
         let factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
-                .unwrap()
+                .unwrap(),
         );
 
         // Compaction should use DirectStream
-        let compaction_reader = UnifiedHELIXReader::for_compaction(
-            factory.clone(),
-            "test_collection".to_string(),
-        ).unwrap();
-        assert_eq!(compaction_reader.strategy(), &ReadAccessStrategy::DirectStream);
+        let compaction_reader =
+            UnifiedHELIXReader::for_compaction(factory.clone(), "test_collection".to_string())
+                .unwrap();
+        assert_eq!(
+            compaction_reader.strategy(),
+            &ReadAccessStrategy::DirectStream
+        );
         assert!(!compaction_reader.is_using_cache());
 
         // Search should use CachedSearch
-        let search_reader = UnifiedHELIXReader::for_search(
-            factory.clone(),
-            "test_collection".to_string(),
-        ).unwrap();
-        matches!(search_reader.strategy(), ReadAccessStrategy::CachedSearch { .. });
+        let search_reader =
+            UnifiedHELIXReader::for_search(factory.clone(), "test_collection".to_string()).unwrap();
+        matches!(
+            search_reader.strategy(),
+            ReadAccessStrategy::CachedSearch { .. }
+        );
         assert!(search_reader.is_using_cache());
     }
 
@@ -403,19 +423,22 @@ mod tests {
         let factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
-                .unwrap()
+                .unwrap(),
         );
-        let mut reader = UnifiedHELIXReader::for_search(
-            factory,
-            "test".to_string(),
-        ).unwrap();
+        let mut reader = UnifiedHELIXReader::for_search(factory, "test".to_string()).unwrap();
 
         // Initially configured for search (cached)
         assert!(reader.is_using_cache());
-        assert!(matches!(reader.search_strategy, HelixSearchStrategy::ZoneMapPruning));
+        assert!(matches!(
+            reader.search_strategy,
+            HelixSearchStrategy::ZoneMapPruning
+        ));
 
         // Change to direct stream
         reader.set_strategy(ReadAccessStrategy::DirectStream);
-        assert!(matches!(reader.search_strategy, HelixSearchStrategy::NoPruning));
+        assert!(matches!(
+            reader.search_strategy,
+            HelixSearchStrategy::NoPruning
+        ));
     }
 }

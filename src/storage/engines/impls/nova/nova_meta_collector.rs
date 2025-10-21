@@ -4,17 +4,16 @@
 //! NOVA's advanced metadata structures without re-reading the file.
 
 use anyhow::Result;
-use arrow_array::{RecordBatch, Float32Array, Array};
+use arrow_array::{Array, Float32Array, RecordBatch};
 // These parquet metadata types are used internally for low-level operations
 // The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::RowGroupMetaData;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 use super::hierarchical_stats::{
-    SuperBlock, EnhancedRowGroupStats, ZoneMap, QuantizationStats,
-    SelectivityHints, StorageStats, QuantizedSelectivity,
-    SearchCostEstimate, AccessStats,
+    AccessStats, EnhancedRowGroupStats, QuantizationStats, QuantizedSelectivity,
+    SearchCostEstimate, SelectivityHints, StorageStats, SuperBlock, ZoneMap,
 };
 
 /// NOVA metadata collector implementation
@@ -106,12 +105,14 @@ impl RowGroupBuilder {
         let count = self.vector_count as f64;
 
         // Calculate centroid and variance
-        let centroid: Vec<f32> = self.sum_values
+        let centroid: Vec<f32> = self
+            .sum_values
             .iter()
             .map(|&sum| (sum / count) as f32)
             .collect();
 
-        let variance: Vec<f32> = self.sum_values
+        let variance: Vec<f32> = self
+            .sum_values
             .iter()
             .zip(&self.sum_squares)
             .map(|(&sum, &sum_sq)| {
@@ -200,7 +201,10 @@ impl NovaMetadataCollector {
         }
 
         let num_groups = rg_stats.len() as f64;
-        let centroid = sum_centroid.iter().map(|&s| (s / num_groups) as f32).collect();
+        let centroid = sum_centroid
+            .iter()
+            .map(|&s| (s / num_groups) as f32)
+            .collect();
 
         SuperBlock {
             id: start as u32 / self.config.row_groups_per_superblock as u32,
@@ -211,7 +215,7 @@ impl NovaMetadataCollector {
                 max_values,
                 centroid,
                 variance: vec![0.0; self.dimension.unwrap_or(0)], // Simplified
-                norm_bounds: (0.0, 0.0), // Would need to recalculate
+                norm_bounds: (0.0, 0.0),                          // Would need to recalculate
                 dimension: self.dimension.unwrap_or(0),
             },
             quantization_stats: QuantizationStats {
@@ -240,7 +244,9 @@ impl NovaMetadataCollector {
     }
 }
 
-impl crate::storage::engines::core::formats::columnar::metadata_collector::MetadataCollector for NovaMetadataCollector {
+impl crate::storage::engines::core::formats::columnar::metadata_collector::MetadataCollector
+    for NovaMetadataCollector
+{
     fn on_row_group_start(&mut self, row_group_index: usize) -> Result<()> {
         if let Some(dim) = self.dimension {
             self.current_row_group = Some(RowGroupBuilder::new(row_group_index, dim));
@@ -265,7 +271,8 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 
                     // Initialize current row group if needed
                     if self.current_row_group.is_none() {
-                        self.current_row_group = Some(RowGroupBuilder::new(row_group_index, dimension));
+                        self.current_row_group =
+                            Some(RowGroupBuilder::new(row_group_index, dimension));
                     }
                 }
 
@@ -299,7 +306,8 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
                     pq_quality: 0.95,
                     progressive_efficiency: 0.75,
                 },
-                compression_ratio: metadata.compressed_size() as f32 / metadata.total_byte_size() as f32,
+                compression_ratio: metadata.compressed_size() as f32
+                    / metadata.total_byte_size() as f32,
                 search_cost_estimate: SearchCostEstimate {
                     io_cost: metadata.compressed_size() as f32,
                     cpu_cost: builder.vector_count as f32 * 0.1,
@@ -329,7 +337,8 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 
         for sb_idx in 0..superblock_count {
             let start = (sb_idx * self.config.row_groups_per_superblock) as u32;
-            let end = ((sb_idx + 1) * self.config.row_groups_per_superblock).min(total_row_groups) as u32;
+            let end =
+                ((sb_idx + 1) * self.config.row_groups_per_superblock).min(total_row_groups) as u32;
 
             if start < end {
                 let superblock = self.build_superblock(start..end);

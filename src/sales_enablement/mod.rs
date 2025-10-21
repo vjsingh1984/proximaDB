@@ -3,12 +3,12 @@
 //! Customer-facing sales tools and trial automation implementing
 //! task_sales_enablement_platform_design.adoc
 
-pub mod trial_platform;
-pub mod demos;
 pub mod analytics;
 pub mod competitive;
+pub mod demos;
+pub mod trial_platform;
 
-pub use trial_platform::{EnterpriseTrialManager, EnterpriseTrial, TrialType, TrialStatus};
+pub use analytics::{ConversionAnalysis, CustomerEngagementTracker, SalesPipelineAnalytics};
+pub use competitive::{CompetitiveAnalysis, CompetitiveIntelligence, PositioningRecommendation};
 pub use demos::{AIShowcasePlatform, DemoScenario, DemonstrationResult};
-pub use analytics::{SalesPipelineAnalytics, ConversionAnalysis, CustomerEngagementTracker};
-pub use competitive::{CompetitiveIntelligence, CompetitiveAnalysis, PositioningRecommendation};
+pub use trial_platform::{EnterpriseTrial, EnterpriseTrialManager, TrialStatus, TrialType};

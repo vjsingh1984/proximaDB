@@ -77,8 +77,8 @@ impl StrategyMetrics {
 
         // Update weighted average latency
         if other.total_reads > 0 {
-            let total_latency = (self.avg_latency_us * self.total_reads as f64) +
-                               (other.avg_latency_us * other.total_reads as f64);
+            let total_latency = (self.avg_latency_us * self.total_reads as f64)
+                + (other.avg_latency_us * other.total_reads as f64);
             self.avg_latency_us = total_latency / self.total_reads as f64;
         }
 
@@ -130,11 +130,11 @@ impl Default for AdaptiveConfig {
     fn default() -> Self {
         Self {
             min_operations: 100,
-            collection_window_secs: 300, // 5 minutes
-            cache_hit_threshold: 0.7,    // 70% hit rate
-            latency_threshold_us: 1000.0, // 1ms
-            min_improvement_pct: 10.0,   // 10% improvement
-            max_switches_per_hour: 6,    // At most every 10 minutes
+            collection_window_secs: 300,         // 5 minutes
+            cache_hit_threshold: 0.7,            // 70% hit rate
+            latency_threshold_us: 1000.0,        // 1ms
+            min_improvement_pct: 10.0,           // 10% improvement
+            max_switches_per_hour: 6,            // At most every 10 minutes
             min_time_between_switches_secs: 600, // 10 minutes
         }
     }
@@ -184,14 +184,20 @@ impl AdaptiveStrategyOptimizer {
         collection_metrics.bytes_read += bytes_read;
 
         // Update moving average latency
-        let current_total_latency = collection_metrics.avg_latency_us * (collection_metrics.total_reads - 1) as f64;
-        collection_metrics.avg_latency_us = (current_total_latency + latency_us as f64) / collection_metrics.total_reads as f64;
+        let current_total_latency =
+            collection_metrics.avg_latency_us * (collection_metrics.total_reads - 1) as f64;
+        collection_metrics.avg_latency_us =
+            (current_total_latency + latency_us as f64) / collection_metrics.total_reads as f64;
 
         collection_metrics.last_updated = Instant::now();
     }
 
     /// Record a strategy switch
-    pub async fn record_strategy_switch(&self, collection_id: &str, new_strategy: ReadAccessStrategy) {
+    pub async fn record_strategy_switch(
+        &self,
+        collection_id: &str,
+        new_strategy: ReadAccessStrategy,
+    ) {
         let mut metrics = self.metrics.write().await;
         let collection_metrics = metrics.entry(collection_id.to_string()).or_default();
         collection_metrics.strategy_switches += 1;
@@ -199,8 +205,10 @@ impl AdaptiveStrategyOptimizer {
         let mut strategies = self.strategies.write().await;
         strategies.insert(collection_id.to_string(), new_strategy);
 
-        debug!("Strategy switch recorded for collection {}: switches = {}",
-               collection_id, collection_metrics.strategy_switches);
+        debug!(
+            "Strategy switch recorded for collection {}: switches = {}",
+            collection_id, collection_metrics.strategy_switches
+        );
     }
 
     /// Detect workload pattern based on recent metrics
@@ -244,8 +252,10 @@ impl AdaptiveStrategyOptimizer {
             collection_history.remove(0);
         }
 
-        debug!("Detected pattern for {}: {:?} (hit_rate: {:.2}, latency: {:.2}μs)",
-               collection_id, pattern, hit_rate, avg_latency);
+        debug!(
+            "Detected pattern for {}: {:?} (hit_rate: {:.2}, latency: {:.2}μs)",
+            collection_id, pattern, hit_rate, avg_latency
+        );
 
         pattern
     }
@@ -262,9 +272,13 @@ impl AdaptiveStrategyOptimizer {
         let recommended_strategy = match pattern {
             WorkloadPattern::Sequential => ReadAccessStrategy::DirectStream,
             WorkloadPattern::Random => ReadAccessStrategy::CachedSelective { filter: None },
-            WorkloadPattern::Search => ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            WorkloadPattern::Search => ReadAccessStrategy::CachedSearch {
+                prefetch_metadata: true,
+            },
             WorkloadPattern::Mixed => ReadAccessStrategy::Adaptive {
-                initial_strategy: Box::new(ReadAccessStrategy::CachedSearch { prefetch_metadata: true }),
+                initial_strategy: Box::new(ReadAccessStrategy::CachedSearch {
+                    prefetch_metadata: true,
+                }),
                 fallback_threshold: self.calculate_optimal_threshold(collection_id).await,
             },
             WorkloadPattern::Unknown => return None,
@@ -279,17 +293,28 @@ impl AdaptiveStrategyOptimizer {
 
         // Check rate limiting for strategy switches
         if !self.should_allow_switch(collection_id).await {
-            debug!("Rate limiting strategy switch for collection {}", collection_id);
+            debug!(
+                "Rate limiting strategy switch for collection {}",
+                collection_id
+            );
             return None;
         }
 
         // Validate that the switch would provide sufficient improvement
-        if self.would_improve_performance(collection_id, &recommended_strategy).await {
-            info!("Recommending strategy switch for collection {} to {:?}",
-                  collection_id, recommended_strategy);
+        if self
+            .would_improve_performance(collection_id, &recommended_strategy)
+            .await
+        {
+            info!(
+                "Recommending strategy switch for collection {} to {:?}",
+                collection_id, recommended_strategy
+            );
             Some(recommended_strategy)
         } else {
-            debug!("Strategy switch would not provide sufficient improvement for {}", collection_id);
+            debug!(
+                "Strategy switch would not provide sufficient improvement for {}",
+                collection_id
+            );
             None
         }
     }
@@ -308,9 +333,9 @@ impl AdaptiveStrategyOptimizer {
         if hit_rate > 0.8 {
             10 // High hit rate, allow more misses before switching
         } else if hit_rate > 0.5 {
-            7  // Medium hit rate
+            7 // Medium hit rate
         } else {
-            3  // Low hit rate, switch quickly to direct reads
+            3 // Low hit rate, switch quickly to direct reads
         }
     }
 
@@ -332,7 +357,8 @@ impl AdaptiveStrategyOptimizer {
         }
 
         // Check minimum time since last update
-        let min_time_between_switches = Duration::from_secs(self.config.min_time_between_switches_secs);
+        let min_time_between_switches =
+            Duration::from_secs(self.config.min_time_between_switches_secs);
         collection_metrics.last_updated.elapsed() >= min_time_between_switches
     }
 
@@ -340,7 +366,7 @@ impl AdaptiveStrategyOptimizer {
     async fn would_improve_performance(
         &self,
         collection_id: &str,
-        new_strategy: &ReadAccessStrategy
+        new_strategy: &ReadAccessStrategy,
     ) -> bool {
         let metrics = self.metrics.read().await;
         let collection_metrics = match metrics.get(collection_id) {
@@ -431,15 +457,21 @@ mod tests {
         let optimizer = AdaptiveStrategyOptimizer::new(AdaptiveConfig::default());
 
         // Record some operations
-        optimizer.record_read("test_collection", true, 100, 1024).await;
-        optimizer.record_read("test_collection", false, 200, 2048).await;
-        optimizer.record_read("test_collection", true, 150, 1536).await;
+        optimizer
+            .record_read("test_collection", true, 100, 1024)
+            .await;
+        optimizer
+            .record_read("test_collection", false, 200, 2048)
+            .await;
+        optimizer
+            .record_read("test_collection", true, 150, 1536)
+            .await;
 
         let metrics = optimizer.get_metrics("test_collection").await.unwrap();
         assert_eq!(metrics.total_reads, 3);
         assert_eq!(metrics.cache_hits, 2);
         assert_eq!(metrics.cache_misses, 1);
-        assert_eq!(metrics.hit_rate(), 2.0/3.0);
+        assert_eq!(metrics.hit_rate(), 2.0 / 3.0);
     }
 
     #[tokio::test]
@@ -451,16 +483,22 @@ mod tests {
 
         // Simulate search pattern (high hit rate, low latency)
         for _ in 0..10 {
-            optimizer.record_read("search_collection", true, 50, 1024).await;
+            optimizer
+                .record_read("search_collection", true, 50, 1024)
+                .await;
         }
-        optimizer.record_read("search_collection", false, 100, 1024).await;
+        optimizer
+            .record_read("search_collection", false, 100, 1024)
+            .await;
 
         let pattern = optimizer.detect_pattern("search_collection").await;
         assert_eq!(pattern, WorkloadPattern::Search);
 
         // Simulate sequential pattern (low hit rate, high latency)
         for _ in 0..10 {
-            optimizer.record_read("seq_collection", false, 3000, 1024).await;
+            optimizer
+                .record_read("seq_collection", false, 3000, 1024)
+                .await;
         }
 
         let pattern = optimizer.detect_pattern("seq_collection").await;
@@ -478,11 +516,16 @@ mod tests {
 
         // Simulate search workload
         for _ in 0..10 {
-            optimizer.record_read("test_collection", true, 50, 1024).await;
+            optimizer
+                .record_read("test_collection", true, 50, 1024)
+                .await;
         }
 
         let recommended = optimizer.optimize_strategy("test_collection").await;
-        assert!(matches!(recommended, Some(ReadAccessStrategy::CachedSearch { .. })));
+        assert!(matches!(
+            recommended,
+            Some(ReadAccessStrategy::CachedSearch { .. })
+        ));
     }
 
     #[test]

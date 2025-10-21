@@ -35,8 +35,8 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// Universal index data that can be stored across tiers
 pub trait IndexData: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync {
@@ -275,10 +275,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 } else {
                     // No lower tier available - keep in memory but log warning
                     // We can't actually evict without losing data
-                    warn!(
-                        "No lower tier available for {}, keeping in memory",
-                        id
-                    );
+                    warn!("No lower tier available for {}, keeping in memory", id);
                     // Put the data back in memory cache since we can't evict it
                     self.memory_cache.insert(id.clone(), bytes);
                 }
@@ -321,14 +318,16 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         id: id.to_string(),
                         vector: vec![], // Empty vector for index data
                         metadata: std::collections::HashMap::new(),
-                        timestamp: Some(std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs() as i64),
+                        timestamp: Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as i64,
+                        ),
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                            source: None,
+                        source: None,
                     },
                 );
                 // Write records using streaming approach for production consistency
@@ -369,20 +368,19 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let filesystem = Arc::new(filesystem_factory);
                 // Create zero-copy system for the reader
                 // Create UnifiedCachingFilesystem for the reader
-                let base_fs = filesystem.get_filesystem("file://")
-                    .map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(
-                        std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to get base filesystem: {}", e))
-                    )))?;
+                let base_fs = filesystem.get_filesystem("file://").map_err(|e| {
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to get base filesystem: {}", e),
+                    )))
+                })?;
                 let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
                     base_fs,
                     self.collection_id.clone(),
                     "universal_index".to_string(),
                 ));
-                let reader = UnifiedSstableReader::new(
-                    filesystem,
-                    unified_fs,
-                    self.collection_id.clone(),
-                );
+                let reader =
+                    UnifiedSstableReader::new(filesystem, unified_fs, self.collection_id.clone());
                 // UnifiedSstableReader's get_vector returns a VectorRecord, not raw bytes
                 // We need to handle this differently
                 if let Some(_vector_record) =
@@ -516,10 +514,12 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         );
                         map
                     },
-                    timestamp: Some(std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as i64),
+                    timestamp: Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as i64,
+                    ),
                     updated_at: None,
                     expires_at: None,
                     version: None,
@@ -655,7 +655,8 @@ mod tests {
         // Without a lower tier, data cannot be evicted and will stay in memory
         // This is expected behavior to prevent data loss
         assert_eq!(
-            storage.memory_cache.len(), 15,
+            storage.memory_cache.len(),
+            15,
             "All items should remain in memory when no lower tier is available"
         );
 

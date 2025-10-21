@@ -11,17 +11,17 @@
 //! - Performance optimization pipelines
 //! - Self-tuning database configurations
 
-pub mod service;
-pub mod workload;
 pub mod optimization;
 pub mod prediction;
+pub mod service;
 pub mod tuning;
+pub mod workload;
 
-pub use service::{AutoMLService, AutoMLConfig};
-pub use workload::{WorkloadAnalyzer, WorkloadPattern};
-pub use optimization::{OptimizationPipeline, OptimizationGoal};
+pub use optimization::{OptimizationGoal, OptimizationPipeline};
 pub use prediction::{PerformancePredictor, PredictionModel};
+pub use service::{AutoMLConfig, AutoMLService};
 pub use tuning::{HyperparameterTuner, TuningConfig};
+pub use workload::{WorkloadAnalyzer, WorkloadPattern};
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -66,7 +66,8 @@ impl AutoMLCoordinator {
         let workload_analyzer = Arc::new(WorkloadAnalyzer::new().await?);
         let performance_predictor = Arc::new(PerformancePredictor::new().await?);
         let optimization_pipeline = Arc::new(OptimizationPipeline::new(config.clone()).await?);
-        let hyperparameter_tuner = Arc::new(HyperparameterTuner::new(TuningConfig::default()).await?);
+        let hyperparameter_tuner =
+            Arc::new(HyperparameterTuner::new(TuningConfig::default()).await?);
 
         let status = Arc::new(RwLock::new(AutoMLStatus {
             enabled: true,

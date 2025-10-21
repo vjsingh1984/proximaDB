@@ -19,7 +19,6 @@ pub type IndexStrategy = IndexSelectionStrategy;
 pub type StrategySelector = IndexStrategyBuilder;
 pub type StrategyRecommendation = OptimizationConfig;
 
-
 /// Optimization goals for index selection
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum OptimizationGoal {
@@ -362,7 +361,9 @@ mod tests {
                 indexes: vec![
                     IndexSpecification {
                         data_type: Data::Identifier,
-                        algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                        algorithm: IndexAlgorithm::BTree {
+                            max_keys_per_node: 256,
+                        },
                         name: Some("identifier".to_string()),
                         is_primary: true,
                         selectivity_threshold: None,
@@ -381,7 +382,9 @@ mod tests {
                     },
                     IndexSpecification {
                         data_type: Data::Metadata,
-                        algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                        algorithm: IndexAlgorithm::BTree {
+                            max_keys_per_node: 256,
+                        },
                         name: Some("metadata".to_string()),
                         is_primary: false,
                         selectivity_threshold: None,

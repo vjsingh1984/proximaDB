@@ -13,23 +13,23 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::warn;
 
-use proximadb::compute::distance_computation::{DistanceMetric, SimilarityResult};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::compute::distance_computation::{DistanceMetric, SimilarityResult};
+use proximadb::core::compression::CompressionAlgorithm;
+use proximadb::index::axis::index_factory::AxisVectorIndex;
 use proximadb::index::axis::indexes::{
     hnsw_index::{AxisHnswConfig, create_hnsw_index},
     lsh_index::{AxisLshConfig, AxisLshIndex},
 };
-use proximadb::index::axis::index_factory::AxisVectorIndex;
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use proximadb::storage::engines::core::formats::proximablocks::{
-    ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout,
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
 };
 use proximadb::storage::engines::core::ops::proximacodec::{
     ProximaCodec, analysis, types::ProximaScheme,
 };
-use proximadb::core::compression::CompressionAlgorithm;
-use rand::{thread_rng, Rng};
 use rand::prelude::*;
+use rand::{Rng, thread_rng};
 
 #[derive(Parser)]
 #[command(name = "proximadb-bench")]
@@ -46,7 +46,10 @@ use rand::prelude::*;
 )]
 struct Cli {
     /// Benchmark suite to run (defaults to 'all')
-    #[arg(value_enum, help = "Available suites: bench_01-bench_13 or aliases (distance, simd, memory, storage, vectors, index, encoding, quantization, viper, query, system, graph, all)")]
+    #[arg(
+        value_enum,
+        help = "Available suites: bench_01-bench_13 or aliases (distance, simd, memory, storage, vectors, index, encoding, quantization, viper, query, system, graph, all)"
+    )]
     suite: Option<CriterionSuite>,
 
     /// Sample size for statistical analysis (more samples = better accuracy, encoding benchmarks are slow)
@@ -606,41 +609,88 @@ async fn main() -> Result<()> {
         match command {
             Commands::All => {
                 // Run all criterion benchmarks
-                run_criterion_benchmarks(CriterionSuite::All, cli.sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::All,
+                    cli.sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench01Distance { metrics: _ } => {
-                run_criterion_benchmarks(CriterionSuite::CoreDistance, cli.sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::CoreDistance,
+                    cli.sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench02Simd { num_vectors: _ } => {
-                run_criterion_benchmarks(CriterionSuite::HardwareSimd, cli.sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::HardwareSimd,
+                    cli.sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench03Memory { num_vectors: _ } => {
-                run_criterion_benchmarks(CriterionSuite::MemoryVector, cli.sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::MemoryVector,
+                    cli.sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench04Storage { num_vectors: _ } => {
-                run_criterion_benchmarks(CriterionSuite::StorageUnified, cli.sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::StorageUnified,
+                    cli.sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench05Vectors { num_vectors: _ } => {
-                run_criterion_benchmarks(CriterionSuite::VectorOps, cli.sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::VectorOps,
+                    cli.sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench06Index { .. } => {
-                run_criterion_benchmarks(CriterionSuite::IndexOps, cli.sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::IndexOps,
+                    cli.sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
-            Commands::Bench07Encoding { vector_counts, dimensions, compression, compression_level, .. } => {
+            Commands::Bench07Encoding {
+                vector_counts,
+                dimensions,
+                compression,
+                compression_level,
+                ..
+            } => {
                 // Pass compression settings and test configurations to encoding benchmarks
                 run_encoding_benchmarks_with_config(
                     cli.sample_size,
                     vector_counts.clone(),
                     dimensions.clone(),
                     compression,
-                    *compression_level
+                    *compression_level,
                 )?;
             }
             Commands::Bench08Compression { .. } => {
                 println!("\n Running Comprehensive Compression Benchmarks");
                 benchmark_compression_algorithms(1024, 768)?;
             }
-            Commands::Bench15SimdEncoding { vector_count, dimension, iterations, patterns, comprehensive } => {
+            Commands::Bench15SimdEncoding {
+                vector_count,
+                dimension,
+                iterations,
+                patterns,
+                comprehensive,
+            } => {
                 println!("\nRunning SIMD Encoding Schemes Benchmark");
                 if *comprehensive {
                     // Run comprehensive matrix: all batch sizes × standard embedding dimensions
@@ -649,38 +699,81 @@ async fn main() -> Result<()> {
 
                     println!("\n╔═══════════════════════════════════════════════════════════════╗");
                     println!("║     COMPREHENSIVE PATTERN DETECTION BENCHMARK MATRIX         ║");
-                    println!("║  {} batch sizes × {} dimensions = {} configurations    ║",
-                        batch_sizes.len(), dimensions.len(), batch_sizes.len() * dimensions.len());
+                    println!(
+                        "║  {} batch sizes × {} dimensions = {} configurations    ║",
+                        batch_sizes.len(),
+                        dimensions.len(),
+                        batch_sizes.len() * dimensions.len()
+                    );
                     println!("╚═══════════════════════════════════════════════════════════════╝\n");
 
                     for batch in &batch_sizes {
                         for dim in &dimensions {
-                            benchmark_simd_encoding_schemes(*batch, *dim, *iterations, patterns.as_deref())?;
+                            benchmark_simd_encoding_schemes(
+                                *batch,
+                                *dim,
+                                *iterations,
+                                patterns.as_deref(),
+                            )?;
                         }
                     }
                 } else {
                     // Use specified or default values
                     let vec_count = vector_count.unwrap_or(1024);
                     let dim = dimension.unwrap_or(768);
-                    benchmark_simd_encoding_schemes(vec_count, dim, *iterations, patterns.as_deref())?;
+                    benchmark_simd_encoding_schemes(
+                        vec_count,
+                        dim,
+                        *iterations,
+                        patterns.as_deref(),
+                    )?;
                 }
             }
             Commands::Bench09Quantization { sample_size } => {
-                run_criterion_benchmarks(CriterionSuite::QuantizationSst, *sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::QuantizationSst,
+                    *sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench10Viper { sample_size } => {
-                run_criterion_benchmarks(CriterionSuite::ColumnarViper, *sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::ColumnarViper,
+                    *sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench11Query { sample_size } => {
-                run_criterion_benchmarks(CriterionSuite::QueryProgressive, *sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::QueryProgressive,
+                    *sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench12System { sample_size } => {
-                run_criterion_benchmarks(CriterionSuite::SystemOptimization, *sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::SystemOptimization,
+                    *sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
             Commands::Bench13Graph { sample_size } => {
-                run_criterion_benchmarks(CriterionSuite::GraphOps, *sample_size, cli.measurement_time).await?;
+                run_criterion_benchmarks(
+                    CriterionSuite::GraphOps,
+                    *sample_size,
+                    cli.measurement_time,
+                )
+                .await?;
             }
-            Commands::Criterion { suite, sample_size, measurement_time } => {
+            Commands::Criterion {
+                suite,
+                sample_size,
+                measurement_time,
+            } => {
                 run_criterion_benchmarks(suite.clone(), *sample_size, *measurement_time).await?;
             }
         }
@@ -870,7 +963,7 @@ fn generate_test_vectors_for_encoding(num_vectors: usize, dimension: usize) -> V
             // Pattern 7: Time Series - Sequential data with trend and seasonality
             let trend = (v as f32 / num_vectors as f32) * 0.5;
             for d in 0..chunk_size {
-                let seasonal = ((d as f32 / 10.0).sin() * 0.3);
+                let seasonal = (d as f32 / 10.0).sin() * 0.3;
                 vec.push(trend + seasonal + rng.gen_range(-0.1..0.1));
             }
 
@@ -1250,18 +1343,18 @@ fn print_encoding_recommendations(
 
 /// Standard embedding dimensions from popular models
 const STANDARD_DIMENSIONS: &[usize] = &[
-    384,   // sentence-transformers/all-MiniLM-L6-v2, paraphrase-MiniLM-L6-v2
-    768,   // BERT-base, all-mpnet-base-v2, sentence-transformers/all-distilroberta-v1
-    1024,  // Common dimension used by many custom models
-    1536,  // OpenAI text-embedding-ada-002 (most widely used)
-    // Note: 3072 (OpenAI text-embedding-3-large) excluded for performance reasons
+    384,  // sentence-transformers/all-MiniLM-L6-v2, paraphrase-MiniLM-L6-v2
+    768,  // BERT-base, all-mpnet-base-v2, sentence-transformers/all-distilroberta-v1
+    1024, // Common dimension used by many custom models
+    1536, // OpenAI text-embedding-ada-002 (most widely used)
+          // Note: 3072 (OpenAI text-embedding-3-large) excluded for performance reasons
 ];
 
 /// Standard batch sizes for realistic workloads
 const STANDARD_BATCH_SIZES: &[usize] = &[
-    250,   // Small batch
-    1000,  // Medium batch
-    5000,  // Large batch
+    250,  // Small batch
+    1000, // Medium batch
+    5000, // Large batch
 ];
 
 // ============= Embedding Generation =============
@@ -1311,7 +1404,8 @@ impl EmbeddingGenerator {
             .map(|_| {
                 let u1: f32 = self.rng.gen_range(0.0001..1.0);
                 let u2: f32 = self.rng.gen_range(0.0..1.0);
-                let val = (-2.0f32 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos() * 1.5;
+                let val =
+                    (-2.0f32 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos() * 1.5;
                 val.max(-5.0).min(5.0)
             })
             .collect();
@@ -1348,7 +1442,9 @@ impl EmbeddingGenerator {
     }
 
     fn generate_random_uniform(&mut self, dimension: usize) -> Vec<f32> {
-        (0..dimension).map(|_| self.rng.gen_range(-1.0..1.0)).collect()
+        (0..dimension)
+            .map(|_| self.rng.gen_range(-1.0..1.0))
+            .collect()
     }
 }
 
@@ -1389,7 +1485,6 @@ async fn run_criterion_benchmarks(
         CriterionSuite::ColumnarViper => run_columnar_viper_benchmarks(sample_size),
         CriterionSuite::QueryProgressive => run_query_progressive_benchmarks(sample_size),
         CriterionSuite::SystemOptimization => run_system_optimization_benchmarks(sample_size),
-        CriterionSuite::GraphOps => run_graph_operations_benchmarks(sample_size),
         CriterionSuite::GraphOps => run_graph_operations_benchmarks(sample_size),
         CriterionSuite::All => {
             run_core_distance_benchmarks(sample_size)?;
@@ -1435,7 +1530,10 @@ where
 
         // Safety check: if single iteration takes > 10 seconds, reduce iterations
         if i == 0 && elapsed > 10_000_000.0 {
-            eprintln!("\n Warning: First iteration took {:.2}s, reducing sample size...", elapsed / 1_000_000.0);
+            eprintln!(
+                "\n Warning: First iteration took {:.2}s, reducing sample size...",
+                elapsed / 1_000_000.0
+            );
             break;
         }
     }
@@ -1483,10 +1581,8 @@ fn benchmark_distance_computation_statistical(sample_size: usize) {
         ] {
             let compute = UnifiedDistanceCompute::new(metric.clone());
 
-            let (mean, std_dev) = measure_function(
-                || compute.calculate_distance(&a, &b, &metric),
-                sample_size,
-            );
+            let (mean, std_dev) =
+                measure_function(|| compute.calculate_distance(&a, &b, &metric), sample_size);
 
             println!(
                 "    {:12} : {:.3} ± {:.3} μs",
@@ -1519,7 +1615,11 @@ fn benchmark_batch_operations_statistical(sample_size: usize) {
             || {
                 let results: Vec<f32> = vector_refs
                     .iter()
-                    .map(|v| compute.calculate_distance(&query, v, &DistanceMetric::Cosine).distance)
+                    .map(|v| {
+                        compute
+                            .calculate_distance(&query, v, &DistanceMetric::Cosine)
+                            .distance
+                    })
                     .collect();
                 results
             },
@@ -1556,12 +1656,26 @@ fn benchmark_batch_operations_statistical(sample_size: usize) {
             sample_size / 10,
         );
 
-        println!("   Sequential : {:.1} ± {:.1} μs ({:.3} μs/vec)",
-                 mean_old, std_old, mean_old / batch_size as f64);
-        println!("   Pooled SIMD: {:.1} ± {:.1} μs ({:.3} μs/vec) - {:.1}x speedup",
-                 mean_pooled, std_pooled, mean_pooled / batch_size as f64, mean_old / mean_pooled);
-        println!("   Lazy eval  : {:.1} ± {:.1} μs ({:.3} μs/vec) - {:.1}x speedup",
-                 mean_lazy, std_lazy, mean_lazy / batch_size as f64, mean_old / mean_lazy);
+        println!(
+            "   Sequential : {:.1} ± {:.1} μs ({:.3} μs/vec)",
+            mean_old,
+            std_old,
+            mean_old / batch_size as f64
+        );
+        println!(
+            "   Pooled SIMD: {:.1} ± {:.1} μs ({:.3} μs/vec) - {:.1}x speedup",
+            mean_pooled,
+            std_pooled,
+            mean_pooled / batch_size as f64,
+            mean_old / mean_pooled
+        );
+        println!(
+            "   Lazy eval  : {:.1} ± {:.1} μs ({:.3} μs/vec) - {:.1}x speedup",
+            mean_lazy,
+            std_lazy,
+            mean_lazy / batch_size as f64,
+            mean_old / mean_lazy
+        );
     }
 }
 
@@ -1583,7 +1697,8 @@ fn benchmark_memory_pool_effectiveness_statistical(sample_size: usize) {
     let (mean_without, std_without) = measure_function(
         || {
             // Use basic loop for non-pooled version
-            let results: Vec<SimilarityResult> = vector_refs.iter()
+            let results: Vec<SimilarityResult> = vector_refs
+                .iter()
                 .map(|v| compute_default.calculate_distance(&query, v, &DistanceMetric::Cosine))
                 .collect();
             results
@@ -1608,10 +1723,19 @@ fn benchmark_memory_pool_effectiveness_statistical(sample_size: usize) {
     let per_vec_without = mean_without / 1000.0;
     let per_vec_with = mean_with / 1000.0;
 
-    println!("  Without pool: {:.1} ± {:.1} μs ({:.3} μs/vec)", mean_without, std_without, per_vec_without);
-    println!("  With pool   : {:.1} ± {:.1} μs ({:.3} μs/vec)", mean_with, std_with, per_vec_with);
+    println!(
+        "  Without pool: {:.1} ± {:.1} μs ({:.3} μs/vec)",
+        mean_without, std_without, per_vec_without
+    );
+    println!(
+        "  With pool   : {:.1} ± {:.1} μs ({:.3} μs/vec)",
+        mean_with, std_with, per_vec_with
+    );
     println!("  Speedup     : {:.2}x", speedup);
-    println!("  Memory saved: ~{:.0}% allocation reduction", (1.0 - 1.0 / speedup) * 100.0);
+    println!(
+        "  Memory saved: ~{:.0}% allocation reduction",
+        (1.0 - 1.0 / speedup) * 100.0
+    );
 }
 
 // ============= Hardware SIMD Benchmarks (from bench_02) =============
@@ -1633,7 +1757,8 @@ fn benchmark_simd_dimensions_statistical(sample_size: usize) {
     println!("\nSIMD Distance Computation by Dimension:");
 
     // Test standard dimensions with appropriate embedding models
-    let test_configs: Vec<(usize, EmbeddingModel)> = STANDARD_DIMENSIONS.iter()
+    let test_configs: Vec<(usize, EmbeddingModel)> = STANDARD_DIMENSIONS
+        .iter()
         .map(|&dim| match dim {
             384 => (dim, EmbeddingModel::Normalized),
             768 => (dim, EmbeddingModel::Bert),
@@ -1657,7 +1782,11 @@ fn benchmark_simd_dimensions_statistical(sample_size: usize) {
             let calculator = UnifiedDistanceCompute::new(metric.clone());
 
             let (mean, std_dev) = measure_function(
-                || calculator.calculate_distance(&vec_a, &vec_b, &metric).raw_value,
+                || {
+                    calculator
+                        .calculate_distance(&vec_a, &vec_b, &metric)
+                        .raw_value
+                },
                 sample_size,
             );
 
@@ -1686,7 +1815,11 @@ fn benchmark_simd_batch_processing_statistical(sample_size: usize) {
             || {
                 let mut results = Vec::with_capacity(batch_size);
                 for vec in &vectors {
-                    results.push(calculator.calculate_distance(&query, vec, &DistanceMetric::Cosine).distance);
+                    results.push(
+                        calculator
+                            .calculate_distance(&query, vec, &DistanceMetric::Cosine)
+                            .distance,
+                    );
                 }
                 results
             },
@@ -1695,7 +1828,10 @@ fn benchmark_simd_batch_processing_statistical(sample_size: usize) {
 
         println!(
             "  Batch {:5}: {:.1} ± {:.1} μs total ({:.3} μs/vec)",
-            batch_size, mean, std_dev, mean / batch_size as f64
+            batch_size,
+            mean,
+            std_dev,
+            mean / batch_size as f64
         );
     }
 }
@@ -1723,18 +1859,33 @@ fn benchmark_simd_aligned_vs_unaligned_statistical(sample_size: usize) {
 
         // Benchmark aligned
         let (aligned_mean, aligned_std) = measure_function(
-            || calculator.calculate_distance(&vec_a_aligned, &vec_b_aligned, &DistanceMetric::DotProduct).raw_value,
+            || {
+                calculator
+                    .calculate_distance(&vec_a_aligned, &vec_b_aligned, &DistanceMetric::DotProduct)
+                    .raw_value
+            },
             sample_size,
         );
 
         // Benchmark unaligned
         let (unaligned_mean, unaligned_std) = measure_function(
-            || calculator.calculate_distance(&vec_a_unaligned, &vec_b_unaligned, &DistanceMetric::DotProduct).raw_value,
+            || {
+                calculator
+                    .calculate_distance(
+                        &vec_a_unaligned,
+                        &vec_b_unaligned,
+                        &DistanceMetric::DotProduct,
+                    )
+                    .raw_value
+            },
             sample_size,
         );
 
         println!("   Aligned:   {:.3} ± {:.3} μs", aligned_mean, aligned_std);
-        println!("   Unaligned: {:.3} ± {:.3} μs", unaligned_mean, unaligned_std);
+        println!(
+            "   Unaligned: {:.3} ± {:.3} μs",
+            unaligned_mean, unaligned_std
+        );
 
         let improvement = ((unaligned_mean - aligned_mean) / unaligned_mean) * 100.0;
         if improvement > 0.0 {
@@ -1782,7 +1933,10 @@ fn benchmark_vector_creation_statistical(sample_size: usize) {
 
         println!(
             "  Dim {:5}: {:.2} ± {:.2} μs for 100 records ({:.3} μs/record)",
-            dimension, mean, std_dev, mean / 100.0
+            dimension,
+            mean,
+            std_dev,
+            mean / 100.0
         );
     }
 }
@@ -1812,7 +1966,9 @@ fn benchmark_vector_manipulation_statistical(sample_size: usize) {
 
     println!(
         "  Normalize 1000x768D: {:.1} ± {:.1} μs ({:.3} μs/vec)",
-        norm_mean, norm_std, norm_mean / 1000.0
+        norm_mean,
+        norm_std,
+        norm_mean / 1000.0
     );
 
     // Scaling benchmark
@@ -1829,7 +1985,9 @@ fn benchmark_vector_manipulation_statistical(sample_size: usize) {
 
     println!(
         "  Scale 1000x768D:     {:.1} ± {:.1} μs ({:.3} μs/vec)",
-        scale_mean, scale_std, scale_mean / 1000.0
+        scale_mean,
+        scale_std,
+        scale_mean / 1000.0
     );
 }
 
@@ -1845,8 +2003,14 @@ fn benchmark_metadata_operations_statistical(sample_size: usize) {
     let records: Vec<VectorRecord> = (0..1000)
         .map(|i| {
             let mut metadata = HashMap::new();
-            metadata.insert(format!("key_{}", i % 10), create_sql_string(format!("value_{}", i)));
-            metadata.insert("type".to_string(), create_sql_string("benchmark".to_string()));
+            metadata.insert(
+                format!("key_{}", i % 10),
+                create_sql_string(format!("value_{}", i)),
+            );
+            metadata.insert(
+                "type".to_string(),
+                create_sql_string("benchmark".to_string()),
+            );
             metadata.insert("index".to_string(), create_sql_string(i.to_string()));
 
             VectorRecord {
@@ -1948,11 +2112,14 @@ async fn benchmark_hnsw_statistical(sample_size: usize) -> Result<()> {
                 }
             },
             sample_size / 10,
-        ).await;
+        )
+        .await;
 
         println!(
             "    Insert 100 vectors:  {:.1} ± {:.1} μs ({:.2} μs/vec)",
-            insert_times.0, insert_times.1, insert_times.0 / 100.0
+            insert_times.0,
+            insert_times.1,
+            insert_times.0 / 100.0
         );
 
         // Benchmark searches
@@ -1962,7 +2129,8 @@ async fn benchmark_hnsw_statistical(sample_size: usize) -> Result<()> {
                 let _ = index.search(query, 10, None).await.unwrap();
             },
             sample_size,
-        ).await;
+        )
+        .await;
 
         println!(
             "    Search (k=10):       {:.1} ± {:.1} μs",
@@ -2002,11 +2170,14 @@ async fn benchmark_lsh_statistical(sample_size: usize) -> Result<()> {
                 }
             },
             sample_size / 10,
-        ).await;
+        )
+        .await;
 
         println!(
             "    Insert 100 vectors:  {:.1} ± {:.1} μs ({:.2} μs/vec)",
-            insert_times.0, insert_times.1, insert_times.0 / 100.0
+            insert_times.0,
+            insert_times.1,
+            insert_times.0 / 100.0
         );
 
         // Benchmark searches
@@ -2016,7 +2187,8 @@ async fn benchmark_lsh_statistical(sample_size: usize) -> Result<()> {
                 let _ = index.search(query, 10, None).await.unwrap();
             },
             sample_size,
-        ).await;
+        )
+        .await;
 
         println!(
             "    Search (k=10):       {:.1} ± {:.1} μs",
@@ -2183,11 +2355,22 @@ fn benchmark_memory_strategies(dimension: usize, sample_size: usize) -> Result<M
     let vector_size_mb = (dimension * std::mem::size_of::<f32>()) as f64 / (1024.0 * 1024.0);
     let arc_overhead_mb = std::mem::size_of::<Arc<Vec<f32>>>() as f64 / (1024.0 * 1024.0);
 
-    println!("  Clone time:     {:.2} ± {:.2} µs", clone_times.0, clone_times.1);
-    println!("  Arc clone time: {:.2} ± {:.2} µs", arc_times.0, arc_times.1);
-    println!("  Speedup:        {:.1}x faster with Arc", clone_times.0 / arc_times.0);
-    println!("  Memory impact:  {:.3} MB per clone vs {:.6} MB per Arc ref",
-        vector_size_mb, arc_overhead_mb);
+    println!(
+        "  Clone time:     {:.2} ± {:.2} µs",
+        clone_times.0, clone_times.1
+    );
+    println!(
+        "  Arc clone time: {:.2} ± {:.2} µs",
+        arc_times.0, arc_times.1
+    );
+    println!(
+        "  Speedup:        {:.1}x faster with Arc",
+        clone_times.0 / arc_times.0
+    );
+    println!(
+        "  Memory impact:  {:.3} MB per clone vs {:.6} MB per Arc ref",
+        vector_size_mb, arc_overhead_mb
+    );
 
     Ok(MemoryVectorResult {
         test_type: "Single Vector".to_string(),
@@ -2202,14 +2385,16 @@ fn benchmark_memory_strategies(dimension: usize, sample_size: usize) -> Result<M
     })
 }
 
-fn benchmark_batch_memory(batch_size: usize, dimension: usize, sample_size: usize) -> Result<MemoryVectorResult> {
+fn benchmark_batch_memory(
+    batch_size: usize,
+    dimension: usize,
+    sample_size: usize,
+) -> Result<MemoryVectorResult> {
     // Create batch of vectors
     let vectors: Vec<Vec<f32>> = (0..batch_size)
         .map(|i| (0..dimension).map(|j| ((i + j) as f32).sin()).collect())
         .collect();
-    let arc_vectors: Vec<Arc<Vec<f32>>> = vectors.iter()
-        .map(|v| Arc::new(v.clone()))
-        .collect();
+    let arc_vectors: Vec<Arc<Vec<f32>>> = vectors.iter().map(|v| Arc::new(v.clone())).collect();
 
     // Benchmark batch cloning
     let clone_times = measure_function(
@@ -2229,13 +2414,29 @@ fn benchmark_batch_memory(batch_size: usize, dimension: usize, sample_size: usiz
         sample_size.min(100),
     );
 
-    let total_memory_mb = (batch_size * dimension * std::mem::size_of::<f32>()) as f64 / (1024.0 * 1024.0);
-    let arc_memory_mb = (batch_size * std::mem::size_of::<Arc<Vec<f32>>>()) as f64 / (1024.0 * 1024.0);
+    let total_memory_mb =
+        (batch_size * dimension * std::mem::size_of::<f32>()) as f64 / (1024.0 * 1024.0);
+    let arc_memory_mb =
+        (batch_size * std::mem::size_of::<Arc<Vec<f32>>>()) as f64 / (1024.0 * 1024.0);
 
-    println!("  Clone batch:    {:.2} ± {:.2} ms", clone_times.0 / 1000.0, clone_times.1 / 1000.0);
-    println!("  Arc batch:      {:.2} ± {:.2} ms", arc_times.0 / 1000.0, arc_times.1 / 1000.0);
-    println!("  Speedup:        {:.1}x faster with Arc", clone_times.0 / arc_times.0);
-    println!("  Memory saved:   {:.1} MB with Arc sharing", total_memory_mb - arc_memory_mb);
+    println!(
+        "  Clone batch:    {:.2} ± {:.2} ms",
+        clone_times.0 / 1000.0,
+        clone_times.1 / 1000.0
+    );
+    println!(
+        "  Arc batch:      {:.2} ± {:.2} ms",
+        arc_times.0 / 1000.0,
+        arc_times.1 / 1000.0
+    );
+    println!(
+        "  Speedup:        {:.1}x faster with Arc",
+        clone_times.0 / arc_times.0
+    );
+    println!(
+        "  Memory saved:   {:.1} MB with Arc sharing",
+        total_memory_mb - arc_memory_mb
+    );
 
     Ok(MemoryVectorResult {
         test_type: "Batch".to_string(),
@@ -2256,10 +2457,14 @@ fn print_memory_vector_summary_table(results: &[MemoryVectorResult]) {
     println!("{}", "=".repeat(120));
 
     // Performance table
-    println!("\n{:<15} {:<8} {:<8} {:>12} {:>12} {:>10} {:>12} {:>12}",
-        "Test Type", "Dim", "Batch", "Clone Time", "Arc Time", "Speedup", "Clone Mem", "Arc Mem");
-    println!("{:<15} {:<8} {:<8} {:>12} {:>12} {:>10} {:>12} {:>12}",
-        "", "", "", "(µs)", "(µs)", "(x)", "(MB)", "(MB)");
+    println!(
+        "\n{:<15} {:<8} {:<8} {:>12} {:>12} {:>10} {:>12} {:>12}",
+        "Test Type", "Dim", "Batch", "Clone Time", "Arc Time", "Speedup", "Clone Mem", "Arc Mem"
+    );
+    println!(
+        "{:<15} {:<8} {:<8} {:>12} {:>12} {:>10} {:>12} {:>12}",
+        "", "", "", "(µs)", "(µs)", "(x)", "(MB)", "(MB)"
+    );
     println!("{}", "-".repeat(120));
 
     for r in results {
@@ -2274,11 +2479,21 @@ fn print_memory_vector_summary_table(results: &[MemoryVectorResult]) {
             format!("{:.2}µs", r.arc_time_us)
         };
 
-        println!("{:<15} {:<8} {:<8} {:>12} {:>12} {:>10.1}x {:>12.3} {:>12.6}",
-            r.test_type, r.dimension,
-            if r.batch_size == 1 { "-".to_string() } else { r.batch_size.to_string() },
-            clone_time_str, arc_time_str, r.speedup,
-            r.clone_memory_mb, r.arc_memory_mb);
+        println!(
+            "{:<15} {:<8} {:<8} {:>12} {:>12} {:>10.1}x {:>12.3} {:>12.6}",
+            r.test_type,
+            r.dimension,
+            if r.batch_size == 1 {
+                "-".to_string()
+            } else {
+                r.batch_size.to_string()
+            },
+            clone_time_str,
+            arc_time_str,
+            r.speedup,
+            r.clone_memory_mb,
+            r.arc_memory_mb
+        );
     }
 
     println!("{}", "=".repeat(120));
@@ -2289,8 +2504,10 @@ fn print_memory_vector_summary_table(results: &[MemoryVectorResult]) {
 
     for r in results.iter().filter(|r| r.batch_size > 1) {
         let saved_mb = r.clone_memory_mb - r.arc_memory_mb;
-        println!("Batch of {} vectors ({}D): Saves {:.1} MB ({:.1}% reduction)",
-            r.batch_size, r.dimension, saved_mb, r.memory_saved_percent);
+        println!(
+            "Batch of {} vectors ({}D): Saves {:.1} MB ({:.1}% reduction)",
+            r.batch_size, r.dimension, saved_mb, r.memory_saved_percent
+        );
     }
 
     // Key insights
@@ -2299,36 +2516,60 @@ fn print_memory_vector_summary_table(results: &[MemoryVectorResult]) {
 
     let avg_speedup = results.iter().map(|r| r.speedup).sum::<f64>() / results.len() as f64;
     println!("\n1. PERFORMANCE:");
-    println!("  • Arc is {:.1}x faster on average than cloning", avg_speedup);
+    println!(
+        "  • Arc is {:.1}x faster on average than cloning",
+        avg_speedup
+    );
     println!("  • Speedup increases with vector dimension");
 
-    let small_dim_speedup = results.iter()
+    let small_dim_speedup = results
+        .iter()
         .filter(|r| r.dimension <= 768)
         .map(|r| r.speedup)
-        .sum::<f64>() / results.iter().filter(|r| r.dimension <= 768).count().max(1) as f64;
-    let large_dim_speedup = results.iter()
+        .sum::<f64>()
+        / results.iter().filter(|r| r.dimension <= 768).count().max(1) as f64;
+    let large_dim_speedup = results
+        .iter()
         .filter(|r| r.dimension >= 1536)
         .map(|r| r.speedup)
-        .sum::<f64>() / results.iter().filter(|r| r.dimension >= 1536).count().max(1) as f64;
+        .sum::<f64>()
+        / results
+            .iter()
+            .filter(|r| r.dimension >= 1536)
+            .count()
+            .max(1) as f64;
 
     println!("\n2. DIMENSION IMPACT:");
-    println!("  • Small embeddings (≤768D): {:.1}x speedup", small_dim_speedup);
-    println!("  • Large embeddings (≥1536D): {:.1}x speedup", large_dim_speedup);
+    println!(
+        "  • Small embeddings (≤768D): {:.1}x speedup",
+        small_dim_speedup
+    );
+    println!(
+        "  • Large embeddings (≥1536D): {:.1}x speedup",
+        large_dim_speedup
+    );
 
     println!("\n3. MEMORY EFFICIENCY:");
-    let max_savings = results.iter()
+    let max_savings = results
+        .iter()
         .filter(|r| r.batch_size > 1)
         .map(|r| r.memory_saved_percent)
         .max_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap_or(0.0);
-    println!("  • Arc can save up to {:.1}% memory in batch operations", max_savings);
+    println!(
+        "  • Arc can save up to {:.1}% memory in batch operations",
+        max_savings
+    );
     println!("  • Critical for large-scale deployments");
 
     // Recommendations
     println!("\nRECOMMENDATIONS:");
     if avg_speedup > 10.0 {
         println!("  ➡ ALWAYS use Arc<Vec<f32>> for production systems");
-        println!("    Reason: {:.0}x performance improvement is significant", avg_speedup);
+        println!(
+            "    Reason: {:.0}x performance improvement is significant",
+            avg_speedup
+        );
     } else if avg_speedup > 5.0 {
         println!("  ➡ Use Arc for vectors ≥ 384 dimensions (most embedding models)");
         println!("    Reason: Good balance of performance and simplicity");
@@ -2365,19 +2606,21 @@ fn run_storage_unified_benchmarks(sample_size: usize) -> Result<()> {
     for (compression, comp_name) in &compressions {
         println!("\n Compression: {}", comp_name);
         for &dim in &test_dimensions {
-            let encode_times = benchmark_storage_encoding(
-                1000,
-                dim,
-                compression.clone(),
-                sample_size
-            )?;
+            let encode_times =
+                benchmark_storage_encoding(1000, dim, compression.clone(), sample_size)?;
 
             let mean = encode_times.iter().sum::<f64>() / encode_times.len() as f64;
-            let variance = encode_times.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / encode_times.len() as f64;
+            let variance = encode_times.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                / encode_times.len() as f64;
             let std_dev = variance.sqrt();
 
-            println!("   Dim {:4}: {:.2} ± {:.2} ms ({:.3} μs/vec)",
-                dim, mean, std_dev, mean * 1000.0 / 1000.0);
+            println!(
+                "   Dim {:4}: {:.2} ± {:.2} ms ({:.3} μs/vec)",
+                dim,
+                mean,
+                std_dev,
+                mean * 1000.0 / 1000.0
+            );
         }
     }
 
@@ -2390,19 +2633,21 @@ fn run_storage_unified_benchmarks(sample_size: usize) -> Result<()> {
         for (compression, comp_name) in &compressions {
             println!("   Compression: {}", comp_name);
             for &batch_size in &test_batch_sizes {
-                let encode_times = benchmark_storage_encoding(
-                    batch_size,
-                    dim,
-                    compression.clone(),
-                    sample_size
-                )?;
+                let encode_times =
+                    benchmark_storage_encoding(batch_size, dim, compression.clone(), sample_size)?;
 
                 let mean = encode_times.iter().sum::<f64>() / encode_times.len() as f64;
-                let variance = encode_times.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / encode_times.len() as f64;
-            let std_dev = variance.sqrt();
+                let variance = encode_times.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                    / encode_times.len() as f64;
+                let std_dev = variance.sqrt();
 
-                println!("    Batch {:4}: {:.2} ± {:.2} ms ({:.3} μs/vec)",
-                    batch_size, mean, std_dev, mean * 1000.0 / batch_size as f64);
+                println!(
+                    "    Batch {:4}: {:.2} ± {:.2} ms ({:.3} μs/vec)",
+                    batch_size,
+                    mean,
+                    std_dev,
+                    mean * 1000.0 / batch_size as f64
+                );
             }
         }
     }
@@ -2439,7 +2684,8 @@ fn benchmark_storage_encoding(
 
     for _ in 0..sample_size {
         // Create vector records
-        let records: Vec<VectorRecord> = vectors.iter()
+        let records: Vec<VectorRecord> = vectors
+            .iter()
             .enumerate()
             .map(|(i, v)| VectorRecord {
                 id: format!("vec_{}", i),
@@ -2455,10 +2701,7 @@ fn benchmark_storage_encoding(
 
         // Benchmark encoding
         let start = Instant::now();
-        let _block = ProximaDataBlock::new(
-            records,
-            config.clone(),
-        );
+        let _block = ProximaDataBlock::new(records, config.clone());
         let elapsed = start.elapsed().as_secs_f64() * 1000.0; // Convert to ms
 
         times.push(elapsed);
@@ -2512,7 +2755,6 @@ fn run_system_optimization_benchmarks(_sample_size: usize) -> Result<()> {
     println!("TODO: Migrate bench_12_system_optimization");
     Ok(())
 }
-
 
 fn run_graph_operations_benchmarks(_sample_size: usize) -> Result<()> {
     println!("\nGraph Operations Benchmarks");
@@ -2617,7 +2859,10 @@ fn run_encoding_benchmarks_with_config(
 
     println!("\nEncoding Benchmarks (Statistical Framework)");
     println!("Sample size: {} iterations", sample_size);
-    println!("Compression: {:?} (level: {})\n", algorithm, compression_level);
+    println!(
+        "Compression: {:?} (level: {})\n",
+        algorithm, compression_level
+    );
     println!("Vector counts: {:?}", vector_counts);
     println!("Dimensions: {:?}\n", dimensions);
 
@@ -2629,7 +2874,10 @@ fn run_encoding_benchmarks_with_config(
 
     for vector_count in &vector_counts {
         for dimension in &dimensions {
-            println!("\n⚙  Benchmarking encoding: {} vectors, {} dimensions", vector_count, dimension);
+            println!(
+                "\n⚙  Benchmarking encoding: {} vectors, {} dimensions",
+                vector_count, dimension
+            );
             let result = benchmark_encoding_statistical_with_compression(
                 *vector_count,
                 *dimension,
@@ -2671,7 +2919,7 @@ fn run_encoding_benchmarks_with_compression(
         vector_counts,
         dimensions,
         compression_str,
-        compression_level
+        compression_level,
     )
 }
 
@@ -2712,75 +2960,182 @@ struct EncodingResult {
 }
 
 fn print_scenario_summary(result: &EncodingResult) {
-    println!("\nScenario Complete: {} vectors × {} dimensions", result.vector_count, result.dimension);
+    println!(
+        "\nScenario Complete: {} vectors × {} dimensions",
+        result.vector_count, result.dimension
+    );
 
     // Strategy overview table
-    println!("\n ┌─────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
-    println!("  │ Strategy            │ Encode (ms)  │ Decode (ms)  │ Size (MB)    │ Compress %   │");
-    println!("  ├─────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
-    println!("  │ TransposeField      │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
-        result.transpose_field_encode_ms, result.transpose_field_decode_ms,
-        result.transpose_field_size_mb, result.transpose_field_compression * 100.0);
-    println!("  │ TransposeBlock      │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
-        result.transpose_block_encode_ms, result.transpose_block_decode_ms,
-        result.transpose_block_size_mb, result.transpose_block_compression * 100.0);
-    println!("  │ FullVector          │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
-        result.fullvector_encode_ms, result.fullvector_decode_ms,
-        result.fullvector_size_mb, result.fullvector_compression * 100.0);
-    println!("  │ GroupedField        │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
-        result.grouped_field_encode_ms, result.grouped_field_decode_ms,
-        result.grouped_field_size_mb, result.grouped_field_compression * 100.0);
-    println!("  │ GroupedBlock        │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
-        result.grouped_block_encode_ms, result.grouped_block_decode_ms,
-        result.grouped_block_size_mb, result.grouped_block_compression * 100.0);
-    println!("  └─────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
+    println!(
+        "\n ┌─────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐"
+    );
+    println!(
+        "  │ Strategy            │ Encode (ms)  │ Decode (ms)  │ Size (MB)    │ Compress %   │"
+    );
+    println!(
+        "  ├─────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤"
+    );
+    println!(
+        "  │ TransposeField      │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
+        result.transpose_field_encode_ms,
+        result.transpose_field_decode_ms,
+        result.transpose_field_size_mb,
+        result.transpose_field_compression * 100.0
+    );
+    println!(
+        "  │ TransposeBlock      │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
+        result.transpose_block_encode_ms,
+        result.transpose_block_decode_ms,
+        result.transpose_block_size_mb,
+        result.transpose_block_compression * 100.0
+    );
+    println!(
+        "  │ FullVector          │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
+        result.fullvector_encode_ms,
+        result.fullvector_decode_ms,
+        result.fullvector_size_mb,
+        result.fullvector_compression * 100.0
+    );
+    println!(
+        "  │ GroupedField        │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
+        result.grouped_field_encode_ms,
+        result.grouped_field_decode_ms,
+        result.grouped_field_size_mb,
+        result.grouped_field_compression * 100.0
+    );
+    println!(
+        "  │ GroupedBlock        │ {:>12.2} │ {:>12.2} │ {:>12.3} │ {:>11.1}% │",
+        result.grouped_block_encode_ms,
+        result.grouped_block_decode_ms,
+        result.grouped_block_size_mb,
+        result.grouped_block_compression * 100.0
+    );
+    println!(
+        "  └─────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘"
+    );
 
     // Find best performers (with decode times for balanced scoring)
     let strategies = [
-        ("TransposeField", result.transpose_field_encode_ms, result.transpose_field_decode_ms, result.transpose_field_compression, result.transpose_field_size_mb),
-        ("TransposeBlock", result.transpose_block_encode_ms, result.transpose_block_decode_ms, result.transpose_block_compression, result.transpose_block_size_mb),
-        ("FullVector", result.fullvector_encode_ms, result.fullvector_decode_ms, result.fullvector_compression, result.fullvector_size_mb),
-        ("GroupedField", result.grouped_field_encode_ms, result.grouped_field_decode_ms, result.grouped_field_compression, result.grouped_field_size_mb),
-        ("GroupedBlock", result.grouped_block_encode_ms, result.grouped_block_decode_ms, result.grouped_block_compression, result.grouped_block_size_mb),
+        (
+            "TransposeField",
+            result.transpose_field_encode_ms,
+            result.transpose_field_decode_ms,
+            result.transpose_field_compression,
+            result.transpose_field_size_mb,
+        ),
+        (
+            "TransposeBlock",
+            result.transpose_block_encode_ms,
+            result.transpose_block_decode_ms,
+            result.transpose_block_compression,
+            result.transpose_block_size_mb,
+        ),
+        (
+            "FullVector",
+            result.fullvector_encode_ms,
+            result.fullvector_decode_ms,
+            result.fullvector_compression,
+            result.fullvector_size_mb,
+        ),
+        (
+            "GroupedField",
+            result.grouped_field_encode_ms,
+            result.grouped_field_decode_ms,
+            result.grouped_field_compression,
+            result.grouped_field_size_mb,
+        ),
+        (
+            "GroupedBlock",
+            result.grouped_block_encode_ms,
+            result.grouped_block_decode_ms,
+            result.grouped_block_compression,
+            result.grouped_block_size_mb,
+        ),
     ];
 
     // Find fastest encode
-    let fastest_encode = strategies.iter().min_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap();
+    let fastest_encode = strategies
+        .iter()
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        .unwrap();
     // Find best compression
-    let best_compression = strategies.iter().max_by(|a, b| a.3.partial_cmp(&b.3).unwrap()).unwrap();
+    let best_compression = strategies
+        .iter()
+        .max_by(|a, b| a.3.partial_cmp(&b.3).unwrap())
+        .unwrap();
     // Find smallest size
-    let smallest_size = strategies.iter().min_by(|a, b| a.4.partial_cmp(&b.4).unwrap()).unwrap();
+    let smallest_size = strategies
+        .iter()
+        .min_by(|a, b| a.4.partial_cmp(&b.4).unwrap())
+        .unwrap();
 
     // Calculate balanced score: 20% encode, 50% decode, 35% compression
-    let min_encode = strategies.iter().map(|(_, e, _, _, _)| *e).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
-    let min_decode = strategies.iter().map(|(_, _, d, _, _)| *d).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
-    let max_compression = strategies.iter().map(|(_, _, _, c, _)| *c).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
+    let min_encode = strategies
+        .iter()
+        .map(|(_, e, _, _, _)| *e)
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap_or(1.0);
+    let min_decode = strategies
+        .iter()
+        .map(|(_, _, d, _, _)| *d)
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap_or(1.0);
+    let max_compression = strategies
+        .iter()
+        .map(|(_, _, _, c, _)| *c)
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap_or(1.0);
 
-    let balanced_best = strategies.iter()
+    let balanced_best = strategies
+        .iter()
         .map(|(name, enc, dec, comp, _)| {
             let encode_score = min_encode / enc;
             let decode_score = min_decode / dec;
             let compression_score = comp / max_compression;
-            let total_score = (0.20 * encode_score) + (0.50 * decode_score) + (0.35 * compression_score);
+            let total_score =
+                (0.20 * encode_score) + (0.50 * decode_score) + (0.35 * compression_score);
             (*name, total_score)
         })
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
         .unwrap();
 
     println!("\n  BEST PERFORMERS:");
-    println!("   • Fastest Encode: {} ({:.2} ms)", fastest_encode.0, fastest_encode.1);
-    println!("   • Best Compression: {} ({:.1}%)", best_compression.0, best_compression.3 * 100.0);
-    println!("   • Smallest Size: {} ({:.3} MB)", smallest_size.0, smallest_size.4);
-    println!("   • Balanced (20/50/35): {} (score={:.3})", balanced_best.0, balanced_best.1);
+    println!(
+        "   • Fastest Encode: {} ({:.2} ms)",
+        fastest_encode.0, fastest_encode.1
+    );
+    println!(
+        "   • Best Compression: {} ({:.1}%)",
+        best_compression.0,
+        best_compression.3 * 100.0
+    );
+    println!(
+        "   • Smallest Size: {} ({:.3} MB)",
+        smallest_size.0, smallest_size.4
+    );
+    println!(
+        "   • Balanced (20/50/35): {} (score={:.3})",
+        balanced_best.0, balanced_best.1
+    );
 
     // Quick recommendation
     println!("\n  Recommendation for this workload:");
-    println!("   → Best Balanced Strategy: {} (optimized for production read-heavy workload)", balanced_best.0);
+    println!(
+        "   → Best Balanced Strategy: {} (optimized for production read-heavy workload)",
+        balanced_best.0
+    );
     if result.vector_count <= 1000 {
-        println!("   → For write-heavy: {} (fastest encode at {:.2} ms)", fastest_encode.0, fastest_encode.1);
+        println!(
+            "   → For write-heavy: {} (fastest encode at {:.2} ms)",
+            fastest_encode.0, fastest_encode.1
+        );
     }
     if best_compression.3 > 0.3 {
-        println!("   → For storage costs: {} ({:.0}% compression)", best_compression.0, best_compression.3 * 100.0);
+        println!(
+            "   → For storage costs: {} ({:.0}% compression)",
+            best_compression.0,
+            best_compression.3 * 100.0
+        );
     }
     if result.dimension > 512 {
         println!("   → High-dimensional note: GroupedField provides cache-friendly access");
@@ -2797,101 +3152,179 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     // Comprehensive strategy table
     println!("\nENCODING TIMES (milliseconds):");
     println!("{}", "-".repeat(160));
-    println!("{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
-        "Vectors", "Dim", "TransposeField", "TransposeBlock", "FullVector", "GroupedField", "GroupedBlock");
+    println!(
+        "{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+        "Vectors",
+        "Dim",
+        "TransposeField",
+        "TransposeBlock",
+        "FullVector",
+        "GroupedField",
+        "GroupedBlock"
+    );
     println!("{}", "-".repeat(160));
 
     for r in results {
-        println!("{:<10} {:<6} {:>14.2} {:>14.2} {:>14.2} {:>14.2} {:>14.2}",
-            r.vector_count, r.dimension,
+        println!(
+            "{:<10} {:<6} {:>14.2} {:>14.2} {:>14.2} {:>14.2} {:>14.2}",
+            r.vector_count,
+            r.dimension,
             r.transpose_field_encode_ms,
             r.transpose_block_encode_ms,
             r.fullvector_encode_ms,
             r.grouped_field_encode_ms,
-            r.grouped_block_encode_ms);
+            r.grouped_block_encode_ms
+        );
     }
 
     println!("\nDECODING TIMES (milliseconds):");
     println!("{}", "-".repeat(160));
-    println!("{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
-        "Vectors", "Dim", "TransposeField", "TransposeBlock", "FullVector", "GroupedField", "GroupedBlock");
+    println!(
+        "{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+        "Vectors",
+        "Dim",
+        "TransposeField",
+        "TransposeBlock",
+        "FullVector",
+        "GroupedField",
+        "GroupedBlock"
+    );
     println!("{}", "-".repeat(160));
 
     for r in results {
-        println!("{:<10} {:<6} {:>14.2} {:>14.2} {:>14.2} {:>14.2} {:>14.2}",
-            r.vector_count, r.dimension,
+        println!(
+            "{:<10} {:<6} {:>14.2} {:>14.2} {:>14.2} {:>14.2} {:>14.2}",
+            r.vector_count,
+            r.dimension,
             r.transpose_field_decode_ms,
             r.transpose_block_decode_ms,
             r.fullvector_decode_ms,
             r.grouped_field_decode_ms,
-            r.grouped_block_decode_ms);
+            r.grouped_block_decode_ms
+        );
     }
 
     println!("\nSTORAGE SIZE (megabytes):");
     println!("{}", "-".repeat(160));
-    println!("{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
-        "Vectors", "Dim", "TransposeField", "TransposeBlock", "FullVector", "GroupedField", "GroupedBlock");
+    println!(
+        "{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+        "Vectors",
+        "Dim",
+        "TransposeField",
+        "TransposeBlock",
+        "FullVector",
+        "GroupedField",
+        "GroupedBlock"
+    );
     println!("{}", "-".repeat(160));
 
     for r in results {
-        println!("{:<10} {:<6} {:>14.3} {:>14.3} {:>14.3} {:>14.3} {:>14.3}",
-            r.vector_count, r.dimension,
+        println!(
+            "{:<10} {:<6} {:>14.3} {:>14.3} {:>14.3} {:>14.3} {:>14.3}",
+            r.vector_count,
+            r.dimension,
             r.transpose_field_size_mb,
             r.transpose_block_size_mb,
             r.fullvector_size_mb,
             r.grouped_field_size_mb,
-            r.grouped_block_size_mb);
+            r.grouped_block_size_mb
+        );
     }
 
     println!("\n COMPRESSION RATIO (%):");
     println!("{}", "-".repeat(160));
-    println!("{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
-        "Vectors", "Dim", "TransposeField", "TransposeBlock", "FullVector", "GroupedField", "GroupedBlock");
+    println!(
+        "{:<10} {:<6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+        "Vectors",
+        "Dim",
+        "TransposeField",
+        "TransposeBlock",
+        "FullVector",
+        "GroupedField",
+        "GroupedBlock"
+    );
     println!("{}", "-".repeat(160));
 
     for r in results {
-        println!("{:<10} {:<6} {:>13.1}% {:>13.1}% {:>13.1}% {:>13.1}% {:>13.1}%",
-            r.vector_count, r.dimension,
+        println!(
+            "{:<10} {:<6} {:>13.1}% {:>13.1}% {:>13.1}% {:>13.1}% {:>13.1}%",
+            r.vector_count,
+            r.dimension,
             r.transpose_field_compression * 100.0,
             r.transpose_block_compression * 100.0,
             r.fullvector_compression * 100.0,
             r.grouped_field_compression * 100.0,
-            r.grouped_block_compression * 100.0);
+            r.grouped_block_compression * 100.0
+        );
     }
 
     println!("{}", "=".repeat(160));
 
-
     // Performance Analysis Table
     println!("\nPERFORMANCE ANALYSIS BY USE CASE");
     println!("{}", "=".repeat(120));
-    println!("\n{:<20} {:<25} {:<25} {:<25} {:<25}",
-        "Config", "Best for Speed", "Best for Storage", "Best Balanced", "Best for Real-time");
+    println!(
+        "\n{:<20} {:<25} {:<25} {:<25} {:<25}",
+        "Config", "Best for Speed", "Best for Storage", "Best Balanced", "Best for Real-time"
+    );
     println!("{}", "-".repeat(120));
 
     for r in results {
         // Strategy data: (name, encode_ms, decode_ms, compression_ratio, size_mb)
         let strategies = [
-            ("TransposeField", r.transpose_field_encode_ms, r.transpose_field_decode_ms, r.transpose_field_compression, r.transpose_field_size_mb),
-            ("TransposeBlock", r.transpose_block_encode_ms, r.transpose_block_decode_ms, r.transpose_block_compression, r.transpose_block_size_mb),
-            ("FullVector", r.fullvector_encode_ms, r.fullvector_decode_ms, r.fullvector_compression, r.fullvector_size_mb),
-            ("GroupedField", r.grouped_field_encode_ms, r.grouped_field_decode_ms, r.grouped_field_compression, r.grouped_field_size_mb),
-            ("GroupedBlock", r.grouped_block_encode_ms, r.grouped_block_decode_ms, r.grouped_block_compression, r.grouped_block_size_mb),
+            (
+                "TransposeField",
+                r.transpose_field_encode_ms,
+                r.transpose_field_decode_ms,
+                r.transpose_field_compression,
+                r.transpose_field_size_mb,
+            ),
+            (
+                "TransposeBlock",
+                r.transpose_block_encode_ms,
+                r.transpose_block_decode_ms,
+                r.transpose_block_compression,
+                r.transpose_block_size_mb,
+            ),
+            (
+                "FullVector",
+                r.fullvector_encode_ms,
+                r.fullvector_decode_ms,
+                r.fullvector_compression,
+                r.fullvector_size_mb,
+            ),
+            (
+                "GroupedField",
+                r.grouped_field_encode_ms,
+                r.grouped_field_decode_ms,
+                r.grouped_field_compression,
+                r.grouped_field_size_mb,
+            ),
+            (
+                "GroupedBlock",
+                r.grouped_block_encode_ms,
+                r.grouped_block_decode_ms,
+                r.grouped_block_compression,
+                r.grouped_block_size_mb,
+            ),
         ];
 
-        let speed_winner = strategies.iter()
+        let speed_winner = strategies
+            .iter()
             .filter(|(_, time, _, _, _)| *time > 0.0)
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .map(|(name, time, _, _, _)| (*name, *time))
             .unwrap_or(("N/A", 0.0));
 
-        let storage_winner = strategies.iter()
+        let storage_winner = strategies
+            .iter()
             .filter(|(_, _, _, comp, _)| *comp > 0.0)
             .max_by(|a, b| a.3.partial_cmp(&b.3).unwrap())
             .map(|(name, _, _, comp, _)| (*name, *comp))
             .unwrap_or(("N/A", 0.0));
 
-        let cloud_winner = strategies.iter()
+        let cloud_winner = strategies
+            .iter()
             .filter(|(_, _, _, _, size)| *size > 0.0)
             .min_by(|a, b| a.4.partial_cmp(&b.4).unwrap())
             .map(|(name, _, _, _, size)| (*name, *size))
@@ -2899,31 +3332,56 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
 
         // Weighted scoring: 20% encode, 50% decode, 35% compression
         // Normalize metrics (0-1 scale where 1.0 is best)
-        let min_encode = strategies.iter().map(|(_, e, _, _, _)| *e).filter(|x| *x > 0.0).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
-        let min_decode = strategies.iter().map(|(_, _, d, _, _)| *d).filter(|x| *x > 0.0).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
-        let max_compression = strategies.iter().map(|(_, _, _, c, _)| *c).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
+        let min_encode = strategies
+            .iter()
+            .map(|(_, e, _, _, _)| *e)
+            .filter(|x| *x > 0.0)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(1.0);
+        let min_decode = strategies
+            .iter()
+            .map(|(_, _, d, _, _)| *d)
+            .filter(|x| *x > 0.0)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(1.0);
+        let max_compression = strategies
+            .iter()
+            .map(|(_, _, _, c, _)| *c)
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(1.0);
 
-        let balanced_winner = strategies.iter()
+        let balanced_winner = strategies
+            .iter()
             .filter(|(_, enc, dec, comp, _)| *enc > 0.0 && *dec > 0.0 && *comp > 0.0)
             .map(|(name, enc, dec, comp, _)| {
                 // Calculate weighted score (higher is better)
                 let encode_score = min_encode / enc; // Lower encode time is better
                 let decode_score = min_decode / dec; // Lower decode time is better
                 let compression_score = comp / max_compression; // Higher compression is better
-                let total_score = (0.20 * encode_score) + (0.50 * decode_score) + (0.35 * compression_score);
+                let total_score =
+                    (0.20 * encode_score) + (0.50 * decode_score) + (0.35 * compression_score);
                 (*name, total_score, *enc, *dec, *comp)
             })
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .unwrap_or(("N/A", 0.0, 0.0, 0.0, 0.0));
 
-        let realtime_winner = if r.vector_count <= 1000 { speed_winner } else { storage_winner };
+        let realtime_winner = if r.vector_count <= 1000 {
+            speed_winner
+        } else {
+            storage_winner
+        };
 
-        println!("{:<20} {:<25} {:<25} {:<25} {:<25}",
+        println!(
+            "{:<20} {:<25} {:<25} {:<25} {:<25}",
             format!("{}v x {}d", r.vector_count, r.dimension),
             format!("{} ({:.1}ms)", speed_winner.0, speed_winner.1),
             format!("{} ({:.1}%)", storage_winner.0, storage_winner.1 * 100.0),
             format!("{} (score={:.3})", balanced_winner.0, balanced_winner.1),
-            format!("{} ({:.1}µs/vec)", realtime_winner.0, realtime_winner.1 * 1000.0 / r.vector_count as f64)
+            format!(
+                "{} ({:.1}µs/vec)",
+                realtime_winner.0,
+                realtime_winner.1 * 1000.0 / r.vector_count as f64
+            )
         );
     }
 
@@ -2932,32 +3390,75 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     // Score-Based Ranking Table
     println!("\n[SCORE-BASED RANKING] Weighted 20/50/35 (Encode/Decode/Compression)");
     println!("{}", "=".repeat(120));
-    println!("\n{:<20} {:<20} {:<15} {:<15} {:<20} {:<15}",
-        "Config", "Strategy", "Encode (ms)", "Decode (ms)", "Compression (%)", "Balanced Score");
+    println!(
+        "\n{:<20} {:<20} {:<15} {:<15} {:<20} {:<15}",
+        "Config", "Strategy", "Encode (ms)", "Decode (ms)", "Compression (%)", "Balanced Score"
+    );
     println!("{}", "-".repeat(120));
 
     for r in results {
         // Calculate scores for all strategies
         let strategies = [
-            ("TransposeField", r.transpose_field_encode_ms, r.transpose_field_decode_ms, r.transpose_field_compression),
-            ("TransposeBlock", r.transpose_block_encode_ms, r.transpose_block_decode_ms, r.transpose_block_compression),
-            ("FullVector", r.fullvector_encode_ms, r.fullvector_decode_ms, r.fullvector_compression),
-            ("GroupedField", r.grouped_field_encode_ms, r.grouped_field_decode_ms, r.grouped_field_compression),
-            ("GroupedBlock", r.grouped_block_encode_ms, r.grouped_block_decode_ms, r.grouped_block_compression),
+            (
+                "TransposeField",
+                r.transpose_field_encode_ms,
+                r.transpose_field_decode_ms,
+                r.transpose_field_compression,
+            ),
+            (
+                "TransposeBlock",
+                r.transpose_block_encode_ms,
+                r.transpose_block_decode_ms,
+                r.transpose_block_compression,
+            ),
+            (
+                "FullVector",
+                r.fullvector_encode_ms,
+                r.fullvector_decode_ms,
+                r.fullvector_compression,
+            ),
+            (
+                "GroupedField",
+                r.grouped_field_encode_ms,
+                r.grouped_field_decode_ms,
+                r.grouped_field_compression,
+            ),
+            (
+                "GroupedBlock",
+                r.grouped_block_encode_ms,
+                r.grouped_block_decode_ms,
+                r.grouped_block_compression,
+            ),
         ];
 
         // Normalize metrics
-        let min_encode = strategies.iter().map(|(_, e, _, _)| *e).filter(|x| *x > 0.0).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
-        let min_decode = strategies.iter().map(|(_, _, d, _)| *d).filter(|x| *x > 0.0).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
-        let max_compression = strategies.iter().map(|(_, _, _, c)| *c).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(1.0);
+        let min_encode = strategies
+            .iter()
+            .map(|(_, e, _, _)| *e)
+            .filter(|x| *x > 0.0)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(1.0);
+        let min_decode = strategies
+            .iter()
+            .map(|(_, _, d, _)| *d)
+            .filter(|x| *x > 0.0)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(1.0);
+        let max_compression = strategies
+            .iter()
+            .map(|(_, _, _, c)| *c)
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(1.0);
 
-        let mut scored_strategies: Vec<_> = strategies.iter()
+        let mut scored_strategies: Vec<_> = strategies
+            .iter()
             .filter(|(_, enc, dec, comp)| *enc > 0.0 && *dec > 0.0 && *comp > 0.0)
             .map(|(name, enc, dec, comp)| {
                 let encode_score = min_encode / enc;
                 let decode_score = min_decode / dec;
                 let compression_score = comp / max_compression;
-                let total_score = (0.20 * encode_score) + (0.50 * decode_score) + (0.35 * compression_score);
+                let total_score =
+                    (0.20 * encode_score) + (0.50 * decode_score) + (0.35 * compression_score);
                 (*name, total_score, *enc, *dec, *comp)
             })
             .collect();
@@ -2968,12 +3469,25 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
         // Print ranked strategies for this configuration
         for (i, (name, score, enc, dec, comp)) in scored_strategies.iter().enumerate() {
             if i == 0 {
-                println!("{:<20} {:<20} {:<15.2} {:<15.2} {:<20.1} {:<15.3} [WINNER]",
+                println!(
+                    "{:<20} {:<20} {:<15.2} {:<15.2} {:<20.1} {:<15.3} [WINNER]",
                     format!("{}v x {}d", r.vector_count, r.dimension),
-                    name, enc, dec, comp * 100.0, score);
+                    name,
+                    enc,
+                    dec,
+                    comp * 100.0,
+                    score
+                );
             } else {
-                println!("{:<20} {:<20} {:<15.2} {:<15.2} {:<20.1} {:<15.3}",
-                    "", name, enc, dec, comp * 100.0, score);
+                println!(
+                    "{:<20} {:<20} {:<15.2} {:<15.2} {:<20.1} {:<15.3}",
+                    "",
+                    name,
+                    enc,
+                    dec,
+                    comp * 100.0,
+                    score
+                );
             }
         }
         println!("{}", "-".repeat(120));
@@ -2986,10 +3500,26 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("{}", "=".repeat(100));
 
     // Calculate key metrics
-    let avg_transpose_field_compression = results.iter().map(|r| r.transpose_field_compression).sum::<f64>() / results.len() as f64;
-    let avg_fullvector_compression = results.iter().map(|r| r.fullvector_compression).sum::<f64>() / results.len() as f64;
-    let avg_grouped_field_compression = results.iter().map(|r| r.grouped_field_compression).sum::<f64>() / results.len() as f64;
-    let avg_transpose_block_compression = results.iter().map(|r| r.transpose_block_compression).sum::<f64>() / results.len() as f64;
+    let avg_transpose_field_compression = results
+        .iter()
+        .map(|r| r.transpose_field_compression)
+        .sum::<f64>()
+        / results.len() as f64;
+    let avg_fullvector_compression = results
+        .iter()
+        .map(|r| r.fullvector_compression)
+        .sum::<f64>()
+        / results.len() as f64;
+    let avg_grouped_field_compression = results
+        .iter()
+        .map(|r| r.grouped_field_compression)
+        .sum::<f64>()
+        / results.len() as f64;
+    let avg_transpose_block_compression = results
+        .iter()
+        .map(|r| r.transpose_block_compression)
+        .sum::<f64>()
+        / results.len() as f64;
 
     // Analyze embedding model specific performance
     let bert_base_results: Vec<_> = results.iter().filter(|r| r.dimension == 768).collect();
@@ -3000,7 +3530,9 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("\n[COMPRESSION ARCHITECTURE]");
     println!("{}", "=".repeat(100));
     println!("\nProximaDB compression stack (all components working together):");
-    println!("   Data Patterns: 12 comprehensive patterns (sparse, gaussian, quantized, sinusoidal,");
+    println!(
+        "   Data Patterns: 12 comprehensive patterns (sparse, gaussian, quantized, sinusoidal,"
+    );
     println!("                  random, clustered, time-series, normalized-dense, high-freq,");
     println!("                  power-law, binary, exponential) - covers ALL production scenarios");
     println!("   ProximaCodec Encoding: Raw, Delta, DoubleDelta, etc.");
@@ -3052,57 +3584,113 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
 
     // OpenAI embeddings (1536D) - CORRECTED ANALYSIS WITH COMPRESSION CAVEATS
     if !openai_results.is_empty() {
-        let openai_best_compression = openai_results.iter()
-            .max_by(|a, b| a.transpose_block_compression.partial_cmp(&b.transpose_block_compression).unwrap()).unwrap();
-        let openai_fastest_encode = openai_results.iter()
-            .min_by(|a, b| a.transpose_block_encode_ms.partial_cmp(&b.transpose_block_encode_ms).unwrap()).unwrap();
-        let openai_fastest_decode = openai_results.iter()
-            .min_by(|a, b| a.transpose_block_decode_ms.partial_cmp(&b.transpose_block_decode_ms).unwrap()).unwrap();
+        let openai_best_compression = openai_results
+            .iter()
+            .max_by(|a, b| {
+                a.transpose_block_compression
+                    .partial_cmp(&b.transpose_block_compression)
+                    .unwrap()
+            })
+            .unwrap();
+        let openai_fastest_encode = openai_results
+            .iter()
+            .min_by(|a, b| {
+                a.transpose_block_encode_ms
+                    .partial_cmp(&b.transpose_block_encode_ms)
+                    .unwrap()
+            })
+            .unwrap();
+        let openai_fastest_decode = openai_results
+            .iter()
+            .min_by(|a, b| {
+                a.transpose_block_decode_ms
+                    .partial_cmp(&b.transpose_block_decode_ms)
+                    .unwrap()
+            })
+            .unwrap();
 
         println!("\nOPENAI EMBEDDINGS (1536D) - 12-PATTERN REALISTIC DATA:");
         println!("   RECOMMENDED: FullVector (WINNER - score=1.043, fastest decode)");
-        println!("   Benchmark Data: Tested with comprehensive 12-pattern mix (production-representative)");
-        println!("   Compression: TransposeBlock 20.0% > GroupedBlock 19.7% > FullVector 19.6% (competitive)");
-        println!("   Decode Speed: FullVector 0.94ms (FASTEST) vs GroupedBlock 1.65ms vs TransposeBlock 1.30ms");
+        println!(
+            "   Benchmark Data: Tested with comprehensive 12-pattern mix (production-representative)"
+        );
+        println!(
+            "   Compression: TransposeBlock 20.0% > GroupedBlock 19.7% > FullVector 19.6% (competitive)"
+        );
+        println!(
+            "   Decode Speed: FullVector 0.94ms (FASTEST) vs GroupedBlock 1.65ms vs TransposeBlock 1.30ms"
+        );
         println!("   Encode Speed: FullVector 3.62ms vs GroupedBlock 4.03ms (faster)");
         println!("   Balanced Score: FullVector 1.043 (best with 50% decode weight)");
         println!("   Storage Impact: ~19.6% compression with realistic mixed-pattern data");
-        println!("   Use Case: High-quality RAG, semantic search, GPT applications, real-time queries");
+        println!(
+            "   Use Case: High-quality RAG, semantic search, GPT applications, real-time queries"
+        );
         println!("   Data Source: 128 vectors x 1536D with 12 comprehensive embedding patterns");
     }
 
     // BERT Large (1024D) - CORRECTED ANALYSIS WITH COMPRESSION CAVEATS
     if !bert_large_results.is_empty() {
-        let bert_large_best_result = bert_large_results.iter()
-            .max_by(|a, b| a.transpose_block_compression.partial_cmp(&b.transpose_block_compression).unwrap()).unwrap();
+        let bert_large_best_result = bert_large_results
+            .iter()
+            .max_by(|a, b| {
+                a.transpose_block_compression
+                    .partial_cmp(&b.transpose_block_compression)
+                    .unwrap()
+            })
+            .unwrap();
 
         println!("\nBERT LARGE (1024D) - OPTIMAL FOR RAG - 12-PATTERN DATA:");
         println!("   RECOMMENDED: GroupedBlock (WINNER - score=1.041, best balanced)");
-        println!("   Benchmark Data: 12-pattern comprehensive mix tests realistic production scenarios");
-        println!("   Compression: GroupedBlock 20.3% > GroupedField 20.2% > TransposeBlock 19.9% > FullVector 19.1%");
+        println!(
+            "   Benchmark Data: 12-pattern comprehensive mix tests realistic production scenarios"
+        );
+        println!(
+            "   Compression: GroupedBlock 20.3% > GroupedField 20.2% > TransposeBlock 19.9% > FullVector 19.1%"
+        );
         println!("   Decode Speed: FullVector 6.68ms vs GroupedBlock 6.80ms (nearly identical)");
-        println!("   Encode Speed: GroupedBlock 19.60ms vs FullVector 22.58ms (GroupedBlock faster)");
-        println!("   Balanced Score: GroupedBlock 1.041 vs FullVector 1.002 (GroupedBlock wins overall)");
+        println!(
+            "   Encode Speed: GroupedBlock 19.60ms vs FullVector 22.58ms (GroupedBlock faster)"
+        );
+        println!(
+            "   Balanced Score: GroupedBlock 1.041 vs FullVector 1.002 (GroupedBlock wins overall)"
+        );
         println!("   Alternative: FullVector if decode speed is critical (0.12ms difference)");
         println!("   Use Case: Production RAG systems, document search, Q&A chatbots");
-        println!("   Data Source: 1024 vectors x 1024D with sparse, gaussian, quantized, and 9 other patterns");
+        println!(
+            "   Data Source: 1024 vectors x 1024D with sparse, gaussian, quantized, and 9 other patterns"
+        );
     }
 
     // BERT Base (768D) - CORRECTED ANALYSIS WITH COMPRESSION CAVEATS
     if !bert_base_results.is_empty() {
-        let bert_base_best_result = bert_base_results.iter()
-            .max_by(|a, b| a.transpose_block_compression.partial_cmp(&b.transpose_block_compression).unwrap()).unwrap();
+        let bert_base_best_result = bert_base_results
+            .iter()
+            .max_by(|a, b| {
+                a.transpose_block_compression
+                    .partial_cmp(&b.transpose_block_compression)
+                    .unwrap()
+            })
+            .unwrap();
 
         println!("\nBERT BASE (768D) - 12-PATTERN REALISTIC DATA:");
         println!("   RECOMMENDED: GroupedBlock (WINNER - score=0.986, best overall balance)");
         println!("   Benchmark Data: 12-pattern mix represents production embedding diversity");
-        println!("   Compression: GroupedBlock 20.8% (BEST) > GroupedField 20.4% > TransposeBlock 19.6% > FullVector 18.9%");
+        println!(
+            "   Compression: GroupedBlock 20.8% (BEST) > GroupedField 20.4% > TransposeBlock 19.6% > FullVector 18.9%"
+        );
         println!("   Decode Speed: FullVector 5.49ms (faster) vs GroupedBlock 6.30ms");
         println!("   Encode Speed: GroupedBlock 15.01ms vs FullVector 19.15ms (27% faster)");
         println!("   Balanced Score: GroupedBlock 0.986 vs FullVector 0.975");
-        println!("   Trade-off: GroupedBlock better compression + faster encode, FullVector faster decode");
-        println!("   Production Guidance: GroupedBlock for balanced workloads, FullVector for read-heavy");
-        println!("   Use Case: General-purpose embeddings, content classification, document similarity");
+        println!(
+            "   Trade-off: GroupedBlock better compression + faster encode, FullVector faster decode"
+        );
+        println!(
+            "   Production Guidance: GroupedBlock for balanced workloads, FullVector for read-heavy"
+        );
+        println!(
+            "   Use Case: General-purpose embeddings, content classification, document similarity"
+        );
         println!("   Data Source: 1024 vectors x 768D with comprehensive 12-pattern mix");
     }
 
@@ -3117,29 +3705,45 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
             println!("   SMALL BATCHES (128 vectors):");
             println!("    RECOMMENDED: FullVector (WINNER - score=0.974, fastest decode)");
             println!("    Benchmark Data: 12-pattern comprehensive mix");
-            println!("    Compression: GroupedField 20.3% > TransposeBlock 18.8% > FullVector 18.2%");
+            println!(
+                "    Compression: GroupedField 20.3% > TransposeBlock 18.8% > FullVector 18.2%"
+            );
             println!("    Decode Speed: FullVector 0.25ms (FASTEST) vs GroupedBlock 0.31ms");
             println!("    Encode Speed: GroupedBlock 0.74ms vs FullVector 0.93ms");
             println!("    Best for: Low-latency requirements, real-time applications");
-            println!("    Compression (realistic): FullVector {:.1}% vs GroupedBlock {:.1}%",
-                    small.fullvector_compression * 100.0, small.grouped_block_compression * 100.0);
+            println!(
+                "    Compression (realistic): FullVector {:.1}% vs GroupedBlock {:.1}%",
+                small.fullvector_compression * 100.0,
+                small.grouped_block_compression * 100.0
+            );
         }
 
         if let Some(large) = minilm_large_batch {
             println!("   LARGE BATCHES (4096 vectors):");
             println!("    RECOMMENDED: GroupedBlock (WINNER - score=1.008, best balanced)");
-            println!("    Benchmark Data: GroupedBlock wins with 12-pattern production-representative data");
-            println!("    Compression: GroupedField 21.5% (BEST) > GroupedBlock 21.2% > TransposeBlock 19.8%");
+            println!(
+                "    Benchmark Data: GroupedBlock wins with 12-pattern production-representative data"
+            );
+            println!(
+                "    Compression: GroupedField 21.5% (BEST) > GroupedBlock 21.2% > TransposeBlock 19.8%"
+            );
             println!("    Decode Speed: FullVector 10.64ms vs GroupedBlock 10.15ms (very close)");
             println!("    Encode Speed: TransposeBlock 24.12ms (fastest) vs GroupedBlock 29.64ms");
             println!("    Trade-off: GroupedField has best compression, GroupedBlock best balance");
-            println!("    Compression (realistic): GroupedBlock {:.1}% vs GroupedField {:.1}%",
-                    large.grouped_block_compression * 100.0, large.grouped_field_compression * 100.0);
+            println!(
+                "    Compression (realistic): GroupedBlock {:.1}% vs GroupedField {:.1}%",
+                large.grouped_block_compression * 100.0,
+                large.grouped_field_compression * 100.0
+            );
         }
 
         println!("   Use Case: Real-time search, mobile applications, edge computing, IoT");
-        println!("   Production Guidance: FullVector for <1K vectors, GroupedBlock for >1K vectors");
-        println!("   Data Patterns: Tests include sparse NLP, gaussian, quantized, + 9 other realistic patterns");
+        println!(
+            "   Production Guidance: FullVector for <1K vectors, GroupedBlock for >1K vectors"
+        );
+        println!(
+            "   Data Patterns: Tests include sparse NLP, gaussian, quantized, + 9 other realistic patterns"
+        );
     }
 
     println!("\n[INDUSTRY USE CASE RECOMMENDATIONS]");
@@ -3150,8 +3754,12 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("   Decode Performance: FullVector fastest in most configs, GroupedBlock competitive");
     println!("   Data Quality: 12-pattern mix (sparse, gaussian, quantized, sinusoidal, random,");
     println!("                 clustered, time-series, dense, high-freq, power-law, binary,");
-    println!("                 exponential) better represents production embeddings than pure random");
-    println!("   Production Default: GroupedBlock for balanced workloads, FullVector for read-heavy");
+    println!(
+        "                 exponential) better represents production embeddings than pure random"
+    );
+    println!(
+        "   Production Default: GroupedBlock for balanced workloads, FullVector for read-heavy"
+    );
 
     println!("\nE-COMMERCE & PRODUCT SEARCH:");
     println!("   RECOMMENDED: FullVector (18-20% compression, fastest decode)");
@@ -3226,15 +3834,31 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     // Real-time latency analysis
     let ultra_fast_results: Vec<_> = results.iter().filter(|r| r.vector_count <= 128).collect();
     if !ultra_fast_results.is_empty() {
-        let fastest_encode = ultra_fast_results.iter()
-            .min_by(|a, b| a.transpose_block_encode_ms.partial_cmp(&b.transpose_block_encode_ms).unwrap()).unwrap();
-        let fastest_decode = ultra_fast_results.iter()
-            .min_by(|a, b| a.transpose_block_decode_ms.partial_cmp(&b.transpose_block_decode_ms).unwrap()).unwrap();
+        let fastest_encode = ultra_fast_results
+            .iter()
+            .min_by(|a, b| {
+                a.transpose_block_encode_ms
+                    .partial_cmp(&b.transpose_block_encode_ms)
+                    .unwrap()
+            })
+            .unwrap();
+        let fastest_decode = ultra_fast_results
+            .iter()
+            .min_by(|a, b| {
+                a.transpose_block_decode_ms
+                    .partial_cmp(&b.transpose_block_decode_ms)
+                    .unwrap()
+            })
+            .unwrap();
 
         println!("\nREAL-TIME PERFORMANCE BENCHMARKS:");
-        println!("   Ultra-low latency: GroupedBlock {:.1}ms encode (fastest), FullVector {:.1}ms decode (fastest)",
-                fastest_encode.grouped_block_encode_ms, fastest_decode.fullvector_decode_ms);
-        println!("   Target: < 10ms total for real-time applications (all strategies ACHIEVE THIS)");
+        println!(
+            "   Ultra-low latency: GroupedBlock {:.1}ms encode (fastest), FullVector {:.1}ms decode (fastest)",
+            fastest_encode.grouped_block_encode_ms, fastest_decode.fullvector_decode_ms
+        );
+        println!(
+            "   Target: < 10ms total for real-time applications (all strategies ACHIEVE THIS)"
+        );
         println!("   Suitable for: Gaming, live chat, instant search, real-time recommendations");
     }
 
@@ -3245,7 +3869,9 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("     - GroupedField: 19-22% (best compression)");
     println!("     - GroupedBlock: 18-21% (best balanced)");
     println!("     - FullVector: 18-20% (best decode speed)");
-    println!("   Benchmark Results: GroupedBlock wins 6/12 (50%), FullVector 5/12 (42%), GroupedField 1/12 (8%)");
+    println!(
+        "   Benchmark Results: GroupedBlock wins 6/12 (50%), FullVector 5/12 (42%), GroupedField 1/12 (8%)"
+    );
     println!("   Weighted Scoring: 20% encode, 50% decode, 35% compression");
     println!("   Data-Driven Default: FullVector for vector DBs (WORM), GroupedBlock for balanced");
 
@@ -3262,7 +3888,9 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("   BERT 768D: GroupedField 20.8% compression (vs FullVector 18.9%)");
     println!("   Best for: Large-scale deployments, data archival, cost-sensitive applications");
     println!("   Trade-off: Slightly slower decode than FullVector, but best compression");
-    println!("   Recommendation: GroupedField for max savings, FullVector if decode speed critical");
+    println!(
+        "   Recommendation: GroupedField for max savings, FullVector if decode speed critical"
+    );
 
     println!("\nPERFORMANCE-OPTIMIZED (Low latency required):");
     println!("   RECOMMENDED: FullVector (fastest decode in 8/12 configs)");
@@ -3291,11 +3919,19 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("\n[IMPLEMENTATION STRATEGY - DATA-DRIVEN WITH 12-PATTERN REALISTIC DATA]");
     println!("   1. PRODUCTION DEFAULT RECOMMENDATION:");
     println!("      VECTOR DATABASES (WORM - Write-Once-Read-Many): FullVector (RECOMMENDED)");
-    println!("        - Rationale: Vector DBs are read-heavy by nature (embeddings written once, queried many times)");
-    println!("        - Decode Speed: FASTEST in 8/12 configs (critical for search/RAG performance)");
+    println!(
+        "        - Rationale: Vector DBs are read-heavy by nature (embeddings written once, queried many times)"
+    );
+    println!(
+        "        - Decode Speed: FASTEST in 8/12 configs (critical for search/RAG performance)"
+    );
     println!("        - Compression: 18-20% (competitive with GroupedBlock's 18-21%)");
-    println!("        - Trade-off: GroupedBlock may have marginally better compression but slower decode");
-    println!("        - Wins: 5/12 configs (42%), but decode speed advantage makes it optimal for DBs");
+    println!(
+        "        - Trade-off: GroupedBlock may have marginally better compression but slower decode"
+    );
+    println!(
+        "        - Wins: 5/12 configs (42%), but decode speed advantage makes it optimal for DBs"
+    );
     println!("        - Excellent for: RAG, semantic search, similarity search, real-time queries");
     println!("      General Balanced Workloads: GroupedBlock (wins 6/12 configs = 50%)");
     println!("        - Compression: 18-21% with 12-pattern comprehensive data");
@@ -3328,7 +3964,9 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("      Expect: 18-22% compression (NOT 30-40%) with real-world diverse patterns");
 
     println!("\n   4. SIMPLE DECISION RULES:");
-    println!("      Vector Databases (WORM): Use FullVector (FASTEST decode, competitive compression)");
+    println!(
+        "      Vector Databases (WORM): Use FullVector (FASTEST decode, competitive compression)"
+    );
     println!("        → ProximaDB, Pinecone, Weaviate, Qdrant, Milvus-style workloads");
     println!("        → Embeddings written once, queried thousands of times");
     println!("        → Decode speed critical, encode happens rarely");
@@ -3358,14 +3996,20 @@ fn generate_test_vectors_for_encoding_2(num_vectors: usize, dimension: usize) ->
 
             // Pattern 1: Sparse (70% zeros) - Common in NLP embeddings (BERT, Word2Vec)
             for _ in 0..chunk_size {
-                vec.push(if rng.gen_bool(0.7) { 0.0 } else { rng.gen_range(-1.0..1.0) });
+                vec.push(if rng.gen_bool(0.7) {
+                    0.0
+                } else {
+                    rng.gen_range(-1.0..1.0)
+                });
             }
 
             // Pattern 2: Gaussian - Neural network activations (standard normal)
             for _ in 0..chunk_size {
                 let u1: f32 = rng.gen_range(0.001..1.0);
                 let u2: f32 = rng.gen_range(0.0..1.0);
-                let gaussian = ((-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos()) * 0.3f32;
+                let gaussian = ((-2.0f32 * u1.ln()).sqrt()
+                    * (2.0f32 * std::f32::consts::PI * u2).cos())
+                    * 0.3f32;
                 vec.push(gaussian.clamp(-1.0, 1.0));
             }
 
@@ -3411,7 +4055,7 @@ fn generate_test_vectors_for_encoding_2(num_vectors: usize, dimension: usize) ->
             // Pattern 9: High-Frequency Oscillations - Audio embeddings, wavelet features
             for d in 0..chunk_size {
                 let high_freq = ((d as f32 * 2.0 + v as f32 * 0.5).sin() * 0.4)
-                              + ((d as f32 * 5.0).cos() * 0.2);
+                    + ((d as f32 * 5.0).cos() * 0.2);
                 vec.push(high_freq.clamp(-1.0, 1.0));
             }
 
@@ -3419,7 +4063,10 @@ fn generate_test_vectors_for_encoding_2(num_vectors: usize, dimension: usize) ->
             for _ in 0..chunk_size {
                 let uniform: f32 = rng.gen_range(0.001..1.0);
                 let power_law = uniform.powf(-0.5); // Power law exponent
-                vec.push((power_law / 10.0).clamp(-1.0, 1.0) * if rng.gen_bool(0.5) { 1.0 } else { -1.0 });
+                vec.push(
+                    (power_law / 10.0).clamp(-1.0, 1.0)
+                        * if rng.gen_bool(0.5) { 1.0 } else { -1.0 },
+                );
             }
 
             // Pattern 11: Binary/Bipolar - Hash-based embeddings, locality-sensitive hashing
@@ -3452,7 +4099,8 @@ fn generate_test_vectors_for_encoding_2(num_vectors: usize, dimension: usize) ->
 
 // Helper function to create vector records from vectors
 fn create_vector_records_from_vecs_2(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord> {
-    vectors.into_iter()
+    vectors
+        .into_iter()
         .enumerate()
         .map(|(i, vector)| VectorRecord {
             id: format!("vec_{}", i),
@@ -3518,9 +4166,7 @@ where
     }
 
     let mean = times.iter().sum::<f64>() / times.len() as f64;
-    let variance = times.iter()
-        .map(|t| (t - mean).powi(2))
-        .sum::<f64>() / times.len() as f64;
+    let variance = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / times.len() as f64;
     let std_dev = variance.sqrt();
 
     Ok(((mean, std_dev), result.unwrap()))
@@ -3531,7 +4177,10 @@ fn benchmark_encoding_statistical(
     dimension: usize,
     sample_size: usize,
 ) -> Result<()> {
-    println!("\n⚙  Benchmarking encoding: {} vectors, {} dimensions", vector_count, dimension);
+    println!(
+        "\n⚙  Benchmarking encoding: {} vectors, {} dimensions",
+        vector_count, dimension
+    );
     // Default to zstd with level 3
     let _ = benchmark_encoding_statistical_with_compression(
         vector_count,
@@ -3564,15 +4213,17 @@ fn benchmark_encoding_statistical_with_compression(
         compression_threshold_bytes: 1024,
         dictionary_compression: false,
         vector_layout: VectorEncodingLayout::Auto,
-        metadata_algorithm: Some(CompressionAlgorithm::None),  // Add missing field
+        metadata_algorithm: Some(CompressionAlgorithm::None), // Add missing field
     };
 
     // ============ TRANSPOSE FIELD-COMPRESSED (Field-Level Compression) ============
-    compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
+    compression_config.vector_layout =
+        VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
 
     // Serialize once to get valid data for decode benchmark
     let transpose_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-    let transpose_field_serialized = transpose_field_block.serialize_with_config(&compression_config)?;
+    let transpose_field_serialized =
+        transpose_field_block.serialize_with_config(&compression_config)?;
 
     // Measure encode time (create fresh block each time to avoid state corruption)
     let transpose_field_encode_times = measure_function(
@@ -3591,16 +4242,24 @@ fn benchmark_encoding_statistical_with_compression(
         sample_size,
     );
 
-    println!("  \x1b[36m[WRITE]\x1b[0m TransposeFieldEncoded:  {:.2} ± {:.2} ms",
-        transpose_field_encode_times.0 / 1000.0, transpose_field_encode_times.1 / 1000.0);
-    println!("  \x1b[35m[READ]\x1b[0m  TransposeFieldEncoded:  {:.2} ± {:.2} ms",
-        transpose_field_decode_times.0 / 1000.0, transpose_field_decode_times.1 / 1000.0);
+    println!(
+        "  \x1b[36m[WRITE]\x1b[0m TransposeFieldEncoded:  {:.2} ± {:.2} ms",
+        transpose_field_encode_times.0 / 1000.0,
+        transpose_field_encode_times.1 / 1000.0
+    );
+    println!(
+        "  \x1b[35m[READ]\x1b[0m  TransposeFieldEncoded:  {:.2} ± {:.2} ms",
+        transpose_field_decode_times.0 / 1000.0,
+        transpose_field_decode_times.1 / 1000.0
+    );
 
     // ============ TRANSPOSE BLOCK-COMPRESSED (Block-Level Compression) ============
-    compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector;
+    compression_config.vector_layout =
+        VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector;
 
     let transpose_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-    let transpose_block_serialized = transpose_block_block.serialize_with_config(&compression_config)?;
+    let transpose_block_serialized =
+        transpose_block_block.serialize_with_config(&compression_config)?;
 
     let transpose_block_encode_times = measure_function(
         || {
@@ -3617,10 +4276,16 @@ fn benchmark_encoding_statistical_with_compression(
         sample_size,
     );
 
-    println!("  \x1b[36m[WRITE]\x1b[0m TransposeBlockCompressed:  {:.2} ± {:.2} ms",
-        transpose_block_encode_times.0 / 1000.0, transpose_block_encode_times.1 / 1000.0);
-    println!("  \x1b[35m[READ]\x1b[0m  TransposeBlockCompressed:  {:.2} ± {:.2} ms",
-        transpose_block_decode_times.0 / 1000.0, transpose_block_decode_times.1 / 1000.0);
+    println!(
+        "  \x1b[36m[WRITE]\x1b[0m TransposeBlockCompressed:  {:.2} ± {:.2} ms",
+        transpose_block_encode_times.0 / 1000.0,
+        transpose_block_encode_times.1 / 1000.0
+    );
+    println!(
+        "  \x1b[35m[READ]\x1b[0m  TransposeBlockCompressed:  {:.2} ± {:.2} ms",
+        transpose_block_decode_times.0 / 1000.0,
+        transpose_block_decode_times.1 / 1000.0
+    );
 
     // ============ ROW-WISE ENCODING (FullVector) ============
     compression_config.vector_layout = VectorEncodingLayout::FullVector;
@@ -3646,10 +4311,16 @@ fn benchmark_encoding_statistical_with_compression(
         sample_size,
     );
 
-    println!("  \x1b[36m[WRITE]\x1b[0m Row-wise encoding:  {:.2} ± {:.2} ms",
-        rowwise_encode_times.0 / 1000.0, rowwise_encode_times.1 / 1000.0);
-    println!("  \x1b[35m[READ]\x1b[0m  Row-wise decoding:  {:.2} ± {:.2} ms",
-        rowwise_decode_times.0 / 1000.0, rowwise_decode_times.1 / 1000.0);
+    println!(
+        "  \x1b[36m[WRITE]\x1b[0m Row-wise encoding:  {:.2} ± {:.2} ms",
+        rowwise_encode_times.0 / 1000.0,
+        rowwise_encode_times.1 / 1000.0
+    );
+    println!(
+        "  \x1b[35m[READ]\x1b[0m  Row-wise decoding:  {:.2} ± {:.2} ms",
+        rowwise_decode_times.0 / 1000.0,
+        rowwise_decode_times.1 / 1000.0
+    );
 
     // ============ GROUPED FIELD-COMPRESSED (Field-Level Compression) ============
     let grouped_field_encode_times;
@@ -3657,10 +4328,13 @@ fn benchmark_encoding_statistical_with_compression(
     let grouped_field_serialized;
 
     if dimension > 128 {
-        compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
+        compression_config.vector_layout =
+            VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
 
-        let grouped_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-        grouped_field_serialized = grouped_field_block.serialize_with_config(&compression_config)?;
+        let grouped_field_block =
+            ProximaDataBlock::new(records.clone(), compression_config.clone());
+        grouped_field_serialized =
+            grouped_field_block.serialize_with_config(&compression_config)?;
 
         grouped_field_encode_times = measure_function(
             || {
@@ -3672,15 +4346,22 @@ fn benchmark_encoding_statistical_with_compression(
 
         grouped_field_decode_times = measure_function(
             || {
-                let _block = ProximaDataBlock::deserialize(&grouped_field_serialized, None).unwrap();
+                let _block =
+                    ProximaDataBlock::deserialize(&grouped_field_serialized, None).unwrap();
             },
             sample_size,
         );
 
-        println!("  \x1b[36m[WRITE]\x1b[0m GroupedFieldEncoded:   {:.2} ± {:.2} ms",
-            grouped_field_encode_times.0 / 1000.0, grouped_field_encode_times.1 / 1000.0);
-        println!("  \x1b[35m[READ]\x1b[0m  GroupedFieldEncoded:   {:.2} ± {:.2} ms",
-            grouped_field_decode_times.0 / 1000.0, grouped_field_decode_times.1 / 1000.0);
+        println!(
+            "  \x1b[36m[WRITE]\x1b[0m GroupedFieldEncoded:   {:.2} ± {:.2} ms",
+            grouped_field_encode_times.0 / 1000.0,
+            grouped_field_encode_times.1 / 1000.0
+        );
+        println!(
+            "  \x1b[35m[READ]\x1b[0m  GroupedFieldEncoded:   {:.2} ± {:.2} ms",
+            grouped_field_decode_times.0 / 1000.0,
+            grouped_field_decode_times.1 / 1000.0
+        );
     } else {
         grouped_field_encode_times = (0.0, 0.0);
         grouped_field_decode_times = (0.0, 0.0);
@@ -3693,10 +4374,13 @@ fn benchmark_encoding_statistical_with_compression(
     let grouped_block_serialized;
 
     if dimension > 128 {
-        compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector;
+        compression_config.vector_layout =
+            VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector;
 
-        let grouped_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-        grouped_block_serialized = grouped_block_block.serialize_with_config(&compression_config)?;
+        let grouped_block_block =
+            ProximaDataBlock::new(records.clone(), compression_config.clone());
+        grouped_block_serialized =
+            grouped_block_block.serialize_with_config(&compression_config)?;
 
         grouped_block_encode_times = measure_function(
             || {
@@ -3708,15 +4392,22 @@ fn benchmark_encoding_statistical_with_compression(
 
         grouped_block_decode_times = measure_function(
             || {
-                let _block = ProximaDataBlock::deserialize(&grouped_block_serialized, None).unwrap();
+                let _block =
+                    ProximaDataBlock::deserialize(&grouped_block_serialized, None).unwrap();
             },
             sample_size,
         );
 
-        println!("  \x1b[36m[WRITE]\x1b[0m GroupedBlockCompressed: {:.2} ± {:.2} ms",
-            grouped_block_encode_times.0 / 1000.0, grouped_block_encode_times.1 / 1000.0);
-        println!("  \x1b[35m[READ]\x1b[0m  GroupedBlockCompressed: {:.2} ± {:.2} ms",
-            grouped_block_decode_times.0 / 1000.0, grouped_block_decode_times.1 / 1000.0);
+        println!(
+            "  \x1b[36m[WRITE]\x1b[0m GroupedBlockCompressed: {:.2} ± {:.2} ms",
+            grouped_block_encode_times.0 / 1000.0,
+            grouped_block_encode_times.1 / 1000.0
+        );
+        println!(
+            "  \x1b[35m[READ]\x1b[0m  GroupedBlockCompressed: {:.2} ± {:.2} ms",
+            grouped_block_decode_times.0 / 1000.0,
+            grouped_block_decode_times.1 / 1000.0
+        );
     } else {
         grouped_block_encode_times = (0.0, 0.0);
         grouped_block_decode_times = (0.0, 0.0);
@@ -3730,16 +4421,32 @@ fn benchmark_encoding_statistical_with_compression(
     let transpose_field_size = transpose_field_serialized.len();
     let transpose_block_size = transpose_block_serialized.len();
     let rowwise_size = rowwise_serialized.len();
-    let grouped_field_size = if !grouped_field_serialized.is_empty() { grouped_field_serialized.len() } else { 0 };
-    let grouped_block_size = if !grouped_block_serialized.is_empty() { grouped_block_serialized.len() } else { 0 };
+    let grouped_field_size = if !grouped_field_serialized.is_empty() {
+        grouped_field_serialized.len()
+    } else {
+        0
+    };
+    let grouped_block_size = if !grouped_block_serialized.is_empty() {
+        grouped_block_serialized.len()
+    } else {
+        0
+    };
 
     // Compression ratio: 1 - (compressed/uncompressed)
     // Standard definition: higher is better, negative means expansion
     let transpose_field_ratio = 1.0 - (transpose_field_size as f64 / original_size as f64);
     let transpose_block_ratio = 1.0 - (transpose_block_size as f64 / original_size as f64);
     let rowwise_ratio = 1.0 - (rowwise_size as f64 / original_size as f64);
-    let grouped_field_ratio = if grouped_field_size > 0 { 1.0 - (grouped_field_size as f64 / original_size as f64) } else { 0.0 };
-    let grouped_block_ratio = if grouped_block_size > 0 { 1.0 - (grouped_block_size as f64 / original_size as f64) } else { 0.0 };
+    let grouped_field_ratio = if grouped_field_size > 0 {
+        1.0 - (grouped_field_size as f64 / original_size as f64)
+    } else {
+        0.0
+    };
+    let grouped_block_ratio = if grouped_block_size > 0 {
+        1.0 - (grouped_block_size as f64 / original_size as f64)
+    } else {
+        0.0
+    };
 
     let transpose_field_size_mb = transpose_field_size as f64 / (1024.0 * 1024.0);
     let transpose_block_size_mb = transpose_block_size as f64 / (1024.0 * 1024.0);
@@ -3748,37 +4455,72 @@ fn benchmark_encoding_statistical_with_compression(
     let grouped_block_size_mb = grouped_block_size as f64 / (1024.0 * 1024.0);
 
     // ============ RESULTS TABLE ============
-    println!("\n ┌──────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
-    println!("  │ Strategy             │ Encode (ms)  │ Decode (ms)  │ Size (MB)    │ Compression  │");
-    println!("  ├──────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
-    println!("  │ TransposeFieldEncoded│ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
-        transpose_field_encode_times.0 / 1000.0, transpose_field_encode_times.1 / 1000.0,
-        transpose_field_decode_times.0 / 1000.0, transpose_field_decode_times.1 / 1000.0,
-        transpose_field_size_mb, transpose_field_ratio * 100.0);
-    println!("  │ TransposeBlockCompr. │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
-        transpose_block_encode_times.0 / 1000.0, transpose_block_encode_times.1 / 1000.0,
-        transpose_block_decode_times.0 / 1000.0, transpose_block_decode_times.1 / 1000.0,
-        transpose_block_size_mb, transpose_block_ratio * 100.0);
-    println!("  │ FullVector           │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
-        rowwise_encode_times.0 / 1000.0, rowwise_encode_times.1 / 1000.0,
-        rowwise_decode_times.0 / 1000.0, rowwise_decode_times.1 / 1000.0,
-        rowwise_size_mb, rowwise_ratio * 100.0);
+    println!(
+        "\n ┌──────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐"
+    );
+    println!(
+        "  │ Strategy             │ Encode (ms)  │ Decode (ms)  │ Size (MB)    │ Compression  │"
+    );
+    println!(
+        "  ├──────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤"
+    );
+    println!(
+        "  │ TransposeFieldEncoded│ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
+        transpose_field_encode_times.0 / 1000.0,
+        transpose_field_encode_times.1 / 1000.0,
+        transpose_field_decode_times.0 / 1000.0,
+        transpose_field_decode_times.1 / 1000.0,
+        transpose_field_size_mb,
+        transpose_field_ratio * 100.0
+    );
+    println!(
+        "  │ TransposeBlockCompr. │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
+        transpose_block_encode_times.0 / 1000.0,
+        transpose_block_encode_times.1 / 1000.0,
+        transpose_block_decode_times.0 / 1000.0,
+        transpose_block_decode_times.1 / 1000.0,
+        transpose_block_size_mb,
+        transpose_block_ratio * 100.0
+    );
+    println!(
+        "  │ FullVector           │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
+        rowwise_encode_times.0 / 1000.0,
+        rowwise_encode_times.1 / 1000.0,
+        rowwise_decode_times.0 / 1000.0,
+        rowwise_decode_times.1 / 1000.0,
+        rowwise_size_mb,
+        rowwise_ratio * 100.0
+    );
     if grouped_field_size > 0 {
-        println!("  │ GroupedFieldEncoded  │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
-            grouped_field_encode_times.0 / 1000.0, grouped_field_encode_times.1 / 1000.0,
-            grouped_field_decode_times.0 / 1000.0, grouped_field_decode_times.1 / 1000.0,
-            grouped_field_size_mb, grouped_field_ratio * 100.0);
-        println!("  │ GroupedBlockCompr.   │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
-            grouped_block_encode_times.0 / 1000.0, grouped_block_encode_times.1 / 1000.0,
-            grouped_block_decode_times.0 / 1000.0, grouped_block_decode_times.1 / 1000.0,
-            grouped_block_size_mb, grouped_block_ratio * 100.0);
+        println!(
+            "  │ GroupedFieldEncoded  │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
+            grouped_field_encode_times.0 / 1000.0,
+            grouped_field_encode_times.1 / 1000.0,
+            grouped_field_decode_times.0 / 1000.0,
+            grouped_field_decode_times.1 / 1000.0,
+            grouped_field_size_mb,
+            grouped_field_ratio * 100.0
+        );
+        println!(
+            "  │ GroupedBlockCompr.   │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
+            grouped_block_encode_times.0 / 1000.0,
+            grouped_block_encode_times.1 / 1000.0,
+            grouped_block_decode_times.0 / 1000.0,
+            grouped_block_decode_times.1 / 1000.0,
+            grouped_block_size_mb,
+            grouped_block_ratio * 100.0
+        );
     }
-    println!("  └──────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
+    println!(
+        "  └──────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘"
+    );
 
     // ============ INTERPRETATION ============
     println!("\n  INTERPRETATION:");
-    println!("  Test: {} vectors × {} dimensions, {:?} compression",
-        vector_count, dimension, compression_config.algorithm);
+    println!(
+        "  Test: {} vectors × {} dimensions, {:?} compression",
+        vector_count, dimension, compression_config.algorithm
+    );
 
     // Find best strategies (higher ratio is better with new definition)
     let mut best_compression_strategy = "TransposeFieldEncoded";
@@ -3820,14 +4562,24 @@ fn benchmark_encoding_statistical_with_compression(
     }
 
     println!("\n  BEST PERFORMERS:");
-    println!("   • Compression: {} ({:.1}% reduction)",
-        best_compression_strategy, best_compression_ratio * 100.0);
-    println!("   • Encode Speed: {} ({:.2} ms)", best_encode_strategy, best_encode_time / 1000.0);
+    println!(
+        "   • Compression: {} ({:.1}% reduction)",
+        best_compression_strategy,
+        best_compression_ratio * 100.0
+    );
+    println!(
+        "   • Encode Speed: {} ({:.2} ms)",
+        best_encode_strategy,
+        best_encode_time / 1000.0
+    );
 
     println!("\n  RECOMMENDATIONS BY USE CASE:");
     if best_compression_ratio < 0.33 {
-        println!("   • Cloud Storage: Use {} (saves ~{:.0}% costs)",
-            best_compression_strategy, best_compression_ratio * 100.0);
+        println!(
+            "   • Cloud Storage: Use {} (saves ~{:.0}% costs)",
+            best_compression_strategy,
+            best_compression_ratio * 100.0
+        );
     }
     if dimension > 128 {
         println!("   • High Dimensions: GroupedFieldEncoded optimal (cache-friendly 32D chunks)");
@@ -3870,30 +4622,30 @@ fn benchmark_encoding_statistical_with_compression(
     })
 }
 
-
 // Comprehensive compression algorithm benchmark
 fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Result<()> {
-    use proximadb::core::compression::{compress, decompress, CompressionContext};
+    use proximadb::core::compression::{CompressionContext, compress, decompress};
 
     println!("\n{}", "=".repeat(80));
     println!("  COMPRESSION ALGORITHM COMPARISON");
-    println!("   Testing {} vectors × {} dimensions", vector_count, dimension);
+    println!(
+        "   Testing {} vectors × {} dimensions",
+        vector_count, dimension
+    );
     println!("{}", "=".repeat(80));
 
     // Generate test data
     let mut rng = rand::thread_rng();
     let records: Vec<VectorRecord> = (0..vector_count)
-        .map(|i| {
-            VectorRecord {
-                id: format!("vec_{}", i),
-                vector: (0..dimension).map(|_| rng.gen_range(0.0..1.0)).collect(),
-                metadata: HashMap::new(),
-                timestamp: Some(i as i64),
-                updated_at: Some(i as i64),
-                expires_at: None,
-                version: None,
-                source: None,
-            }
+        .map(|i| VectorRecord {
+            id: format!("vec_{}", i),
+            vector: (0..dimension).map(|_| rng.gen_range(0.0..1.0)).collect(),
+            metadata: HashMap::new(),
+            timestamp: Some(i as i64),
+            updated_at: Some(i as i64),
+            expires_at: None,
+            version: None,
+            source: None,
         })
         .collect();
 
@@ -3935,9 +4687,18 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
     let raw_size = vector_count * dimension * 4;
 
     println!("\nOriginal Data:");
-    println!("  • Raw size: {:.2} MB", raw_size as f64 / (1024.0 * 1024.0));
-    println!("  • Columnar encoded: {:.2} MB", columnar_bytes.len() as f64 / (1024.0 * 1024.0));
-    println!("  • Row-wise encoded: {:.2} MB", rowwise_bytes.len() as f64 / (1024.0 * 1024.0));
+    println!(
+        "  • Raw size: {:.2} MB",
+        raw_size as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  • Columnar encoded: {:.2} MB",
+        columnar_bytes.len() as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "  • Row-wise encoded: {:.2} MB",
+        rowwise_bytes.len() as f64 / (1024.0 * 1024.0)
+    );
 
     // Results storage
     struct CompressionResult {
@@ -3958,55 +4719,75 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
         println!("\n⚙  Testing {}...", name);
 
         // Columnar compression
-        let (columnar_compress_time, columnar_compressed) = if matches!(algo, CompressionAlgorithm::None) {
-            ((0.0, 0.0), columnar_bytes.clone())
-        } else {
-            measure_function_with_result(
-                || compress(&columnar_bytes, algo.clone(),
-                    match algo {
-                        CompressionAlgorithm::Zstd => 3,  // Default level for Zstd
-                        CompressionAlgorithm::Gzip => 6,  // Default level for Gzip
-                        CompressionAlgorithm::Brotli => 4, // Default level for Brotli
-                        _ => 1
+        let (columnar_compress_time, columnar_compressed) =
+            if matches!(algo, CompressionAlgorithm::None) {
+                ((0.0, 0.0), columnar_bytes.clone())
+            } else {
+                measure_function_with_result(
+                    || {
+                        compress(
+                            &columnar_bytes,
+                            algo.clone(),
+                            match algo {
+                                CompressionAlgorithm::Zstd => 3,   // Default level for Zstd
+                                CompressionAlgorithm::Gzip => 6,   // Default level for Gzip
+                                CompressionAlgorithm::Brotli => 4, // Default level for Brotli
+                                _ => 1,
+                            },
+                            CompressionContext::Block,
+                        )
                     },
-                    CompressionContext::Block
-                ),
-                5,
-            )?
-        };
+                    5,
+                )?
+            };
 
         let columnar_decompress_time = if matches!(algo, CompressionAlgorithm::None) {
             (0.0, 0.0)
         } else {
             measure_function(
-                || decompress(&columnar_compressed, algo.clone(), CompressionContext::Block).unwrap(),
+                || {
+                    decompress(
+                        &columnar_compressed,
+                        algo.clone(),
+                        CompressionContext::Block,
+                    )
+                    .unwrap()
+                },
                 5,
             )
         };
 
         // Row-wise compression
-        let (rowwise_compress_time, rowwise_compressed) = if matches!(algo, CompressionAlgorithm::None) {
-            ((0.0, 0.0), rowwise_bytes.clone())
-        } else {
-            measure_function_with_result(
-                || compress(&rowwise_bytes, algo.clone(),
-                    match algo {
-                        CompressionAlgorithm::Zstd => 3,  // Default level for Zstd
-                        CompressionAlgorithm::Gzip => 6,  // Default level for Gzip
-                        CompressionAlgorithm::Brotli => 4, // Default level for Brotli
-                        _ => 1
+        let (rowwise_compress_time, rowwise_compressed) =
+            if matches!(algo, CompressionAlgorithm::None) {
+                ((0.0, 0.0), rowwise_bytes.clone())
+            } else {
+                measure_function_with_result(
+                    || {
+                        compress(
+                            &rowwise_bytes,
+                            algo.clone(),
+                            match algo {
+                                CompressionAlgorithm::Zstd => 3,   // Default level for Zstd
+                                CompressionAlgorithm::Gzip => 6,   // Default level for Gzip
+                                CompressionAlgorithm::Brotli => 4, // Default level for Brotli
+                                _ => 1,
+                            },
+                            CompressionContext::Block,
+                        )
                     },
-                    CompressionContext::Block
-                ),
-                5,
-            )?
-        };
+                    5,
+                )?
+            };
 
         let rowwise_decompress_time = if matches!(algo, CompressionAlgorithm::None) {
             (0.0, 0.0)
         } else {
             measure_function(
-                || decompress(&rowwise_compressed, algo.clone(), CompressionContext::Block).unwrap(),
+                || {
+                    decompress(&rowwise_compressed, algo.clone(), CompressionContext::Block)
+                        .unwrap()
+                },
                 5,
             )
         };
@@ -4016,12 +4797,20 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
         let columnar_ratio = columnar_bytes.len() as f64 / columnar_compressed.len() as f64;
         let rowwise_ratio = rowwise_bytes.len() as f64 / rowwise_compressed.len() as f64;
 
-        println!("  Columnar: {:.2} MB ({:.2}x), compress: {:.2}ms, decompress: {:.2}ms",
-            columnar_size_mb, columnar_ratio,
-            columnar_compress_time.0 / 1000.0, columnar_decompress_time.0 / 1000.0);
-        println!("  Row-wise: {:.2} MB ({:.2}x), compress: {:.2}ms, decompress: {:.2}ms",
-            rowwise_size_mb, rowwise_ratio,
-            rowwise_compress_time.0 / 1000.0, rowwise_decompress_time.0 / 1000.0);
+        println!(
+            "  Columnar: {:.2} MB ({:.2}x), compress: {:.2}ms, decompress: {:.2}ms",
+            columnar_size_mb,
+            columnar_ratio,
+            columnar_compress_time.0 / 1000.0,
+            columnar_decompress_time.0 / 1000.0
+        );
+        println!(
+            "  Row-wise: {:.2} MB ({:.2}x), compress: {:.2}ms, decompress: {:.2}ms",
+            rowwise_size_mb,
+            rowwise_ratio,
+            rowwise_compress_time.0 / 1000.0,
+            rowwise_decompress_time.0 / 1000.0
+        );
 
         results.push(CompressionResult {
             algorithm: name.to_string(),
@@ -4040,10 +4829,14 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
     println!("\n{}", "=".repeat(100));
     println!(" COMPRESSION SUMMARY TABLE");
     println!("{}", "=".repeat(100));
-    println!("{:<12} | {:^30} | {:^30} | {:^10}",
-        "Algorithm", "Columnar", "Row-wise", "Winner");
-    println!("{:<12} | {:>7} {:>7} {:>7} {:>7} | {:>7} {:>7} {:>7} {:>7} | {:^10}",
-        "", "Size", "Ratio", "Comp", "Decomp", "Size", "Ratio", "Comp", "Decomp", "");
+    println!(
+        "{:<12} | {:^30} | {:^30} | {:^10}",
+        "Algorithm", "Columnar", "Row-wise", "Winner"
+    );
+    println!(
+        "{:<12} | {:>7} {:>7} {:>7} {:>7} | {:>7} {:>7} {:>7} {:>7} | {:^10}",
+        "", "Size", "Ratio", "Comp", "Decomp", "Size", "Ratio", "Comp", "Decomp", ""
+    );
     println!("{}", "-".repeat(100));
 
     for r in &results {
@@ -4055,10 +4848,17 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
             "Similar"
         };
 
-        println!("{:<12} | {:>6.2}M {:>6.1}x {:>6.1}ms {:>6.1}ms | {:>6.2}M {:>6.1}x {:>6.1}ms {:>6.1}ms | {:<10}",
+        println!(
+            "{:<12} | {:>6.2}M {:>6.1}x {:>6.1}ms {:>6.1}ms | {:>6.2}M {:>6.1}x {:>6.1}ms {:>6.1}ms | {:<10}",
             r.algorithm,
-            r.columnar_size_mb, r.columnar_ratio, r.columnar_compress_ms, r.columnar_decompress_ms,
-            r.rowwise_size_mb, r.rowwise_ratio, r.rowwise_compress_ms, r.rowwise_decompress_ms,
+            r.columnar_size_mb,
+            r.columnar_ratio,
+            r.columnar_compress_ms,
+            r.columnar_decompress_ms,
+            r.rowwise_size_mb,
+            r.rowwise_ratio,
+            r.rowwise_compress_ms,
+            r.rowwise_decompress_ms,
             winner
         );
     }
@@ -4069,32 +4869,61 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
     println!("{}", "=".repeat(80));
 
     // Find best for different workloads
-    let best_compression = results.iter()
+    let best_compression = results
+        .iter()
         .filter(|r| r.algorithm != "None")
         .min_by(|a, b| a.columnar_size_mb.partial_cmp(&b.columnar_size_mb).unwrap())
         .unwrap();
 
-    let fastest_compress = results.iter()
+    let fastest_compress = results
+        .iter()
         .filter(|r| r.algorithm != "None")
-        .min_by(|a, b| a.columnar_compress_ms.partial_cmp(&b.columnar_compress_ms).unwrap())
+        .min_by(|a, b| {
+            a.columnar_compress_ms
+                .partial_cmp(&b.columnar_compress_ms)
+                .unwrap()
+        })
         .unwrap();
 
-    let fastest_decompress = results.iter()
+    let fastest_decompress = results
+        .iter()
         .filter(|r| r.algorithm != "None")
-        .min_by(|a, b| a.columnar_decompress_ms.partial_cmp(&b.columnar_decompress_ms).unwrap())
+        .min_by(|a, b| {
+            a.columnar_decompress_ms
+                .partial_cmp(&b.columnar_decompress_ms)
+                .unwrap()
+        })
         .unwrap();
 
     println!("\nWORM (Write-Once-Read-Many) Workload:");
-    println!("  • Recommendation: {} with COLUMNAR layout", best_compression.algorithm);
-    println!("  • Rationale: Best compression ratio ({:.1}% of original), slow writes acceptable", best_compression.columnar_ratio * 100.0);
+    println!(
+        "  • Recommendation: {} with COLUMNAR layout",
+        best_compression.algorithm
+    );
+    println!(
+        "  • Rationale: Best compression ratio ({:.1}% of original), slow writes acceptable",
+        best_compression.columnar_ratio * 100.0
+    );
 
     println!("\nHigh-Write Workload:");
-    println!("  • Recommendation: {} with ROW-WISE layout", fastest_compress.algorithm);
-    println!("  • Rationale: Fastest compression ({:.1}ms), minimizes write latency", fastest_compress.rowwise_compress_ms);
+    println!(
+        "  • Recommendation: {} with ROW-WISE layout",
+        fastest_compress.algorithm
+    );
+    println!(
+        "  • Rationale: Fastest compression ({:.1}ms), minimizes write latency",
+        fastest_compress.rowwise_compress_ms
+    );
 
     println!("\nReal-Time Query Workload:");
-    println!("  • Recommendation: {} with ROW-WISE layout", fastest_decompress.algorithm);
-    println!("  • Rationale: Fastest decompression ({:.1}ms), minimizes query latency", fastest_decompress.rowwise_decompress_ms);
+    println!(
+        "  • Recommendation: {} with ROW-WISE layout",
+        fastest_decompress.algorithm
+    );
+    println!(
+        "  • Rationale: Fastest decompression ({:.1}ms), minimizes query latency",
+        fastest_decompress.rowwise_decompress_ms
+    );
 
     println!("\nMixed Workload:");
     println!("  • Recommendation: Snappy with layout based on dimension");
@@ -4139,31 +4968,60 @@ fn benchmark_simd_encoding_schemes(
     // Default patterns if none specified - ALL patterns for comprehensive coverage
     let default_patterns = vec![
         // Original 5 patterns (~35% coverage)
-        "sequential".to_string(), "normalized".to_string(), "sparse".to_string(),
-        "random".to_string(), "constant".to_string(),
+        "sequential".to_string(),
+        "normalized".to_string(),
+        "sparse".to_string(),
+        "random".to_string(),
+        "constant".to_string(),
         // Critical new patterns (~50% additional coverage)
-        "quantized".to_string(), "gaussian".to_string(), "power_law".to_string(),
+        "quantized".to_string(),
+        "gaussian".to_string(),
+        "power_law".to_string(),
         "near_constant_outliers".to_string(),
         // Additional patterns (~15% additional coverage)
-        "bimodal".to_string(), "exponential".to_string(), "extreme_sparse".to_string(),
-        "correlated".to_string(), "periodic".to_string()
+        "bimodal".to_string(),
+        "exponential".to_string(),
+        "extreme_sparse".to_string(),
+        "correlated".to_string(),
+        "periodic".to_string(),
     ];
     let test_patterns = patterns.unwrap_or(&default_patterns);
 
     println!("═══════════════════════════════════════════════════════════════");
     println!(" Pattern Detection & Encoding Performance Matrix");
     println!("═══════════════════════════════════════════════════════════════");
-    println!("Testing {} patterns by default (use --patterns to filter)", test_patterns.len());
+    println!(
+        "Testing {} patterns by default (use --patterns to filter)",
+        test_patterns.len()
+    );
     println!();
 
     // All encoding schemes to test
     let schemes = vec![
         ("BitPacked", ProximaScheme::BitPacked { bits: 16 }),
         ("Delta", ProximaScheme::Delta { base: 0 }),
-        ("FrameOfReference", ProximaScheme::FrameOfReference { reference: 0, bits: 20 }),
+        (
+            "FrameOfReference",
+            ProximaScheme::FrameOfReference {
+                reference: 0,
+                bits: 20,
+            },
+        ),
         ("Zigzag", ProximaScheme::Zigzag { bits: 0 }),
-        ("DoubleDelta", ProximaScheme::DoubleDelta { first_value: 0, first_delta: 0 }),
-        ("PForDelta", ProximaScheme::PForDelta { majority_bits: 16, base: 0 }),
+        (
+            "DoubleDelta",
+            ProximaScheme::DoubleDelta {
+                first_value: 0,
+                first_delta: 0,
+            },
+        ),
+        (
+            "PForDelta",
+            ProximaScheme::PForDelta {
+                majority_bits: 16,
+                base: 0,
+            },
+        ),
         ("Simple8b", ProximaScheme::Simple8b),
         ("VByte", ProximaScheme::VByte),
         ("RunLength", ProximaScheme::RunLength),
@@ -4178,11 +5036,11 @@ fn benchmark_simd_encoding_schemes(
     struct BenchmarkResult {
         scheme_name: String,
         pattern: String,
-        encode_ms: f64,  // Encoding time with ProximaCodec
+        encode_ms: f64, // Encoding time with ProximaCodec
         compression_ratio: f64,
         compressed_size: usize,
         success: bool,
-        pattern_detection_us: f64,  // Pattern detection time in microseconds
+        pattern_detection_us: f64, // Pattern detection time in microseconds
         detected_scheme: String,
     }
 
@@ -4201,7 +5059,10 @@ fn benchmark_simd_encoding_schemes(
         let detection_time_us = detection_start.elapsed().as_micros() as f64;
 
         let detected_scheme_name = format!("{:?}", detected_scheme);
-        println!("  Pattern Detection: {:?} in {:.2} μs", detected_scheme, detection_time_us);
+        println!(
+            "  Pattern Detection: {:?} in {:.2} μs",
+            detected_scheme, detection_time_us
+        );
 
         for (scheme_name, scheme) in &schemes {
             // Test encoding with ProximaCodec
@@ -4237,7 +5098,7 @@ fn benchmark_simd_encoding_schemes(
                 scheme_name: scheme_name.to_string(),
                 pattern: pattern_name.clone(),
                 encode_ms: simd_time,
-                compression_ratio: compression_pct,  // Now in percentage
+                compression_ratio: compression_pct, // Now in percentage
                 compressed_size,
                 success: true,
                 pattern_detection_us: detection_time_us,
@@ -4245,9 +5106,22 @@ fn benchmark_simd_encoding_schemes(
             });
 
             // Print result with compression percentage
-            let speedup_symbol = if compression_pct > 50.0 { "" } else if compression_pct > 20.0 { "✓" } else { "➖" };
-            println!("  {} {:20} - Compression: {:5.1}% ({} → {} bytes) | Encode: {:.2}ms",
-                speedup_symbol, scheme_name, compression_pct, original_size, compressed_size, simd_time);
+            let speedup_symbol = if compression_pct > 50.0 {
+                ""
+            } else if compression_pct > 20.0 {
+                "✓"
+            } else {
+                "➖"
+            };
+            println!(
+                "  {} {:20} - Compression: {:5.1}% ({} → {} bytes) | Encode: {:.2}ms",
+                speedup_symbol,
+                scheme_name,
+                compression_pct,
+                original_size,
+                compressed_size,
+                simd_time
+            );
         }
     }
 
@@ -4259,7 +5133,8 @@ fn benchmark_simd_encoding_schemes(
     println!("╟──────────────────────┼──────────────────────┼────────────────┼──────────╢");
 
     for pattern_name in test_patterns {
-        let pattern_results: Vec<_> = all_results.iter()
+        let pattern_results: Vec<_> = all_results
+            .iter()
             .filter(|r| r.pattern == *pattern_name)
             .collect();
 
@@ -4271,22 +5146,33 @@ fn benchmark_simd_encoding_schemes(
         let detection_time = first_result.pattern_detection_us;
 
         // Find best performer for this pattern (higher % compression is better)
-        let best_scheme = pattern_results.iter()
+        let best_scheme = pattern_results
+            .iter()
             .max_by(|a, b| {
                 // Higher compression percentage is better
-                a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap()
+                a.compression_ratio
+                    .partial_cmp(&b.compression_ratio)
+                    .unwrap()
             })
             .unwrap()
-            .scheme_name.as_str();
+            .scheme_name
+            .as_str();
 
-        let is_optimal = first_result.detected_scheme.contains(best_scheme) || best_scheme.contains(&first_result.detected_scheme);
+        let is_optimal = first_result.detected_scheme.contains(best_scheme)
+            || best_scheme.contains(&first_result.detected_scheme);
         let optimal_mark = if is_optimal { "✓" } else { "✗" };
 
-        println!("║ {:20} │ {:20} │ {:11.2} μs │ {:^8} ║",
+        println!(
+            "║ {:20} │ {:20} │ {:11.2} μs │ {:^8} ║",
             pattern_name,
-            first_result.detected_scheme.split('(').next().unwrap_or(&first_result.detected_scheme),
+            first_result
+                .detected_scheme
+                .split('(')
+                .next()
+                .unwrap_or(&first_result.detected_scheme),
             detection_time,
-            optimal_mark);
+            optimal_mark
+        );
     }
     println!("╚══════════════════════════════════════════════════════════════════════════╝\n");
 
@@ -4296,7 +5182,8 @@ fn benchmark_simd_encoding_schemes(
     println!("╠═══════════════════════════════════════════════════════════════════════════╣");
 
     for pattern_name in test_patterns {
-        let pattern_results: Vec<_> = all_results.iter()
+        let pattern_results: Vec<_> = all_results
+            .iter()
             .filter(|r| r.pattern == *pattern_name)
             .collect();
 
@@ -4306,16 +5193,28 @@ fn benchmark_simd_encoding_schemes(
 
         // Sort by compression percentage (higher is better)
         let mut scored_results: Vec<_> = pattern_results.iter().collect();
-        scored_results.sort_by(|a, b| b.compression_ratio.partial_cmp(&a.compression_ratio).unwrap());
+        scored_results.sort_by(|a, b| {
+            b.compression_ratio
+                .partial_cmp(&a.compression_ratio)
+                .unwrap()
+        });
 
         println!("║ Pattern: {:60} ║", pattern_name);
         println!("╟───────────────────────────────────────────────────────────────────────────╢");
         for (i, result) in scored_results.iter().take(3).enumerate() {
-            println!("║ {}. {:18} │ Compress: {:5.1}% │ Size: {:6} bytes │ Time: {:5.2}ms ║",
-                i + 1, result.scheme_name, result.compression_ratio, result.compressed_size, result.encode_ms);
+            println!(
+                "║ {}. {:18} │ Compress: {:5.1}% │ Size: {:6} bytes │ Time: {:5.2}ms ║",
+                i + 1,
+                result.scheme_name,
+                result.compression_ratio,
+                result.compressed_size,
+                result.encode_ms
+            );
         }
         if pattern_name != test_patterns.last().unwrap() {
-            println!("╟───────────────────────────────────────────────────────────────────────────╢");
+            println!(
+                "╟───────────────────────────────────────────────────────────────────────────╢"
+            );
         }
     }
     println!("╚═══════════════════════════════════════════════════════════════════════════╝\n");
@@ -4329,7 +5228,8 @@ fn benchmark_simd_encoding_schemes(
 
     let unique_schemes: Vec<&str> = schemes.iter().map(|(name, _)| *name).collect();
     for scheme_name in unique_schemes {
-        let scheme_results: Vec<_> = all_results.iter()
+        let scheme_results: Vec<_> = all_results
+            .iter()
             .filter(|r| r.scheme_name == scheme_name)
             .collect();
 
@@ -4337,23 +5237,38 @@ fn benchmark_simd_encoding_schemes(
             continue;
         }
 
-        let avg_compression: f64 = scheme_results.iter().map(|r| r.compression_ratio).sum::<f64>() / scheme_results.len() as f64;
-        let avg_encode_ms: f64 = scheme_results.iter().map(|r| r.encode_ms).sum::<f64>() / scheme_results.len() as f64;
+        let avg_compression: f64 = scheme_results
+            .iter()
+            .map(|r| r.compression_ratio)
+            .sum::<f64>()
+            / scheme_results.len() as f64;
+        let avg_encode_ms: f64 =
+            scheme_results.iter().map(|r| r.encode_ms).sum::<f64>() / scheme_results.len() as f64;
 
         // Find which pattern this scheme performs best on (highest compression %)
-        let best_pattern = scheme_results.iter()
-            .max_by(|a, b| a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap())
+        let best_pattern = scheme_results
+            .iter()
+            .max_by(|a, b| {
+                a.compression_ratio
+                    .partial_cmp(&b.compression_ratio)
+                    .unwrap()
+            })
             .map(|r| r.pattern.as_str())
             .unwrap_or("N/A");
 
-        println!("║ {:17} │ {:11.1}% │ {:10.2}ms │ {:22} ║",
-            scheme_name, avg_compression, avg_encode_ms, best_pattern);
+        println!(
+            "║ {:17} │ {:11.1}% │ {:10.2}ms │ {:22} ║",
+            scheme_name, avg_compression, avg_encode_ms, best_pattern
+        );
     }
     println!("╚═══════════════════════════════════════════════════════════════════════════╝\n");
 
     println!("╔═══════════════════════════════════════════════════════════════════════════╗");
-    println!("║   Benchmark Complete - {} patterns × {} schemes tested      ║",
-        test_patterns.len(), schemes.len());
+    println!(
+        "║   Benchmark Complete - {} patterns × {} schemes tested      ║",
+        test_patterns.len(),
+        schemes.len()
+    );
     println!("║   Use these results to optimize pattern detection in production         ║");
     println!("╚═══════════════════════════════════════════════════════════════════════════╝\n");
 
@@ -4370,7 +5285,6 @@ fn generate_pattern_data(pattern: &str, count: usize, _dimension: usize) -> Vec<
 
     match pattern {
         // ===== ORIGINAL PATTERNS =====
-
         "sequential" => {
             // Sequential data with small increments (timestamps, IDs)
             // Real-world: Timestamp columns, monotonic IDs
@@ -4379,18 +5293,24 @@ fn generate_pattern_data(pattern: &str, count: usize, _dimension: usize) -> Vec<
         "normalized" => {
             // Normalized data in [0, 1] range (embeddings)
             // Real-world: Layer-normalized embeddings, cosine similarity scores
-            (0..count).map(|i| ((i as f32 * 0.01).sin() + 1.0) / 2.0).collect()
+            (0..count)
+                .map(|i| ((i as f32 * 0.01).sin() + 1.0) / 2.0)
+                .collect()
         }
         "sparse" => {
             // Sparse data with 80% zeros
             // Real-world: Sparse vectors, bag-of-words (moderate sparsity)
-            (0..count).map(|_| {
-                use rand::Rng as _;
-                let rand_val: f32 = rng.gen_range(0.0..1.0);
-                if rand_val < 0.8 { 0.0 } else {
-                    rng.gen_range(0.0..10.0)
-                }
-            }).collect()
+            (0..count)
+                .map(|_| {
+                    use rand::Rng as _;
+                    let rand_val: f32 = rng.gen_range(0.0..1.0);
+                    if rand_val < 0.8 {
+                        0.0
+                    } else {
+                        rng.gen_range(0.0..10.0)
+                    }
+                })
+                .collect()
         }
         "constant" => {
             // Constant or nearly constant data
@@ -4401,45 +5321,48 @@ fn generate_pattern_data(pattern: &str, count: usize, _dimension: usize) -> Vec<
             // Random data (tests general-purpose schemes)
             // Real-world: Unstructured data, noise
             use rand::Rng as _;
-            (0..count).map(|_| {
-                rng.gen_range(0.0..1000.0)
-            }).collect()
+            (0..count).map(|_| rng.gen_range(0.0..1000.0)).collect()
         }
 
         // ===== NEW CRITICAL PATTERNS (50-80% of production data!) =====
-
         "quantized" => {
             // Quantized values: 8 discrete levels (INT8 → f32)
             // Real-world: 50-60% of production systems (OpenAI, Cohere, Anthropic)
             // Post-quantization vectors stored as f32 with limited precision
             use rand::Rng as _;
-            (0..count).map(|_| {
-                let level = rng.gen_range(0..8);
-                (level as f32 - 3.5) / 3.5  // Maps to [-1.0, -0.71, -0.43, -0.14, 0.14, 0.43, 0.71, 1.0]
-            }).collect()
+            (0..count)
+                .map(|_| {
+                    let level = rng.gen_range(0..8);
+                    (level as f32 - 3.5) / 3.5 // Maps to [-1.0, -0.71, -0.43, -0.14, 0.14, 0.43, 0.71, 1.0]
+                })
+                .collect()
         }
 
         "gaussian" => {
             // Gaussian/Normal distribution: N(μ=0, σ=0.3)
             // Real-world: 80% of transformer embeddings (BERT, GPT, RoBERTa, CLIP)
             // After layer normalization, embeddings follow normal distribution
-            use rand_distr::{Normal, Distribution};
+            use rand_distr::{Distribution, Normal};
             let normal = Normal::new(0.0, 0.3).unwrap();
-            (0..count).map(|_| {
-                let val: f32 = normal.sample(&mut rng);
-                val.clamp(-1.0, 1.0)
-            }).collect()
+            (0..count)
+                .map(|_| {
+                    let val: f32 = normal.sample(&mut rng);
+                    val.clamp(-1.0, 1.0)
+                })
+                .collect()
         }
 
         "power_law" => {
             // Power law / Long-tail distribution (Zipf)
             // Real-world: 60-70% of search/IR systems (TF-IDF, BM25, PageRank)
             // Few high-frequency terms, many low-frequency terms
-            (0..count).map(|i| {
-                let rank = (i + 1) as f32;
-                let value: f32 = 100.0 / rank;
-                value.clamp(0.0, 100.0)
-            }).collect()
+            (0..count)
+                .map(|i| {
+                    let rank = (i + 1) as f32;
+                    let value: f32 = 100.0 / rank;
+                    value.clamp(0.0, 100.0)
+                })
+                .collect()
         }
 
         "near_constant_outliers" => {
@@ -4447,39 +5370,44 @@ fn generate_pattern_data(pattern: &str, count: usize, _dimension: usize) -> Vec<
             // Real-world: 20-30% of pruned models, masked tokens
             // Sparse activations in quantized/pruned networks
             use rand::Rng;
-            (0..count).map(|_| {
-                if Rng::r#gen::<f32>(&mut rng) < 0.95 {
-                    0.0  // 95% baseline constant
-                } else {
-                    rng.gen_range(0.0..1.0)  // 5% outliers
-                }
-            }).collect()
+            (0..count)
+                .map(|_| {
+                    if Rng::r#gen::<f32>(&mut rng) < 0.95 {
+                        0.0 // 95% baseline constant
+                    } else {
+                        rng.gen_range(0.0..1.0) // 5% outliers
+                    }
+                })
+                .collect()
         }
 
         // ===== ADDITIONAL REAL-WORLD PATTERNS =====
-
         "bimodal" => {
             // Bimodal distribution: Two distinct clusters
             // Real-world: 40-60% of recommendation systems
             // Engaged vs. non-engaged users, technical vs. casual content
             use rand::Rng;
-            (0..count).map(|_| {
-                if Rng::r#gen::<bool>(&mut rng) {
-                    rng.gen_range(0.0..0.3)  // Cluster 1: Low engagement
-                } else {
-                    rng.gen_range(0.7..1.0)  // Cluster 2: High engagement
-                }
-            }).collect()
+            (0..count)
+                .map(|_| {
+                    if Rng::r#gen::<bool>(&mut rng) {
+                        rng.gen_range(0.0..0.3) // Cluster 1: Low engagement
+                    } else {
+                        rng.gen_range(0.7..1.0) // Cluster 2: High engagement
+                    }
+                })
+                .collect()
         }
 
         "exponential" => {
             // Exponential decay: e^(-λx)
             // Real-world: 30-40% of attention mechanisms
             // Softmax outputs, attention weights, recency decay
-            (0..count).map(|i| {
-                let x = i as f32 / 100.0;
-                (-2.0 * x).exp()  // Decay rate λ=2
-            }).collect()
+            (0..count)
+                .map(|i| {
+                    let x = i as f32 / 100.0;
+                    (-2.0 * x).exp() // Decay rate λ=2
+                })
+                .collect()
         }
 
         "extreme_sparse" => {
@@ -4487,13 +5415,16 @@ fn generate_pattern_data(pattern: &str, count: usize, _dimension: usize) -> Vec<
             // Real-world: 10-15% of hybrid systems
             // TF-IDF sparse vectors, one-hot encodings, SPLADE
             use rand::Rng;
-            (0..count).map(|_| {
-                if Rng::r#gen::<f32>(&mut rng) < 0.005 {  // 0.5% non-zero
-                    rng.gen_range(0.0..1.0)
-                } else {
-                    0.0
-                }
-            }).collect()
+            (0..count)
+                .map(|_| {
+                    if Rng::r#gen::<f32>(&mut rng) < 0.005 {
+                        // 0.5% non-zero
+                        rng.gen_range(0.0..1.0)
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
         }
 
         "correlated" => {
@@ -4507,7 +5438,7 @@ fn generate_pattern_data(pattern: &str, count: usize, _dimension: usize) -> Vec<
                 let noise: f32 = rng.gen_range(-0.05..0.05);
                 let val: f32 = (prev + noise).clamp(0.0, 1.0);
                 values.push(val);
-                prev = val * 0.9 + 0.5 * 0.1;  // Smooth toward mean
+                prev = val * 0.9 + 0.5 * 0.1; // Smooth toward mean
             }
             values
         }
@@ -4517,19 +5448,19 @@ fn generate_pattern_data(pattern: &str, count: usize, _dimension: usize) -> Vec<
             // Real-world: 10-20% of time-series, positional encodings
             // Transformer positional encodings (BERT, GPT), audio embeddings
             use std::f32::consts::PI;
-            (0..count).map(|i| {
-                let t = i as f32 / 100.0;
-                0.5 + 0.4 * (2.0 * PI * t).sin()      // Slow wave
-                    + 0.1 * (20.0 * PI * t).sin()     // Fast wave
-            }).collect()
+            (0..count)
+                .map(|i| {
+                    let t = i as f32 / 100.0;
+                    0.5 + 0.4 * (2.0 * PI * t).sin()      // Slow wave
+                    + 0.1 * (20.0 * PI * t).sin() // Fast wave
+                })
+                .collect()
         }
 
         // Default fallback
         _ => {
             use rand::Rng as _;
-            (0..count).map(|_| {
-                rng.gen_range(0.0..1000.0)
-            }).collect()
+            (0..count).map(|_| rng.gen_range(0.0..1000.0)).collect()
         }
     }
 }

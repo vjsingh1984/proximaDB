@@ -420,8 +420,12 @@ impl ProximaScheme {
             // Examples:
             //   FrameOfReference { reference: 0, bits: 16 } for F32 → LOSSY
             //   FrameOfReference { reference: 0, bits: 32 } for F32 → LOSSLESS
-            (Self::FrameOfReference { bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *bits < 32,
-            (Self::FrameOfReference { bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *bits < 64,
+            (Self::FrameOfReference { bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => {
+                *bits < 32
+            }
+            (Self::FrameOfReference { bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => {
+                *bits < 64
+            }
 
             // ========== CONDITIONALLY LOSSY: PForDelta ==========
             // PForDelta (Patched Frame-of-Reference with Delta) encodes most values
@@ -434,8 +438,12 @@ impl ProximaScheme {
             // Examples:
             //   PForDelta { majority_bits: 16, base: 0 } for F32 → LOSSY
             //   PForDelta { majority_bits: 32, base: 0 } for F32 → LOSSLESS
-            (Self::PForDelta { majority_bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *majority_bits < 32,
-            (Self::PForDelta { majority_bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *majority_bits < 64,
+            (Self::PForDelta { majority_bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => {
+                *majority_bits < 32
+            }
+            (Self::PForDelta { majority_bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => {
+                *majority_bits < 64
+            }
 
             // ========== ALWAYS LOSSLESS: All Other Schemes ==========
             // The following schemes are ALWAYS lossless for all types:
@@ -696,8 +704,14 @@ mod tests {
             first_value: 0,
             first_delta: 1,
         };
-        assert!(!scheme.is_lossy(TypeId::F32), "DoubleDelta is lossless for F32 via IEEE 754 bit preservation");
-        assert!(!scheme.is_lossy(TypeId::F64), "DoubleDelta is lossless for F64 via IEEE 754 bit preservation");
+        assert!(
+            !scheme.is_lossy(TypeId::F32),
+            "DoubleDelta is lossless for F32 via IEEE 754 bit preservation"
+        );
+        assert!(
+            !scheme.is_lossy(TypeId::F64),
+            "DoubleDelta is lossless for F64 via IEEE 754 bit preservation"
+        );
         assert!(!scheme.is_lossy(TypeId::I32));
         assert!(!scheme.is_lossy(TypeId::I64));
     }
@@ -709,8 +723,14 @@ mod tests {
             base: 0,
             first_delta: 1,
         };
-        assert!(!scheme.is_lossy(TypeId::F32), "PForDoubleDelta is lossless for F32 via IEEE 754 bit preservation");
-        assert!(!scheme.is_lossy(TypeId::F64), "PForDoubleDelta is lossless for F64 via IEEE 754 bit preservation");
+        assert!(
+            !scheme.is_lossy(TypeId::F32),
+            "PForDoubleDelta is lossless for F32 via IEEE 754 bit preservation"
+        );
+        assert!(
+            !scheme.is_lossy(TypeId::F64),
+            "PForDoubleDelta is lossless for F64 via IEEE 754 bit preservation"
+        );
         assert!(!scheme.is_lossy(TypeId::I32));
         assert!(!scheme.is_lossy(TypeId::I64));
     }
@@ -767,10 +787,26 @@ mod tests {
         ];
 
         for scheme in lossless_schemes {
-            assert!(!scheme.is_lossy(TypeId::F32), "{} should be lossless for F32", scheme.name());
-            assert!(!scheme.is_lossy(TypeId::F64), "{} should be lossless for F64", scheme.name());
-            assert!(!scheme.is_lossy(TypeId::I32), "{} should be lossless for I32", scheme.name());
-            assert!(!scheme.is_lossy(TypeId::I64), "{} should be lossless for I64", scheme.name());
+            assert!(
+                !scheme.is_lossy(TypeId::F32),
+                "{} should be lossless for F32",
+                scheme.name()
+            );
+            assert!(
+                !scheme.is_lossy(TypeId::F64),
+                "{} should be lossless for F64",
+                scheme.name()
+            );
+            assert!(
+                !scheme.is_lossy(TypeId::I32),
+                "{} should be lossless for I32",
+                scheme.name()
+            );
+            assert!(
+                !scheme.is_lossy(TypeId::I64),
+                "{} should be lossless for I64",
+                scheme.name()
+            );
         }
     }
 

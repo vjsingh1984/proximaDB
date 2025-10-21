@@ -3,7 +3,7 @@
 //! This module handles the construction and optimization of predicates
 //! for Parquet filter pushdown, enabling efficient query execution.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arrow::compute::SortColumn;
 use arrow::datatypes::{DataType, Field, Schema};
 use parquet::arrow::arrow_reader::RowSelection;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 
 // Use the columnar module's MetadataFilter, not the proto one
-use crate::storage::engines::core::formats::columnar::{MetadataFilter, FilterCondition};
+use crate::storage::engines::core::formats::columnar::{FilterCondition, MetadataFilter};
 
 /// Predicate builder for filter pushdown
 pub struct PredicateBuilder {
@@ -84,10 +84,7 @@ impl PredicateBuilder {
     }
 
     /// Build a single predicate from a condition
-    fn build_single_predicate(
-        &self,
-        condition: &FilterCondition,
-    ) -> Result<String> {
+    fn build_single_predicate(&self, condition: &FilterCondition) -> Result<String> {
         let predicate = match condition {
             FilterCondition::Equals(field, value) => {
                 let value_str = self.format_value(value)?;
@@ -99,9 +96,8 @@ impl PredicateBuilder {
                 format!("{} >= {} AND {} <= {}", field, min_str, field, max_str)
             }
             FilterCondition::In(field, values) => {
-                let value_strs: Result<Vec<String>> = values.iter()
-                    .map(|v| self.format_value(v))
-                    .collect();
+                let value_strs: Result<Vec<String>> =
+                    values.iter().map(|v| self.format_value(v)).collect();
                 let values_list = value_strs?.join(", ");
                 format!("{} IN ({})", field, values_list)
             }
@@ -272,19 +268,19 @@ impl FilterPushdownPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::core::formats::columnar::{FilterLogic, FilterCondition};
+    use crate::storage::engines::core::formats::columnar::{FilterCondition, FilterLogic};
 
     #[test]
     fn test_predicate_builder() {
         let filter = MetadataFilter {
-            conditions: vec![
-                FilterCondition::Equals("category".to_string(), serde_json::Value::String("test".to_string())),
-            ],
+            conditions: vec![FilterCondition::Equals(
+                "category".to_string(),
+                serde_json::Value::String("test".to_string()),
+            )],
             logic: FilterLogic::And,
         };
 
-        let builder = PredicateBuilder::new()
-            .add_filter(filter);
+        let builder = PredicateBuilder::new().add_filter(filter);
 
         let predicate = builder.build_arrow_predicate().unwrap();
         assert!(predicate.is_some());
@@ -296,13 +292,11 @@ mod tests {
         let pushdown = FilterPushdown::new();
 
         let filter = MetadataFilter {
-            conditions: vec![
-                FilterCondition::Range(
-                    "score".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from_f64(0.5).unwrap()),
-                    serde_json::Value::Number(serde_json::Number::from_f64(1.0).unwrap()),
-                ),
-            ],
+            conditions: vec![FilterCondition::Range(
+                "score".to_string(),
+                serde_json::Value::Number(serde_json::Number::from_f64(0.5).unwrap()),
+                serde_json::Value::Number(serde_json::Number::from_f64(1.0).unwrap()),
+            )],
             logic: FilterLogic::And,
         };
 

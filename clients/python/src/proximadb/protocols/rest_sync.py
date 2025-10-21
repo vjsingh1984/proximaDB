@@ -547,14 +547,15 @@ class ProximaDBClient:
         if primary_index_name:
             config_data["primary_index"] = primary_index_name
 
-        # Quantization
-        if getattr(config, 'quantization', None):
+        # Quantization (check both quantization and quantization_config for compatibility)
+        quant = getattr(config, 'quantization_config', None) or getattr(config, 'quantization', None)
+        if quant:
             try:
                 # Pydantic v2
-                q = config.quantization.model_dump(exclude_none=True)
+                q = quant.model_dump(exclude_none=True)
             except Exception:
                 try:
-                    q = config.quantization.dict(exclude_none=True)
+                    q = quant.dict(exclude_none=True)
                 except Exception:
                     q = {}
             config_data["quantization"] = q
@@ -573,8 +574,31 @@ class ProximaDBClient:
         # Add VIPER-specific optimization fields
         if config.filterable_metadata_fields:
             config_data["filterable_columns"] = [
-                {"name": field, "data_type": "string", "indexed": True} 
+                {"name": field, "data_type": "string", "indexed": True}
                 for field in config.filterable_metadata_fields
+            ]
+
+        # Add filterable_columns if directly specified (higher priority)
+        if config.filterable_columns:
+            # Map FilterableDataType to proto integer values
+            FILTERABLE_DATATYPE_MAP = {
+                "string": 1, "integer": 2, "float": 3, "boolean": 4,
+                "datetime": 5, "array_string": 6, "array_integer": 7, "array_float": 8
+            }
+
+            # Serialize FilterableColumn objects to dicts with proto integer data_type
+            config_data["filterable_columns"] = [
+                {
+                    "name": col.name,
+                    "data_type": FILTERABLE_DATATYPE_MAP.get(
+                        (col.data_type if isinstance(col.data_type, str) else col.data_type.value).lower(),
+                        1  # Default to STRING
+                    ),
+                    "indexed": col.indexed,
+                    "supports_range": col.supports_range if hasattr(col, 'supports_range') else False,
+                    "estimated_cardinality": col.estimated_cardinality if hasattr(col, 'estimated_cardinality') and col.estimated_cardinality else None
+                }
+                for col in config.filterable_columns
             ]
         
         # Add WAL flush configuration
@@ -632,11 +656,38 @@ class ProximaDBClient:
                 se = getattr(config, 'storage_engine', 'viper')
                 storage_engine = se.value if hasattr(se, 'value') else se
 
+            # Deserialize filterable_columns from server response
+            filterable_columns = None
+            if "filterable_columns" in cfg_src and cfg_src["filterable_columns"]:
+                from proximadb.models import FilterableColumn, FilterableDataType
+
+                # Map proto integer values to FilterableDataType strings
+                FILTERABLE_DATATYPE_REVERSE_MAP = {
+                    0: "string", 1: "string", 2: "integer", 3: "float",
+                    4: "boolean", 5: "datetime", 6: "array_string",
+                    7: "array_integer", 8: "array_float"
+                }
+
+                filterable_columns = [
+                    FilterableColumn(
+                        name=col["name"],
+                        data_type=FILTERABLE_DATATYPE_REVERSE_MAP.get(
+                            col.get("data_type") if isinstance(col.get("data_type"), int) else 1,
+                            "string"
+                        ),
+                        indexed=col.get("indexed", True),
+                        supports_range=col.get("supports_range", False),
+                        estimated_cardinality=col.get("estimated_cardinality")
+                    )
+                    for col in cfg_src["filterable_columns"]
+                ]
+
             cfg = CollectionConfig(
                 name=cfg_src.get("name", name),
                 dimension=cfg_src.get("dimension", config.dimension),
                 distance_metric=distance_metric,
                 storage_engine=storage_engine,
+                filterable_columns=filterable_columns,
             )
             return Collection(
                 id=coll_data.get("id", name),
@@ -940,48 +991,82 @@ class ProximaDBClient:
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: VectorArray,
-        ids: List[str],
+        vectors: Union[VectorArray, List[Dict[str, Any]]],  # Accept VectorRecord dicts
+        ids: Optional[List[str]] = None,
         metadata: Optional[List[MetadataDict]] = None,
         upsert: bool = False,
         batch_size: Optional[int] = None,
+        vector_records: Optional[List[Dict[str, Any]]] = None,  # NEW: Full VectorRecord dicts
     ) -> BatchResult:
         """Insert multiple vectors
-        
+
         Args:
             collection_id: Target collection ID
-            vectors: Vector data array
-            ids: List of unique vector identifiers
+            vectors: Vector data array (or VectorRecord dicts if vector_records is None)
+            ids: List of unique vector identifiers (optional if vector_records provided)
             metadata: Optional list of metadata dictionaries
             upsert: Update if vectors already exist
             batch_size: Override default batch size
-            
+            vector_records: Full VectorRecord dicts with all fields (version, source, etc.)
+
         Returns:
             Batch insert operation result
         """
         self._auto_warmup(collection_id)
-        vectors_list = self._normalize_vectors(vectors)
-        
-        if len(vectors_list) != len(ids):
-            raise ValueError("Number of vectors must match number of IDs")
-        
-        if metadata and len(metadata) != len(vectors_list):
-            raise ValueError("Number of metadata items must match number of vectors")
-        
-        # Prepare vector data
-        vector_data = []
-        for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
-            # Convert metadata dict to REST API format
-            metadata_items = self._convert_metadata_to_rest_format(
-                metadata[i] if metadata else {}
-            )
-            item = {
-                "id": vector_id,
-                "vector": vector,
-                "metadata": metadata_items,
-                "timestamp": int(time.time())  # Current time in seconds
-            }
-            vector_data.append(item)
+
+        # NEW: If vector_records provided, use them directly (full VectorRecord support)
+        if vector_records is not None:
+            vector_data = []
+            for record in vector_records:
+                # Convert metadata to REST format
+                metadata_items = self._convert_metadata_to_rest_format(
+                    record.get("metadata", {})
+                )
+                item = {
+                    "id": record.get("id", f"vec_{len(vector_data)}"),
+                    "vector": record["vector"],
+                    "metadata": metadata_items,
+                }
+                # Add all VectorRecord fields if present
+                if "timestamp" in record:
+                    item["timestamp"] = record["timestamp"]
+                if "updated_at" in record:
+                    item["updated_at"] = record["updated_at"]
+                if "expires_at" in record:
+                    item["expires_at"] = record["expires_at"]
+                if "version" in record:
+                    item["version"] = record["version"]
+                if "source" in record:
+                    item["source"] = record["source"]
+
+                vector_data.append(item)
+        else:
+            # OLD PATH: Legacy array interface
+            vectors_list = self._normalize_vectors(vectors)
+
+            if ids is None:
+                ids = [f"vec_{i}" for i in range(len(vectors_list))]
+
+            if len(vectors_list) != len(ids):
+                raise ValueError("Number of vectors must match number of IDs")
+
+            if metadata and len(metadata) != len(vectors_list):
+                raise ValueError("Number of metadata items must match number of vectors")
+
+            # Prepare vector data with basic fields
+            vector_data = []
+            for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
+                # Convert metadata dict to REST API format
+                metadata_items = self._convert_metadata_to_rest_format(
+                    metadata[i] if metadata else {}
+                )
+                item = {
+                    "id": vector_id,
+                    "vector": vector,
+                    "metadata": metadata_items,
+                    "timestamp": int(time.time() * 1000)  # Current time in milliseconds
+                }
+                vector_data.append(item)
         
         # Use batching for large datasets
         effective_batch_size = batch_size or self.config.default_batch_size
@@ -1259,6 +1344,16 @@ class ProximaDBClient:
                     rank=result.get("rank", 0),
                     vector=(result.get("vector", []) if include_vectors else None),
                     metadata=(result.get("metadata", {}) if include_metadata else None),
+                    # Add all SearchVectorRecord fields (proto field 5-13)
+                    version=result.get("version"),
+                    similarity=result.get("similarity"),
+                    timestamp=result.get("timestamp"),
+                    source=result.get("source"),
+                    expanded_context=result.get("expanded_context"),
+                    semantic_similarity=result.get("semantic_similarity"),
+                    quantization_info=result.get("quantization_info"),
+                    engine_stats=result.get("engine_stats"),
+                    index_path=result.get("index_path")
                 )
             )
         return results

@@ -1,7 +1,7 @@
 // Test to verify bloom filters are written to Parquet files
-use arrow_array::{StringArray, Int32Array};
-use arrow_schema::{DataType, Field, Schema};
 use arrow_array::RecordBatch;
+use arrow_array::{Int32Array, StringArray};
+use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::properties::WriterProperties;
@@ -20,10 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Field::new("value", DataType::Int32, false),
     ]));
 
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![Arc::new(ids), Arc::new(values)],
-    )?;
+    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids), Arc::new(values)])?;
 
     // Configure writer with bloom filters
     let props = WriterProperties::builder()
@@ -62,15 +59,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 has_bloom = true;
             }
 
-            println!("    Column {}: bloom_filter_offset = {:?}, bloom_filter_length = {:?}",
-                     col_idx,
-                     bloom_offset,
-                     bloom_length);
+            println!(
+                "    Column {}: bloom_filter_offset = {:?}, bloom_filter_length = {:?}",
+                col_idx, bloom_offset, bloom_length
+            );
         }
     }
 
     if has_bloom {
-        println!("\n✅ BLOOM FILTERS CONFIRMED: ArrowWriter DOES write bloom filters to Parquet files!");
+        println!(
+            "\n✅ BLOOM FILTERS CONFIRMED: ArrowWriter DOES write bloom filters to Parquet files!"
+        );
     } else {
         println!("\n❌ WARNING: No bloom filters found in Parquet metadata!");
         println!("   This might mean:");

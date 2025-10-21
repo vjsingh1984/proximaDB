@@ -571,10 +571,9 @@ impl AdvancedSearchOptimizer {
             for search_result in cached_v1 {
                 for record in search_result.results {
                     // Use SqlValue metadata directly - no conversion needed!
-                    let rec =
-                        OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
-                            .add_vector(record.vector.clone())
-                            .with_metadata(record.metadata);
+                    let rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(record.metadata);
                     // TODO: Implement with_version method if needed
                     // if let Some(v) = record.version { rec = rec.with_version(v); }
                     converted_results.push(rec);
@@ -911,7 +910,7 @@ impl AdvancedSearchOptimizer {
     ) {
         // Track performance metrics using existing metrics infrastructure
         let latency_ms = duration.as_millis() as f64;
-        
+
         // Update strategy-specific performance metrics
         match strategy {
             ExecutionStrategy::IndexFirst { .. } => {
@@ -930,10 +929,10 @@ impl AdvancedSearchOptimizer {
                 debug!("MemoryOptimized strategy completed in {:.2}ms", latency_ms);
             }
         }
-        
+
         // Update global search performance metrics
         debug!("Search completed in {:.2}ms", latency_ms);
-        
+
         debug!(
             "Search completed in {:?} using strategy {:?}, metrics updated",
             duration, strategy

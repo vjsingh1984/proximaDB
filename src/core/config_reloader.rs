@@ -3,12 +3,12 @@
 //! This module provides hot configuration reloading capabilities for production
 //! deployments where configuration changes need to be applied without restart.
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{broadcast, RwLock, watch};
+use tokio::sync::{RwLock, broadcast, watch};
 use tokio::time::interval;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::core::config::Config;
 use crate::core::config_loader::ConfigLoader;
@@ -42,25 +42,25 @@ pub enum ConfigChangeType {
 pub struct ConfigReloader {
     /// Current configuration
     config: Arc<RwLock<Config>>,
-    
+
     /// Configuration file path
     config_path: String,
-    
+
     /// Config loader
     loader: ConfigLoader,
-    
+
     /// File modification time tracking
     last_modified: Arc<RwLock<SystemTime>>,
-    
+
     /// Change notification broadcast
     change_notifier: broadcast::Sender<ConfigChangeEvent>,
-    
+
     /// Reload interval
     check_interval: Duration,
-    
+
     /// Reload task handle
     reload_task: Option<tokio::task::JoinHandle<()>>,
-    
+
     /// Shutdown signal
     shutdown: watch::Receiver<bool>,
 }
@@ -73,13 +73,13 @@ impl ConfigReloader {
         shutdown: watch::Receiver<bool>,
     ) -> Result<Self> {
         let (change_tx, _) = broadcast::channel(100);
-        
+
         // Get initial file modification time
         let last_modified = tokio::fs::metadata(&config_path)
             .await
             .map(|m| m.modified().unwrap_or(SystemTime::now()))
             .unwrap_or_else(|_| SystemTime::now());
-        
+
         Ok(Self {
             config: Arc::new(RwLock::new(initial_config)),
             config_path,
@@ -91,26 +91,29 @@ impl ConfigReloader {
             shutdown,
         })
     }
-    
+
     /// Start dynamic configuration reloading
     pub async fn start_reloading(&mut self) -> Result<()> {
         if self.reload_task.is_some() {
             warn!("Configuration reloading already started");
             return Ok(());
         }
-        
-        info!("Starting dynamic configuration reloading for: {}", self.config_path);
-        
+
+        info!(
+            "Starting dynamic configuration reloading for: {}",
+            self.config_path
+        );
+
         let config_path = self.config_path.clone();
         let config = self.config.clone();
         let last_modified = self.last_modified.clone();
         let change_notifier = self.change_notifier.clone();
         let check_interval = self.check_interval;
         let mut shutdown = self.shutdown.clone();
-        
+
         let reload_task = tokio::spawn(async move {
             let mut interval = interval(check_interval);
-            
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -132,11 +135,11 @@ impl ConfigReloader {
                 }
             }
         });
-        
+
         self.reload_task = Some(reload_task);
         Ok(())
     }
-    
+
     /// Check file modification and reload if needed
     async fn check_and_reload_config(
         config_path: &str,
@@ -145,30 +148,30 @@ impl ConfigReloader {
         change_notifier: &broadcast::Sender<ConfigChangeEvent>,
     ) -> Result<()> {
         // Check file modification time
-        let metadata = tokio::fs::metadata(config_path).await
+        let metadata = tokio::fs::metadata(config_path)
+            .await
             .context("Failed to read config file metadata")?;
-        
-        let file_modified = metadata.modified()
-            .unwrap_or_else(|_| SystemTime::now());
-        
+
+        let file_modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
+
         let last_mod_time = *last_modified.read().await;
-        
+
         if file_modified <= last_mod_time {
             return Ok(()); // No changes
         }
-        
+
         debug!("Configuration file changed, reloading: {}", config_path);
-        
+
         // Load new configuration
         let new_config = ConfigLoader::load_with_defaults(config_path)
             .map_err(|e| anyhow::anyhow!("Failed to load new configuration: {}", e))?;
-        
+
         // Store old config for comparison
         let old_config = {
             let current = config.read().await;
             current.clone()
         };
-        
+
         // Determine what changed
         let affected_sections = Self::analyze_config_changes(&old_config, &new_config);
         let change_type = if affected_sections.len() > 3 {
@@ -180,23 +183,23 @@ impl ConfigReloader {
         } else if affected_sections.contains(&"cache".to_string()) {
             ConfigChangeType::CacheConfigUpdate
         } else {
-            ConfigChangeType::SectionUpdate { 
-                section: affected_sections.first().cloned().unwrap_or_default() 
+            ConfigChangeType::SectionUpdate {
+                section: affected_sections.first().cloned().unwrap_or_default(),
             }
         };
-        
+
         // Update configuration
         {
             let mut current = config.write().await;
             *current = new_config.clone();
         }
-        
+
         // Update modification time
         {
             let mut last_mod = last_modified.write().await;
             *last_mod = file_modified;
         }
-        
+
         // Notify subscribers of configuration change
         let change_event = ConfigChangeEvent {
             change_type: change_type.clone(),
@@ -205,45 +208,45 @@ impl ConfigReloader {
             new_config,
             timestamp: SystemTime::now(),
         };
-        
+
         if let Err(e) = change_notifier.send(change_event) {
             warn!("Failed to broadcast configuration change: {}", e);
         }
-        
+
         info!("Configuration reloaded successfully: {:?}", change_type);
         Ok(())
     }
-    
+
     /// Analyze differences between old and new configuration
     fn analyze_config_changes(old_config: &Config, new_config: &Config) -> Vec<String> {
         let mut changed_sections = Vec::new();
-        
+
         // Compare server settings
         if old_config.server != new_config.server {
             changed_sections.push("server".to_string());
         }
-        
+
         // Compare storage settings (simplified comparison)
         if old_config.storage.metadata_url != new_config.storage.metadata_url {
             changed_sections.push("storage".to_string());
         }
-        
+
         // In a full implementation, you'd compare all config sections
         // This is a simplified version for demonstration
-        
+
         changed_sections
     }
-    
+
     /// Subscribe to configuration changes
     pub fn subscribe_to_changes(&self) -> broadcast::Receiver<ConfigChangeEvent> {
         self.change_notifier.subscribe()
     }
-    
+
     /// Get current configuration
     pub async fn current_config(&self) -> Config {
         self.config.read().await.clone()
     }
-    
+
     /// Manually trigger configuration reload
     pub async fn reload_now(&self) -> Result<()> {
         Self::check_and_reload_config(
@@ -251,9 +254,10 @@ impl ConfigReloader {
             &self.config,
             &self.last_modified,
             &self.change_notifier,
-        ).await
+        )
+        .await
     }
-    
+
     /// Stop configuration reloading
     pub async fn stop(&mut self) {
         if let Some(task) = self.reload_task.take() {
@@ -266,20 +270,20 @@ impl ConfigReloader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{sleep, Duration};
-    
+    use tokio::time::{Duration, sleep};
+
     #[tokio::test]
     async fn test_config_change_detection() {
         let old_config = Config::default();
         let mut new_config = Config::default();
-        
+
         // Modify server settings
         new_config.server.port = 6789;
-        
+
         let changes = ConfigReloader::analyze_config_changes(&old_config, &new_config);
         assert!(changes.contains(&"server".to_string()));
     }
-    
+
     #[test]
     fn test_config_change_event() {
         let event = ConfigChangeEvent {
@@ -289,8 +293,11 @@ mod tests {
             new_config: Config::default(),
             timestamp: SystemTime::now(),
         };
-        
-        assert!(matches!(event.change_type, ConfigChangeType::ServerConfigUpdate));
+
+        assert!(matches!(
+            event.change_type,
+            ConfigChangeType::ServerConfigUpdate
+        ));
         assert_eq!(event.affected_sections[0], "server");
     }
 }

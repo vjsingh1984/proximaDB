@@ -106,7 +106,7 @@ impl GlobalManifestEntry {
         checksum_crc32: u32,
         format: SerializationFormat,
         vector_count: u64,
-        storage_url: String,  // Which disk this WAL file is on
+        storage_url: String, // Which disk this WAL file is on
     ) -> Self {
         let timestamp_ms = batch_id.timestamp_ms();
         // Keep existing structure: {collection_id}/wal/{file_name}
@@ -254,7 +254,9 @@ impl GlobalManifest {
             return Ok(());
         }
 
-        let data = fs.read(&url).await
+        let data = fs
+            .read(&url)
+            .await
             .context("Failed to read global manifest")?;
 
         let mut entries = Vec::new();
@@ -284,9 +286,11 @@ impl GlobalManifest {
         // Set next LSN to be one more than the maximum
         self.lsn_allocator.set_next(max_lsn + 1).await;
 
-        info!("✅ Loaded {} manifest entries, next LSN: {}",
-              self.entries.read().await.len(),
-              self.lsn_allocator.current().await);
+        info!(
+            "✅ Loaded {} manifest entries, next LSN: {}",
+            self.entries.read().await.len(),
+            self.lsn_allocator.current().await
+        );
 
         // Load checkpoint if it exists
         self.load_checkpoint().await?;
@@ -304,17 +308,17 @@ impl GlobalManifest {
             return Ok(());
         }
 
-        let data = fs.read(&url).await
-            .context("Failed to read checkpoint")?;
+        let data = fs.read(&url).await.context("Failed to read checkpoint")?;
 
-        let checkpoint: GlobalCheckpoint = serde_json::from_slice(&data)
-            .context("Failed to parse checkpoint")?;
+        let checkpoint: GlobalCheckpoint =
+            serde_json::from_slice(&data).context("Failed to parse checkpoint")?;
 
         *self.latest_checkpoint.write().await = Some(checkpoint.clone());
 
-        info!("✅ Loaded checkpoint {} at LSN {}",
-              checkpoint.checkpoint_id,
-              checkpoint.checkpoint_lsn);
+        info!(
+            "✅ Loaded checkpoint {} at LSN {}",
+            checkpoint.checkpoint_id, checkpoint.checkpoint_lsn
+        );
 
         Ok(())
     }
@@ -326,8 +330,10 @@ impl GlobalManifest {
             entry.global_lsn = self.lsn_allocator.allocate().await;
         }
 
-        debug!("📝 Appending manifest entry: LSN={}, collection={}, batch={}",
-               entry.global_lsn, entry.collection_id, entry.batch_id);
+        debug!(
+            "📝 Appending manifest entry: LSN={}, collection={}, batch={}",
+            entry.global_lsn, entry.collection_id, entry.batch_id
+        );
 
         // Add to in-memory cache
         let mut entries = self.entries.write().await;
@@ -354,8 +360,7 @@ impl GlobalManifest {
         };
 
         // Append new entry as JSON line
-        let mut line = serde_json::to_vec(entry)
-            .context("Failed to serialize manifest entry")?;
+        let mut line = serde_json::to_vec(entry).context("Failed to serialize manifest entry")?;
         line.push(b'\n');
         content.extend_from_slice(&line);
 
@@ -363,7 +368,8 @@ impl GlobalManifest {
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)?;
         let opts = strategy.create_file_options(&*fs, &url)?;
-        fs.write(&url, &content, Some(opts)).await
+        fs.write(&url, &content, Some(opts))
+            .await
             .context("Failed to write global manifest")?;
 
         // Best-effort sync
@@ -427,8 +433,8 @@ impl GlobalManifest {
 
         let mut buf = Vec::new();
         for entry in entries.iter() {
-            let mut line = serde_json::to_vec(entry)
-                .context("Failed to serialize manifest entry")?;
+            let mut line =
+                serde_json::to_vec(entry).context("Failed to serialize manifest entry")?;
             line.push(b'\n');
             buf.extend_from_slice(&line);
         }
@@ -436,7 +442,8 @@ impl GlobalManifest {
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)?;
         let opts = strategy.create_file_options(&*fs, &url)?;
-        fs.write(&url, &buf, Some(opts)).await
+        fs.write(&url, &buf, Some(opts))
+            .await
             .context("Failed to rewrite global manifest")?;
 
         let _ = fs.sync_file(&url).await;
@@ -501,9 +508,10 @@ impl GlobalManifest {
         // Update in-memory checkpoint
         *self.latest_checkpoint.write().await = Some(checkpoint.clone());
 
-        info!("✅ Created checkpoint {} at LSN {}",
-              checkpoint.checkpoint_id,
-              checkpoint.checkpoint_lsn);
+        info!(
+            "✅ Created checkpoint {} at LSN {}",
+            checkpoint.checkpoint_id, checkpoint.checkpoint_lsn
+        );
 
         Ok(checkpoint)
     }
@@ -513,13 +521,14 @@ impl GlobalManifest {
         let url = self.checkpoint_url();
         let fs = self.filesystem_factory.get_filesystem(&url)?;
 
-        let data = serde_json::to_vec_pretty(checkpoint)
-            .context("Failed to serialize checkpoint")?;
+        let data =
+            serde_json::to_vec_pretty(checkpoint).context("Failed to serialize checkpoint")?;
 
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)?;
         let opts = strategy.create_file_options(&*fs, &url)?;
-        fs.write(&url, &data, Some(opts)).await
+        fs.write(&url, &data, Some(opts))
+            .await
             .context("Failed to write checkpoint")?;
 
         let _ = fs.sync_file(&url).await;
@@ -547,7 +556,8 @@ impl GlobalManifest {
 
         // Remove entries that are checkpointed and can be safely deleted
         entries.retain(|e| {
-            e.global_lsn >= checkpoint.safe_to_delete_before_lsn || e.status == WalEntryStatus::Active
+            e.global_lsn >= checkpoint.safe_to_delete_before_lsn
+                || e.status == WalEntryStatus::Active
         });
 
         let removed_count = original_count - entries.len();
@@ -603,6 +613,9 @@ mod tests {
         assert_eq!(entry.status, WalEntryStatus::Active);
         assert_eq!(entry.file_path, "test_collection/wal/test.bcwal");
         assert_eq!(entry.storage_url, "file:///tmp/proximadb1/data");
-        assert_eq!(entry.full_url(), "file:///tmp/proximadb1/data/test_collection/wal/test.bcwal");
+        assert_eq!(
+            entry.full_url(),
+            "file:///tmp/proximadb1/data/test_collection/wal/test.bcwal"
+        );
     }
 }

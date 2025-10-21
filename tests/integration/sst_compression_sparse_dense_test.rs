@@ -8,8 +8,6 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-
-
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
@@ -42,9 +40,16 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
                 None,
                 {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("type".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("sparse".to_string()))
-                    });
+                    metadata.insert(
+                        "type".to_string(),
+                        proximadb::proto::proximadb_v1::SqlValue {
+                            value: Some(
+                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    "sparse".to_string(),
+                                ),
+                            ),
+                        },
+                    );
                     metadata
                 },
             )
@@ -62,8 +67,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     config_compressed.compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstEngine::new()
-    .await?;
+    let compressed_engine = SstEngine::new().await?;
 
     // Flush compressed sparse data with compression config
     let mut flush_params =
@@ -72,7 +76,9 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     // Set compression in the collection storage config
     if let Some(ref mut collection_config) = flush_params.collection_config {
         if let Some(ref mut config) = collection_config.config {
-            use proximadb::proto::proximadb_v1::{StorageConfig as ProtoStorageConfig, CompressionAlgorithm};
+            use proximadb::proto::proximadb_v1::{
+                CompressionAlgorithm, StorageConfig as ProtoStorageConfig,
+            };
 
             config.storage_config = Some(ProtoStorageConfig {
                 compression: Some(CompressionAlgorithm::CompressionZstd as i32),
@@ -98,8 +104,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     let mut config_uncompressed = base_env.sst_config.clone();
     config_uncompressed.compression = "none".to_string();
 
-    let uncompressed_engine = SstEngine::new()
-    .await?;
+    let uncompressed_engine = SstEngine::new().await?;
 
     // Create fresh flush params for uncompressed (don't reuse the modified compressed ones)
     let flush_params_uncompressed =
@@ -170,9 +175,16 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
                 None,
                 {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("type".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("dense".to_string()))
-                    });
+                    metadata.insert(
+                        "type".to_string(),
+                        proximadb::proto::proximadb_v1::SqlValue {
+                            value: Some(
+                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    "dense".to_string(),
+                                ),
+                            ),
+                        },
+                    );
                     metadata
                 },
             )
@@ -190,8 +202,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     config_compressed.compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstEngine::new()
-    .await?;
+    let compressed_engine = SstEngine::new().await?;
 
     // Flush compressed dense data with compression config
     let mut flush_params =
@@ -200,7 +211,9 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     // Set compression in the collection storage config
     if let Some(ref mut collection_config) = flush_params.collection_config {
         if let Some(ref mut config) = collection_config.config {
-            use proximadb::proto::proximadb_v1::{StorageConfig as ProtoStorageConfig, CompressionAlgorithm};
+            use proximadb::proto::proximadb_v1::{
+                CompressionAlgorithm, StorageConfig as ProtoStorageConfig,
+            };
 
             config.storage_config = Some(ProtoStorageConfig {
                 compression: Some(CompressionAlgorithm::CompressionZstd as i32),
@@ -226,8 +239,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     let mut config_uncompressed = base_env.sst_config.clone();
     config_uncompressed.compression = "none".to_string();
 
-    let uncompressed_engine = SstEngine::new()
-    .await?;
+    let uncompressed_engine = SstEngine::new().await?;
 
     // Create fresh flush params for uncompressed (don't reuse the modified compressed ones)
     let flush_params_uncompressed =

@@ -25,29 +25,27 @@
 //! - Flush result coordination
 
 pub mod coordinator;
-pub mod optimizer;
 pub mod operations;
+pub mod optimizer;
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::Utc;
-use tracing::{info, debug, warn, error};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
-use crate::storage::engines::impls::sst::{SstEngine, SstError};
-use crate::storage::engines::impls::sst::utils::SortingStats;
-use crate::storage::traits::{FlushParameters, FlushResult};
-use crate::storage::transaction_coordinator::{
-    StagingConfig, TransactionStageType
-};
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::utils::StoragePath;
-use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use crate::storage::engines::impls::sst::utils::SortingStats;
+use crate::storage::engines::impls::sst::writer::SstableWriter;
+use crate::storage::engines::impls::sst::{SstEngine, SstError};
+use crate::storage::traits::{FlushParameters, FlushResult};
+use crate::storage::transaction_coordinator::{StagingConfig, TransactionStageType};
+use crate::utils::StoragePath;
 
 pub use coordinator::FlushCoordinator;
-pub use optimizer::FlushOptimizer;
 pub use operations::FlushOperations;
+pub use optimizer::FlushOptimizer;
 
 impl SstEngine {
     /// Main flush operation for SST engine
@@ -59,11 +57,12 @@ impl SstEngine {
     /// 4. Update metadata and trigger compaction if needed
     pub async fn flush_implementation(&self, params: &FlushParameters) -> Result<FlushResult> {
         // Check if quantization is enabled in collection config
-        let quantization_enabled = params.collection_config.as_ref()
+        let quantization_enabled = params
+            .collection_config
+            .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
-            .map(|q| q.enabled)
-            ;
+            .map(|q| q.enabled);
 
         if quantization_enabled.flatten().unwrap_or(false) {
             debug!("🔄 SST FLUSH: Quantization enabled, processing with quantization support");
@@ -87,7 +86,9 @@ impl SstEngine {
 
         // Extract storage URL from parameters
         let collection_storage_url = Self::get_collection_storage_url_from_params(&params)?;
-        let collection_id = params.collection_id.as_ref()
+        let collection_id = params
+            .collection_id
+            .as_ref()
             .ok_or_else(|| SstError::InvalidArgument("Collection ID is required".to_string()))?;
 
         debug!(
@@ -96,12 +97,13 @@ impl SstEngine {
         );
 
         // Sort vectors for optimal SSTable encoding
-        let (sorted_vectors, sort_stats) = self.sort_vectors_for_sstable_encoding(
-            params.vector_records.clone()
-        ).await?;
+        let (sorted_vectors, sort_stats) = self
+            .sort_vectors_for_sstable_encoding(params.vector_records.clone())
+            .await?;
 
         // Convert the result to expected format
-        let sorted_tuples: Vec<(String, VectorRecord)> = sorted_vectors.into_iter()
+        let sorted_tuples: Vec<(String, VectorRecord)> = sorted_vectors
+            .into_iter()
             .map(|record| (record.id.clone(), record))
             .collect();
 
@@ -114,15 +116,20 @@ impl SstEngine {
         // Generate SSTable filename
         let codec = FilenameCodec::new();
         let sst_filename = codec.generate(0, "sst"); // Level 0 for flush
-        debug!("🔧 SST: Creating SSTable file: {} for collection: {}", sst_filename, collection_id);
+        debug!(
+            "🔧 SST: Creating SSTable file: {} for collection: {}",
+            sst_filename, collection_id
+        );
 
         // Perform atomic flush operation
-        let flush_result = self.perform_atomic_flush(
-            sorted_tuples,
-            &collection_storage_url,
-            &sst_filename,
-            &params,
-        ).await?;
+        let flush_result = self
+            .perform_atomic_flush(
+                sorted_tuples,
+                &collection_storage_url,
+                &sst_filename,
+                &params,
+            )
+            .await?;
 
         let duration = start_time.elapsed();
         info!(
@@ -157,7 +164,7 @@ impl SstEngine {
                     params
                         .collection_id
                         .as_ref()
-                        .unwrap_or(&"unknown".to_string())
+                        .unwrap_or(&"unknown".to_string()),
                 );
                 debug!(
                     "🔍 SST FLUSH: Using storage URL from params: {}",
@@ -168,8 +175,9 @@ impl SstEngine {
         }
 
         Err(SstError::InvalidArgument(
-            "No storage assignment found in collection config".to_string()
-        ).into())
+            "No storage assignment found in collection config".to_string(),
+        )
+        .into())
     }
 
     // Removed duplicate sort_vectors_for_sstable_encoding method - using the one from utils.rs
@@ -196,7 +204,8 @@ impl SstEngine {
 
         tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");
 
-        let atomic_op = self.atomic_coordinator()
+        let atomic_op = self
+            .atomic_coordinator()
             .begin_atomic_operation(&staging_config)
             .await
             .context("Failed to begin atomic flush operation")?;
@@ -209,12 +218,14 @@ impl SstEngine {
         let block_size = (self.config().block_size_kb * 1024) as usize;
 
         // Extract compression config from collection config if available
-        let compression_config = params.collection_config.as_ref()
+        let compression_config = params
+            .collection_config
+            .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.storage_config.as_ref())
             .and_then(|sc| {
                 // Convert storage_config.compression to CompressionConfig
-                use crate::proto::proximadb_v1::{CompressionConfig, CompressionAlgorithm};
+                use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig};
                 sc.compression.map(|compression_algo| {
                     CompressionConfig {
                         algorithm: compression_algo,
@@ -250,17 +261,16 @@ impl SstEngine {
                 tracing::trace!(vector_id = %id, metadata = ?rec.metadata, "First vector before write");
             }
         }
-        writer.write_sorted_vector_records(
-            sorted_vectors.into_iter(),
-            entries_written as usize,
-        ).await
+        writer
+            .write_sorted_vector_records(sorted_vectors.into_iter(), entries_written as usize)
+            .await
             .context("Failed to write vectors to SSTable")?;
         tracing::debug!("Write operation completed");
 
         // Get actual bytes written from the filesystem
         let fs = self.filesystem().get_filesystem(&staging_url)?;
-        let file_metadata = fs.metadata(&staging_url).await
-            .unwrap_or_else(|_| crate::storage::persistence::filesystem::FileMetadata {
+        let file_metadata = fs.metadata(&staging_url).await.unwrap_or_else(|_| {
+            crate::storage::persistence::filesystem::FileMetadata {
                 path: staging_url.clone(),
                 size: entries_written * 1024, // Estimate if metadata unavailable
                 created: None,
@@ -269,7 +279,8 @@ impl SstEngine {
                 permissions: None,
                 etag: None,
                 storage_class: None,
-            });
+            }
+        });
         let bytes_written = file_metadata.size;
 
         // Commit the atomic operation
@@ -294,10 +305,14 @@ impl SstEngine {
             completed_at: Utc::now(),
             engine_metrics: {
                 let mut metrics = HashMap::new();
-                metrics.insert("engine".to_string(),
-                    serde_json::Value::String("SST".to_string()));
-                metrics.insert("filename".to_string(),
-                    serde_json::Value::String(filename.to_string()));
+                metrics.insert(
+                    "engine".to_string(),
+                    serde_json::Value::String("SST".to_string()),
+                );
+                metrics.insert(
+                    "filename".to_string(),
+                    serde_json::Value::String(filename.to_string()),
+                );
                 metrics
             },
             compaction_triggered: should_trigger_compaction,
@@ -320,9 +335,9 @@ pub type SortStats = SortingStats;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
     #[tokio::test]
     async fn test_sort_vectors_for_sstable_encoding() {
@@ -334,10 +349,14 @@ mod tests {
             create_test_vector("vector_2", vec![2.0, 3.0]),
         ];
 
-        let (sorted, stats) = engine.sort_vectors_for_sstable_encoding(vectors).await.unwrap();
+        let (sorted, stats) = engine
+            .sort_vectors_for_sstable_encoding(vectors)
+            .await
+            .unwrap();
 
         // Convert to tuples and verify sorting
-        let sorted_tuples: Vec<(String, VectorRecord)> = sorted.into_iter()
+        let sorted_tuples: Vec<(String, VectorRecord)> = sorted
+            .into_iter()
             .map(|record| (record.id.clone(), record))
             .collect();
         assert_eq!(sorted_tuples[0].0, "vector_1");
@@ -351,11 +370,14 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 
     fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {

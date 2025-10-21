@@ -9,8 +9,6 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-
-
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
@@ -98,8 +96,7 @@ async fn test_compression_for_data(
     config_uncompressed.compression_level = 0;
     config_uncompressed.block_size_kb = 256; // Use 256KB blocks for better quantization clustering
 
-    let uncompressed_engine = SstEngine::new()
-    .await?;
+    let uncompressed_engine = SstEngine::new().await?;
 
     let vectors_uncompressed = vectors.clone();
     let flush_params_uncompressed =
@@ -135,12 +132,15 @@ async fn test_compression_for_data(
     config_compressed.compression_level = level;
     config_compressed.block_size_kb = 256; // Use 256KB blocks to see vector grouping with quantization
 
-    let compressed_engine = SstEngine::new()
-    .await?;
+    let compressed_engine = SstEngine::new().await?;
 
     // Save dimensions before vectors is moved
     let vector_count = vectors.len();
-    let vector_dim = if !vectors.is_empty() { vectors[0].vector.len() } else { 0 };
+    let vector_dim = if !vectors.is_empty() {
+        vectors[0].vector.len()
+    } else {
+        0
+    };
 
     // Build flush params with compression config in the collection
     let mut flush_params_compressed =
@@ -149,7 +149,9 @@ async fn test_compression_for_data(
     // Set compression in the collection storage config
     if let Some(ref mut collection_config) = flush_params_compressed.collection_config {
         if let Some(ref mut config) = collection_config.config {
-            use proximadb::proto::proximadb_v1::{StorageConfig as ProtoStorageConfig, CompressionAlgorithm};
+            use proximadb::proto::proximadb_v1::{
+                CompressionAlgorithm, StorageConfig as ProtoStorageConfig,
+            };
 
             let compression_algo = match algorithm {
                 "none" => CompressionAlgorithm::CompressionNone as i32,
@@ -176,7 +178,10 @@ async fn test_compression_for_data(
         algorithm, level
     );
     info!("  • Files created: {:?}", compressed_result.files_created);
-    info!("  • Entries flushed: {:?}", compressed_result.entries_flushed);
+    info!(
+        "  • Entries flushed: {:?}",
+        compressed_result.entries_flushed
+    );
     info!(
         "  • Expected blocks: ~{}",
         vector_count * vector_dim * 4 / (256 * 1024)

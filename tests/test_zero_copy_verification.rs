@@ -1,7 +1,7 @@
 //! Test to verify protobuf serialization operations
 
 use prost::Message;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use std::collections::HashMap;
 use tracing::{debug, info};
 

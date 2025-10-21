@@ -140,109 +140,113 @@ pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 /// NEON-optimized INT8 dot product for ARM64
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe {
-    use std::arch::aarch64::*;
+pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
+    unsafe {
+        use std::arch::aarch64::*;
 
-    debug_assert_eq!(vec_a.len(), vec_b.len());
+        debug_assert_eq!(vec_a.len(), vec_b.len());
 
-    let len = vec_a.len();
-    let chunks = len / 16; // 16 INT8 values per NEON register
-    let remainder = len % 16;
+        let len = vec_a.len();
+        let chunks = len / 16; // 16 INT8 values per NEON register
+        let remainder = len % 16;
 
-    let mut sum_vec = vdupq_n_s32(0);
+        let mut sum_vec = vdupq_n_s32(0);
 
-    // Process 16 INT8 values at a time
-    for i in 0..chunks {
-        let offset = i * 16;
+        // Process 16 INT8 values at a time
+        for i in 0..chunks {
+            let offset = i * 16;
 
-        // Load 16 INT8 values
-        let a_vec = vld1q_s8(vec_a.as_ptr().add(offset));
-        let b_vec = vld1q_s8(vec_b.as_ptr().add(offset));
+            // Load 16 INT8 values
+            let a_vec = vld1q_s8(vec_a.as_ptr().add(offset));
+            let b_vec = vld1q_s8(vec_b.as_ptr().add(offset));
 
-        // Widen to 16-bit and multiply
-        let a_lo = vmovl_s8(vget_low_s8(a_vec));
-        let a_hi = vmovl_s8(vget_high_s8(a_vec));
-        let b_lo = vmovl_s8(vget_low_s8(b_vec));
-        let b_hi = vmovl_s8(vget_high_s8(b_vec));
+            // Widen to 16-bit and multiply
+            let a_lo = vmovl_s8(vget_low_s8(a_vec));
+            let a_hi = vmovl_s8(vget_high_s8(a_vec));
+            let b_lo = vmovl_s8(vget_low_s8(b_vec));
+            let b_hi = vmovl_s8(vget_high_s8(b_vec));
 
-        // Multiply and accumulate
-        let prod_lo = vmull_s16(vget_low_s16(a_lo), vget_low_s16(b_lo));
-        let prod_hi = vmull_s16(vget_high_s16(a_lo), vget_high_s16(b_lo));
-        sum_vec = vaddq_s32(sum_vec, prod_lo);
-        sum_vec = vaddq_s32(sum_vec, prod_hi);
+            // Multiply and accumulate
+            let prod_lo = vmull_s16(vget_low_s16(a_lo), vget_low_s16(b_lo));
+            let prod_hi = vmull_s16(vget_high_s16(a_lo), vget_high_s16(b_lo));
+            sum_vec = vaddq_s32(sum_vec, prod_lo);
+            sum_vec = vaddq_s32(sum_vec, prod_hi);
 
-        let prod_lo = vmull_s16(vget_low_s16(a_hi), vget_low_s16(b_hi));
-        let prod_hi = vmull_s16(vget_high_s16(a_hi), vget_high_s16(b_hi));
-        sum_vec = vaddq_s32(sum_vec, prod_lo);
-        sum_vec = vaddq_s32(sum_vec, prod_hi);
+            let prod_lo = vmull_s16(vget_low_s16(a_hi), vget_low_s16(b_hi));
+            let prod_hi = vmull_s16(vget_high_s16(a_hi), vget_high_s16(b_hi));
+            sum_vec = vaddq_s32(sum_vec, prod_lo);
+            sum_vec = vaddq_s32(sum_vec, prod_hi);
+        }
+
+        // Horizontal sum
+        let mut result = vaddvq_s32(sum_vec);
+
+        // Handle remainder
+        let start = chunks * 16;
+        for i in start..len {
+            result += vec_a[i] as i32 * vec_b[i] as i32;
+        }
+
+        trace!("NEON INT8 dot product computed for {} elements", len);
+        result
     }
-
-    // Horizontal sum
-    let mut result = vaddvq_s32(sum_vec);
-
-    // Handle remainder
-    let start = chunks * 16;
-    for i in start..len {
-        result += vec_a[i] as i32 * vec_b[i] as i32;
-    }
-
-    trace!("NEON INT8 dot product computed for {} elements", len);
-    result
-}}
+}
 
 /// NEON-optimized INT8 squared difference for ARM64
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-pub unsafe fn int8_squared_diff_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe {
-    use std::arch::aarch64::*;
+pub unsafe fn int8_squared_diff_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
+    unsafe {
+        use std::arch::aarch64::*;
 
-    debug_assert_eq!(vec_a.len(), vec_b.len());
+        debug_assert_eq!(vec_a.len(), vec_b.len());
 
-    let len = vec_a.len();
-    let chunks = len / 16;
-    let remainder = len % 16;
+        let len = vec_a.len();
+        let chunks = len / 16;
+        let remainder = len % 16;
 
-    let mut sum_vec = vdupq_n_s32(0);
+        let mut sum_vec = vdupq_n_s32(0);
 
-    for i in 0..chunks {
-        let offset = i * 16;
+        for i in 0..chunks {
+            let offset = i * 16;
 
-        // Load 16 INT8 values
-        let a_vec = vld1q_s8(vec_a.as_ptr().add(offset));
-        let b_vec = vld1q_s8(vec_b.as_ptr().add(offset));
+            // Load 16 INT8 values
+            let a_vec = vld1q_s8(vec_a.as_ptr().add(offset));
+            let b_vec = vld1q_s8(vec_b.as_ptr().add(offset));
 
-        // Compute difference
-        let diff_vec = vsubq_s8(a_vec, b_vec);
+            // Compute difference
+            let diff_vec = vsubq_s8(a_vec, b_vec);
 
-        // Widen to 16-bit for squaring
-        let diff_lo = vmovl_s8(vget_low_s8(diff_vec));
-        let diff_hi = vmovl_s8(vget_high_s8(diff_vec));
+            // Widen to 16-bit for squaring
+            let diff_lo = vmovl_s8(vget_low_s8(diff_vec));
+            let diff_hi = vmovl_s8(vget_high_s8(diff_vec));
 
-        // Square by multiplying with itself
-        let squared_lo = vmull_s16(vget_low_s16(diff_lo), vget_low_s16(diff_lo));
-        let squared_hi = vmull_s16(vget_high_s16(diff_lo), vget_high_s16(diff_lo));
-        sum_vec = vaddq_s32(sum_vec, squared_lo);
-        sum_vec = vaddq_s32(sum_vec, squared_hi);
+            // Square by multiplying with itself
+            let squared_lo = vmull_s16(vget_low_s16(diff_lo), vget_low_s16(diff_lo));
+            let squared_hi = vmull_s16(vget_high_s16(diff_lo), vget_high_s16(diff_lo));
+            sum_vec = vaddq_s32(sum_vec, squared_lo);
+            sum_vec = vaddq_s32(sum_vec, squared_hi);
 
-        let squared_lo = vmull_s16(vget_low_s16(diff_hi), vget_low_s16(diff_hi));
-        let squared_hi = vmull_s16(vget_high_s16(diff_hi), vget_high_s16(diff_hi));
-        sum_vec = vaddq_s32(sum_vec, squared_lo);
-        sum_vec = vaddq_s32(sum_vec, squared_hi);
+            let squared_lo = vmull_s16(vget_low_s16(diff_hi), vget_low_s16(diff_hi));
+            let squared_hi = vmull_s16(vget_high_s16(diff_hi), vget_high_s16(diff_hi));
+            sum_vec = vaddq_s32(sum_vec, squared_lo);
+            sum_vec = vaddq_s32(sum_vec, squared_hi);
+        }
+
+        // Horizontal sum
+        let mut result = vaddvq_s32(sum_vec);
+
+        // Handle remainder
+        let start = chunks * 16;
+        for i in start..len {
+            let diff = vec_a[i] as i32 - vec_b[i] as i32;
+            result += diff * diff;
+        }
+
+        trace!("NEON INT8 squared difference computed for {} elements", len);
+        result
     }
-
-    // Horizontal sum
-    let mut result = vaddvq_s32(sum_vec);
-
-    // Handle remainder
-    let start = chunks * 16;
-    for i in start..len {
-        let diff = vec_a[i] as i32 - vec_b[i] as i32;
-        result += diff * diff;
-    }
-
-    trace!("NEON INT8 squared difference computed for {} elements", len);
-    result
-}}
+}
 
 #[cfg(test)]
 mod tests {

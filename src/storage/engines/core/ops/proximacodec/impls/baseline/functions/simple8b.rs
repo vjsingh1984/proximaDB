@@ -16,22 +16,22 @@ use super::helpers::ToWireFormat;
 /// Simple8b selector modes
 /// Each mode packs different number of values with different bit widths
 const SELECTORS: [(u8, u8); 16] = [
-    (240, 0),  // 0: 240 × 0-bit (all zeros)
-    (120, 0),  // 1: 120 × 0-bit (unused, reserved)
-    (60, 1),   // 2: 60 × 1-bit
-    (30, 2),   // 3: 30 × 2-bit
-    (20, 3),   // 4: 20 × 3-bit
-    (15, 4),   // 5: 15 × 4-bit
-    (12, 5),   // 6: 12 × 5-bit
-    (10, 6),   // 7: 10 × 6-bit
-    (8, 7),    // 8: 8 × 7-bit
-    (7, 8),    // 9: 7 × 8-bit
-    (6, 10),   // 10: 6 × 10-bit
-    (5, 12),   // 11: 5 × 12-bit
-    (4, 15),   // 12: 4 × 15-bit
-    (3, 20),   // 13: 3 × 20-bit
-    (2, 30),   // 14: 2 × 30-bit
-    (1, 60),   // 15: 1 × 60-bit
+    (240, 0), // 0: 240 × 0-bit (all zeros)
+    (120, 0), // 1: 120 × 0-bit (unused, reserved)
+    (60, 1),  // 2: 60 × 1-bit
+    (30, 2),  // 3: 30 × 2-bit
+    (20, 3),  // 4: 20 × 3-bit
+    (15, 4),  // 5: 15 × 4-bit
+    (12, 5),  // 6: 12 × 5-bit
+    (10, 6),  // 7: 10 × 6-bit
+    (8, 7),   // 8: 8 × 7-bit
+    (7, 8),   // 9: 7 × 8-bit
+    (6, 10),  // 10: 6 × 10-bit
+    (5, 12),  // 11: 5 × 12-bit
+    (4, 15),  // 12: 4 × 15-bit
+    (3, 20),  // 13: 3 × 20-bit
+    (2, 30),  // 14: 2 × 30-bit
+    (1, 60),  // 15: 1 × 60-bit
 ];
 
 // ===== Core wire format encoding functions =====
@@ -128,7 +128,11 @@ fn pack_word(values: &[u64]) -> Result<(u8, usize, u64)> {
         let to_pack = values.len().min(count);
 
         // Check if all values fit in bit width
-        let max_val = if bits < 64 { (1u64 << bits) - 1 } else { u64::MAX };
+        let max_val = if bits < 64 {
+            (1u64 << bits) - 1
+        } else {
+            u64::MAX
+        };
         if values[..to_pack].iter().all(|&v| v <= max_val) {
             // Pack values into word
             let mut word = (selector as u64) << 60;
@@ -209,8 +213,14 @@ fn decode_u64_internal(data: &[u8], count: usize) -> Result<Vec<u64>> {
         }
 
         let word = u64::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
         ]);
         offset += 8;
 
@@ -218,7 +228,10 @@ fn decode_u64_internal(data: &[u8], count: usize) -> Result<Vec<u64>> {
         let selector = (word >> 60) as usize;
 
         if selector >= SELECTORS.len() {
-            return Err(anyhow::anyhow!("Simple8b decode: invalid selector {}", selector));
+            return Err(anyhow::anyhow!(
+                "Simple8b decode: invalid selector {}",
+                selector
+            ));
         }
 
         let (num_values, bits) = SELECTORS[selector];
@@ -229,7 +242,11 @@ fn decode_u64_internal(data: &[u8], count: usize) -> Result<Vec<u64>> {
                 result.push(0);
             }
         } else {
-            let mask = if bits < 64 { (1u64 << bits) - 1 } else { u64::MAX };
+            let mask = if bits < 64 {
+                (1u64 << bits) - 1
+            } else {
+                u64::MAX
+            };
 
             for i in 0..num_values {
                 if result.len() >= count {

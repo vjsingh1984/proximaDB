@@ -393,16 +393,36 @@ The sidecar `.nova_meta` files are automatically skipped during compaction and f
 
 **MetadataCollector Integration (Implemented):**
 ```rust
+use std::sync::Arc;
+use proximadb::storage::engines::core::formats::columnar::{
+    ParquetWriterConfig,
+    parquet_write_engine::streaming_writer::StreamingWriterBuilder,
+};
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
+
 // During flush operation (src/storage/engines/impls/nova/engine.rs)
-let writer = StreamingParquetWriter::new()
-    .with_metadata_collector(Box::new(
-        NovaMetadataCollector::new(NovaCollectorConfig {
-            row_groups_per_superblock: 10,
-            compute_vector_stats: true,
-            sample_rate: 0.1,
-        })
-    ))
-    .with_filterable_columns(collection_config.filterable_columns);
+let config = ParquetWriterConfig::default();
+let file_path = "/data/collections/my_collection/nova/data_001.parquet";
+
+// Optionally, create a filesystem factory (local/cloud)
+let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
+
+// Build an async streaming writer and attach the NOVA collector
+let mut writer = StreamingWriterBuilder::new()
+    .with_path(file_path)
+    .with_dimension(768)
+    .with_config(config)
+    .with_filesystem_factory(filesystem_factory)
+    .build()
+    .await?;
+
+writer = writer.with_metadata_collector(Box::new(
+    NovaMetadataCollector::new(NovaCollectorConfig {
+        row_groups_per_superblock: 10,
+        compute_vector_stats: true,
+        sample_rate: 0.1,
+    })
+));
 
 // Collector gathers statistics during write
 // No re-reading required - statistics collected inline
@@ -429,20 +449,44 @@ let row_groups_to_read = relevant_superblocks
     .flat_map(|sb| sb.row_groups)
     .filter(|rg| nova_meta.row_group_stats[rg].matches_predicate());
 
-// 4. Direct Parquet row group access
-let reader = UnifiedParquetReader::new();
-let results = reader.read_row_groups_projected(
-    parquet_file,
-    &row_groups_to_read,
-    projection_columns
-).await?;
+// 4. Direct Parquet row group access (with unified caching filesystem)
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
+use proximadb::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use proximadb::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
+use std::sync::Arc;
+
+let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
+let base_fs = filesystem_factory.get_filesystem("file://")?;
+let cached_filesystem = Arc::new(UnifiedCachingFilesystem::new(
+    base_fs,
+    collection_id.clone(),
+    "columnar".to_string(),
+));
+
+let reader = UnifiedParquetReader::new(
+    vec![parquet_file.to_string()],
+    /* dimension: */ 768,
+    filesystem_factory.clone(),
+    cached_filesystem,
+    collection_id.clone(),
+    "columnar".to_string(),
+)?;
+
+let results = reader
+    .read_row_groups_projected(
+        &collection_id,
+        &row_groups_to_read.collect::<Vec<_>>(),
+        Some(&projection_columns),
+    )
+    .await?;
 ```
 
 **Key Implementation Files:**
 - `src/storage/engines/impls/nova/nova_meta_collector.rs` - Sidecar metadata collection
 - `src/storage/engines/impls/nova/hierarchical_stats.rs` - SuperBlock and zone map structures
 - `src/storage/engines/core/formats/columnar/metadata_collector.rs` - Collector trait
-- `src/storage/engines/core/formats/columnar/parquet_writer.rs` - Writer integration
+- `src/storage/engines/core/formats/columnar/parquet_write_engine/streaming_writer.rs` - Streaming writer integration
+- `src/storage/engines/core/formats/columnar/parquet_write_engine/batch_writer.rs` - Batch writer integration
 ****
 
 **Configuration Optimization:**

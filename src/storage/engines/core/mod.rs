@@ -4,13 +4,13 @@
 //! It provides a clean separation between infrastructure (how things work) and
 //! implementations (what engines do).
 
+pub mod adaptive_strategy_optimizer; // Intelligent strategy optimization and tuning
 pub mod constants; // Centralized constants for all storage engines
 pub mod filter_evaluator;
 pub mod formats; // Storage formats: row-based, columnar
 pub mod io; // I/O operations: zero-copy, filesystem abstractions
 pub mod ops; // Common operations: compression, encoding, optimization
 pub mod read_strategy; // Unified read access strategy for all engines
-pub mod adaptive_strategy_optimizer; // Intelligent strategy optimization and tuning
 pub mod search; // Search infrastructure: progressive search, filtering // Unified filter evaluation for all engines
 
 // Re-export commonly used types for convenience

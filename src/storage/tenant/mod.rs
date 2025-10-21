@@ -2,23 +2,26 @@
 //!
 //! Clean, simple tenant isolation without over-engineering.
 
-pub mod manager;
 pub mod context;
-pub mod resources;
-pub mod entity_store;
 pub mod domain;
-pub mod rbac;
+pub mod entity_store;
 pub mod knowledge_graph;
+pub mod manager;
 pub mod performance;
+pub mod rbac;
+pub mod resources;
 
-pub use manager::TenantManager;
-pub use context::{TenantContext, TenantConfig, TenantStatus, BusinessContext, DataSensitivityLevel, PerformanceRequirements, ResourceLimits};
-pub use resources::{TenantResourceTracker};
+pub use context::{
+    BusinessContext, DataSensitivityLevel, PerformanceRequirements, ResourceLimits, TenantConfig,
+    TenantContext, TenantStatus,
+};
+pub use domain::{CollectionDomainMapping, DomainContext, DomainManager};
 pub use entity_store::{TenantAwareEntityStore, UserContext};
-pub use domain::{DomainManager, DomainContext, CollectionDomainMapping};
+pub use knowledge_graph::{CollectionDomainBridge, DomainKnowledgeGraph};
+pub use manager::TenantManager;
+pub use performance::{SLACheckResult, TenantMetrics, TenantPerformanceMonitor, TenantSLA};
 pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
-pub use knowledge_graph::{DomainKnowledgeGraph, CollectionDomainBridge};
-pub use performance::{TenantPerformanceMonitor, TenantMetrics, TenantSLA, SLACheckResult};
+pub use resources::TenantResourceTracker;
 
 use serde::{Deserialize, Serialize};
 
@@ -53,16 +56,16 @@ pub enum ComplianceFramework {
 pub struct SecurityPolicies {
     /// Require MFA for all operations
     pub require_mfa: bool,
-    
+
     /// Encryption at rest required
     pub encryption_at_rest: bool,
-    
+
     /// Audit all operations
     pub audit_all_operations: bool,
-    
+
     /// IP restrictions
     pub allowed_ip_ranges: Vec<String>,
-    
+
     /// Session timeout in minutes
     pub session_timeout_minutes: u32,
 }
@@ -73,7 +76,7 @@ impl Default for SecurityPolicies {
             require_mfa: true,
             encryption_at_rest: true,
             audit_all_operations: true,
-            allowed_ip_ranges: vec![], // No restrictions by default
+            allowed_ip_ranges: vec![],    // No restrictions by default
             session_timeout_minutes: 480, // 8 hours
         }
     }
@@ -101,7 +104,7 @@ mod tests {
         let financial = Industry::Financial;
         let healthcare = Industry::Healthcare;
         let custom = Industry::Other("Aerospace".to_string());
-        
+
         assert_ne!(financial, healthcare);
         assert_eq!(custom, Industry::Other("Aerospace".to_string()));
     }
@@ -110,7 +113,7 @@ mod tests {
     fn test_compliance_frameworks() {
         let sox = ComplianceFramework::SOX;
         let hipaa = ComplianceFramework::HIPAA;
-        
+
         assert_ne!(sox, hipaa);
         assert_eq!(sox, ComplianceFramework::SOX);
     }
@@ -118,7 +121,7 @@ mod tests {
     #[test]
     fn test_security_policies_default() {
         let policies = SecurityPolicies::default();
-        
+
         assert!(policies.require_mfa);
         assert!(policies.encryption_at_rest);
         assert!(policies.audit_all_operations);

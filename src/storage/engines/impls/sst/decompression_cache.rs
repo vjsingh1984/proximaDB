@@ -11,8 +11,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::cache::orchestrator::{CacheStatsProvider, UsageStats};
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
 /// Cache key for decompressed blocks
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -519,7 +519,9 @@ pub struct DecompressionCacheStatsProvider {
 }
 
 impl DecompressionCacheStatsProvider {
-    pub fn new(cache: Arc<DecompressionCache>) -> Self { Self { cache } }
+    pub fn new(cache: Arc<DecompressionCache>) -> Self {
+        Self { cache }
+    }
 }
 
 impl CacheStatsProvider for DecompressionCacheStatsProvider {
@@ -528,7 +530,11 @@ impl CacheStatsProvider for DecompressionCacheStatsProvider {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let stats = handle.block_on(self.cache.get_stats());
             let total = stats.hits + stats.misses;
-            let hit_rate = if total == 0 { 0.0 } else { stats.hits as f64 / total as f64 };
+            let hit_rate = if total == 0 {
+                0.0
+            } else {
+                stats.hits as f64 / total as f64
+            };
             // Approximate avg entry size using bytes_saved per hit when available
             let avg_entry_size = if stats.hits > 0 {
                 (stats.bytes_saved / stats.hits) as usize
@@ -542,7 +548,12 @@ impl CacheStatsProvider for DecompressionCacheStatsProvider {
                 last_rebalance: std::time::SystemTime::now(),
             };
         }
-        UsageStats { hit_rate: 0.0, avg_entry_size: 64 * 1024, access_frequency: 0.0, last_rebalance: std::time::SystemTime::now() }
+        UsageStats {
+            hit_rate: 0.0,
+            avg_entry_size: 64 * 1024,
+            access_frequency: 0.0,
+            last_rebalance: std::time::SystemTime::now(),
+        }
     }
 }
 
@@ -620,7 +631,11 @@ mod tests {
         assert!(cache.get(&key).await.is_none());
 
         // Test put and hit
-        let block = ProximaDataBlock::new(vec![], crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig::default());
+        let block = ProximaDataBlock::new(
+            vec![],
+            crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig::default(
+            ),
+        );
         cache
             .put(
                 key.clone(),
@@ -662,9 +677,16 @@ mod tests {
                     vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
                     metadata: {
                         let mut metadata = std::collections::HashMap::new();
-                        metadata.insert("test_key".to_string(), crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string()))
-                        });
+                        metadata.insert(
+                            "test_key".to_string(),
+                            crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        "test_value".to_string(),
+                                    ),
+                                ),
+                            },
+                        );
                         metadata
                     },
                     timestamp: Some(0i64),

@@ -13,9 +13,9 @@
 //! Source: src/query/unified_query_optimizer.rs
 //! Tests extracted: 3 (all tests from the source module)
 
-use proximadb::query::unified_query_optimizer::*;
+use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::Collection;
-use proximadb::core::search::{FilterExpression, SearchParams, ComparisonOperator};
+use proximadb::query::unified_query_optimizer::*;
 use std::sync::Arc;
 
 #[test]

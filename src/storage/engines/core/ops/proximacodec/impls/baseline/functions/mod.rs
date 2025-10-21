@@ -25,175 +25,118 @@
 //! - [x] adaptive.rs - Automatic scheme selection (Phase 2.14)
 //! - [ ] hybrid.rs - Multi-scheme hybrid (Phase 2.15) - LOW PRIORITY
 
-pub(crate) mod helpers;
-pub mod raw;
-pub mod delta;
+pub mod adaptive;
 pub mod bitpack;
+pub mod delta;
+pub mod double_delta;
 pub mod frame_of_ref;
+pub mod gorilla;
+pub(crate) mod helpers;
+pub mod patched_base;
+pub mod pfor_delta;
+pub mod pfor_double_delta;
+pub mod raw;
+pub mod run_length;
+pub mod simple8b;
 pub mod sparse_bitmap;
 pub mod sparse_coo;
-pub mod run_length;
-pub mod pfor_delta;
-pub mod patched_base;
-pub mod pfor_double_delta;
-pub mod zigzag;
-pub mod double_delta;
-pub mod gorilla;
 pub mod vbyte;
-pub mod simple8b;
-pub mod adaptive;
+pub mod zigzag;
 
 // Re-export for convenience
 pub use raw::{
-    encode_f32 as raw_encode_f32,
-    encode_i64 as raw_encode_i64,
-    encode_i32 as raw_encode_i32,
-    decode_f32 as raw_decode_f32,
-    decode_i64 as raw_decode_i64,
-    decode_i32 as raw_decode_i32,
+    decode_f32 as raw_decode_f32, decode_i32 as raw_decode_i32, decode_i64 as raw_decode_i64,
+    encode_f32 as raw_encode_f32, encode_i32 as raw_encode_i32, encode_i64 as raw_encode_i64,
 };
 
 pub use delta::{
-    encode_f32 as delta_encode_f32,
-    encode_i64 as delta_encode_i64,
-    encode_i32 as delta_encode_i32,
-    decode_f32 as delta_decode_f32,
-    decode_i64 as delta_decode_i64,
-    decode_i32 as delta_decode_i32,
+    decode_f32 as delta_decode_f32, decode_i32 as delta_decode_i32, decode_i64 as delta_decode_i64,
+    encode_f32 as delta_encode_f32, encode_i32 as delta_encode_i32, encode_i64 as delta_encode_i64,
 };
 
 pub use bitpack::{
-    encode_f32 as bitpack_encode_f32,
-    encode_i64 as bitpack_encode_i64,
-    encode_i32 as bitpack_encode_i32,
-    decode_f32 as bitpack_decode_f32,
-    decode_i64 as bitpack_decode_i64,
-    decode_i32 as bitpack_decode_i32,
+    decode_f32 as bitpack_decode_f32, decode_i32 as bitpack_decode_i32,
+    decode_i64 as bitpack_decode_i64, encode_f32 as bitpack_encode_f32,
+    encode_i32 as bitpack_encode_i32, encode_i64 as bitpack_encode_i64,
 };
 
 pub use frame_of_ref::{
-    encode_f32 as for_encode_f32,
-    encode_i64 as for_encode_i64,
-    encode_i32 as for_encode_i32,
-    decode_f32 as for_decode_f32,
-    decode_i64 as for_decode_i64,
-    decode_i32 as for_decode_i32,
+    decode_f32 as for_decode_f32, decode_i32 as for_decode_i32, decode_i64 as for_decode_i64,
+    encode_f32 as for_encode_f32, encode_i32 as for_encode_i32, encode_i64 as for_encode_i64,
 };
 
 pub use sparse_bitmap::{
-    encode_f32 as sparse_bitmap_encode_f32,
-    encode_i64 as sparse_bitmap_encode_i64,
-    encode_i32 as sparse_bitmap_encode_i32,
-    decode_f32 as sparse_bitmap_decode_f32,
-    decode_i64 as sparse_bitmap_decode_i64,
-    decode_i32 as sparse_bitmap_decode_i32,
+    decode_f32 as sparse_bitmap_decode_f32, decode_i32 as sparse_bitmap_decode_i32,
+    decode_i64 as sparse_bitmap_decode_i64, encode_f32 as sparse_bitmap_encode_f32,
+    encode_i32 as sparse_bitmap_encode_i32, encode_i64 as sparse_bitmap_encode_i64,
 };
 
 pub use sparse_coo::{
-    encode_f32 as sparse_coo_encode_f32,
-    encode_i64 as sparse_coo_encode_i64,
-    encode_i32 as sparse_coo_encode_i32,
-    decode_f32 as sparse_coo_decode_f32,
-    decode_i64 as sparse_coo_decode_i64,
-    decode_i32 as sparse_coo_decode_i32,
+    decode_f32 as sparse_coo_decode_f32, decode_i32 as sparse_coo_decode_i32,
+    decode_i64 as sparse_coo_decode_i64, encode_f32 as sparse_coo_encode_f32,
+    encode_i32 as sparse_coo_encode_i32, encode_i64 as sparse_coo_encode_i64,
 };
 
 pub use run_length::{
-    encode_f32 as rle_encode_f32,
-    encode_i64 as rle_encode_i64,
-    encode_i32 as rle_encode_i32,
-    decode_f32 as rle_decode_f32,
-    decode_i64 as rle_decode_i64,
-    decode_i32 as rle_decode_i32,
+    decode_f32 as rle_decode_f32, decode_i32 as rle_decode_i32, decode_i64 as rle_decode_i64,
+    encode_f32 as rle_encode_f32, encode_i32 as rle_encode_i32, encode_i64 as rle_encode_i64,
 };
 
 pub use pfor_delta::{
-    encode_f32 as pfor_encode_f32,
-    encode_i64 as pfor_encode_i64,
-    encode_i32 as pfor_encode_i32,
-    decode_f32 as pfor_decode_f32,
-    decode_i64 as pfor_decode_i64,
-    decode_i32 as pfor_decode_i32,
+    decode_f32 as pfor_decode_f32, decode_i32 as pfor_decode_i32, decode_i64 as pfor_decode_i64,
+    encode_f32 as pfor_encode_f32, encode_i32 as pfor_encode_i32, encode_i64 as pfor_encode_i64,
 };
 
 pub use patched_base::{
-    encode_f32 as patched_base_encode_f32,
-    encode_i64 as patched_base_encode_i64,
-    encode_i32 as patched_base_encode_i32,
-    decode_f32 as patched_base_decode_f32,
-    decode_i64 as patched_base_decode_i64,
-    decode_i32 as patched_base_decode_i32,
+    decode_f32 as patched_base_decode_f32, decode_i32 as patched_base_decode_i32,
+    decode_i64 as patched_base_decode_i64, encode_f32 as patched_base_encode_f32,
+    encode_i32 as patched_base_encode_i32, encode_i64 as patched_base_encode_i64,
 };
 
 pub use pfor_double_delta::{
-    encode_f32 as pfor_double_delta_encode_f32,
-    encode_i64 as pfor_double_delta_encode_i64,
-    encode_i32 as pfor_double_delta_encode_i32,
-    decode_f32 as pfor_double_delta_decode_f32,
-    decode_i64 as pfor_double_delta_decode_i64,
-    decode_i32 as pfor_double_delta_decode_i32,
+    decode_f32 as pfor_double_delta_decode_f32, decode_i32 as pfor_double_delta_decode_i32,
+    decode_i64 as pfor_double_delta_decode_i64, encode_f32 as pfor_double_delta_encode_f32,
+    encode_i32 as pfor_double_delta_encode_i32, encode_i64 as pfor_double_delta_encode_i64,
 };
 
 pub use zigzag::{
-    encode_f32 as zigzag_encode_f32,
-    encode_i64 as zigzag_encode_i64,
-    encode_i32 as zigzag_encode_i32,
-    decode_f32 as zigzag_decode_f32,
-    decode_i64 as zigzag_decode_i64,
-    decode_i32 as zigzag_decode_i32,
+    decode_f32 as zigzag_decode_f32, decode_i32 as zigzag_decode_i32,
+    decode_i64 as zigzag_decode_i64, encode_f32 as zigzag_encode_f32,
+    encode_i32 as zigzag_encode_i32, encode_i64 as zigzag_encode_i64,
 };
 
 pub use double_delta::{
-    encode_f32 as double_delta_encode_f32,
-    encode_i64 as double_delta_encode_i64,
-    encode_i32 as double_delta_encode_i32,
-    decode_f32 as double_delta_decode_f32,
-    decode_i64 as double_delta_decode_i64,
-    decode_i32 as double_delta_decode_i32,
+    decode_f32 as double_delta_decode_f32, decode_i32 as double_delta_decode_i32,
+    decode_i64 as double_delta_decode_i64, encode_f32 as double_delta_encode_f32,
+    encode_i32 as double_delta_encode_i32, encode_i64 as double_delta_encode_i64,
 };
 
 pub use gorilla::{
-    encode_f32 as gorilla_encode_f32,
-    encode_i64 as gorilla_encode_i64,
-    encode_i32 as gorilla_encode_i32,
-    decode_f32 as gorilla_decode_f32,
-    decode_i64 as gorilla_decode_i64,
-    decode_i32 as gorilla_decode_i32,
+    decode_f32 as gorilla_decode_f32, decode_i32 as gorilla_decode_i32,
+    decode_i64 as gorilla_decode_i64, encode_f32 as gorilla_encode_f32,
+    encode_i32 as gorilla_encode_i32, encode_i64 as gorilla_encode_i64,
 };
 
 pub use vbyte::{
-    encode_f32 as vbyte_encode_f32,
-    encode_i64 as vbyte_encode_i64,
-    encode_i32 as vbyte_encode_i32,
-    decode_f32 as vbyte_decode_f32,
-    decode_i64 as vbyte_decode_i64,
-    decode_i32 as vbyte_decode_i32,
+    decode_f32 as vbyte_decode_f32, decode_i32 as vbyte_decode_i32, decode_i64 as vbyte_decode_i64,
+    encode_f32 as vbyte_encode_f32, encode_i32 as vbyte_encode_i32, encode_i64 as vbyte_encode_i64,
 };
 pub mod dictionary;
 
 pub use dictionary::{
-    encode_f32 as dictionary_encode_f32,
-    encode_i64 as dictionary_encode_i64,
-    encode_i32 as dictionary_encode_i32,
-    decode_f32 as dictionary_decode_f32,
-    decode_i64 as dictionary_decode_i64,
-    decode_i32 as dictionary_decode_i32,
+    decode_f32 as dictionary_decode_f32, decode_i32 as dictionary_decode_i32,
+    decode_i64 as dictionary_decode_i64, encode_f32 as dictionary_encode_f32,
+    encode_i32 as dictionary_encode_i32, encode_i64 as dictionary_encode_i64,
 };
 
 pub use simple8b::{
-    encode_f32 as simple8b_encode_f32,
-    encode_i64 as simple8b_encode_i64,
-    encode_i32 as simple8b_encode_i32,
-    decode_f32 as simple8b_decode_f32,
-    decode_i64 as simple8b_decode_i64,
-    decode_i32 as simple8b_decode_i32,
+    decode_f32 as simple8b_decode_f32, decode_i32 as simple8b_decode_i32,
+    decode_i64 as simple8b_decode_i64, encode_f32 as simple8b_encode_f32,
+    encode_i32 as simple8b_encode_i32, encode_i64 as simple8b_encode_i64,
 };
 
 pub use adaptive::{
-    encode_f32 as adaptive_encode_f32,
-    encode_i64 as adaptive_encode_i64,
-    encode_i32 as adaptive_encode_i32,
-    decode_f32 as adaptive_decode_f32,
-    decode_i64 as adaptive_decode_i64,
-    decode_i32 as adaptive_decode_i32,
+    decode_f32 as adaptive_decode_f32, decode_i32 as adaptive_decode_i32,
+    decode_i64 as adaptive_decode_i64, encode_f32 as adaptive_encode_f32,
+    encode_i32 as adaptive_encode_i32, encode_i64 as adaptive_encode_i64,
 };

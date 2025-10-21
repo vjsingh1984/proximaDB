@@ -52,10 +52,12 @@ impl TestVectorGenerator {
             id,
             vector,
             metadata: self.generate_metadata(),
-            timestamp: Some(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64),
+            timestamp: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+            ),
             updated_at: None,
             expires_at: None,
             version: Some(1),
@@ -166,31 +168,41 @@ impl TestVectorGenerator {
     /// Generate random metadata
     fn generate_metadata(&mut self) -> HashMap<String, SqlValue> {
         HashMap::from([
-            ("category".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue(format!(
-                    "cat-{}",
-                    self.rng.gen_range(0..5)
-                ))),
-            }),
-            ("score".to_string(), SqlValue {
-                value: Some(sql_value::Value::NumberValue(
-                    self.rng.gen_range(0.0..100.0),
-                )),
-            }),
-            ("active".to_string(), SqlValue {
-                value: Some(sql_value::Value::BoolValue(
-                    self.rng.gen_bool(0.7),
-                )),
-            }),
+            (
+                "category".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue(format!(
+                        "cat-{}",
+                        self.rng.gen_range(0..5)
+                    ))),
+                },
+            ),
+            (
+                "score".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::NumberValue(
+                        self.rng.gen_range(0.0..100.0),
+                    )),
+                },
+            ),
+            (
+                "active".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::BoolValue(self.rng.gen_bool(0.7))),
+                },
+            ),
         ])
     }
 
     /// Generate metadata with cluster information
     fn generate_metadata_with_cluster(&mut self, cluster_id: usize) -> HashMap<String, SqlValue> {
         let mut metadata = self.generate_metadata();
-        metadata.insert("cluster_id".to_string(), SqlValue {
-            value: Some(sql_value::Value::Int64Value(cluster_id as i64)),
-        });
+        metadata.insert(
+            "cluster_id".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::Int64Value(cluster_id as i64)),
+            },
+        );
         metadata
     }
 }

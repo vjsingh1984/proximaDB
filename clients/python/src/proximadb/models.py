@@ -73,8 +73,8 @@ class DistanceMetricType(int, Enum):
     COSINE = 1
     EUCLIDEAN = 2
     DOT_PRODUCT = 3
-    MANHATTAN = 4
-    HAMMING = 5
+    HAMMING = 4
+    MANHATTAN = 5
     JACCARD = 6
     CHEBYSHEV = 7
     CANBERRA = 8
@@ -727,6 +727,8 @@ class FilterableColumn(BaseModel):
 
 class CollectionConfig(BaseModel):
     """Collection configuration aligned with proto CollectionConfig"""
+    model_config = ConfigDict(populate_by_name=True)
+
     # CORE CONFIGURATION (Required)
     name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with 7-char base62 IDs
     dimension: int = Field(ge=1, le=65536)  # Server default maximum is 65536 (configurable)
@@ -744,8 +746,14 @@ class CollectionConfig(BaseModel):
     
     # SCHEMA CONFIGURATION
     filterable_columns: Optional[List[FilterableColumn]] = None
-    quantization: Optional[QuantizationConfig] = None  # Vector quantization
-    
+    quantization_config: Optional[QuantizationConfig] = Field(None, alias='quantization')  # Vector quantization configuration
+    primary_indexing_algorithm: Optional[IndexingAlgorithm] = None  # Primary indexing algorithm
+
+    @property
+    def quantization(self):
+        """Alias property for backward compatibility"""
+        return self.quantization_config
+
     # METADATA
     description: Optional[str] = None
     tags: Optional[List[str]] = None
@@ -903,11 +911,31 @@ class Collection(BaseModel):
     def updated_at(self) -> int:
         """Backward compatibility: updated_at in seconds"""
         return self.updated_at_ms // 1000
-    
+
     @updated_at.setter
     def updated_at(self, value: int):
         """Backward compatibility: updated_at in seconds"""
         self.updated_at_ms = value * 1000
+
+    @property
+    def dimension(self) -> int:
+        """Backward compatibility property for dimension"""
+        return self.config.dimension
+
+    @property
+    def distance_metric(self):
+        """Backward compatibility property for distance metric"""
+        return self.config.distance_metric
+
+    @property
+    def storage_engine(self):
+        """Backward compatibility property for storage engine"""
+        return self.config.storage_engine
+
+    @property
+    def vector_count(self) -> int:
+        """Backward compatibility property for vector count"""
+        return self.stats.vector_count
 
 
 # ============================================================================
@@ -1051,12 +1079,28 @@ class SearchOptimization(BaseModel):
 
 
 class SearchResult(BaseModel):
-    """Search result"""
+    """Search result - aligned with SearchVectorRecord proto"""
     id: str
     score: float
     vector: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
     rank: Optional[int] = None
+    # Additional SearchVectorRecord fields (proto field 5-13)
+    version: Optional[int] = None  # Proto field 5
+    similarity: Optional[float] = None  # Proto field 6
+    timestamp: Optional[int] = None  # Proto field 7 (milliseconds)
+    source: Optional[str] = None  # Proto field 8 (original content for RAG)
+    expanded_context: Optional[List[str]] = None  # Proto field 9
+    semantic_similarity: Optional[float] = None  # Proto field 10
+    quantization_info: Optional[str] = None  # Proto field 11
+    engine_stats: Optional[Dict[str, str]] = None  # Proto field 12
+    index_path: Optional[str] = None  # Proto field 13
+
+    # Backward compatibility - map timestamp to timestamp_ms
+    @property
+    def timestamp_ms(self) -> Optional[int]:
+        """Alias for timestamp field"""
+        return self.timestamp
 
 
 class SearchProgress(BaseModel):

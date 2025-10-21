@@ -10,8 +10,8 @@ use tracing::{debug, info};
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::clustering::HilbertKey;
@@ -46,7 +46,9 @@ impl ProgressiveSearchCoordinator {
         sstables: &[SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         info!(
             "Starting progressive search for k={} across {} SSTables",
@@ -138,7 +140,9 @@ impl ProgressiveSearchCoordinator {
         sstables: &[&SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         quant_engine: &Arc<StorageQuantizationEngine>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut candidates = Vec::new();
@@ -205,7 +209,9 @@ impl ProgressiveSearchCoordinator {
         sstables: &[&SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut priority_queue = BoundedPriorityQueue::new(k);
@@ -300,7 +306,9 @@ impl ProgressiveSearchCoordinator {
         sstables: &[&SStableMetadata],
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut priority_queue = BoundedPriorityQueue::new(k);
 
@@ -337,7 +345,9 @@ impl ProgressiveSearchCoordinator {
         sstable: &SStableMetadata,
         k: usize,
         distance_metric: DistanceMetric,
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         quantization_level: &UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         // This is a simplified version - in production, would read
@@ -429,7 +439,7 @@ mod tests {
             SStableMetadata {
                 path: "test2.helix".into(),
                 level: 1,
-                hilbert_range: Some((10000, 11000)),  // More distant to ensure pruning
+                hilbert_range: Some((10000, 11000)), // More distant to ensure pruning
                 num_vectors: 100,
                 size_bytes: 1024,
                 created_at: chrono::Utc::now(),

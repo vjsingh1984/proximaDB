@@ -12,9 +12,9 @@
 
 use anyhow::{Result, anyhow};
 use serde_json::Value;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::cmp::Ordering;
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
 
@@ -532,9 +532,7 @@ pub fn get_field_value(
         metadata.get(field).cloned()
     } else {
         // Slow path: check extra_meta Map
-        extra_meta.and_then(|map| {
-            map.get(field).map(|s| Value::String(s.clone()))
-        })
+        extra_meta.and_then(|map| map.get(field).map(|s| Value::String(s.clone())))
     }
 }
 
@@ -547,7 +545,11 @@ pub fn evaluate_filter_with_config(
     filterable_columns: &[String],
 ) -> bool {
     match expr {
-        FilterExpression::Comparison { field, operator, value } => {
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => {
             let field_value = get_field_value(field, metadata, extra_meta, filterable_columns);
 
             if let Some(metadata_value) = field_value {
@@ -561,19 +563,23 @@ pub fn evaluate_filter_with_config(
                 }
             }
         }
-        FilterExpression::And(exprs) => {
-            exprs.iter().all(|e| evaluate_filter_with_config(e, metadata, extra_meta, filterable_columns))
-        }
-        FilterExpression::Or(exprs) => {
-            exprs.iter().any(|e| evaluate_filter_with_config(e, metadata, extra_meta, filterable_columns))
-        }
+        FilterExpression::And(exprs) => exprs
+            .iter()
+            .all(|e| evaluate_filter_with_config(e, metadata, extra_meta, filterable_columns)),
+        FilterExpression::Or(exprs) => exprs
+            .iter()
+            .any(|e| evaluate_filter_with_config(e, metadata, extra_meta, filterable_columns)),
         FilterExpression::Not(expr) => {
             !evaluate_filter_with_config(expr, metadata, extra_meta, filterable_columns)
         }
     }
 }
 
-fn evaluate_comparison_op(record_value: &Value, operator: &ComparisonOperator, expected: &Value) -> bool {
+fn evaluate_comparison_op(
+    record_value: &Value,
+    operator: &ComparisonOperator,
+    expected: &Value,
+) -> bool {
     match operator {
         ComparisonOperator::Equals => {
             if let (Value::Number(n1), Value::Number(n2)) = (record_value, expected) {
@@ -610,9 +616,10 @@ fn evaluate_comparison_op(record_value: &Value, operator: &ComparisonOperator, e
 
 fn compare_json_values(v1: &Value, v2: &Value) -> Ordering {
     match (v1, v2) {
-        (Value::Number(n1), Value::Number(n2)) => {
-            n1.as_f64().partial_cmp(&n2.as_f64()).unwrap_or(Ordering::Equal)
-        }
+        (Value::Number(n1), Value::Number(n2)) => n1
+            .as_f64()
+            .partial_cmp(&n2.as_f64())
+            .unwrap_or(Ordering::Equal),
         (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
         (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),
         _ => Ordering::Equal,

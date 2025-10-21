@@ -3,6 +3,6 @@
 pub mod engine;
 
 pub use engine::{
-    UsageMeteringEngine, UsageEvent, UsageEventType, UsageAggregate,
-    PricingConfig, MeteringConfig, UsageSummary, ResourceConsumption
+    MeteringConfig, PricingConfig, ResourceConsumption, UsageAggregate, UsageEvent, UsageEventType,
+    UsageMeteringEngine, UsageSummary,
 };

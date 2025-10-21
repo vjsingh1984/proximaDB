@@ -15,7 +15,10 @@ use std::sync::Arc;
 use crate::compute::quantization::{
     global_cache::{GlobalQuantizationCache, QuantizationCacheKey},
     storage_engine::StorageQuantizationEngine,
-    unified::{Codebook, CodebookData, CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine, QuantizationLevel},
+    unified::{
+        Codebook, CodebookData, CodebookStore, InMemoryCodebookStore, QuantizationLevel,
+        UnifiedQuantizationEngine,
+    },
 };
 use crate::storage::engines::core::formats::columnar::constants::*;
 
@@ -152,15 +155,15 @@ impl CodebookSerializer {
     /// Serialize codebook metadata to bytes for footer storage
     pub fn serialize_for_footer(&self, metadata: &QuantizationCodebookMetadata) -> Result<Bytes> {
         // Use bincode for efficient binary serialization
-        let bytes = bincode::serialize(metadata)
-            .context("Failed to serialize codebook metadata")?;
+        let bytes =
+            bincode::serialize(metadata).context("Failed to serialize codebook metadata")?;
         Ok(Bytes::from(bytes))
     }
 
     /// Deserialize codebook metadata from footer bytes
     pub fn deserialize_from_footer(&self, bytes: &[u8]) -> Result<QuantizationCodebookMetadata> {
-        let metadata = bincode::deserialize(bytes)
-            .context("Failed to deserialize codebook metadata")?;
+        let metadata =
+            bincode::deserialize(bytes).context("Failed to deserialize codebook metadata")?;
         Ok(metadata)
     }
 
@@ -200,9 +203,9 @@ impl CodebookSerializer {
             let binary_key = QuantizationCacheKey::binary(collection_id);
             if let Some(_codebook) = cache.get_codebook(&binary_key).await {
                 metadata.binary_codebook = Some(BinaryCodebook {
-                    threshold: 0.0,  // Default threshold
+                    threshold: 0.0, // Default threshold
                     mean: None,
-                    dimension: 0,  // Will be set during actual quantization
+                    dimension: 0, // Will be set during actual quantization
                 });
             }
 
@@ -224,7 +227,9 @@ impl CodebookSerializer {
                     let pq_key = QuantizationCacheKey::pq(collection_id, bits, subvectors);
                     if let Some(codebook) = cache.get_codebook(&pq_key).await {
                         let key = format!("pq{}_{}", bits, subvectors);
-                        metadata.pq_codebooks.insert(key, self.convert_to_pq_codebook(&codebook)?);
+                        metadata
+                            .pq_codebooks
+                            .insert(key, self.convert_to_pq_codebook(&codebook)?);
                     }
                 }
             }
@@ -241,10 +246,9 @@ impl CodebookSerializer {
                         // Format: {collection_id}_pq_{bits}_{subvectors}
                         if let Some(codebook) = engine.get_cached_codebook(&codebook_id) {
                             let key = codebook_id.replace(&format!("{}_", collection_id), "");
-                            metadata.pq_codebooks.insert(
-                                key,
-                                self.convert_cached_to_pq_codebook(&codebook)?
-                            );
+                            metadata
+                                .pq_codebooks
+                                .insert(key, self.convert_cached_to_pq_codebook(&codebook)?);
                         }
                     }
                 }
@@ -257,14 +261,18 @@ impl CodebookSerializer {
     /// Convert unified Codebook to PqCodebook
     fn convert_to_pq_codebook(&self, codebook: &Arc<Codebook>) -> Result<PqCodebook> {
         // Extract PQ data from the codebook
-        if let CodebookData::ProductQuantization { centroids, _subvector_dim } = &codebook.data {
+        if let CodebookData::ProductQuantization {
+            centroids,
+            _subvector_dim,
+        } = &codebook.data
+        {
             // Extract quantization parameters from the level
-            let (num_subvectors, bits_per_code) = if let Some(QuantizationLevel::Pq(pq)) =
-                &codebook.quantization_level.level_type {
-                (pq.num_subvectors, pq.bits_per_code)
-            } else {
-                return Err(anyhow::anyhow!("Codebook is not PQ type"));
-            };
+            let (num_subvectors, bits_per_code) =
+                if let Some(QuantizationLevel::Pq(pq)) = &codebook.quantization_level.level_type {
+                    (pq.num_subvectors, pq.bits_per_code)
+                } else {
+                    return Err(anyhow::anyhow!("Codebook is not PQ type"));
+                };
 
             let num_centroids = 1 << bits_per_code;
             let subvector_dim = *_subvector_dim;
@@ -355,7 +363,11 @@ impl CodebookSerializer {
         // Add binary codebook if configured
         if config.enable_binary.unwrap_or(false) {
             metadata.binary_codebook = Some(BinaryCodebook {
-                threshold: if config.binary_threshold.unwrap_or(0.0) != 0.0 { config.binary_threshold.unwrap_or(0.0) } else { 0.0 },
+                threshold: if config.binary_threshold.unwrap_or(0.0) != 0.0 {
+                    config.binary_threshold.unwrap_or(0.0)
+                } else {
+                    0.0
+                },
                 mean: None,
                 dimension,
             });
@@ -383,19 +395,25 @@ impl CodebookSerializer {
             let subvector_dim = (dimension + subvectors as usize - 1) / subvectors as usize;
             let num_centroids = 1 << bits;
 
-            metadata.pq_codebooks.insert(key, PqCodebook {
-                num_subvectors: subvectors,
-                bits_per_code: bits as u8,
-                centroids: vec![vec![vec![0.0; subvector_dim]; num_centroids]; subvectors as usize],
-                dimension,
-                subvector_dim,
-                num_centroids,
-                training_config: PqTrainingConfig {
-                    num_iterations: 100,
-                    seed: None,
-                    distance_metric: "euclidean".to_string(),
+            metadata.pq_codebooks.insert(
+                key,
+                PqCodebook {
+                    num_subvectors: subvectors,
+                    bits_per_code: bits as u8,
+                    centroids: vec![
+                        vec![vec![0.0; subvector_dim]; num_centroids];
+                        subvectors as usize
+                    ],
+                    dimension,
+                    subvector_dim,
+                    num_centroids,
+                    training_config: PqTrainingConfig {
+                        num_iterations: 100,
+                        seed: None,
+                        distance_metric: "euclidean".to_string(),
+                    },
                 },
-            });
+            );
         }
 
         metadata
@@ -471,41 +489,47 @@ impl ProximaBlockFooter {
         }
 
         let metadata_offset = u64::from_le_bytes([
-            buffer[8], buffer[9], buffer[10], buffer[11],
-            buffer[12], buffer[13], buffer[14], buffer[15],
+            buffer[8], buffer[9], buffer[10], buffer[11], buffer[12], buffer[13], buffer[14],
+            buffer[15],
         ]);
 
         let metadata_size = u64::from_le_bytes([
-            buffer[16], buffer[17], buffer[18], buffer[19],
-            buffer[20], buffer[21], buffer[22], buffer[23],
+            buffer[16], buffer[17], buffer[18], buffer[19], buffer[20], buffer[21], buffer[22],
+            buffer[23],
         ]);
 
         let codebook_offset_raw = u64::from_le_bytes([
-            buffer[24], buffer[25], buffer[26], buffer[27],
-            buffer[28], buffer[29], buffer[30], buffer[31],
+            buffer[24], buffer[25], buffer[26], buffer[27], buffer[28], buffer[29], buffer[30],
+            buffer[31],
         ]);
 
         let codebook_size_raw = u64::from_le_bytes([
-            buffer[32], buffer[33], buffer[34], buffer[35],
-            buffer[36], buffer[37], buffer[38], buffer[39],
+            buffer[32], buffer[33], buffer[34], buffer[35], buffer[36], buffer[37], buffer[38],
+            buffer[39],
         ]);
 
-        let codebook_offset = if codebook_offset_raw == 0 { None } else { Some(codebook_offset_raw) };
-        let codebook_size = if codebook_size_raw == 0 { None } else { Some(codebook_size_raw) };
+        let codebook_offset = if codebook_offset_raw == 0 {
+            None
+        } else {
+            Some(codebook_offset_raw)
+        };
+        let codebook_size = if codebook_size_raw == 0 {
+            None
+        } else {
+            Some(codebook_size_raw)
+        };
 
         let index_offset = u64::from_le_bytes([
-            buffer[40], buffer[41], buffer[42], buffer[43],
-            buffer[44], buffer[45], buffer[46], buffer[47],
+            buffer[40], buffer[41], buffer[42], buffer[43], buffer[44], buffer[45], buffer[46],
+            buffer[47],
         ]);
 
         let index_size = u64::from_le_bytes([
-            buffer[48], buffer[49], buffer[50], buffer[51],
-            buffer[52], buffer[53], buffer[54], buffer[55],
+            buffer[48], buffer[49], buffer[50], buffer[51], buffer[52], buffer[53], buffer[54],
+            buffer[55],
         ]);
 
-        let checksum = u32::from_le_bytes([
-            buffer[56], buffer[57], buffer[58], buffer[59],
-        ]);
+        let checksum = u32::from_le_bytes([buffer[56], buffer[57], buffer[58], buffer[59]]);
 
         Ok(Self {
             magic,

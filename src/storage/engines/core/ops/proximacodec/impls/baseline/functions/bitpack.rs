@@ -35,7 +35,10 @@ use anyhow::Result;
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     if bits == 0 || bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} is invalid (must be 1-32)", bits));
+        return Err(anyhow::anyhow!(
+            "Bit width {} is invalid (must be 1-32)",
+            bits
+        ));
     }
 
     if values.is_empty() {
@@ -54,7 +57,10 @@ pub fn encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
 /// Encode i64 values using bitpacking (raw, no headers)
 pub fn encode_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
     if bits == 0 || bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} is invalid (must be 1-64)", bits));
+        return Err(anyhow::anyhow!(
+            "Bit width {} is invalid (must be 1-64)",
+            bits
+        ));
     }
 
     if values.is_empty() {
@@ -70,7 +76,10 @@ pub fn encode_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 /// Encode i32 values using bitpacking (raw, no headers)
 pub fn encode_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
     if bits == 0 || bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} is invalid (must be 1-32)", bits));
+        return Err(anyhow::anyhow!(
+            "Bit width {} is invalid (must be 1-32)",
+            bits
+        ));
     }
 
     if values.is_empty() {

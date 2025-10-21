@@ -928,7 +928,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         // For now, use a default fallback
         let base_location = "file:///tmp/proximadb/data/wal";
 
-        let sequences = self.write_native_batch(batch, collection_id, base_location).await?;
+        let sequences = self
+            .write_native_batch(batch, collection_id, base_location)
+            .await?;
         Ok(sequences.into_iter().next().unwrap_or(0))
     }
 

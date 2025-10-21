@@ -4,7 +4,9 @@
 //! Implements Claude models with proper error handling and fallback support.
 
 use super::{LLMClient, RateLimitStatus, validate_request_safety};
-use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason};
+use crate::ai::llm_integration::types::{
+    FinishReason, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -85,14 +87,16 @@ impl AnthropicClient {
     pub async fn new(api_key: &str) -> Result<Self, LLMError> {
         if api_key.is_empty() {
             return Err(LLMError::ConfigurationError(
-                "Anthropic API key is required".to_string()
+                "Anthropic API key is required".to_string(),
             ));
         }
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
-            .map_err(|e| LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let anthropic_client = Self {
             client,
@@ -107,14 +111,21 @@ impl AnthropicClient {
     }
 
     /// Create Anthropic request from LLMRequest
-    fn build_anthropic_request(&self, request: &LLMRequest, context: &LLMRequestContext) -> AnthropicRequest {
+    fn build_anthropic_request(
+        &self,
+        request: &LLMRequest,
+        context: &LLMRequestContext,
+    ) -> AnthropicRequest {
         let messages = vec![AnthropicMessage {
             role: "user".to_string(),
             content: request.prompt.clone(),
         }];
 
         AnthropicRequest {
-            model: request.model.clone().unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
+            model: request
+                .model
+                .clone()
+                .unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
             max_tokens: request.max_tokens.unwrap_or(1000),
             messages,
             temperature: request.temperature,
@@ -126,8 +137,14 @@ impl AnthropicClient {
     }
 
     /// Parse Anthropic response into LLMResponse
-    fn parse_anthropic_response(&self, response: AnthropicResponse, response_time_ms: u64) -> Result<LLMResponse, LLMError> {
-        let content = response.content.into_iter()
+    fn parse_anthropic_response(
+        &self,
+        response: AnthropicResponse,
+        response_time_ms: u64,
+    ) -> Result<LLMResponse, LLMError> {
+        let content = response
+            .content
+            .into_iter()
             .filter(|c| c.content_type == "text")
             .map(|c| c.text)
             .collect::<Vec<_>>()
@@ -173,7 +190,11 @@ impl AnthropicClient {
 
 #[async_trait]
 impl LLMClient for AnthropicClient {
-    async fn query(&self, request: &LLMRequest, context: &LLMRequestContext) -> Result<LLMResponse, LLMError> {
+    async fn query(
+        &self,
+        request: &LLMRequest,
+        context: &LLMRequestContext,
+    ) -> Result<LLMResponse, LLMError> {
         let start_time = Instant::now();
 
         // Validate request safety
@@ -190,7 +211,8 @@ impl LLMClient for AnthropicClient {
         );
 
         // Send request to Anthropic
-        let response = self.client
+        let response = self
+            .client
             .post(&format!("{}/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -203,25 +225,35 @@ impl LLMClient for AnthropicClient {
         let status = response.status();
 
         // Get response body
-        let response_body = response.text().await
+        let response_body = response
+            .text()
+            .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to read response: {}", e)))?;
 
         // Handle error responses
         if !status.is_success() {
             // Try to parse error response
-            if let Ok(error_response) = serde_json::from_str::<AnthropicErrorResponse>(&response_body) {
+            if let Ok(error_response) =
+                serde_json::from_str::<AnthropicErrorResponse>(&response_body)
+            {
                 return Err(LLMError::APIError {
                     provider: LLMProvider::Anthropic,
                     message: format!("{}: {}", error_response.error_type, error_response.message),
                 });
             } else {
-                return Err(super::handle_http_error(status, &response_body, LLMProvider::Anthropic));
+                return Err(super::handle_http_error(
+                    status,
+                    &response_body,
+                    LLMProvider::Anthropic,
+                ));
             }
         }
 
         // Parse successful response
-        let anthropic_response: AnthropicResponse = serde_json::from_str(&response_body)
-            .map_err(|e| LLMError::ParseError(format!("Failed to parse Anthropic response: {}", e)))?;
+        let anthropic_response: AnthropicResponse =
+            serde_json::from_str(&response_body).map_err(|e| {
+                LLMError::ParseError(format!("Failed to parse Anthropic response: {}", e))
+            })?;
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -266,7 +298,8 @@ impl LLMClient for AnthropicClient {
             metadata: None,
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&format!("{}/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -311,15 +344,18 @@ mod tests {
             .with_temperature(0.5)
             .with_system_prompt("You are an expert assistant".to_string());
 
-        let context = LLMRequestContext::new("test_request".to_string())
-            .with_user("test_user".to_string());
+        let context =
+            LLMRequestContext::new("test_request".to_string()).with_user("test_user".to_string());
 
         let anthropic_request = client.build_anthropic_request(&request, &context);
 
         assert_eq!(anthropic_request.model, "claude-3-sonnet-20240229");
         assert_eq!(anthropic_request.max_tokens, 200);
         assert_eq!(anthropic_request.temperature, Some(0.5));
-        assert_eq!(anthropic_request.system, Some("You are an expert assistant".to_string()));
+        assert_eq!(
+            anthropic_request.system,
+            Some("You are an expert assistant".to_string())
+        );
         assert_eq!(anthropic_request.messages.len(), 1);
     }
 }

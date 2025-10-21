@@ -17,8 +17,10 @@ pub fn parse_metadata_query(
     }
 
     // Check if there's a special "__logical_query" or "$logical" field containing JSON
-    if let Some(logical_query_json) = metadata_filter.get("__logical_query")
-        .or_else(|| metadata_filter.get("$logical")) {
+    if let Some(logical_query_json) = metadata_filter
+        .get("__logical_query")
+        .or_else(|| metadata_filter.get("$logical"))
+    {
         return parse_json_logical_query(logical_query_json);
     }
 
@@ -207,7 +209,10 @@ fn parse_operator_queries(
 
 /// Parse NOT query from special field
 fn parse_not_query(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
-    if let Some(not_value) = metadata_filter.get("__not").or_else(|| metadata_filter.get("$not")) {
+    if let Some(not_value) = metadata_filter
+        .get("__not")
+        .or_else(|| metadata_filter.get("$not"))
+    {
         match serde_json::from_str::<JsonValue>(not_value) {
             Ok(json_value) => {
                 if let Some(inner_query) = parse_json_query_value(&json_value)? {

@@ -44,9 +44,7 @@ impl EmbeddingGenerator {
 
     /// Generate multiple embedding vectors
     pub fn generate_batch(&mut self, count: usize, dimension: usize) -> Vec<Vec<f32>> {
-        (0..count)
-            .map(|_| self.generate(dimension))
-            .collect()
+        (0..count).map(|_| self.generate(dimension)).collect()
     }
 
     /// BERT-style embeddings: Normal distribution with mean=0, std=1.5
@@ -57,7 +55,8 @@ impl EmbeddingGenerator {
                 // Box-Muller transform for normal distribution
                 let u1: f32 = self.rng.gen_range(0.0001..1.0);
                 let u2: f32 = self.rng.gen_range(0.0..1.0);
-                let val = (-2.0f32 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos() * 1.5;
+                let val =
+                    (-2.0f32 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos() * 1.5;
                 // Soft clamp to [-5, 5] range (rare values might exceed)
                 val.max(-5.0).min(5.0)
             })
@@ -83,7 +82,8 @@ impl EmbeddingGenerator {
             // Generate from normal distribution using Box-Muller transform
             let u1: f32 = self.rng.gen_range(0.0001..1.0);
             let u2: f32 = self.rng.gen_range(0.0..1.0);
-            let normal_val: f32 = (-2.0f32 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
+            let normal_val: f32 =
+                (-2.0f32 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
 
             // Apply transformation to create OpenAI-like distribution:
             // 1. Shift mean to positive (around 0.3)
@@ -183,12 +183,14 @@ impl EmbeddingStats {
         let max = embedding.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let mean = embedding.iter().sum::<f32>() / embedding.len() as f32;
 
-        let variance = embedding.iter()
+        let variance = embedding
+            .iter()
             .map(|&x| {
                 let diff = x - mean;
                 diff * diff
             })
-            .sum::<f32>() / embedding.len() as f32;
+            .sum::<f32>()
+            / embedding.len() as f32;
 
         let std_dev = variance.sqrt();
         let zero_count = embedding.iter().filter(|&&x| x == 0.0).count();
@@ -208,7 +210,10 @@ impl EmbeddingStats {
         println!("=== {} Embedding Stats ===", model_name);
         println!("Range: [{:.3}, {:.3}]", self.min, self.max);
         println!("Mean: {:.3}, Std Dev: {:.3}", self.mean, self.std_dev);
-        println!("Zero values: {} | Negative values: {}", self.zero_count, self.negative_count);
+        println!(
+            "Zero values: {} | Negative values: {}",
+            self.zero_count, self.negative_count
+        );
     }
 }
 
@@ -225,7 +230,10 @@ mod tests {
         // BERT embeddings should be roughly centered around 0
         assert!(stats.mean.abs() < 0.5, "BERT mean should be near 0");
         // Most values should be in [-5, 5]
-        assert!(stats.min >= -6.0 && stats.max <= 6.0, "BERT range should be roughly [-5, 5]");
+        assert!(
+            stats.min >= -6.0 && stats.max <= 6.0,
+            "BERT range should be roughly [-5, 5]"
+        );
         // Should have both positive and negative values
         assert!(stats.negative_count > 0, "BERT should have negative values");
     }
@@ -240,7 +248,10 @@ mod tests {
         assert!(stats.mean > 0.0, "OpenAI mean should be positive");
         // Should have few negative values
         let negative_ratio = stats.negative_count as f32 / embedding.len() as f32;
-        assert!(negative_ratio < 0.2, "OpenAI should have <20% negative values");
+        assert!(
+            negative_ratio < 0.2,
+            "OpenAI should have <20% negative values"
+        );
     }
 
     #[test]
@@ -250,7 +261,10 @@ mod tests {
 
         // Check L2 norm is approximately 1
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((norm - 1.0).abs() < 0.01, "Normalized embedding should have unit norm");
+        assert!(
+            (norm - 1.0).abs() < 0.01,
+            "Normalized embedding should have unit norm"
+        );
     }
 
     #[test]
@@ -266,7 +280,10 @@ mod tests {
             let stats = EmbeddingStats::from_embedding(embedding);
             // Should have approximately 50% zeros
             let zero_ratio = stats.zero_count as f32 / embedding.len() as f32;
-            assert!(zero_ratio > 0.4 && zero_ratio < 0.6, "Should have ~50% sparsity");
+            assert!(
+                zero_ratio > 0.4 && zero_ratio < 0.6,
+                "Should have ~50% sparsity"
+            );
         }
     }
 }

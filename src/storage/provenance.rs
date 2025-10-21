@@ -150,29 +150,34 @@ impl InMemoryProvenanceRegistry {
                 Ok(provenance_records) => {
                     let source_map = &self.source_index;
                     let chunk_map = &self.chunk_index;
-                    
+
                     // Rebuild indices from stored provenance data
                     for prov in provenance_records {
                         // Create entity identifier from source and chunk info
                         let entity_id = format!("{}:{}", prov.source_id, prov.chunk_id);
-                        
-                        source_map.entry(prov.source_id.clone())
+
+                        source_map
+                            .entry(prov.source_id.clone())
                             .or_insert_with(HashSet::new)
                             .insert(entity_id.clone());
-                        
-                        chunk_map.entry(prov.chunk_id.clone())
+
+                        chunk_map
+                            .entry(prov.chunk_id.clone())
                             .or_insert_with(HashSet::new)
                             .insert(entity_id);
                     }
-                    
-                    info!("Loaded {} provenance records from storage", source_map.len());
+
+                    info!(
+                        "Loaded {} provenance records from storage",
+                        source_map.len()
+                    );
                 }
                 Err(e) => {
                     debug!("No existing provenance records found: {}", e);
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -222,7 +227,11 @@ impl InMemoryProvenanceRegistry {
 // Implement the simple ProvenanceRegistry trait from entity_store for compatibility
 #[async_trait]
 impl crate::storage::entity_store::ProvenanceRegistry for InMemoryProvenanceRegistry {
-    async fn register_provenance(&self, entity_id: &str, provenance: Provenance) -> anyhow::Result<()> {
+    async fn register_provenance(
+        &self,
+        entity_id: &str,
+        provenance: Provenance,
+    ) -> anyhow::Result<()> {
         // Delegate to the full trait implementation
         <Self as ProvenanceRegistry>::register_provenance(self, entity_id, provenance).await
     }

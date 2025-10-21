@@ -233,8 +233,10 @@ where
                     // Only increment if we've reached a new growth level
                     if expected_grows > stats.pool_grows {
                         stats.pool_grows = expected_grows;
-                        trace!("📈 Pool grew to level {}, total capacity: {}",
-                            stats.pool_grows, total_capacity);
+                        trace!(
+                            "📈 Pool grew to level {}, total capacity: {}",
+                            stats.pool_grows, total_capacity
+                        );
                     }
                 }
             }

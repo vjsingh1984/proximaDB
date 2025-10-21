@@ -418,7 +418,9 @@ impl ColumnarSchema {
                 )));
             }
 
-            if quant_config.enable_int8.unwrap_or(false) && existing_schema.field_with_name("vector_int8").is_err() {
+            if quant_config.enable_int8.unwrap_or(false)
+                && existing_schema.field_with_name("vector_int8").is_err()
+            {
                 fields.extend([
                     Arc::new(Field::new(
                         "vector_int8",
@@ -430,7 +432,9 @@ impl ColumnarSchema {
                 ]);
             }
 
-            if quant_config.enable_pq.unwrap_or(false) && existing_schema.field_with_name("vector_pq").is_err() {
+            if quant_config.enable_pq.unwrap_or(false)
+                && existing_schema.field_with_name("vector_pq").is_err()
+            {
                 fields.extend([
                     Arc::new(Field::new(
                         "vector_pq",

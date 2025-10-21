@@ -49,8 +49,7 @@ mod metal_ffi {
         /// Create new Metal context with compiled shader library
         pub fn new() -> Result<Self, String> {
             // Get default Metal device (Apple GPU)
-            let device = Device::system_default()
-                .ok_or("No Metal device found")?;
+            let device = Device::system_default().ok_or("No Metal device found")?;
 
             // Create command queue
             let command_queue = device.new_command_queue();
@@ -60,13 +59,15 @@ mod metal_ffi {
                 .unwrap_or_else(|_| "target/metal/libproximadb_metal.metallib".to_string());
 
             let library = if std::path::Path::new(&library_path).exists() {
-                device.new_library_with_file(&library_path)
+                device
+                    .new_library_with_file(&library_path)
                     .map_err(|e| format!("Failed to load Metal library: {}", e))?
             } else {
                 // Fallback: compile from source (slower, for development)
                 let source = include_str!("kernels.metal");
                 let options = CompileOptions::new();
-                device.new_library_with_source(source, &options)
+                device
+                    .new_library_with_source(source, &options)
                     .map_err(|e| format!("Failed to compile Metal shaders: {}", e))?
             };
 
@@ -79,10 +80,13 @@ mod metal_ffi {
 
         /// Get compute pipeline for a kernel function
         pub fn get_pipeline(&self, function_name: &str) -> Result<ComputePipelineState, String> {
-            let function = self.library.get_function(function_name, None)
+            let function = self
+                .library
+                .get_function(function_name, None)
                 .map_err(|e| format!("Function '{}' not found: {}", function_name, e))?;
 
-            self.device.new_compute_pipeline_state_with_function(&function)
+            self.device
+                .new_compute_pipeline_state_with_function(&function)
                 .map_err(|e| format!("Failed to create pipeline: {}", e))
         }
     }
@@ -172,15 +176,20 @@ impl MetalContext {
     pub fn new(total_vectors: usize, dimension: usize) -> Result<Self> {
         let config = GpuBatchConfig::for_backend(&HardwareBackend::MPS, total_vectors, dimension);
 
-        debug!("🍎 [Metal] Initializing context: {} vectors, dim={}",
-               total_vectors, dimension);
+        debug!(
+            "🍎 [Metal] Initializing context: {} vectors, dim={}",
+            total_vectors, dimension
+        );
 
         #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
         {
             let metal_ctx = metal_ffi::RawMetalContext::new()
                 .map_err(|e| anyhow::anyhow!("Failed to initialize Metal: {}", e))?;
 
-            debug!("✅ [Metal] Initialized GPU device: {}", metal_ctx.device.name());
+            debug!(
+                "✅ [Metal] Initialized GPU device: {}",
+                metal_ctx.device.name()
+            );
 
             Ok(Self {
                 config,
@@ -232,7 +241,11 @@ impl MetalContext {
 /// }
 /// ```
 pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
-    trace!("🔧 [Metal] Delta encode: {} values, base={}", values.len(), base);
+    trace!(
+        "🔧 [Metal] Delta encode: {} values, base={}",
+        values.len(),
+        base
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
@@ -242,7 +255,8 @@ pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
         // Get compute pipeline
-        let pipeline = ctx.get_pipeline("delta_encode_f32")
+        let pipeline = ctx
+            .get_pipeline("delta_encode_f32")
             .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
         // Create GPU buffers
@@ -253,13 +267,22 @@ pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
         let base_buffer = create_buffer(&ctx.device, &[base]);
 
         // Execute kernel
-        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer], values.len())
-            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &pipeline,
+            &[&input_buffer, &output_buffer, &base_buffer],
+            values.len(),
+        )
+        .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
         // Read results
         let deltas = read_buffer::<i64>(&output_buffer, values.len());
 
-        debug!("✅ [Metal] Delta encoded {} values → {} deltas (GPU)", values.len(), deltas.len());
+        debug!(
+            "✅ [Metal] Delta encoded {} values → {} deltas (GPU)",
+            values.len(),
+            deltas.len()
+        );
         Ok(deltas)
     }
 
@@ -267,7 +290,11 @@ pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     {
         // CPU fallback
         let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
-        debug!("✅ [Metal] Delta encoded {} values → {} deltas (CPU fallback)", values.len(), deltas.len());
+        debug!(
+            "✅ [Metal] Delta encoded {} values → {} deltas (CPU fallback)",
+            values.len(),
+            deltas.len()
+        );
         Ok(deltas)
     }
 }
@@ -286,7 +313,11 @@ pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 /// }
 /// ```
 pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
-    trace!("🔧 [Metal] Delta decode: {} deltas, base={}", deltas.len(), base);
+    trace!(
+        "🔧 [Metal] Delta decode: {} deltas, base={}",
+        deltas.len(),
+        base
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
@@ -295,26 +326,40 @@ pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
         let ctx = metal_ffi::RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-        let pipeline = ctx.get_pipeline("delta_decode_f32")
+        let pipeline = ctx
+            .get_pipeline("delta_decode_f32")
             .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
         let input_buffer = create_buffer(&ctx.device, deltas);
         let output_buffer = create_empty_buffer::<f32>(&ctx.device, deltas.len());
         let base_buffer = create_buffer(&ctx.device, &[base]);
 
-        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer], deltas.len())
-            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &pipeline,
+            &[&input_buffer, &output_buffer, &base_buffer],
+            deltas.len(),
+        )
+        .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
         let values = read_buffer::<f32>(&output_buffer, deltas.len());
 
-        debug!("✅ [Metal] Delta decoded {} deltas → {} values (GPU)", deltas.len(), values.len());
+        debug!(
+            "✅ [Metal] Delta decoded {} deltas → {} values (GPU)",
+            deltas.len(),
+            values.len()
+        );
         Ok(values)
     }
 
     #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
     {
         let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
-        debug!("✅ [Metal] Delta decoded {} deltas → {} values (CPU fallback)", deltas.len(), values.len());
+        debug!(
+            "✅ [Metal] Delta decoded {} deltas → {} values (CPU fallback)",
+            deltas.len(),
+            values.len()
+        );
         Ok(values)
     }
 }
@@ -345,16 +390,23 @@ pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 /// }
 /// ```
 pub fn metal_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [Metal] BitPacked encode: {} values, {}b/val", values.len(), bits);
+    trace!(
+        "🔧 [Metal] BitPacked encode: {} values, {}b/val",
+        values.len(),
+        bits
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
-        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
+        use metal_ffi::{
+            RawMetalContext, create_buffer, create_empty_buffer, execute_kernel, read_buffer,
+        };
 
         let ctx = RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-        let pipeline = ctx.get_pipeline("bitpack_encode")
+        let pipeline = ctx
+            .get_pipeline("bitpack_encode")
             .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
         // Convert f32 to i64 for bitpacking
@@ -369,8 +421,13 @@ pub fn metal_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
         let n_buffer = create_buffer(&ctx.device, &[values.len() as i32]);
 
-        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &bit_width_buffer, &n_buffer], values.len())
-            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &pipeline,
+            &[&input_buffer, &output_buffer, &bit_width_buffer, &n_buffer],
+            values.len(),
+        )
+        .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
         // Read result and convert to bytes
         let packed_words = read_buffer::<u32>(&output_buffer, word_count);
@@ -384,7 +441,11 @@ pub fn metal_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
             }
         }
 
-        debug!("✅ [Metal] BitPacked encoded {} values → {} bytes (GPU)", values.len(), result.len());
+        debug!(
+            "✅ [Metal] BitPacked encoded {} values → {} bytes (GPU)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 
@@ -395,7 +456,11 @@ pub fn metal_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         let byte_count = (total_bits + 7) / 8;
         let mut result = vec![0u8; byte_count];
 
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
 
         for (i, &value) in values.iter().enumerate() {
             let bit_offset = i * bits as usize;
@@ -410,23 +475,35 @@ pub fn metal_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
             }
         }
 
-        debug!("✅ [Metal] BitPacked encoded {} values → {} bytes (CPU fallback)", values.len(), result.len());
+        debug!(
+            "✅ [Metal] BitPacked encoded {} values → {} bytes (CPU fallback)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 }
 
 /// Metal BitPacked decoding for f32
 pub fn metal_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [Metal] BitPacked decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
+    trace!(
+        "🔧 [Metal] BitPacked decode: {} bytes, {}b/val, count={}",
+        packed.len(),
+        bits,
+        count
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
-        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
+        use metal_ffi::{
+            RawMetalContext, create_buffer, create_empty_buffer, execute_kernel, read_buffer,
+        };
 
         let ctx = RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-        let pipeline = ctx.get_pipeline("bitpack_decode")
+        let pipeline = ctx
+            .get_pipeline("bitpack_decode")
             .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
         let input_buffer = create_buffer(&ctx.device, packed);
@@ -434,20 +511,36 @@ pub fn metal_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result
         let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
         let n_buffer = create_buffer(&ctx.device, &[count as i32]);
 
-        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &bit_width_buffer, &n_buffer], count)
-            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &pipeline,
+            &[&input_buffer, &output_buffer, &bit_width_buffer, &n_buffer],
+            count,
+        )
+        .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
         let decoded_i64 = read_buffer::<i64>(&output_buffer, count);
-        let result: Vec<f32> = decoded_i64.iter().map(|&v| f32::from_bits(v as u32)).collect();
+        let result: Vec<f32> = decoded_i64
+            .iter()
+            .map(|&v| f32::from_bits(v as u32))
+            .collect();
 
-        debug!("✅ [Metal] BitPacked decoded {} bytes → {} values (GPU)", packed.len(), result.len());
+        debug!(
+            "✅ [Metal] BitPacked decoded {} bytes → {} values (GPU)",
+            packed.len(),
+            result.len()
+        );
         Ok(result)
     }
 
     #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
     {
         // CPU fallback
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
         let mut result = Vec::with_capacity(count);
 
         for i in 0..count {
@@ -469,7 +562,11 @@ pub fn metal_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result
             result.push(f32::from_bits(value & mask));
         }
 
-        debug!("✅ [Metal] BitPacked decoded {} bytes → {} values (CPU fallback)", packed.len(), result.len());
+        debug!(
+            "✅ [Metal] BitPacked decoded {} bytes → {} values (CPU fallback)",
+            packed.len(),
+            result.len()
+        );
         Ok(result)
     }
 }
@@ -481,9 +578,17 @@ pub fn metal_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result
 /// Metal FrameOfReference encoding
 ///
 /// Combines delta encoding with bit-packing using unified memory
-pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [Metal] FrameOfReference encode: {} values, ref={}, {}b/val",
-           values.len(), reference, bits);
+pub fn metal_frame_of_reference_encode_f32(
+    values: &[f32],
+    reference: i64,
+    bits: u8,
+) -> Result<Vec<u8>> {
+    trace!(
+        "🔧 [Metal] FrameOfReference encode: {} values, ref={}, {}b/val",
+        values.len(),
+        reference,
+        bits
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
@@ -492,7 +597,8 @@ pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits:
         let ctx = metal_ffi::RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-        let pipeline = ctx.get_pipeline("for_encode_f32")
+        let pipeline = ctx
+            .get_pipeline("for_encode_f32")
             .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
         let total_bits = values.len() * bits as usize;
@@ -505,8 +611,19 @@ pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits:
         let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
         let n_buffer = create_buffer(&ctx.device, &[values.len() as i32]);
 
-        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer, &bit_width_buffer, &n_buffer], values.len())
-            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &pipeline,
+            &[
+                &input_buffer,
+                &output_buffer,
+                &base_buffer,
+                &bit_width_buffer,
+                &n_buffer,
+            ],
+            values.len(),
+        )
+        .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
         let packed_words = read_buffer::<u32>(&output_buffer, word_count);
         let mut result = vec![0u8; byte_count];
@@ -519,8 +636,11 @@ pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits:
             }
         }
 
-        debug!("✅ [Metal] FrameOfReference encoded {} values → {} bytes (GPU)",
-               values.len(), result.len());
+        debug!(
+            "✅ [Metal] FrameOfReference encoded {} values → {} bytes (GPU)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 
@@ -534,7 +654,11 @@ pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits:
         let byte_count = (total_bits + 7) / 8;
         let mut result = vec![0u8; byte_count];
 
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
 
         for (i, &offset) in offsets.iter().enumerate() {
             let bit_offset = i * bits as usize;
@@ -549,16 +673,29 @@ pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits:
             }
         }
 
-        debug!("✅ [Metal] FrameOfReference encoded {} values → {} bytes (CPU fallback)",
-               values.len(), result.len());
+        debug!(
+            "✅ [Metal] FrameOfReference encoded {} values → {} bytes (CPU fallback)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 }
 
 /// Metal FrameOfReference decoding
-pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [Metal] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
-           packed.len(), reference, bits, count);
+pub fn metal_frame_of_reference_decode_f32(
+    packed: &[u8],
+    reference: i64,
+    bits: u8,
+    count: usize,
+) -> Result<Vec<f32>> {
+    trace!(
+        "🔧 [Metal] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
+        packed.len(),
+        reference,
+        bits,
+        count
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
@@ -567,7 +704,8 @@ pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: 
         let ctx = metal_ffi::RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-        let pipeline = ctx.get_pipeline("for_decode_f32")
+        let pipeline = ctx
+            .get_pipeline("for_decode_f32")
             .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
         let input_buffer = create_buffer(&ctx.device, packed);
@@ -576,20 +714,38 @@ pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: 
         let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
         let n_buffer = create_buffer(&ctx.device, &[count as i32]);
 
-        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer, &bit_width_buffer, &n_buffer], count)
-            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &pipeline,
+            &[
+                &input_buffer,
+                &output_buffer,
+                &base_buffer,
+                &bit_width_buffer,
+                &n_buffer,
+            ],
+            count,
+        )
+        .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
         let values = read_buffer::<f32>(&output_buffer, count);
 
-        debug!("✅ [Metal] FrameOfReference decoded {} bytes → {} values (GPU)",
-               packed.len(), values.len());
+        debug!(
+            "✅ [Metal] FrameOfReference decoded {} bytes → {} values (GPU)",
+            packed.len(),
+            values.len()
+        );
         Ok(values)
     }
 
     #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
     {
         // CPU fallback
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
         let mut offsets = Vec::with_capacity(count);
 
         for i in 0..count {
@@ -612,10 +768,16 @@ pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: 
         }
 
         let reference_f32 = reference as f32;
-        let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+        let values: Vec<f32> = offsets
+            .iter()
+            .map(|&offset| offset as f32 + reference_f32)
+            .collect();
 
-        debug!("✅ [Metal] FrameOfReference decoded {} bytes → {} values (CPU fallback)",
-               packed.len(), values.len());
+        debug!(
+            "✅ [Metal] FrameOfReference decoded {} bytes → {} values (CPU fallback)",
+            packed.len(),
+            values.len()
+        );
         Ok(values)
     }
 }
@@ -638,11 +800,17 @@ pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: 
 /// }
 /// ```
 pub fn metal_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    trace!("🔧 [Metal] Zigzag encode: {} values, {}b/val", values.len(), bits);
+    trace!(
+        "🔧 [Metal] Zigzag encode: {} values, {}b/val",
+        values.len(),
+        bits
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
-        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
+        use metal_ffi::{
+            RawMetalContext, create_buffer, create_empty_buffer, execute_kernel, read_buffer,
+        };
 
         let ctx = RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
@@ -651,20 +819,27 @@ pub fn metal_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         let values_i64: Vec<i64> = values.iter().map(|&v| v.to_bits() as i64).collect();
 
         // Step 1: Zigzag encode on GPU
-        let zigzag_pipeline = ctx.get_pipeline("zigzag_encode")
+        let zigzag_pipeline = ctx
+            .get_pipeline("zigzag_encode")
             .map_err(|e| anyhow::anyhow!("Zigzag pipeline creation failed: {}", e))?;
 
         let input_buffer = create_buffer(&ctx.device, &values_i64);
         let zigzag_buffer = create_empty_buffer::<u64>(&ctx.device, values.len());
 
-        execute_kernel(&ctx, &zigzag_pipeline, &[&input_buffer, &zigzag_buffer], values.len())
-            .map_err(|e| anyhow::anyhow!("Zigzag kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &zigzag_pipeline,
+            &[&input_buffer, &zigzag_buffer],
+            values.len(),
+        )
+        .map_err(|e| anyhow::anyhow!("Zigzag kernel execution failed: {}", e))?;
 
         let zigzag_u64 = read_buffer::<u64>(&zigzag_buffer, values.len());
         let zigzag_i64: Vec<i64> = zigzag_u64.iter().map(|&v| v as i64).collect();
 
         // Step 2: Bitpack the zigzag values on GPU
-        let bitpack_pipeline = ctx.get_pipeline("bitpack_encode")
+        let bitpack_pipeline = ctx
+            .get_pipeline("bitpack_encode")
             .map_err(|e| anyhow::anyhow!("BitPack pipeline creation failed: {}", e))?;
 
         let total_bits = zigzag_i64.len() * bits as usize;
@@ -676,8 +851,18 @@ pub fn metal_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
         let n_buffer = create_buffer(&ctx.device, &[zigzag_i64.len() as i32]);
 
-        execute_kernel(&ctx, &bitpack_pipeline, &[&bitpack_input_buffer, &output_buffer, &bit_width_buffer, &n_buffer], zigzag_i64.len())
-            .map_err(|e| anyhow::anyhow!("BitPack kernel execution failed: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &bitpack_pipeline,
+            &[
+                &bitpack_input_buffer,
+                &output_buffer,
+                &bit_width_buffer,
+                &n_buffer,
+            ],
+            zigzag_i64.len(),
+        )
+        .map_err(|e| anyhow::anyhow!("BitPack kernel execution failed: {}", e))?;
 
         // Read result and convert to bytes
         let packed_words = read_buffer::<u32>(&output_buffer, word_count);
@@ -691,25 +876,36 @@ pub fn metal_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
             }
         }
 
-        debug!("✅ [Metal] Zigzag encoded {} values → {} bytes (GPU)", values.len(), result.len());
+        debug!(
+            "✅ [Metal] Zigzag encoded {} values → {} bytes (GPU)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 
     #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
     {
         // CPU fallback
-        let zigzag: Vec<i64> = values.iter().map(|&v| {
-            let n = v.to_bits() as i32;
-            let zz = (n << 1) ^ (n >> 31);
-            zz as i64
-        }).collect();
+        let zigzag: Vec<i64> = values
+            .iter()
+            .map(|&v| {
+                let n = v.to_bits() as i32;
+                let zz = (n << 1) ^ (n >> 31);
+                zz as i64
+            })
+            .collect();
 
         // Bit-pack zigzag values
         let total_bits = zigzag.len() * bits as usize;
         let byte_count = (total_bits + 7) / 8;
         let mut result = vec![0u8; byte_count];
 
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
 
         for (i, &zz) in zigzag.iter().enumerate() {
             let bit_offset = i * bits as usize;
@@ -724,24 +920,36 @@ pub fn metal_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
             }
         }
 
-        debug!("✅ [Metal] Zigzag encoded {} values → {} bytes (CPU fallback)", values.len(), result.len());
+        debug!(
+            "✅ [Metal] Zigzag encoded {} values → {} bytes (CPU fallback)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 }
 
 /// Metal Zigzag decoding
 pub fn metal_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [Metal] Zigzag decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
+    trace!(
+        "🔧 [Metal] Zigzag decode: {} bytes, {}b/val, count={}",
+        packed.len(),
+        bits,
+        count
+    );
 
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     {
-        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
+        use metal_ffi::{
+            RawMetalContext, create_buffer, create_empty_buffer, execute_kernel, read_buffer,
+        };
 
         let ctx = RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Failed to create Metal context: {}", e))?;
 
         // Step 1: Bit-unpack using GPU
-        let bitpack_pipeline = ctx.get_pipeline("bitpack_decode")
+        let bitpack_pipeline = ctx
+            .get_pipeline("bitpack_decode")
             .map_err(|e| anyhow::anyhow!("Failed to get bitpack_decode pipeline: {}", e))?;
 
         let packed_buffer = create_buffer(&ctx.device, packed);
@@ -752,17 +960,27 @@ pub fn metal_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
         execute_kernel(
             &ctx,
             &bitpack_pipeline,
-            &[&packed_buffer, &unpacked_buffer, &bit_width_buffer, &n_buffer],
+            &[
+                &packed_buffer,
+                &unpacked_buffer,
+                &bit_width_buffer,
+                &n_buffer,
+            ],
             count,
-        ).map_err(|e| anyhow::anyhow!("Bitpack decode kernel failed: {}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("Bitpack decode kernel failed: {}", e))?;
 
         let zigzag_values = read_buffer::<i64>(&unpacked_buffer, count);
 
         // Step 2: Zigzag decode using GPU
-        let zigzag_pipeline = ctx.get_pipeline("zigzag_decode")
+        let zigzag_pipeline = ctx
+            .get_pipeline("zigzag_decode")
             .map_err(|e| anyhow::anyhow!("Failed to get zigzag_decode pipeline: {}", e))?;
 
-        let zigzag_input = create_buffer(&ctx.device, &zigzag_values.iter().map(|&v| v as u64).collect::<Vec<_>>());
+        let zigzag_input = create_buffer(
+            &ctx.device,
+            &zigzag_values.iter().map(|&v| v as u64).collect::<Vec<_>>(),
+        );
         let decoded_buffer = create_empty_buffer::<i64>(&ctx.device, count);
 
         execute_kernel(
@@ -770,7 +988,8 @@ pub fn metal_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
             &zigzag_pipeline,
             &[&zigzag_input, &decoded_buffer],
             count,
-        ).map_err(|e| anyhow::anyhow!("Zigzag decode kernel failed: {}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("Zigzag decode kernel failed: {}", e))?;
 
         let decoded_values = read_buffer::<i64>(&decoded_buffer, count);
 
@@ -780,14 +999,22 @@ pub fn metal_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
             .map(|&v| f32::from_bits(v as u32))
             .collect();
 
-        debug!("✅ [Metal GPU] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
+        debug!(
+            "✅ [Metal GPU] Zigzag decoded {} bytes → {} values",
+            packed.len(),
+            values.len()
+        );
         Ok(values)
     }
 
     #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
     {
         // CPU fallback: Step 1 - Bit-unpack
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
         let mut zigzag = Vec::with_capacity(count);
 
         for i in 0..count {
@@ -810,12 +1037,19 @@ pub fn metal_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
         }
 
         // Step 2: Reverse zigzag
-        let values: Vec<f32> = zigzag.iter().map(|&zz| {
-            let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
-            f32::from_bits(n as u32)
-        }).collect();
+        let values: Vec<f32> = zigzag
+            .iter()
+            .map(|&zz| {
+                let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
+                f32::from_bits(n as u32)
+            })
+            .collect();
 
-        debug!("✅ [Metal CPU fallback] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
+        debug!(
+            "✅ [Metal CPU fallback] Zigzag decoded {} bytes → {} values",
+            packed.len(),
+            values.len()
+        );
         Ok(values)
     }
 }
@@ -825,18 +1059,36 @@ pub fn metal_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
 // ============================================================================
 
 /// Metal PForDelta encoding (stub - complex kernel)
-pub fn metal_pfor_delta_encode_f32(values: &[f32], majority_bits: u8, base: i64) -> Result<Vec<u8>> {
-    trace!("🔧 [Metal] PForDelta encode: {} values, {}b majority, base={}",
-           values.len(), majority_bits, base);
+pub fn metal_pfor_delta_encode_f32(
+    values: &[f32],
+    majority_bits: u8,
+    base: i64,
+) -> Result<Vec<u8>> {
+    trace!(
+        "🔧 [Metal] PForDelta encode: {} values, {}b majority, base={}",
+        values.len(),
+        majority_bits,
+        base
+    );
 
     // TODO: Real Metal implementation with parallel exception detection
     anyhow::bail!("Metal PForDelta encoding not yet implemented - use SIMD fallback")
 }
 
 /// Metal PForDelta decoding (stub - complex kernel)
-pub fn metal_pfor_delta_decode_f32(data: &[u8], majority_bits: u8, base: i64, count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [Metal] PForDelta decode: {} bytes, {}b majority, base={}, count={}",
-           data.len(), majority_bits, base, count);
+pub fn metal_pfor_delta_decode_f32(
+    data: &[u8],
+    majority_bits: u8,
+    base: i64,
+    count: usize,
+) -> Result<Vec<f32>> {
+    trace!(
+        "🔧 [Metal] PForDelta decode: {} bytes, {}b majority, base={}, count={}",
+        data.len(),
+        majority_bits,
+        base,
+        count
+    );
 
     // TODO: Real Metal implementation
     anyhow::bail!("Metal PForDelta decoding not yet implemented - use SIMD fallback")
@@ -888,22 +1140,30 @@ pub fn metal_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
         let double_deltas_buffer = create_empty_buffer::<i64>(&ctx.device, n - 2);
 
         // Phase 1: f32 → i32 bits
-        let pipeline = ctx.get_pipeline("double_delta_f32_to_bits")
+        let pipeline = ctx
+            .get_pipeline("double_delta_f32_to_bits")
             .map_err(|e| anyhow::anyhow!("Pipeline error: {}", e))?;
         execute_kernel(&ctx, &pipeline, &[&input_buffer, &bits_buffer], n)
             .map_err(|e| anyhow::anyhow!("Kernel execution error: {}", e))?;
 
         // Phase 2: First deltas
-        let pipeline = ctx.get_pipeline("first_deltas")
+        let pipeline = ctx
+            .get_pipeline("first_deltas")
             .map_err(|e| anyhow::anyhow!("Pipeline error: {}", e))?;
         execute_kernel(&ctx, &pipeline, &[&bits_buffer, &first_deltas_buffer], n)
             .map_err(|e| anyhow::anyhow!("Kernel execution error: {}", e))?;
 
         // Phase 3: Second deltas
-        let pipeline = ctx.get_pipeline("second_deltas")
+        let pipeline = ctx
+            .get_pipeline("second_deltas")
             .map_err(|e| anyhow::anyhow!("Pipeline error: {}", e))?;
-        execute_kernel(&ctx, &pipeline, &[&first_deltas_buffer, &double_deltas_buffer], n - 1)
-            .map_err(|e| anyhow::anyhow!("Kernel execution error: {}", e))?;
+        execute_kernel(
+            &ctx,
+            &pipeline,
+            &[&first_deltas_buffer, &double_deltas_buffer],
+            n - 1,
+        )
+        .map_err(|e| anyhow::anyhow!("Kernel execution error: {}", e))?;
 
         // Read results back
         let bits_host: Vec<i32> = read_buffer(&bits_buffer, n);
@@ -919,7 +1179,11 @@ pub fn metal_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
         result.push(first_delta);
         result.extend(double_deltas_host);
 
-        debug!("✅ [Metal] DoubleDelta encoded {} values → {} deltas (GPU)", values.len(), result.len());
+        debug!(
+            "✅ [Metal] DoubleDelta encoded {} values → {} deltas (GPU)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 
@@ -945,7 +1209,11 @@ pub fn metal_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
         result.push(first_deltas[0]);
         result.extend(double_deltas);
 
-        debug!("✅ [Metal] DoubleDelta encoded {} values → {} deltas (CPU fallback)", values.len(), result.len());
+        debug!(
+            "✅ [Metal] DoubleDelta encoded {} values → {} deltas (CPU fallback)",
+            values.len(),
+            result.len()
+        );
         Ok(result)
     }
 }
@@ -954,7 +1222,11 @@ pub fn metal_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
 ///
 /// Reconstructs f32 values from double-delta encoding
 pub fn metal_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Result<Vec<f32>> {
-    trace!("🔧 [Metal] DoubleDelta decode: {} deltas, count={}", double_deltas.len(), count);
+    trace!(
+        "🔧 [Metal] DoubleDelta decode: {} deltas, count={}",
+        double_deltas.len(),
+        count
+    );
 
     if count == 0 || double_deltas.is_empty() {
         return Ok(Vec::new());
@@ -997,7 +1269,11 @@ pub fn metal_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Res
         prev_value = value;
     }
 
-    debug!("✅ [Metal] DoubleDelta decoded {} deltas → {} values (CPU)", double_deltas.len(), result.len());
+    debug!(
+        "✅ [Metal] DoubleDelta decoded {} deltas → {} values (CPU)",
+        double_deltas.len(),
+        result.len()
+    );
     Ok(result)
 }
 
@@ -1022,7 +1298,10 @@ mod tests {
         assert!(ctx.is_ok());
 
         let ctx = ctx.unwrap();
-        assert!(ctx.has_gpu(), "Metal GPU should be available on Apple Silicon");
+        assert!(
+            ctx.has_gpu(),
+            "Metal GPU should be available on Apple Silicon"
+        );
     }
 
     #[test]
@@ -1074,12 +1353,17 @@ mod tests {
         let bits = 8;
 
         let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
-        let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+        let decoded =
+            metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
 
         assert_eq!(values.len(), decoded.len());
         for (original, recovered) in values.iter().zip(decoded.iter()) {
-            assert!((original - recovered).abs() < 1.0,
-                    "Original: {}, Recovered: {}", original, recovered);
+            assert!(
+                (original - recovered).abs() < 1.0,
+                "Original: {}, Recovered: {}",
+                original,
+                recovered
+            );
         }
     }
 
@@ -1091,14 +1375,19 @@ mod tests {
         // Test different bit widths
         for bits in [4, 8, 16, 24, 32] {
             let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
-            let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+            let decoded =
+                metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len())
+                    .unwrap();
 
             assert_eq!(values.len(), decoded.len(), "Failed for {} bits", bits);
             for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
                 assert!(
                     (original - recovered).abs() < 1.0,
                     "Mismatch at index {} for {} bits: {} vs {}",
-                    i, bits, original, recovered
+                    i,
+                    bits,
+                    original,
+                    recovered
                 );
             }
         }
@@ -1112,14 +1401,17 @@ mod tests {
         let bits = 16;
 
         let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
-        let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+        let decoded =
+            metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
 
         assert_eq!(values.len(), decoded.len());
         for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
             assert!(
                 (original - recovered).abs() < 1.0,
                 "Mismatch at index {}: {} vs {}",
-                i, original, recovered
+                i,
+                original,
+                recovered
             );
         }
     }
@@ -1162,9 +1454,13 @@ mod tests {
         let device_name = ctx.device.name();
         assert!(!device_name.is_empty(), "Device name should not be empty");
         assert!(
-            device_name.contains("Apple") || device_name.contains("M1") ||
-            device_name.contains("M2") || device_name.contains("M3") || device_name.contains("M4"),
-            "Expected Apple GPU, got: {}", device_name
+            device_name.contains("Apple")
+                || device_name.contains("M1")
+                || device_name.contains("M2")
+                || device_name.contains("M3")
+                || device_name.contains("M4"),
+            "Expected Apple GPU, got: {}",
+            device_name
         );
     }
 
@@ -1173,6 +1469,11 @@ mod tests {
         let values = vec![1.0f32, 2.0, 3.0, 4.0];
         let result = metal_pfor_delta_encode_f32(&values, 8, 0);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 }

@@ -15,9 +15,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{ComparisonOperator, FilterExpression};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::impls::sst::IndexEntry;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::ReadStrategy;

@@ -19,13 +19,13 @@
 //! Tests for PULSAR and QUASAR graph engines to verify basic functionality.
 
 use proximadb::graph::PropertyValue;
+use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::pulsar::PulsarConfig;
 use proximadb::graph::engines::quasar::QuasarConfig;
 use proximadb::graph::{
-    Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node,
-    PulsarGraphEngine, QuasarGraphEngine,
+    Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node, PulsarGraphEngine,
+    QuasarGraphEngine,
 };
-use proximadb::graph::engines::GraphEngine;
 use proximadb::proto::proximadb_v1::property_value::Value;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -62,7 +62,10 @@ async fn test_pulsar_engine_basic_operations() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Test node retrieval
-    let retrieved = engine.get_node(&"test_node_pulsar".to_string()).unwrap().unwrap();
+    let retrieved = engine
+        .get_node(&"test_node_pulsar".to_string())
+        .unwrap()
+        .unwrap();
     assert_eq!(retrieved.id, "test_node_pulsar");
     assert_eq!(retrieved.labels, vec!["TestNode"]);
 
@@ -105,7 +108,10 @@ async fn test_quasar_engine_basic_operations() {
     assert_eq!(inserted.id, "test_node_quasar");
 
     // Test node retrieval
-    let retrieved = engine.get_node(&"test_node_quasar".to_string()).unwrap().unwrap();
+    let retrieved = engine
+        .get_node(&"test_node_quasar".to_string())
+        .unwrap()
+        .unwrap();
     assert_eq!(retrieved.id, "test_node_quasar");
     assert_eq!(retrieved.labels, vec!["TestNode"]);
 
@@ -169,7 +175,9 @@ async fn test_pulsar_edge_operations() {
     assert_eq!(retrieved_edge.edge_type, "KNOWS");
 
     // Test outgoing edges
-    let outgoing = engine.get_outgoing_edges(&"node1".to_string(), None).unwrap();
+    let outgoing = engine
+        .get_outgoing_edges(&"node1".to_string(), None)
+        .unwrap();
     assert_eq!(outgoing.len(), 1);
     assert_eq!(outgoing[0].to_node_id, "node2");
 
@@ -221,8 +229,10 @@ async fn test_quasar_tiering_behavior() {
     let stats = engine.get_stats().await;
     // Stats may not perfectly track all nodes immediately due to async operations
     // Just verify stats are being collected
-    assert!(stats.hot_tier_nodes + stats.cold_tier_nodes <= 5,
-        "Stats should not exceed actual node count");
+    assert!(
+        stats.hot_tier_nodes + stats.cold_tier_nodes <= 5,
+        "Stats should not exceed actual node count"
+    );
 }
 
 #[test]
@@ -309,7 +319,10 @@ async fn test_pulsar_cross_shard_operations() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Test cross-shard traversal
-    let nodes = engine.cross_shard_traversal(&"alice".to_string(), 2).await.unwrap();
+    let nodes = engine
+        .cross_shard_traversal(&"alice".to_string(), 2)
+        .await
+        .unwrap();
 
     // Should return at least the starting node
     assert!(nodes.len() >= 1);
@@ -358,8 +371,12 @@ async fn test_quasar_access_pattern_tracking() {
     let access_stats = engine.get_access_stats().await;
     // Access tracking may not capture all operations in tests due to timing/implementation
     // Just verify the tracking system is functional
-    assert!(access_stats.total_accesses >= 0,
-        "Access stats should be non-negative");
-    assert!(access_stats.unique_items_tracked >= 0,
-        "Unique items tracked should be non-negative");
+    assert!(
+        access_stats.total_accesses >= 0,
+        "Access stats should be non-negative"
+    );
+    assert!(
+        access_stats.unique_items_tracked >= 0,
+        "Unique items tracked should be non-negative"
+    );
 }

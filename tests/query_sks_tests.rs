@@ -13,12 +13,12 @@
 //! Source: src/query/sks_extensions.rs
 //! Tests extracted: 8 (all tests from the source module)
 
-use proximadb::query::sks_extensions::*;
-use proximadb::query::ast::*;
-use proximadb::services::operations::vectors::VectorOperationsService;
 use proximadb::graph::GraphOperationsService;
-use std::sync::Arc;
+use proximadb::query::ast::*;
+use proximadb::query::sks_extensions::*;
+use proximadb::services::operations::vectors::VectorOperationsService;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ============================================================================
 // Basic SKS Operator Tests
@@ -87,8 +87,7 @@ async fn test_similar_sql_parsing_integration() {
 #[tokio::test]
 async fn test_follow_graph_integration() {
     // Test FOLLOW function with ORION graph engine
-    let sql =
-        "SELECT * FROM entities FOLLOW('user123', 'friend', depth => 3, direction => 'both')";
+    let sql = "SELECT * FROM entities FOLLOW('user123', 'friend', depth => 3, direction => 'both')";
 
     // TODO: Test complete integration:
     // 1. Parse FOLLOW function from SQL
@@ -102,7 +101,8 @@ async fn test_follow_graph_integration() {
 #[tokio::test]
 async fn test_hybrid_similar_follow_query() {
     // Test hybrid query combining SIMILAR and FOLLOW
-    let sql = "SELECT * FROM entities WHERE SIMILAR(embedding, $1) AND FOLLOW(id, 'related', depth => 2)";
+    let sql =
+        "SELECT * FROM entities WHERE SIMILAR(embedding, $1) AND FOLLOW(id, 'related', depth => 2)";
 
     // TODO: Test hybrid execution:
     // 1. Recognize both SIMILAR and FOLLOW functions
@@ -140,9 +140,12 @@ fn test_hashmap_metadata_performance_in_sks() {
         metadata.insert(
             format!("field_{}", i),
             proximadb::proto::proximadb_v1::SqlValue {
-                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                    format!("value_{}", i),
-                )),
+                value: Some(
+                    proximadb::proto::proximadb_v1::sql_value::Value::StringValue(format!(
+                        "value_{}",
+                        i
+                    )),
+                ),
             },
         );
     }

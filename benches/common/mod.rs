@@ -1,7 +1,7 @@
 //! Common benchmark utilities and initialization
 
-pub mod embedding_generator;
 pub mod benchmark_utils;
+pub mod embedding_generator;
 pub mod validation;
 
 #[allow(unused_imports)]
@@ -10,9 +10,9 @@ pub use embedding_generator::{EmbeddingGenerator, EmbeddingModel};
 // Currently unused in bench_04_storage_unified
 #[allow(unused_imports)]
 pub use validation::{
-    validate_flush_result, validate_search_results, validate_metadata_filter,
-    validate_filesystem_write, calculate_compression_metrics,
-    BenchmarkValidation, BenchmarkStatus, CompressionMetrics,
+    BenchmarkStatus, BenchmarkValidation, CompressionMetrics, calculate_compression_metrics,
+    validate_filesystem_write, validate_flush_result, validate_metadata_filter,
+    validate_search_results,
 };
 
 use std::sync::Once;

@@ -11,7 +11,7 @@
 //! ### Flow:
 //! 1. **Storage engines flush files** → EventLog.add_event(flush_event)
 //! 2. **AXIS consumer subscribes** → Processes events, hydrates indexes
-//! 3. **AXIS acknowledges completion** → EventLog.acknowledge_event() 
+//! 3. **AXIS acknowledges completion** → EventLog.acknowledge_event()
 //! 4. **Compaction checks readiness** → EventLog.can_compact() returns true
 //! 5. **Compaction proceeds safely** → Files removed only after index consistency
 //!
@@ -279,13 +279,13 @@ pub struct CompactionCoordinator {
     /// Configuration
     pub config: CompactionConfig,
     /// EventLog service for AXIS integration (replaces deprecated QueueManager)
-    /// 
+    ///
     /// Architecture Note: ProximaDB uses an event log pattern where:
     /// 1. Flushed files are added to EventLog by storage engines
     /// 2. AXIS manager subscribes to EventLog and hydrates indexes asynchronously  
     /// 3. EventLog.can_compact() returns false until all indexes are hydrated
     /// 4. Only then are files eligible for compaction, ensuring consistency
-    /// 
+    ///
     /// This guarantees that flushed files are not prematurely picked up by compaction
     /// before indexes are fully hydrated, preventing index inconsistencies.
     event_log_service: Option<Arc<dyn crate::index::axis::eventlog::EventLogService>>,
@@ -305,13 +305,13 @@ impl CompactionCoordinator {
     }
 
     /// Create coordinator with EventLog service for AXIS integration
-    /// 
+    ///
     /// The EventLog service replaces the deprecated QueueManager pattern.
-    /// It provides can_compact() functionality to ensure files are not 
+    /// It provides can_compact() functionality to ensure files are not
     /// compacted until all indexes have been properly hydrated.
     pub fn new_with_event_log(
-        config: CompactionConfig, 
-        event_log_service: Arc<dyn crate::index::axis::eventlog::EventLogService>
+        config: CompactionConfig,
+        event_log_service: Arc<dyn crate::index::axis::eventlog::EventLogService>,
     ) -> Self {
         Self {
             active_operations: DashMap::new(),
@@ -458,7 +458,7 @@ impl CompactionCoordinator {
     }
 
     /// Evaluate if compaction should be deferred due to AXIS index processing
-    /// 
+    ///
     /// Uses EventLog pattern where can_compact() returns false until indexes are hydrated.
     /// This replaces the deprecated QueueManager approach with a more reliable mechanism.
     async fn evaluate_axis_aware_compaction(
@@ -474,17 +474,18 @@ impl CompactionCoordinator {
 
         // Check if all files are ready for compaction
         for file_path in files {
-            match event_log_service.can_compact(collection_id, file_path).await {
+            match event_log_service
+                .can_compact(collection_id, file_path)
+                .await
+            {
                 Ok(true) => {
-                    debug!(
-                        "File {} ready for compaction (indexes hydrated)", 
-                        file_path
-                    );
+                    debug!("File {} ready for compaction (indexes hydrated)", file_path);
                 }
                 Ok(false) => {
                     // Index hydration still in progress
-                    self.defer_compaction(collection_id, _operation_type.clone()).await;
-                    
+                    self.defer_compaction(collection_id, _operation_type.clone())
+                        .await;
+
                     return Ok(Some(format!(
                         "Deferring compaction for {} - file {} pending index hydration",
                         collection_id, file_path
@@ -492,14 +493,14 @@ impl CompactionCoordinator {
                 }
                 Err(e) => {
                     debug!(
-                        "Failed to check compaction readiness for {}: {} - allowing compaction", 
+                        "Failed to check compaction readiness for {}: {} - allowing compaction",
                         file_path, e
                     );
                     // On error, don't block compaction to avoid deadlocks
                 }
             }
         }
-        
+
         // All files ready - clear any deferred state and allow compaction
         self.deferred_compactions.remove(collection_id);
         Ok(None)
@@ -526,8 +527,8 @@ impl CompactionCoordinator {
     }
 
     /// Process deferred compactions that can now run
-    /// 
-    /// Checks EventLog service to see if previously deferred files are now 
+    ///
+    /// Checks EventLog service to see if previously deferred files are now
     /// ready for compaction (all indexes hydrated).
     pub async fn process_deferred_compactions(&self) -> Result<Vec<String>> {
         let event_log_service = match &self.event_log_service {
@@ -542,24 +543,27 @@ impl CompactionCoordinator {
         for entry in self.deferred_compactions.iter() {
             let collection_id = entry.key();
             let deferred = entry.value();
-            
+
             // For simplicity, check a representative file from the deferred operation
             // In practice, you'd need to track which specific files were deferred
             let sample_file = format!("{}_sample.sst", collection_id); // Placeholder
-            
-            match event_log_service.can_compact(collection_id, &sample_file).await {
+
+            match event_log_service
+                .can_compact(collection_id, &sample_file)
+                .await
+            {
                 Ok(true) => {
                     ready_collections.push((collection_id.clone(), deferred.defer_count));
                 }
                 Ok(false) => {
                     debug!(
-                        "Collection {} still waiting for index hydration", 
+                        "Collection {} still waiting for index hydration",
                         collection_id
                     );
                 }
                 Err(e) => {
                     debug!(
-                        "Error checking compaction readiness for {}: {} - will retry", 
+                        "Error checking compaction readiness for {}: {} - will retry",
                         collection_id, e
                     );
                 }
@@ -575,7 +579,7 @@ impl CompactionCoordinator {
                 );
                 processed.push(message);
                 info!(
-                    "Resuming deferred compaction for {} - indexes hydrated after {} deferrals", 
+                    "Resuming deferred compaction for {} - indexes hydrated after {} deferrals",
                     collection_id, defer_count
                 );
             }

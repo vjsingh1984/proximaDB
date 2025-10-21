@@ -1,10 +1,10 @@
 //! Azure AD integration - clean implementation foundation
 
-use anyhow::{Result, anyhow};
-use super::types::{SSOToken, SSOValidationResult, EnterpriseUserContext};
 use super::AzureADConfig;
+use super::types::{EnterpriseUserContext, SSOToken, SSOValidationResult};
+use anyhow::{Result, anyhow};
 
-/// Clean Azure AD integration 
+/// Clean Azure AD integration
 pub struct AzureADIntegration {
     tenant_id: String,
     client_id: String,
@@ -20,17 +20,17 @@ impl AzureADIntegration {
             authority: config.authority,
         })
     }
-    
+
     /// Validate Azure AD token (foundation implementation)
     pub async fn validate_token(&self, sso_token: &SSOToken) -> Result<SSOValidationResult> {
         // Foundation implementation - will be enhanced in Phase 2
         if sso_token.is_expired() {
             return Err(anyhow!("Azure AD token expired"));
         }
-        
+
         // Placeholder validation - real implementation will use Microsoft Graph API
         let enterprise_context = EnterpriseUserContext::system_admin(); // Simplified for foundation
-        
+
         Ok(SSOValidationResult {
             valid: true,
             user_context: enterprise_context,
@@ -58,8 +58,11 @@ mod tests {
             client_secret: "secret".to_string(),
             authority: "https://login.microsoftonline.com/".to_string(),
         };
-        
+
         let integration = AzureADIntegration::new(config).unwrap();
-        assert_eq!(integration.tenant_id, "12345678-1234-1234-1234-123456789012");
+        assert_eq!(
+            integration.tenant_id,
+            "12345678-1234-1234-1234-123456789012"
+        );
     }
 }

@@ -4,8 +4,8 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, SuperBlock};
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, SuperBlock};
 
 /// Metadata index for efficient filtering
 #[derive(Debug)]
@@ -283,12 +283,7 @@ impl MetadataIndex {
     }
 
     /// Index a single block's metadata
-    fn index_block(
-        &mut self,
-        sb_idx: usize,
-        b_idx: usize,
-        block: &ProximaDataBlock,
-    ) -> Result<()> {
+    fn index_block(&mut self, sb_idx: usize, b_idx: usize, block: &ProximaDataBlock) -> Result<()> {
         let block_id = sb_idx * 64 + b_idx;
 
         // Process each record's metadata

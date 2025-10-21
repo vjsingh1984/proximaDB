@@ -146,9 +146,18 @@ mod tests {
 
     #[test]
     fn test_scheme_parsing() {
-        assert_eq!(FilesystemScheme::from_str("file").unwrap(), FilesystemScheme::File);
-        assert_eq!(FilesystemScheme::from_str("s3").unwrap(), FilesystemScheme::S3);
-        assert_eq!(FilesystemScheme::from_str("gs").unwrap(), FilesystemScheme::GoogleCloudStorage);
+        assert_eq!(
+            FilesystemScheme::from_str("file").unwrap(),
+            FilesystemScheme::File
+        );
+        assert_eq!(
+            FilesystemScheme::from_str("s3").unwrap(),
+            FilesystemScheme::S3
+        );
+        assert_eq!(
+            FilesystemScheme::from_str("gs").unwrap(),
+            FilesystemScheme::GoogleCloudStorage
+        );
         assert!(FilesystemScheme::from_str("invalid").is_err());
     }
 
@@ -162,8 +171,14 @@ mod tests {
     #[test]
     fn test_extract_scheme() {
         assert_eq!(extract_scheme("/tmp/data").unwrap(), FilesystemScheme::File);
-        assert_eq!(extract_scheme("file:///tmp/data").unwrap(), FilesystemScheme::File);
-        assert_eq!(extract_scheme("s3://bucket/path").unwrap(), FilesystemScheme::S3);
+        assert_eq!(
+            extract_scheme("file:///tmp/data").unwrap(),
+            FilesystemScheme::File
+        );
+        assert_eq!(
+            extract_scheme("s3://bucket/path").unwrap(),
+            FilesystemScheme::S3
+        );
     }
 
     #[test]

@@ -767,7 +767,10 @@ impl ProgressiveColumnarSearch {
             .into_iter()
             .map(|search_record| VectorRecord {
                 id: search_record.id,
-                vector: search_record.vector.map(|v| (*v).clone()).unwrap_or_default(),
+                vector: search_record
+                    .vector
+                    .map(|v| (*v).clone())
+                    .unwrap_or_default(),
                 metadata: search_record.metadata,
                 version: None,
                 timestamp: Some(0),

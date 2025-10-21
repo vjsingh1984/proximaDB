@@ -310,7 +310,7 @@ impl IndexConfig {
                 },
             },
             parameters: std::collections::HashMap::new(), // Empty parameters map
-            enabled: Some(true),                                // Index enabled by default
+            enabled: Some(true),                          // Index enabled by default
             update_mode: Some(update_mode),
             async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as u32),
             async_update_batch_size: self.async_update_batch_size.map(|b| b as u32),
@@ -323,15 +323,16 @@ impl IndexConfig {
             lsh_config,
             build_concurrency: Some(self.build_concurrency.map(|x| x as u32).unwrap_or(1)),
             memory_limit_mb: Some(self.memory_limit_mb.map(|x| x as u32).unwrap_or(512)),
-            checkpoint_interval_ms: Some(self
-                .checkpoint_interval_ms
-                .map(|x| x as u32)
-                .unwrap_or(30000)),
-            is_primary: Some(true),                         // Default to primary index
-            use_cases: vec![],                        // Default empty use cases
-            selectivity_threshold: Some(0.0),               // Default no selectivity threshold
-            use_quantization: Some(false),                  // Default: no quantization
-            quantization_override: None,              // Default: no override
+            checkpoint_interval_ms: Some(
+                self.checkpoint_interval_ms
+                    .map(|x| x as u32)
+                    .unwrap_or(30000),
+            ),
+            is_primary: Some(true),           // Default to primary index
+            use_cases: vec![],                // Default empty use cases
+            selectivity_threshold: Some(0.0), // Default no selectivity threshold
+            use_quantization: Some(false),    // Default: no quantization
+            quantization_override: None,      // Default: no override
             queue_representation: Some("auto".to_string()), // Default: auto-detect from queue
         }
     }
@@ -823,7 +824,8 @@ impl IndexConfig {
             config.async_update_batch_size = Some(batch_size as usize);
         }
 
-        config.enable_background_optimization = proto.enable_background_optimization.unwrap_or(true);
+        config.enable_background_optimization =
+            proto.enable_background_optimization.unwrap_or(true);
 
         // Handle algorithm-specific overrides
         match algorithm {
@@ -835,16 +837,19 @@ impl IndexConfig {
                             smart_hnsw.m = user_hnsw.m.unwrap_or(16) as usize;
                         }
                         if user_hnsw.ef_construction.unwrap_or(0) != 0 {
-                            smart_hnsw.ef_construction = user_hnsw.ef_construction.unwrap_or(200) as usize;
+                            smart_hnsw.ef_construction =
+                                user_hnsw.ef_construction.unwrap_or(200) as usize;
                         }
                         if user_hnsw.ef_search.unwrap_or(0) != 0 {
                             smart_hnsw.ef_search = user_hnsw.ef_search.unwrap_or(100) as usize;
                         }
                         if user_hnsw.max_partition_size.unwrap_or(0) != 0 {
-                            smart_hnsw.max_partition_size = user_hnsw.max_partition_size.unwrap_or(100000) as usize;
+                            smart_hnsw.max_partition_size =
+                                user_hnsw.max_partition_size.unwrap_or(100000) as usize;
                         }
                         if user_hnsw.memory_limit_mb.unwrap_or(0) != 0 {
-                            smart_hnsw.memory_limit_mb = user_hnsw.memory_limit_mb.unwrap_or(512) as usize;
+                            smart_hnsw.memory_limit_mb =
+                                user_hnsw.memory_limit_mb.unwrap_or(512) as usize;
                         }
                         // prune_connections and level_multiplier are not in proto - use smart defaults
 
@@ -874,13 +879,15 @@ impl IndexConfig {
                             smart_ivf.n_probe = user_ivf.n_probe.unwrap_or(10) as usize;
                         }
                         if user_ivf.quantization_bits.unwrap_or(0) != 0 {
-                            smart_ivf.quantization_bits = user_ivf.quantization_bits.unwrap_or(8) as usize;
+                            smart_ivf.quantization_bits =
+                                user_ivf.quantization_bits.unwrap_or(8) as usize;
                         }
                         if user_ivf.pq_subspaces.unwrap_or(0) != 0 {
                             smart_ivf.pq_subspaces = user_ivf.pq_subspaces.unwrap_or(8) as usize;
                         }
                         if user_ivf.min_train_size.unwrap_or(0) != 0 {
-                            smart_ivf.min_train_size = user_ivf.min_train_size.unwrap_or(1000) as usize;
+                            smart_ivf.min_train_size =
+                                user_ivf.min_train_size.unwrap_or(1000) as usize;
                         }
 
                         // Boolean fields: use user value if explicitly set, otherwise keep smart default
@@ -906,7 +913,8 @@ impl IndexConfig {
             config.memory_limit_mb = Some(proto.memory_limit_mb.unwrap_or(512) as u64);
         }
         if proto.checkpoint_interval_ms.unwrap_or(0) > 0 {
-            config.checkpoint_interval_ms = Some(proto.checkpoint_interval_ms.unwrap_or(60000) as u64);
+            config.checkpoint_interval_ms =
+                Some(proto.checkpoint_interval_ms.unwrap_or(60000) as u64);
         }
 
         // Validate the final configuration

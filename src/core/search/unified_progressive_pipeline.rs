@@ -673,11 +673,12 @@ impl UnifiedProgressiveSearchPipeline {
 
         for (key, entry) in &record.metadata {
             if let Some(ref proto_value) = entry.value {
-                
                 use serde_json::Value;
 
                 let json_value = match proto_value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Value::String(s.clone()),
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                        Value::String(s.clone())
+                    }
                     crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                         if let Some(num) = serde_json::Number::from_f64(*n) {
                             Value::Number(num)
@@ -693,10 +694,16 @@ impl UnifiedProgressiveSearchPipeline {
                             continue;
                         }
                     }
-                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => Value::String("[binary]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
+                        Value::String("[binary]".to_string())
+                    }
                     crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => Value::Null,
-                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => Value::String("[array]".to_string()),
-                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => Value::String("[object]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
+                        Value::String("[array]".to_string())
+                    }
+                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
+                        Value::String("[object]".to_string())
+                    }
                 };
                 map.insert(key.clone(), json_value);
             }
@@ -733,8 +740,10 @@ impl UnifiedProgressiveSearchPipeline {
             .map(|(rank, candidate)| {
                 let json_metadata = self.convert_metadata(&candidate.record);
                 // Convert metadata directly to SqlValue format
-                let metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = 
-                    candidate.record.metadata.clone();
+                let metadata: std::collections::HashMap<
+                    String,
+                    crate::proto::proximadb_v1::SqlValue,
+                > = candidate.record.metadata.clone();
 
                 OptimizedSearchRecord::new(candidate.record.id.clone(), candidate.score)
                     .with_similarity(candidate.score)
@@ -860,17 +869,18 @@ mod tests {
 
         let quantization_config = QuantizationConfig {
             enabled: Some(true),
-            strategy: Some(crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults as i32),
-            custom_levels: vec![
-                crate::proto::proximadb_v1::QuantizationLevel {
-                    level_id: "binary".to_string(),
-                    r#type: crate::proto::proximadb_v1::quantization_level::QuantizationType::Binary as i32,
-                    bits: 1,
-                    threshold: 0.0,
-                    sign_based: true,
-                    ..Default::default()
-                },
-            ],
+            strategy: Some(
+                crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults as i32,
+            ),
+            custom_levels: vec![crate::proto::proximadb_v1::QuantizationLevel {
+                level_id: "binary".to_string(),
+                r#type: crate::proto::proximadb_v1::quantization_level::QuantizationType::Binary
+                    as i32,
+                bits: 1,
+                threshold: 0.0,
+                sign_based: true,
+                ..Default::default()
+            }],
             enable_progressive_search: Some(true),
             binary_filter_selectivity: Some(0.1),
             int8_ranking_selectivity: Some(0.1),

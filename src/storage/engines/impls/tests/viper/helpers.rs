@@ -68,8 +68,11 @@ pub async fn create_viper_engine_with_config(
     fs_config.default_fs = Some(format!("file://{}", base_path));
 
     let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await?);
-    ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory)
-        .await
+    ViperEngine::from_core_config(
+        crate::core::config::ViperConfig::default(),
+        filesystem_factory,
+    )
+    .await
 }
 
 /// Create a VIPER engine configuration for compaction testing
@@ -318,21 +321,17 @@ pub fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<Vec
                     metadata.insert(
                         "category".to_string(),
                         SqlValue {
-                            value: Some(
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    format!("category_{}", i % 3),
-                                ),
-                            ),
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                format!("category_{}", i % 3),
+                            )),
                         },
                     );
                     metadata.insert(
                         "priority".to_string(),
                         SqlValue {
-                            value: Some(
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    i.to_string(),
-                                ),
-                            ),
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                i.to_string(),
+                            )),
                         },
                     );
                     metadata
@@ -420,9 +419,7 @@ pub fn convert_search_params_to_plan(
     SearchPlan {
         collection_id: collection_id.to_string(),
         collection_config: Some(CollectionConfig {
-            default_distance_metric: params
-                .distance_metric
-                .unwrap_or(DistanceMetric::Cosine),
+            default_distance_metric: params.distance_metric.unwrap_or(DistanceMetric::Cosine),
             vector_dimension: 128,
             enable_quantization: false,
             enable_metadata_filtering: params.filter_expression.is_some(),
@@ -453,8 +450,8 @@ pub fn convert_search_params_to_plan(
 /// let context = create_test_collection_context();
 /// assert_eq!(context.collection_id, "test_collection");
 /// ```
-pub fn create_test_collection_context(
-) -> crate::storage::engines::core::formats::columnar::CollectionContext {
+pub fn create_test_collection_context()
+-> crate::storage::engines::core::formats::columnar::CollectionContext {
     use crate::storage::engines::core::formats::columnar::CollectionContext;
 
     CollectionContext {
@@ -612,8 +609,8 @@ pub async fn create_test_filesystem_with_path(base_path: &str) -> Result<Arc<Fil
 /// let config = create_default_pipeline_config();
 /// assert!(config.processing_config.enable_preprocessing);
 /// ```
-pub fn create_default_pipeline_config(
-) -> crate::storage::engines::impls::viper::pipeline::ViperPipelineConfig {
+pub fn create_default_pipeline_config()
+-> crate::storage::engines::impls::viper::pipeline::ViperPipelineConfig {
     use crate::storage::engines::impls::viper::pipeline::*;
 
     ViperPipelineConfig {

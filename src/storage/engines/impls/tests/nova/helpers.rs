@@ -17,11 +17,8 @@
 //! - Batch operations
 //! - Performance metrics
 
+use crate::storage::engines::impls::nova::{hierarchical_stats::*, zone_maps::*};
 use anyhow::Result;
-use crate::storage::engines::impls::nova::{
-    hierarchical_stats::*,
-    zone_maps::*,
-};
 
 // ============================================================================
 // Test Data Generation Utilities
@@ -55,7 +52,9 @@ pub fn create_test_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
 /// # Returns
 /// A test query vector with deterministic values
 pub fn create_test_query(dimension: usize) -> Vec<f32> {
-    (0..dimension).map(|i| i as f32 / dimension as f32).collect()
+    (0..dimension)
+        .map(|i| i as f32 / dimension as f32)
+        .collect()
 }
 
 /// Create a large test dataset for performance testing
@@ -136,7 +135,8 @@ pub fn create_test_enhanced_stats(id: u32) -> EnhancedRowGroupStats {
 pub fn create_test_enhanced_stats_vec(count: usize) -> Vec<EnhancedRowGroupStats> {
     (0..count)
         .map(|i| {
-            let zone_map = ZoneMap::from_vectors(&[vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]).unwrap();
+            let zone_map =
+                ZoneMap::from_vectors(&[vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]).unwrap();
 
             EnhancedRowGroupStats {
                 row_group_id: i as u32,
@@ -290,9 +290,17 @@ pub fn extract_query_characteristics(query: &[f32], top_k: usize) -> QueryCharac
     let sparsity = query.iter().filter(|&&x| x.abs() < 0.01).count() as f32 / query.len() as f32;
 
     // Find dominant dimensions (top 5 by absolute value)
-    let mut indexed_query: Vec<(usize, f32)> = query.iter().enumerate().map(|(i, &v)| (i, v.abs())).collect();
+    let mut indexed_query: Vec<(usize, f32)> = query
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i, v.abs()))
+        .collect();
     indexed_query.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    let dominant_dimensions = indexed_query.iter().take(5).map(|(i, _)| *i as u32).collect();
+    let dominant_dimensions = indexed_query
+        .iter()
+        .take(5)
+        .map(|(i, _)| *i as u32)
+        .collect();
 
     QueryCharacteristics {
         norm,
@@ -418,10 +426,7 @@ pub fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
 /// Serialized bytes
 #[allow(dead_code)]
 pub fn serialize_vector(vector: &[f32]) -> Vec<u8> {
-    vector
-        .iter()
-        .flat_map(|&f| f.to_le_bytes())
-        .collect()
+    vector.iter().flat_map(|&f| f.to_le_bytes()).collect()
 }
 
 // ============================================================================
@@ -438,10 +443,7 @@ pub fn serialize_vector(vector: &[f32]) -> Vec<u8> {
 /// # Returns
 /// Vectors grouped by row group
 #[allow(dead_code)]
-pub fn group_by_row_group(
-    vectors: &[Vec<f32>],
-    row_group_size: usize,
-) -> Vec<Vec<Vec<f32>>> {
+pub fn group_by_row_group(vectors: &[Vec<f32>], row_group_size: usize) -> Vec<Vec<Vec<f32>>> {
     vectors
         .chunks(row_group_size)
         .map(|chunk| chunk.to_vec())
@@ -534,12 +536,7 @@ pub struct ExecutionPlan {
 impl ExecutionPlan {
     /// Create a new execution plan
     #[allow(dead_code)]
-    pub fn new(
-        quantization_level: String,
-        row_groups: Vec<u32>,
-        cost: f32,
-        recall: f32,
-    ) -> Self {
+    pub fn new(quantization_level: String, row_groups: Vec<u32>, cost: f32, recall: f32) -> Self {
         Self {
             quantization_level,
             row_groups_to_scan: row_groups,
@@ -621,7 +618,7 @@ mod tests {
         let quantized = quantize_vector_to_int8(&vector);
         assert_eq!(quantized.len(), 3);
         assert_eq!(quantized[0], -128); // min value
-        assert_eq!(quantized[2], 127);  // max value
+        assert_eq!(quantized[2], 127); // max value
     }
 
     #[test]
@@ -698,12 +695,7 @@ mod tests {
 
     #[test]
     fn test_execution_plan() {
-        let plan = ExecutionPlan::new(
-            "binary".to_string(),
-            vec![0, 1, 2],
-            10.0,
-            0.95,
-        );
+        let plan = ExecutionPlan::new("binary".to_string(), vec![0, 1, 2], 10.0, 0.95);
 
         assert_eq!(plan.quantization_level, "binary");
         assert_eq!(plan.row_groups_to_scan.len(), 3);

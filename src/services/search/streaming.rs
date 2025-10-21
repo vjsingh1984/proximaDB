@@ -32,14 +32,24 @@ use std::collections::HashMap;
 /// Helper function to convert proto metadata Value to TypedMetadata value
 fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
     match value {
-        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
+        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+            MetadataValue::String(Arc::from(s.as_str()))
+        }
         crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => MetadataValue::Number(f),
         crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => MetadataValue::Bool(b),
-        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => MetadataValue::Number(i as f64),
-        crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => MetadataValue::String(Arc::from("[binary]")),
+        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+            MetadataValue::Number(i as f64)
+        }
+        crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
+            MetadataValue::String(Arc::from("[binary]"))
+        }
         crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => MetadataValue::Null,
-        crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => MetadataValue::String(Arc::from("[array]")),
-        crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => MetadataValue::String(Arc::from("[object]")),
+        crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
+            MetadataValue::String(Arc::from("[array]"))
+        }
+        crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
+            MetadataValue::String(Arc::from("[object]"))
+        }
     }
 }
 
@@ -486,7 +496,10 @@ impl StreamingSearchService {
                             .with_similarity(similarity.rank_value)
                             .add_vector(record.vector.clone())
                             .with_metadata(metadata_map)
-                            .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0));
+                            .with_version_info(
+                                record.version.unwrap_or(0),
+                                record.timestamp.unwrap_or(0),
+                            );
 
                     results.push(search_result);
                 }

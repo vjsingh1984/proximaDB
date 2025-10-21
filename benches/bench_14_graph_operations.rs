@@ -22,7 +22,10 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::{
     graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{NodeQuery, TraversalAlgorithm, TraversalRequest, PropertyFilter, PropertyFilterOperator, property_value::Value, CreateGraphRequest},
+    proto::proximadb_v1::{
+        CreateGraphRequest, NodeQuery, PropertyFilter, PropertyFilterOperator, TraversalAlgorithm,
+        TraversalRequest, property_value::Value,
+    },
     services::graph_collection::GraphCollectionService,
 };
 use std::collections::HashMap;
@@ -31,10 +34,15 @@ use std::sync::Arc;
 const DEFAULT_GRAPH_ID: &str = "benchmark_graph";
 
 /// Helper function to ensure graph collection exists before benchmarking
-async fn ensure_benchmark_graph_exists(collection_service: &GraphCollectionService) -> Result<(), Box<dyn std::error::Error>> {
+async fn ensure_benchmark_graph_exists(
+    collection_service: &GraphCollectionService,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Check if graph already exists in the list
     let existing_graphs = collection_service.list_graphs().await?;
-    if existing_graphs.iter().any(|g| g.graph_id == DEFAULT_GRAPH_ID) {
+    if existing_graphs
+        .iter()
+        .any(|g| g.graph_id == DEFAULT_GRAPH_ID)
+    {
         return Ok(());
     }
 
@@ -65,11 +73,13 @@ fn bench_node_creation(c: &mut Criterion) {
 
         // Create graph operations service with collection service
         let service = Arc::new(GraphOperationsService::new_with_collection_service(
-            collection_service.clone()
+            collection_service.clone(),
         ));
 
         // Ensure benchmark graph exists
-        ensure_benchmark_graph_exists(&collection_service).await.unwrap();
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
 
         (service, collection_service)
     });
@@ -121,9 +131,11 @@ fn bench_edge_creation(c: &mut Criterion) {
     let (service, _collection_service) = runtime.block_on(async {
         let collection_service = Arc::new(GraphCollectionService::new());
         let service = Arc::new(GraphOperationsService::new_with_collection_service(
-            collection_service.clone()
+            collection_service.clone(),
         ));
-        ensure_benchmark_graph_exists(&collection_service).await.unwrap();
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
         (service, collection_service)
     });
 
@@ -153,14 +165,12 @@ fn bench_edge_creation(c: &mut Criterion) {
                             from_node_id: format!("edge_node_{}", i % 128),
                             to_node_id: format!("edge_node_{}", (i + 1) % 128),
                             edge_type: "CONNECTS_TO".to_string(),
-                            properties: HashMap::from([
-                                (
-                                    "weight".to_string(),
-                                    PropertyValue {
-                                        value: Some(Value::DoubleValue((i % 10) as f64)),
-                                    },
-                                ),
-                            ]),
+                            properties: HashMap::from([(
+                                "weight".to_string(),
+                                PropertyValue {
+                                    value: Some(Value::DoubleValue((i % 10) as f64)),
+                                },
+                            )]),
                             weight: Some((i % 10) as f64),
                             created_at_ms: 0,
                             updated_at_ms: 0,
@@ -185,9 +195,11 @@ fn bench_node_queries(c: &mut Criterion) {
     let (service, _collection_service) = runtime.block_on(async {
         let collection_service = Arc::new(GraphCollectionService::new());
         let service = Arc::new(GraphOperationsService::new_with_collection_service(
-            collection_service.clone()
+            collection_service.clone(),
         ));
-        ensure_benchmark_graph_exists(&collection_service).await.unwrap();
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
 
         // Create test nodes
         for i in 0..1024 {
@@ -197,14 +209,12 @@ fn bench_node_queries(c: &mut Criterion) {
                     "QueryNode".to_string(),
                     if i % 2 == 0 { "Even" } else { "Odd" }.to_string(),
                 ],
-                properties: HashMap::from([
-                    (
-                        "value".to_string(),
-                        PropertyValue {
-                            value: Some(Value::IntValue(i)),
-                        },
-                    ),
-                ]),
+                properties: HashMap::from([(
+                    "value".to_string(),
+                    PropertyValue {
+                        value: Some(Value::IntValue(i)),
+                    },
+                )]),
                 embedding: None,
                 created_at_ms: 0,
                 updated_at_ms: 0,
@@ -227,7 +237,12 @@ fn bench_node_queries(c: &mut Criterion) {
                     offset: None,
                     continuation_token: None,
                 };
-                black_box(service.query_nodes(DEFAULT_GRAPH_ID, query.clone()).await.unwrap());
+                black_box(
+                    service
+                        .query_nodes(DEFAULT_GRAPH_ID, query.clone())
+                        .await
+                        .unwrap(),
+                );
             });
         });
     });
@@ -243,7 +258,12 @@ fn bench_node_queries(c: &mut Criterion) {
                     offset: None,
                     continuation_token: None,
                 };
-                black_box(service.query_nodes(DEFAULT_GRAPH_ID, query.clone()).await.unwrap());
+                black_box(
+                    service
+                        .query_nodes(DEFAULT_GRAPH_ID, query.clone())
+                        .await
+                        .unwrap(),
+                );
             });
         });
     });
@@ -265,7 +285,12 @@ fn bench_node_queries(c: &mut Criterion) {
                     offset: None,
                     continuation_token: None,
                 };
-                black_box(service.query_nodes(DEFAULT_GRAPH_ID, query.clone()).await.unwrap());
+                black_box(
+                    service
+                        .query_nodes(DEFAULT_GRAPH_ID, query.clone())
+                        .await
+                        .unwrap(),
+                );
             });
         });
     });
@@ -282,9 +307,11 @@ fn bench_traversal(c: &mut Criterion) {
     let (service, _collection_service) = runtime.block_on(async {
         let collection_service = Arc::new(GraphCollectionService::new());
         let service = Arc::new(GraphOperationsService::new_with_collection_service(
-            collection_service.clone()
+            collection_service.clone(),
         ));
-        ensure_benchmark_graph_exists(&collection_service).await.unwrap();
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
 
         // Create a small connected graph for traversal
         for i in 0..128 {
@@ -371,9 +398,11 @@ fn bench_shortest_path(c: &mut Criterion) {
     let (service, _collection_service) = runtime.block_on(async {
         let collection_service = Arc::new(GraphCollectionService::new());
         let service = Arc::new(GraphOperationsService::new_with_collection_service(
-            collection_service.clone()
+            collection_service.clone(),
         ));
-        ensure_benchmark_graph_exists(&collection_service).await.unwrap();
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
 
         // Create a grid-like graph for pathfinding
         let grid_size = 20;
@@ -383,8 +412,18 @@ fn bench_shortest_path(c: &mut Criterion) {
                     id: format!("grid_{}_{}", x, y),
                     labels: vec!["GridNode".to_string()],
                     properties: HashMap::from([
-                        ("x".to_string(), PropertyValue { value: Some(Value::IntValue(x)) }),
-                        ("y".to_string(), PropertyValue { value: Some(Value::IntValue(y)) }),
+                        (
+                            "x".to_string(),
+                            PropertyValue {
+                                value: Some(Value::IntValue(x)),
+                            },
+                        ),
+                        (
+                            "y".to_string(),
+                            PropertyValue {
+                                value: Some(Value::IntValue(y)),
+                            },
+                        ),
                     ]),
                     embedding: None,
                     created_at_ms: 0,
@@ -399,9 +438,12 @@ fn bench_shortest_path(c: &mut Criterion) {
                         from_node_id: format!("grid_{}_{}", x, y),
                         to_node_id: format!("grid_{}_{}", x + 1, y),
                         edge_type: "GRID_EDGE".to_string(),
-                        properties: HashMap::from([
-                            ("weight".to_string(), PropertyValue { value: Some(Value::DoubleValue(1.0)) }),
-                        ]),
+                        properties: HashMap::from([(
+                            "weight".to_string(),
+                            PropertyValue {
+                                value: Some(Value::DoubleValue(1.0)),
+                            },
+                        )]),
                         weight: Some(1.0),
                         created_at_ms: 0,
                         updated_at_ms: 0,
@@ -415,9 +457,12 @@ fn bench_shortest_path(c: &mut Criterion) {
                         from_node_id: format!("grid_{}_{}", x, y),
                         to_node_id: format!("grid_{}_{}", x, y + 1),
                         edge_type: "GRID_EDGE".to_string(),
-                        properties: HashMap::from([
-                            ("weight".to_string(), PropertyValue { value: Some(Value::DoubleValue(1.0)) }),
-                        ]),
+                        properties: HashMap::from([(
+                            "weight".to_string(),
+                            PropertyValue {
+                                value: Some(Value::DoubleValue(1.0)),
+                            },
+                        )]),
                         weight: Some(1.0),
                         created_at_ms: 0,
                         updated_at_ms: 0,
@@ -448,7 +493,7 @@ fn bench_shortest_path(c: &mut Criterion) {
                             None,
                         )
                         .await
-                        .unwrap()
+                        .unwrap(),
                 );
             });
         });
@@ -457,6 +502,392 @@ fn bench_shortest_path(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark A* shortest path operations
+fn bench_astar_shortest_path(c: &mut Criterion) {
+    let mut group = c.benchmark_group("astar_shortest_path");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Pre-initialize with a weighted grid
+    let (service, _collection_service) = runtime.block_on(async {
+        let collection_service = Arc::new(GraphCollectionService::new());
+        let service = Arc::new(GraphOperationsService::new_with_collection_service(
+            collection_service.clone(),
+        ));
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
+
+        // Create a grid-like graph for pathfinding
+        let grid_size = 20;
+        for x in 0..grid_size {
+            for y in 0..grid_size {
+                let node = Node {
+                    id: format!("astar_{}_{}", x, y),
+                    labels: vec!["GridNode".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_node(DEFAULT_GRAPH_ID, node).await.ok();
+
+                // Connect to adjacent nodes (right and down)
+                if x < grid_size - 1 {
+                    let edge = Edge {
+                        id: format!("astar_edge_{}_{}_right", x, y),
+                        from_node_id: format!("astar_{}_{}", x, y),
+                        to_node_id: format!("astar_{}_{}", x + 1, y),
+                        edge_type: "GRID_EDGE".to_string(),
+                        properties: HashMap::from([(
+                            "weight".to_string(),
+                            PropertyValue {
+                                value: Some(Value::DoubleValue(1.0)),
+                            },
+                        )]),
+                        weight: Some(1.0),
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    };
+                    service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok();
+                }
+
+                if y < grid_size - 1 {
+                    let edge = Edge {
+                        id: format!("astar_edge_{}_{}_down", x, y),
+                        from_node_id: format!("astar_{}_{}", x, y),
+                        to_node_id: format!("astar_{}_{}", x, y + 1),
+                        edge_type: "GRID_EDGE".to_string(),
+                        properties: HashMap::from([(
+                            "weight".to_string(),
+                            PropertyValue {
+                                value: Some(Value::DoubleValue(1.0)),
+                            },
+                        )]),
+                        weight: Some(1.0),
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    };
+                    service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok();
+                }
+            }
+        }
+
+        (service, collection_service)
+    });
+
+    // Benchmark A* shortest path finding
+    group.bench_function("astar_path", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                black_box(
+                    service
+                        .shortest_path(
+                            DEFAULT_GRAPH_ID,
+                            &"astar_0_0".to_string(),
+                            &"astar_19_19".to_string(),
+                            Some(50),
+                            None,
+                            Some(proximadb::proto::proximadb_v1::ShortestPathAlgorithm::Astar),
+                            None,
+                            None,
+                            None,
+                        )
+                        .await
+                        .unwrap(),
+                );
+            });
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark K-shortest paths (returns best of K for timing consistency)
+fn bench_k_shortest_paths(c: &mut Criterion) {
+    let mut group = c.benchmark_group("k_shortest_paths");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Build a small layered DAG to provide multiple alternative routes
+    let (service, _collection_service) = runtime.block_on(async {
+        let collection_service = Arc::new(GraphCollectionService::new());
+        let service = Arc::new(GraphOperationsService::new_with_collection_service(
+            collection_service.clone(),
+        ));
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
+
+        // Layers L0..L4 each with 10 nodes, connect Lk to Lk+1 densely
+        let layers = 5;
+        let width = 10;
+        for l in 0..layers {
+            for i in 0..width {
+                let node = Node {
+                    id: format!("ksp_{}_{}", l, i),
+                    labels: vec!["KSP".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_node(DEFAULT_GRAPH_ID, node).await.ok();
+            }
+        }
+        for l in 0..(layers - 1) {
+            for i in 0..width {
+                for j in 0..width {
+                    let edge = Edge {
+                        id: format!("ksp_e_{}_{}_to_{}_{}", l, i, l + 1, j),
+                        from_node_id: format!("ksp_{}_{}", l, i),
+                        to_node_id: format!("ksp_{}_{}", l + 1, j),
+                        edge_type: "KSP_EDGE".to_string(),
+                        properties: HashMap::from([(
+                            "weight".to_string(),
+                            PropertyValue {
+                                value: Some(Value::DoubleValue(1.0)),
+                            },
+                        )]),
+                        weight: Some(1.0),
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    };
+                    service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok();
+                }
+            }
+        }
+
+        (service, collection_service)
+    });
+
+    group.bench_function("ksp_k5", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                black_box(
+                    service
+                        .shortest_path(
+                            DEFAULT_GRAPH_ID,
+                            &"ksp_0_0".to_string(),
+                            &format!("ksp_{}_{}", 4, 9),
+                            Some(10),
+                            Some(vec!["KSP_EDGE".to_string()]),
+                            None,
+                            Some(5),
+                            None,
+                            None,
+                        )
+                        .await
+                        .unwrap(),
+                );
+            });
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark connected components detection
+fn bench_connected_components(c: &mut Criterion) {
+    let mut group = c.benchmark_group("connected_components");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    let (service, _collection_service) = runtime.block_on(async {
+        let collection_service = Arc::new(GraphCollectionService::new());
+        let service = Arc::new(GraphOperationsService::new_with_collection_service(
+            collection_service.clone(),
+        ));
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
+
+        // Build 4 disjoint components, each a line of 50 nodes
+        for cidx in 0..4 {
+            let base = cidx * 1000;
+            for i in 0..50 {
+                let node = Node {
+                    id: format!("cc_{}_{}", cidx, base + i),
+                    labels: vec!["CC".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_node(DEFAULT_GRAPH_ID, node).await.ok();
+                if i > 0 {
+                    let edge = Edge {
+                        id: format!("cc_e_{}_{}", cidx, base + i),
+                        from_node_id: format!("cc_{}_{}", cidx, base + i - 1),
+                        to_node_id: format!("cc_{}_{}", cidx, base + i),
+                        edge_type: "CC_EDGE".to_string(),
+                        properties: HashMap::new(),
+                        weight: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    };
+                    service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok();
+                }
+            }
+        }
+
+        (service, collection_service)
+    });
+
+    group.bench_function("components", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                black_box(
+                    service
+                        .connected_components(DEFAULT_GRAPH_ID)
+                        .await
+                        .unwrap(),
+                );
+            });
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark cycle detection
+fn bench_cycle_detection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cycle_detection");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Build a graph with cycles (a few interlinked rings)
+    let (service, _collection_service) = runtime.block_on(async {
+        let collection_service = Arc::new(GraphCollectionService::new());
+        let service = Arc::new(GraphOperationsService::new_with_collection_service(
+            collection_service.clone(),
+        ));
+        ensure_benchmark_graph_exists(&collection_service)
+            .await
+            .unwrap();
+
+        // Three rings of size 64 each, plus cross-links
+        for ring in 0..3 {
+            let base = ring * 10000;
+            let size = 64;
+            for i in 0..size {
+                let node = Node {
+                    id: format!("cy_{}_{}", ring, base + i),
+                    labels: vec!["CY".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_node(DEFAULT_GRAPH_ID, node).await.ok();
+            }
+            for i in 0..size {
+                let edge = Edge {
+                    id: format!("cy_e_{}_{}", ring, base + i),
+                    from_node_id: format!("cy_{}_{}", ring, base + i),
+                    to_node_id: format!("cy_{}_{}", ring, base + ((i + 1) % size)),
+                    edge_type: "CY_EDGE".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok();
+            }
+        }
+
+        // Cross links to create more cycles
+        for i in 0..64 {
+            let edge = Edge {
+                id: format!("cy_link_{}", i),
+                from_node_id: format!("cy_0_{}", i),
+                to_node_id: format!("cy_1_{}", 10000 + (i * 3) % 64),
+                edge_type: "CY_EDGE".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok();
+        }
+
+        (service, collection_service)
+    });
+
+    group.bench_function("has_cycle", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                let _ = black_box(service.has_cycle(DEFAULT_GRAPH_ID).await.unwrap());
+            });
+        });
+    });
+
+    group.finish();
+}
+
+/// Connected components scaling study (vary node count)
+fn bench_connected_components_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("connected_components_scaling");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Scale line sizes for each component
+    for line_len in [50usize, 200, 800] {
+        let service = runtime.block_on(async {
+            let collection_service = Arc::new(GraphCollectionService::new());
+            let service = Arc::new(GraphOperationsService::new_with_collection_service(
+                collection_service.clone(),
+            ));
+            ensure_benchmark_graph_exists(&collection_service)
+                .await
+                .unwrap();
+
+            // Build 4 components, each a simple path of line_len nodes
+            for cidx in 0..4 {
+                let base = cidx * 100000 + line_len * 10;
+                for i in 0..line_len {
+                    let node = Node {
+                        id: format!("ccs_{}_{}", cidx, base + i),
+                        labels: vec!["CCS".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    };
+                    service.create_node(DEFAULT_GRAPH_ID, node).await.ok();
+                    if i > 0 {
+                        let edge = Edge {
+                            id: format!("ccs_e_{}_{}", cidx, base + i),
+                            from_node_id: format!("ccs_{}_{}", cidx, base + i - 1),
+                            to_node_id: format!("ccs_{}_{}", cidx, base + i),
+                            edge_type: "CCS_EDGE".to_string(),
+                            properties: HashMap::new(),
+                            weight: None,
+                            created_at_ms: 0,
+                            updated_at_ms: 0,
+                        };
+                        service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok();
+                    }
+                }
+            }
+            service
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("components", line_len),
+            &line_len,
+            |b, _| {
+                b.iter(|| {
+                    runtime.block_on(async {
+                        black_box(
+                            service
+                                .connected_components(DEFAULT_GRAPH_ID)
+                                .await
+                                .unwrap(),
+                        );
+                    });
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
 // Configure with consistent settings across all benchmarks
 criterion_group! {
     name = benches;
@@ -468,7 +899,12 @@ criterion_group! {
               bench_edge_creation,
               bench_node_queries,
               bench_traversal,
-              bench_shortest_path
+              bench_shortest_path,
+              bench_astar_shortest_path,
+              bench_k_shortest_paths,
+              bench_connected_components,
+              bench_cycle_detection,
+              bench_connected_components_scaling
 }
 
 criterion_main!(benches);

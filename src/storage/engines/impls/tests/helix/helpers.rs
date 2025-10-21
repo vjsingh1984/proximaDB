@@ -9,17 +9,17 @@
 //! - Hilbert curve utilities
 //! - PCA and clustering helpers
 
+use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
-use rand::{Rng, SeedableRng};
 
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric as ProtoDistanceMetric,
-    StorageEngine, StorageAssignment, VectorRecord,
+    StorageAssignment, StorageEngine, VectorRecord,
 };
 use crate::storage::engines::impls::helix::{HelixConfig, HelixEngine};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -58,7 +58,14 @@ pub async fn create_test_engine_with_config(
 /// Create a minimal HELIX engine with filesystem and distance compute
 pub async fn create_minimal_engine(
     temp_dir: &TempDir,
-) -> Result<(HelixEngine, Arc<FilesystemFactory>, Arc<UnifiedDistanceCompute>), Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        HelixEngine,
+        Arc<FilesystemFactory>,
+        Arc<UnifiedDistanceCompute>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let path = temp_dir.path().to_str().unwrap().to_string();
@@ -70,12 +77,9 @@ pub async fn create_minimal_engine(
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
     let config = HelixConfig::default();
-    let engine = HelixEngine::new_with_config(
-        config,
-        filesystem_factory.clone(),
-        distance_compute.clone(),
-    )
-    .await?;
+    let engine =
+        HelixEngine::new_with_config(config, filesystem_factory.clone(), distance_compute.clone())
+            .await?;
 
     Ok((engine, filesystem_factory, distance_compute))
 }
@@ -93,12 +97,22 @@ pub fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
             id: format!("vec_{}", i),
             vector: (0..dims).map(|d| (i * dims + d) as f32 / 100.0).collect(),
             metadata: HashMap::from([
-                ("type".to_string(), crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string()))
-                }),
-                ("index".to_string(), crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
-                }),
+                (
+                    "type".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "test".to_string(),
+                        )),
+                    },
+                ),
+                (
+                    "index".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            i.to_string(),
+                        )),
+                    },
+                ),
             ]),
             timestamp: Some(i as i64),
             expires_at: None,
@@ -147,20 +161,28 @@ pub fn generate_random_vectors(count: usize, dims: usize, seed: u64) -> Vec<Vect
 
     (0..count)
         .map(|i| {
-            let vector: Vec<f32> = (0..dims)
-                .map(|_| rng.gen_range(-1.0..1.0))
-                .collect();
+            let vector: Vec<f32> = (0..dims).map(|_| rng.gen_range(-1.0..1.0)).collect();
 
             VectorRecord {
                 id: format!("vec_{}", i),
                 vector,
                 metadata: HashMap::from([
-                    ("type".to_string(), crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("benchmark".to_string()))
-                    }),
-                    ("cluster".to_string(), crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue((i % 10).to_string()))
-                    }),
+                    (
+                        "type".to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                "benchmark".to_string(),
+                            )),
+                        },
+                    ),
+                    (
+                        "cluster".to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                (i % 10).to_string(),
+                            )),
+                        },
+                    ),
                 ]),
                 timestamp: Some(i as i64),
                 expires_at: None,
@@ -183,9 +205,7 @@ pub fn generate_clustered_vectors(
 
     for cluster_id in 0..num_clusters {
         // Generate cluster center
-        let center: Vec<f32> = (0..dims)
-            .map(|_| rng.gen_range(-10.0..10.0))
-            .collect();
+        let center: Vec<f32> = (0..dims).map(|_| rng.gen_range(-10.0..10.0)).collect();
 
         // Generate vectors around center
         for i in 0..vectors_per_cluster {
@@ -197,11 +217,14 @@ pub fn generate_clustered_vectors(
             all_vectors.push(VectorRecord {
                 id: format!("cluster_{}_vec_{}", cluster_id, i),
                 vector,
-                metadata: HashMap::from([
-                    ("cluster_id".to_string(), crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(cluster_id.to_string()))
-                    }),
-                ]),
+                metadata: HashMap::from([(
+                    "cluster_id".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            cluster_id.to_string(),
+                        )),
+                    },
+                )]),
                 timestamp: Some((cluster_id * vectors_per_cluster + i) as i64),
                 expires_at: None,
                 source: None,
@@ -301,8 +324,8 @@ pub fn create_flush_params_with_options(
 // ============================================================================
 
 /// Create a temporary directory and filesystem factory
-pub async fn create_test_filesystem(
-) -> Result<(TempDir, Arc<FilesystemFactory>), Box<dyn std::error::Error>> {
+pub async fn create_test_filesystem()
+-> Result<(TempDir, Arc<FilesystemFactory>), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let path = temp_dir.path().to_str().unwrap().to_string();
 
@@ -347,7 +370,10 @@ pub fn create_diverse_vectors(count: usize, dims: usize) -> Vec<Vec<f32>> {
 /// Generate Hilbert keys for a set of vectors
 pub fn generate_hilbert_keys(vectors: &[VectorRecord]) -> Vec<u64> {
     use crate::storage::engines::impls::helix::clustering::compute_hilbert_key;
-    vectors.iter().map(|v| compute_hilbert_key(&v.vector)).collect()
+    vectors
+        .iter()
+        .map(|v| compute_hilbert_key(&v.vector))
+        .collect()
 }
 
 // ============================================================================
@@ -402,7 +428,10 @@ pub fn create_zone_map_builder(
 pub fn train_test_pca_model(
     vectors: &[VectorRecord],
     n_components: usize,
-) -> Result<crate::storage::engines::impls::helix::pca_impl::EnhancedPCAModel, Box<dyn std::error::Error>> {
+) -> Result<
+    crate::storage::engines::impls::helix::pca_impl::EnhancedPCAModel,
+    Box<dyn std::error::Error>,
+> {
     use crate::storage::engines::impls::helix::pca_impl::EnhancedPCAModel;
     EnhancedPCAModel::train(vectors, n_components).map_err(|e| e.into())
 }
@@ -488,7 +517,9 @@ pub fn create_mock_sstable_metadata(
 }
 
 /// Create multiple mock SSTables for testing pruning
-pub fn create_mock_sstables(count: usize) -> Vec<crate::storage::engines::impls::helix::SStableMetadata> {
+pub fn create_mock_sstables(
+    count: usize,
+) -> Vec<crate::storage::engines::impls::helix::SStableMetadata> {
     (0..count)
         .map(|i| {
             let start = i as u64 * 1000;
@@ -571,7 +602,11 @@ mod tests {
 
         // First dimension should differ by approximately 10.0 between clusters
         let diff = (cluster_1_vec[0] - cluster_0_vec[0]).abs();
-        assert!(diff > 9.0 && diff < 11.0, "Clustering pattern not working: diff = {}", diff);
+        assert!(
+            diff > 9.0 && diff < 11.0,
+            "Clustering pattern not working: diff = {}",
+            diff
+        );
     }
 
     #[test]

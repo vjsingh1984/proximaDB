@@ -2,13 +2,13 @@
 //!
 //! Generates automated business insights from data analysis using AI.
 
-use crate::ai::llm_integration::LLMIntegrationEngine;
-use crate::ai::business_intelligence::engine::BusinessMetrics;
 use super::trend_analyzer::TrendAnalysis;
+use crate::ai::business_intelligence::engine::BusinessMetrics;
+use crate::ai::llm_integration::LLMIntegrationEngine;
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
 use tracing::info;
 
 /// Insight generator for automated business intelligence
@@ -59,10 +59,7 @@ impl InsightGenerator {
     pub async fn new(llm_engine: Arc<LLMIntegrationEngine>) -> Result<Self> {
         let config = InsightGeneratorConfig::default();
 
-        Ok(Self {
-            llm_engine,
-            config,
-        })
+        Ok(Self { llm_engine, config })
     }
 
     /// Generate business insights from metrics and trends
@@ -76,22 +73,34 @@ impl InsightGenerator {
         let mut insights = Vec::new();
 
         // Generate insights from revenue metrics
-        if let Some(revenue_insights) = self.analyze_revenue_metrics(&metrics.revenue_metrics).await? {
+        if let Some(revenue_insights) = self
+            .analyze_revenue_metrics(&metrics.revenue_metrics)
+            .await?
+        {
             insights.extend(revenue_insights);
         }
 
         // Generate insights from customer metrics
-        if let Some(customer_insights) = self.analyze_customer_metrics(&metrics.customer_metrics).await? {
+        if let Some(customer_insights) = self
+            .analyze_customer_metrics(&metrics.customer_metrics)
+            .await?
+        {
             insights.extend(customer_insights);
         }
 
         // Generate insights from operational metrics
-        if let Some(operational_insights) = self.analyze_operational_metrics(&metrics.operational_metrics).await? {
+        if let Some(operational_insights) = self
+            .analyze_operational_metrics(&metrics.operational_metrics)
+            .await?
+        {
             insights.extend(operational_insights);
         }
 
         // Generate insights from performance metrics
-        if let Some(performance_insights) = self.analyze_performance_metrics(&metrics.performance_metrics).await? {
+        if let Some(performance_insights) = self
+            .analyze_performance_metrics(&metrics.performance_metrics)
+            .await?
+        {
             insights.extend(performance_insights);
         }
 
@@ -109,14 +118,21 @@ impl InsightGenerator {
         insights.truncate(self.config.max_insights_per_analysis);
 
         // Sort by impact score
-        insights.sort_by(|a, b| b.impact_score.partial_cmp(&a.impact_score).unwrap_or(std::cmp::Ordering::Equal));
+        insights.sort_by(|a, b| {
+            b.impact_score
+                .partial_cmp(&a.impact_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         info!("Generated {} business insights", insights.len());
         Ok(insights)
     }
 
     /// Analyze revenue metrics for insights
-    async fn analyze_revenue_metrics(&self, revenue: &super::engine::RevenueMetrics) -> Result<Option<Vec<BusinessInsight>>> {
+    async fn analyze_revenue_metrics(
+        &self,
+        revenue: &super::engine::RevenueMetrics,
+    ) -> Result<Option<Vec<BusinessInsight>>> {
         if revenue.total_revenue.is_none() && revenue.revenue_growth_percent.is_none() {
             return Ok(None);
         }
@@ -130,10 +146,14 @@ impl InsightGenerator {
         }
 
         // Revenue per customer insight
-        if let (Some(total_revenue), Some(avg_per_customer)) = (revenue.total_revenue, revenue.avg_revenue_per_customer) {
+        if let (Some(total_revenue), Some(avg_per_customer)) =
+            (revenue.total_revenue, revenue.avg_revenue_per_customer)
+        {
             if avg_per_customer > 0.0 {
                 let customer_count = (total_revenue / avg_per_customer) as u64;
-                let insight = self.generate_customer_value_insight(avg_per_customer, customer_count).await?;
+                let insight = self
+                    .generate_customer_value_insight(avg_per_customer, customer_count)
+                    .await?;
                 insights.push(insight);
             }
         }
@@ -146,28 +166,40 @@ impl InsightGenerator {
         let (title, description, impact_score) = match growth_rate {
             g if g > 20.0 => (
                 "Exceptional Revenue Growth".to_string(),
-                format!("Revenue is growing at {:.1}% - significantly above industry average", g),
-                0.9
+                format!(
+                    "Revenue is growing at {:.1}% - significantly above industry average",
+                    g
+                ),
+                0.9,
             ),
             g if g > 10.0 => (
                 "Strong Revenue Growth".to_string(),
-                format!("Revenue growth of {:.1}% indicates healthy business expansion", g),
-                0.8
+                format!(
+                    "Revenue growth of {:.1}% indicates healthy business expansion",
+                    g
+                ),
+                0.8,
             ),
             g if g > 0.0 => (
                 "Positive Revenue Trend".to_string(),
                 format!("Revenue growing at {:.1}% - continue current strategies", g),
-                0.6
+                0.6,
             ),
             g if g > -5.0 => (
                 "Revenue Decline Warning".to_string(),
-                format!("Revenue declining at {:.1}% - requires immediate attention", g.abs()),
-                0.7
+                format!(
+                    "Revenue declining at {:.1}% - requires immediate attention",
+                    g.abs()
+                ),
+                0.7,
             ),
             g => (
                 "Critical Revenue Decline".to_string(),
-                format!("Severe revenue decline of {:.1}% - emergency intervention needed", g.abs()),
-                0.95
+                format!(
+                    "Severe revenue decline of {:.1}% - emergency intervention needed",
+                    g.abs()
+                ),
+                0.95,
             ),
         };
 
@@ -186,7 +218,11 @@ impl InsightGenerator {
     }
 
     /// Generate customer value insight
-    async fn generate_customer_value_insight(&self, avg_revenue_per_customer: f64, customer_count: u64) -> Result<BusinessInsight> {
+    async fn generate_customer_value_insight(
+        &self,
+        avg_revenue_per_customer: f64,
+        customer_count: u64,
+    ) -> Result<BusinessInsight> {
         let insight = BusinessInsight {
             insight_id: uuid::Uuid::new_v4().to_string(),
             title: "Customer Value Analysis".to_string(),
@@ -244,25 +280,37 @@ impl InsightGenerator {
     }
 
     /// Analyze customer metrics for insights
-    async fn analyze_customer_metrics(&self, _customer: &super::engine::CustomerMetrics) -> Result<Option<Vec<BusinessInsight>>> {
+    async fn analyze_customer_metrics(
+        &self,
+        _customer: &super::engine::CustomerMetrics,
+    ) -> Result<Option<Vec<BusinessInsight>>> {
         // Placeholder implementation
         Ok(None)
     }
 
     /// Analyze operational metrics for insights
-    async fn analyze_operational_metrics(&self, _operational: &super::engine::OperationalMetrics) -> Result<Option<Vec<BusinessInsight>>> {
+    async fn analyze_operational_metrics(
+        &self,
+        _operational: &super::engine::OperationalMetrics,
+    ) -> Result<Option<Vec<BusinessInsight>>> {
         // Placeholder implementation
         Ok(None)
     }
 
     /// Analyze performance metrics for insights
-    async fn analyze_performance_metrics(&self, _performance: &super::engine::PerformanceMetrics) -> Result<Option<Vec<BusinessInsight>>> {
+    async fn analyze_performance_metrics(
+        &self,
+        _performance: &super::engine::PerformanceMetrics,
+    ) -> Result<Option<Vec<BusinessInsight>>> {
         // Placeholder implementation
         Ok(None)
     }
 
     /// Generate insight from trend analysis
-    async fn generate_trend_insight(&self, trend: &TrendAnalysis) -> Result<Option<BusinessInsight>> {
+    async fn generate_trend_insight(
+        &self,
+        trend: &TrendAnalysis,
+    ) -> Result<Option<BusinessInsight>> {
         if trend.confidence_score < 0.7 {
             return Ok(None);
         }

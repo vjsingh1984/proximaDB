@@ -541,10 +541,9 @@ impl ColdStorageBackend {
             id: node.id.clone(),
             labels: node.labels.clone(),
             properties,
-            embedding: node
-                .embedding
-                .as_ref()
-                .and_then(|e: &crate::proto::proximadb_v1::EmbeddingVersion| Some(e.vector.clone())),
+            embedding: node.embedding.as_ref().and_then(
+                |e: &crate::proto::proximadb_v1::EmbeddingVersion| Some(e.vector.clone()),
+            ),
             created_at: Some(node.created_at_ms as u64),
             updated_at: Some(node.updated_at_ms as u64),
         })
@@ -574,7 +573,6 @@ impl ColdStorageBackend {
         &self,
         value: &crate::graph::PropertyValue,
     ) -> Result<StorablePropertyValue> {
-
         use crate::proto::proximadb_v1::property_value::Value;
         match &value.value {
             Some(Value::StringValue(s)) => Ok(StorablePropertyValue::String(s.clone())),
@@ -641,7 +639,6 @@ impl ColdStorageBackend {
         &self,
         storable: StorablePropertyValue,
     ) -> Result<crate::graph::PropertyValue> {
-
         use crate::proto::proximadb_v1::property_value::Value;
         let value = match storable {
             StorablePropertyValue::String(s) => Some(Value::StringValue(s)),
@@ -676,7 +673,6 @@ impl ColdStorageBackend {
 
         Ok(all_nodes)
     }
-
 
     /// Get storage statistics
     pub async fn get_stats(&self) -> StorageStats {
@@ -717,7 +713,11 @@ mod tests {
             properties: HashMap::from([(
                 "name".to_string(),
                 crate::graph::PropertyValue {
-                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Test Node".to_string())),
+                    value: Some(
+                        crate::proto::proximadb_v1::property_value::Value::StringValue(
+                            "Test Node".to_string(),
+                        ),
+                    ),
                 },
             )]),
             embedding: None,
@@ -729,7 +729,11 @@ mod tests {
         backend.store_node(node.clone()).await.unwrap();
 
         // Retrieve node
-        let retrieved = backend.get_node(&"test_node".to_string()).await.unwrap().unwrap();
+        let retrieved = backend
+            .get_node(&"test_node".to_string())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.id, "test_node");
         assert_eq!(retrieved.labels, vec!["TestLabel"]);
 
@@ -762,7 +766,11 @@ mod tests {
         backend.store_edge(edge.clone()).await.unwrap();
 
         // Retrieve edge
-        let retrieved = backend.get_edge(&"test_edge".to_string()).await.unwrap().unwrap();
+        let retrieved = backend
+            .get_edge(&"test_edge".to_string())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.id, "test_edge");
         assert_eq!(retrieved.from_node_id, "node1");
         assert_eq!(retrieved.to_node_id, "node2");
@@ -791,7 +799,11 @@ mod tests {
 
         // Store then delete
         backend.store_node(node).await.unwrap();
-        let deleted = backend.delete_node(&"delete_me".to_string()).await.unwrap().unwrap();
+        let deleted = backend
+            .delete_node(&"delete_me".to_string())
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(deleted.id, "delete_me");
 

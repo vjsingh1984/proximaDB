@@ -111,10 +111,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = BatchOperationResult::success(
-            vec!["id1".to_string(), "id2".to_string()],
-            metrics,
-        );
+        let result =
+            BatchOperationResult::success(vec!["id1".to_string(), "id2".to_string()], metrics);
 
         assert!(result.success);
         assert_eq!(result.vector_ids.len(), 2);

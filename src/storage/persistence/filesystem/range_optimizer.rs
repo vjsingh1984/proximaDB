@@ -69,7 +69,9 @@ impl RangeOptimizer {
         if let Some(history) = self.range_history.get(file_path) {
             let ranges = self.analyze_patterns(&history);
             if !ranges.is_empty() {
-                self.stats.optimizations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.stats
+                    .optimizations
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return self.merge_ranges(ranges);
             }
         }
@@ -93,24 +95,24 @@ impl RangeOptimizer {
         match storage_engine.to_lowercase().as_str() {
             "viper" | "nova" => {
                 // VIPER and NOVA use Parquet format
-            // Always need the footer (last 8 bytes + footer size)
-            // Estimate footer size as 1% of file or 64KB, whichever is smaller
-            let footer_size = std::cmp::min(file_size / 100, 65536);
-            ranges.push(OptimizedRange {
-                start: file_size.saturating_sub(footer_size),
-                end: file_size,
-            });
+                // Always need the footer (last 8 bytes + footer size)
+                // Estimate footer size as 1% of file or 64KB, whichever is smaller
+                let footer_size = std::cmp::min(file_size / 100, 65536);
+                ranges.push(OptimizedRange {
+                    start: file_size.saturating_sub(footer_size),
+                    end: file_size,
+                });
 
-            // If specific row groups requested, calculate their ranges
-            if let Some(row_groups) = row_group_indices {
-                // Estimate row group size (divide file by typical number of row groups)
-                let estimated_rg_size = file_size / 10; // Assume ~10 row groups
-                for rg_idx in row_groups {
-                    let start = (rg_idx as u64) * estimated_rg_size;
-                    let end = std::cmp::min(start + estimated_rg_size, file_size);
-                    ranges.push(OptimizedRange { start, end });
+                // If specific row groups requested, calculate their ranges
+                if let Some(row_groups) = row_group_indices {
+                    // Estimate row group size (divide file by typical number of row groups)
+                    let estimated_rg_size = file_size / 10; // Assume ~10 row groups
+                    for rg_idx in row_groups {
+                        let start = (rg_idx as u64) * estimated_rg_size;
+                        let end = std::cmp::min(start + estimated_rg_size, file_size);
+                        ranges.push(OptimizedRange { start, end });
+                    }
                 }
-            }
 
                 // If specific columns requested, we'd need the footer first to determine column chunks
                 // For now, this is a placeholder for column-specific optimization
@@ -166,7 +168,10 @@ impl RangeOptimizer {
 
     /// Record a range access for learning
     pub async fn record_access(&self, file_path: &str, start: u64, end: u64) {
-        let mut entry = self.range_history.entry(file_path.to_string()).or_insert_with(Vec::new);
+        let mut entry = self
+            .range_history
+            .entry(file_path.to_string())
+            .or_insert_with(Vec::new);
 
         // Check if this range already exists
         for range in entry.iter_mut() {
@@ -221,7 +226,9 @@ impl RangeOptimizer {
             if range.start <= current.end + self.merge_threshold as u64 {
                 // Merge ranges
                 current.end = cmp::max(current.end, range.end);
-                self.stats.ranges_merged.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.stats
+                    .ranges_merged
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             } else {
                 // Gap too large, start new range
                 merged.push(current);
@@ -244,16 +251,27 @@ impl RangeOptimizer {
         let bytes_to_read: u64 = ranges.iter().map(|r| r.end - r.start).sum();
         let saved = file_size.saturating_sub(bytes_to_read);
 
-        self.stats.bytes_saved.fetch_add(saved, std::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .bytes_saved
+            .fetch_add(saved, std::sync::atomic::Ordering::Relaxed);
         saved
     }
 
     /// Get optimization statistics
     pub fn stats(&self) -> RangeOptimizationStats {
         RangeOptimizationStats {
-            optimizations: self.stats.optimizations.load(std::sync::atomic::Ordering::Relaxed),
-            bytes_saved: self.stats.bytes_saved.load(std::sync::atomic::Ordering::Relaxed),
-            ranges_merged: self.stats.ranges_merged.load(std::sync::atomic::Ordering::Relaxed),
+            optimizations: self
+                .stats
+                .optimizations
+                .load(std::sync::atomic::Ordering::Relaxed),
+            bytes_saved: self
+                .stats
+                .bytes_saved
+                .load(std::sync::atomic::Ordering::Relaxed),
+            ranges_merged: self
+                .stats
+                .ranges_merged
+                .load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 }
@@ -290,9 +308,18 @@ mod tests {
 
         let ranges = vec![
             OptimizedRange { start: 0, end: 100 },
-            OptimizedRange { start: 110, end: 200 },
-            OptimizedRange { start: 1100, end: 1200 },
-            OptimizedRange { start: 1150, end: 1300 },
+            OptimizedRange {
+                start: 110,
+                end: 200,
+            },
+            OptimizedRange {
+                start: 1100,
+                end: 1200,
+            },
+            OptimizedRange {
+                start: 1150,
+                end: 1300,
+            },
         ];
 
         let merged = optimizer.merge_ranges(ranges);

@@ -48,19 +48,28 @@ fn encode_gorilla_u32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
             let trailing_zeros = xor.trailing_zeros() as u8;
             let meaningful_bits = 32 - leading_zeros - trailing_zeros;
 
-            if leading_zeros >= prev_leading_zeros &&
-               trailing_zeros >= prev_trailing_zeros &&
-               prev_leading_zeros + prev_trailing_zeros < 32 {
+            if leading_zeros >= prev_leading_zeros
+                && trailing_zeros >= prev_trailing_zeros
+                && prev_leading_zeros + prev_trailing_zeros < 32
+            {
                 bit_writer.write_bit(false);
                 let block_size = 32 - prev_leading_zeros - prev_trailing_zeros;
-                let mask = if block_size >= 32 { u32::MAX } else { (1u32 << block_size) - 1 };
+                let mask = if block_size >= 32 {
+                    u32::MAX
+                } else {
+                    (1u32 << block_size) - 1
+                };
                 let value_bits = (xor >> prev_trailing_zeros) & mask;
                 bit_writer.write_bits(value_bits as u64, block_size);
             } else {
                 bit_writer.write_bit(true);
                 bit_writer.write_bits(leading_zeros as u64, 5);
                 bit_writer.write_bits(meaningful_bits as u64, 6);
-                let mask = if meaningful_bits >= 32 { u32::MAX } else { (1u32 << meaningful_bits) - 1 };
+                let mask = if meaningful_bits >= 32 {
+                    u32::MAX
+                } else {
+                    (1u32 << meaningful_bits) - 1
+                };
                 let value_bits = (xor >> trailing_zeros) & mask;
                 bit_writer.write_bits(value_bits as u64, meaningful_bits);
                 prev_leading_zeros = leading_zeros;
@@ -109,19 +118,28 @@ fn encode_gorilla_u64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
             let trailing_zeros = xor.trailing_zeros() as u8;
             let meaningful_bits = 64 - leading_zeros - trailing_zeros;
 
-            if leading_zeros >= prev_leading_zeros &&
-               trailing_zeros >= prev_trailing_zeros &&
-               prev_leading_zeros + prev_trailing_zeros < 64 {
+            if leading_zeros >= prev_leading_zeros
+                && trailing_zeros >= prev_trailing_zeros
+                && prev_leading_zeros + prev_trailing_zeros < 64
+            {
                 bit_writer.write_bit(false);
                 let block_size = 64 - prev_leading_zeros - prev_trailing_zeros;
-                let mask = if block_size >= 64 { u64::MAX } else { (1u64 << block_size) - 1 };
+                let mask = if block_size >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << block_size) - 1
+                };
                 let value_bits = (xor >> prev_trailing_zeros) & mask;
                 bit_writer.write_bits(value_bits, block_size);
             } else {
                 bit_writer.write_bit(true);
                 bit_writer.write_bits(leading_zeros as u64, 6);
                 bit_writer.write_bits(meaningful_bits as u64, 7);
-                let mask = if meaningful_bits >= 64 { u64::MAX } else { (1u64 << meaningful_bits) - 1 };
+                let mask = if meaningful_bits >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << meaningful_bits) - 1
+                };
                 let value_bits = (xor >> trailing_zeros) & mask;
                 bit_writer.write_bits(value_bits, meaningful_bits);
                 prev_leading_zeros = leading_zeros;
@@ -239,8 +257,7 @@ fn decode_gorilla_u64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     }
 
     let first_value = u64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
     let mut result = vec![first_value as i64];
 

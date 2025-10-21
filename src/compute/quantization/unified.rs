@@ -1642,15 +1642,17 @@ impl UnifiedQuantizationEngine {
         #[cfg(target_arch = "x86_64")]
         {
             // Use optimized popcount implementation (Rust's count_ones uses POPCNT when available)
-            return a
-                .iter()
+            a.iter()
                 .zip(b.iter())
                 .map(|(byte_a, byte_b)| (*byte_a ^ *byte_b).count_ones())
-                .sum();
+                .sum()
         }
 
-        // Fallback to generic implementation
-        self.calculate_hamming_generic(a, b)
+        // Fallback to generic implementation on non-x86_64 targets
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.calculate_hamming_generic(a, b)
+        }
     }
 
     /// Generic Hamming distance calculation

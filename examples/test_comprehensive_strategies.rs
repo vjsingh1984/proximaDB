@@ -1,8 +1,8 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
-};
 use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
+};
 use std::collections::HashMap;
 
 /// Static test data: 32 dimensions x 64 rows as requested
@@ -16,9 +16,15 @@ fn create_static_test_vectors() -> Vec<VectorRecord> {
         // Create patterns in the data for better compression testing
         for dim in 0..32 {
             let value = match dim % 4 {
-                0 => (row as f32 + dim as f32) * 0.1,           // Linear pattern
-                1 => ((row * dim) as f32).sin() * 0.5,          // Sine pattern
-                2 => if row % 2 == 0 { 1.0 } else { -1.0 },     // Binary pattern
+                0 => (row as f32 + dim as f32) * 0.1,  // Linear pattern
+                1 => ((row * dim) as f32).sin() * 0.5, // Sine pattern
+                2 => {
+                    if row % 2 == 0 {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                } // Binary pattern
                 3 => (dim as f32 / 32.0) + (row as f32 * 0.01), // Mixed pattern
                 _ => unreachable!(),
             };
@@ -30,16 +36,27 @@ fn create_static_test_vectors() -> Vec<VectorRecord> {
             vector,
             metadata: {
                 let mut meta = HashMap::new();
-                meta.insert("row_index".to_string(), SqlValue {
-                    value: Some(sql_value::Value::Int64Value(row as i64))
-                });
-                meta.insert("created_by".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("comprehensive_test".to_string()))
-                });
+                meta.insert(
+                    "row_index".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::Int64Value(row as i64)),
+                    },
+                );
+                meta.insert(
+                    "created_by".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue(
+                            "comprehensive_test".to_string(),
+                        )),
+                    },
+                );
                 if row % 10 == 0 {
-                    meta.insert("special_marker".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue("checkpoint".to_string()))
-                    });
+                    meta.insert(
+                        "special_marker".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue("checkpoint".to_string())),
+                        },
+                    );
                 }
                 meta
             },
@@ -64,7 +81,14 @@ fn test_configuration(
     println!("\n🧪 Testing: {}", test_name);
     println!("   Layout: {:?}", layout);
     println!("   Algorithm: {:?}", algorithm);
-    println!("   Compression: {}", if enable_compression { "ENABLED" } else { "DISABLED" });
+    println!(
+        "   Compression: {}",
+        if enable_compression {
+            "ENABLED"
+        } else {
+            "DISABLED"
+        }
+    );
 
     let config = BlockCompressionConfig {
         vector_layout: layout,
@@ -84,8 +108,16 @@ fn test_configuration(
     let original_size = vectors.len() * 32 * 4; // 32 dimensions * 4 bytes per f32
     let compression_ratio = original_size as f64 / encoded.len() as f64;
 
-    println!("   Original: {:.2} KB ({} bytes)", original_size as f64 / 1024.0, original_size);
-    println!("   Encoded:  {:.2} KB ({} bytes)", encoded.len() as f64 / 1024.0, encoded.len());
+    println!(
+        "   Original: {:.2} KB ({} bytes)",
+        original_size as f64 / 1024.0,
+        original_size
+    );
+    println!(
+        "   Encoded:  {:.2} KB ({} bytes)",
+        encoded.len() as f64 / 1024.0,
+        encoded.len()
+    );
     println!("   Ratio:    {:.2}x", compression_ratio);
 
     // Test round-trip decoding
@@ -93,13 +125,24 @@ fn test_configuration(
     let round_trip_success = decoded_block.records.len() == vectors.len();
 
     if round_trip_success {
-        println!("   ✅ Round-trip: SUCCESS ({} vectors decoded)", decoded_block.records.len());
+        println!(
+            "   ✅ Round-trip: SUCCESS ({} vectors decoded)",
+            decoded_block.records.len()
+        );
 
         // Verify first few vectors for data integrity
         let mut data_match = true;
-        for (i, (original, decoded)) in vectors.iter().zip(decoded_block.records.iter()).take(3).enumerate() {
+        for (i, (original, decoded)) in vectors
+            .iter()
+            .zip(decoded_block.records.iter())
+            .take(3)
+            .enumerate()
+        {
             if original.id != decoded.id {
-                println!("   ❌ ID mismatch at {}: {} vs {}", i, original.id, decoded.id);
+                println!(
+                    "   ❌ ID mismatch at {}: {} vs {}",
+                    i, original.id, decoded.id
+                );
                 data_match = false;
                 break;
             }
@@ -110,14 +153,24 @@ fn test_configuration(
             }
 
             // Check dimensions with tolerance for compression artifacts
-            for (j, (orig_val, dec_val)) in original.vector.iter().zip(decoded.vector.iter()).enumerate() {
+            for (j, (orig_val, dec_val)) in original
+                .vector
+                .iter()
+                .zip(decoded.vector.iter())
+                .enumerate()
+            {
                 if (orig_val - dec_val).abs() > 1e-5 {
-                    println!("   ❌ Vector value mismatch at {}[{}]: {} vs {}", i, j, orig_val, dec_val);
+                    println!(
+                        "   ❌ Vector value mismatch at {}[{}]: {} vs {}",
+                        i, j, orig_val, dec_val
+                    );
                     data_match = false;
                     break;
                 }
             }
-            if !data_match { break; }
+            if !data_match {
+                break;
+            }
         }
 
         if data_match {
@@ -139,7 +192,11 @@ fn main() -> anyhow::Result<()> {
     let vectors = create_static_test_vectors();
     let original_size = vectors.len() * 32 * 4;
 
-    println!("📏 Original data size: {:.2} KB ({} bytes)", original_size as f64 / 1024.0, original_size);
+    println!(
+        "📏 Original data size: {:.2} KB ({} bytes)",
+        original_size as f64 / 1024.0,
+        original_size
+    );
     println!("🧮 Testing all combinations...\n");
 
     let layouts = vec![
@@ -168,10 +225,20 @@ fn main() -> anyhow::Result<()> {
                     "{:?} + {:?} + {}",
                     layout,
                     algorithm,
-                    if enable_compression { "COMPRESS" } else { "NO_COMPRESS" }
+                    if enable_compression {
+                        "COMPRESS"
+                    } else {
+                        "NO_COMPRESS"
+                    }
                 );
 
-                match test_configuration(&vectors, *layout, *algorithm, enable_compression, &test_name) {
+                match test_configuration(
+                    &vectors,
+                    *layout,
+                    *algorithm,
+                    enable_compression,
+                    &test_name,
+                ) {
                     Ok((encoded_size, ratio, success)) => {
                         results.push((test_name.clone(), encoded_size, ratio, success));
                         if success && ratio > best_ratio {
@@ -197,54 +264,86 @@ fn main() -> anyhow::Result<()> {
     println!("   Ratio: {:.2}x compression", best_ratio);
 
     println!("\n📊 ALL RESULTS:");
-    println!("{:<40} {:>12} {:>10} {:>8}", "Configuration", "Size (bytes)", "Ratio", "Success");
+    println!(
+        "{:<40} {:>12} {:>10} {:>8}",
+        "Configuration", "Size (bytes)", "Ratio", "Success"
+    );
     println!("{}", "-".repeat(75));
 
     for (config, size, ratio, success) in &results {
         let success_marker = if *success { "✅" } else { "❌" };
-        println!("{:<40} {:>12} {:>10.2}x {:>6}", config, size, ratio, success_marker);
+        println!(
+            "{:<40} {:>12} {:>10.2}x {:>6}",
+            config, size, ratio, success_marker
+        );
     }
 
     // Analysis
     println!("\n🔍 ANALYSIS:");
 
-    let full_vector_results: Vec<_> = results.iter()
+    let full_vector_results: Vec<_> = results
+        .iter()
         .filter(|(config, _, _, success)| config.contains("FullVector") && *success)
         .collect();
-    let transpose_results: Vec<_> = results.iter()
+    let transpose_results: Vec<_> = results
+        .iter()
         .filter(|(config, _, _, success)| config.contains("TransposeField") && *success)
         .collect();
 
     if !full_vector_results.is_empty() {
-        let avg_full_vector = full_vector_results.iter().map(|(_, _, ratio, _)| ratio).sum::<f64>() / full_vector_results.len() as f64;
+        let avg_full_vector = full_vector_results
+            .iter()
+            .map(|(_, _, ratio, _)| ratio)
+            .sum::<f64>()
+            / full_vector_results.len() as f64;
         println!("   FullVector average ratio: {:.2}x", avg_full_vector);
     }
 
     if !transpose_results.is_empty() {
-        let avg_transpose = transpose_results.iter().map(|(_, _, ratio, _)| ratio).sum::<f64>() / transpose_results.len() as f64;
+        let avg_transpose = transpose_results
+            .iter()
+            .map(|(_, _, ratio, _)| ratio)
+            .sum::<f64>()
+            / transpose_results.len() as f64;
         println!("   TransposeField average ratio: {:.2}x", avg_transpose);
     }
 
     // Identify compression benefit
-    let no_compression_results: Vec<_> = results.iter()
+    let no_compression_results: Vec<_> = results
+        .iter()
         .filter(|(config, _, _, success)| config.contains("NO_COMPRESS") && *success)
         .collect();
-    let with_compression_results: Vec<_> = results.iter()
+    let with_compression_results: Vec<_> = results
+        .iter()
         .filter(|(config, _, _, success)| config.contains("COMPRESS") && *success)
         .collect();
 
     if !no_compression_results.is_empty() && !with_compression_results.is_empty() {
-        let avg_no_compress = no_compression_results.iter().map(|(_, _, ratio, _)| ratio).sum::<f64>() / no_compression_results.len() as f64;
-        let avg_with_compress = with_compression_results.iter().map(|(_, _, ratio, _)| ratio).sum::<f64>() / with_compression_results.len() as f64;
+        let avg_no_compress = no_compression_results
+            .iter()
+            .map(|(_, _, ratio, _)| ratio)
+            .sum::<f64>()
+            / no_compression_results.len() as f64;
+        let avg_with_compress = with_compression_results
+            .iter()
+            .map(|(_, _, ratio, _)| ratio)
+            .sum::<f64>()
+            / with_compression_results.len() as f64;
 
         println!("   Without compression: {:.2}x average", avg_no_compress);
         println!("   With compression: {:.2}x average", avg_with_compress);
-        println!("   Compression benefit: {:.1}% improvement", ((avg_with_compress / avg_no_compress) - 1.0) * 100.0);
+        println!(
+            "   Compression benefit: {:.1}% improvement",
+            ((avg_with_compress / avg_no_compress) - 1.0) * 100.0
+        );
     }
 
     println!("\n✅ Comprehensive testing complete!");
     println!("   Total configurations tested: {}", results.len());
-    println!("   Successful configurations: {}", results.iter().filter(|(_, _, _, success)| *success).count());
+    println!(
+        "   Successful configurations: {}",
+        results.iter().filter(|(_, _, _, success)| *success).count()
+    );
 
     Ok(())
 }

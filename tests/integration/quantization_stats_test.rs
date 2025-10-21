@@ -5,9 +5,9 @@ mod common;
 use anyhow::Result;
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::compute::quantization::{
-    BinaryQuantization, InMemoryCodebookStore, ProductQuantization as PqConfig,
-    QuantizationLevel, StorageQuantizationConfig, StorageQuantizationEngine,
-    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
+    BinaryQuantization, InMemoryCodebookStore, ProductQuantization as PqConfig, QuantizationLevel,
+    StorageQuantizationConfig, StorageQuantizationEngine, UnifiedQuantizationEngine,
+    UnifiedQuantizationLevel,
 };
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -178,12 +178,7 @@ async fn run_quantization_test(
         let quantized_data = quantization_engine
             .quantize_batch(
                 &vector_data,
-                Some(
-                    &vectors
-                        .iter()
-                        .map(|v| v.id.clone())
-                        .collect::<Vec<_>>(),
-                ),
+                Some(&vectors.iter().map(|v| v.id.clone()).collect::<Vec<_>>()),
             )
             .await?;
 

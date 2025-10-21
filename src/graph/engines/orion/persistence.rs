@@ -23,10 +23,10 @@
 
 use crate::core::error::ProximaDBError;
 use crate::core::serialization::CompressionAlgorithm;
-use crate::graph::{Edge, Node, NodeId};
 use crate::graph::engines::orion::OrionGraphEngine;
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::graph::{Edge, Node, NodeId};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -112,18 +112,24 @@ impl std::fmt::Debug for OrionPersistence {
 
 impl OrionPersistence {
     /// Create a new persistence manager for a specific graph
-    pub async fn new(
-        graph_id: String,
-        base_url: String,
-        enable_wal: bool,
-    ) -> Result<Self> {
+    pub async fn new(graph_id: String, base_url: String, enable_wal: bool) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
-        let filesystem_factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?);
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?,
+        );
 
         // Get the underlying filesystem from the factory
-        let underlying_fs = filesystem_factory.get_filesystem(&base_url)
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+        let underlying_fs = filesystem_factory.get_filesystem(&base_url).map_err(|e| {
+            ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                e.to_string(),
+            ))
+        })?;
 
         // Wrap with UnifiedCachingFilesystem
         let filesystem = Arc::new(UnifiedCachingFilesystem::new(
@@ -133,25 +139,54 @@ impl OrionPersistence {
         ));
 
         // Build graph-specific path: {base_url}/graphs/{graph_id}/data
-        let graph_path = format!("{}/graphs/{}/data", base_url.trim_end_matches('/'), graph_id);
+        let graph_path = format!(
+            "{}/graphs/{}/data",
+            base_url.trim_end_matches('/'),
+            graph_id
+        );
 
         // Create graph directory
-        filesystem_factory.create_dir_all(&graph_path).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+        filesystem_factory
+            .create_dir_all(&graph_path)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+            })?;
 
         // Store WAL path and initialize WAL writer
         let (wal_path, wal_writer) = if enable_wal {
-            let wal_path = PathBuf::from(format!("{}/wal", graph_path));
+            // Build WAL URL (keep as URL for filesystem operations)
+            let wal_url = format!("{}/wal", graph_path);
 
-            // Create WAL directory
-            filesystem_factory.create_dir_all(wal_path.to_str().unwrap()).await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+            // Extract path component for WAL writer (strip file:// prefix if present)
+            let wal_path_str = if wal_url.starts_with("file://") {
+                wal_url.strip_prefix("file://").unwrap().to_string()
+            } else {
+                wal_url.clone()
+            };
+            let wal_path = PathBuf::from(&wal_path_str);
 
-            // Initialize WAL writer
-            let wal_writer = UnifiedWALWriter::new(wal_path.to_string_lossy().to_string()).await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+            // Create WAL directory using URL
+            filesystem_factory
+                .create_dir_all(&wal_url)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                        e.to_string(),
+                    ))
+                })?;
 
-            (Some(wal_path), Some(Arc::new(tokio::sync::Mutex::new(wal_writer))))
+            // Initialize WAL writer with path (not URL)
+            let wal_writer = UnifiedWALWriter::new(wal_path_str).await.map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                    e.to_string(),
+                ))
+            })?;
+
+            (
+                Some(wal_path),
+                Some(Arc::new(tokio::sync::Mutex::new(wal_writer))),
+            )
         } else {
             (None, None)
         };
@@ -175,13 +210,16 @@ impl OrionPersistence {
         info!("Creating ORION snapshot");
 
         // Collect all nodes
-        let nodes = engine.memory_pool.nodes
+        let nodes = engine
+            .memory_pool
+            .nodes
             .iter()
             .map(|entry| (*entry.value()).clone())
             .collect::<Vec<_>>();
 
         // Collect all edges
-        let edges = engine.edge_metadata
+        let edges = engine
+            .edge_metadata
             .iter()
             .map(|entry| (*entry.value()).clone())
             .collect::<Vec<_>>();
@@ -191,7 +229,8 @@ impl OrionPersistence {
         let csr_incoming = engine.csr_incoming.read().await;
 
         // Build node_to_index mapping
-        let node_to_index = engine.node_to_index
+        let node_to_index = engine
+            .node_to_index
             .iter()
             .map(|entry| (entry.key().clone(), *entry.value()))
             .collect::<HashMap<_, _>>();
@@ -210,8 +249,11 @@ impl OrionPersistence {
         };
 
         // Serialize snapshot
-        let serialized = bincode::serialize(&snapshot)
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+        let serialized = bincode::serialize(&snapshot).map_err(|e| {
+            ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                e.to_string(),
+            ))
+        })?;
 
         // Apply compression based on algorithm
         let compressed = self.compress_data(&serialized)?;
@@ -219,21 +261,40 @@ impl OrionPersistence {
         // Generate snapshot filename with graph ID
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let filename = format!("graph_{}_snapshot_{}.bin.zst", self.graph_id, timestamp);
-        let snapshot_url = format!("{}/graphs/{}/snapshots/{}",
-            self.base_url.trim_end_matches('/'), self.graph_id, filename);
+        let snapshot_url = format!(
+            "{}/graphs/{}/snapshots/{}",
+            self.base_url.trim_end_matches('/'),
+            self.graph_id,
+            filename
+        );
 
         // Ensure snapshots directory exists
-        let snapshots_dir = format!("{}/graphs/{}/snapshots",
-            self.base_url.trim_end_matches('/'), self.graph_id);
-        self.filesystem_factory.create_dir_all(&snapshots_dir).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+        let snapshots_dir = format!(
+            "{}/graphs/{}/snapshots",
+            self.base_url.trim_end_matches('/'),
+            self.graph_id
+        );
+        self.filesystem_factory
+            .create_dir_all(&snapshots_dir)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+            })?;
 
         // Write compressed snapshot
-        self.filesystem_factory.write(&snapshot_url, &compressed, None).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+        self.filesystem_factory
+            .write(&snapshot_url, &compressed, None)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+            })?;
 
-        info!("ORION graph {} snapshot saved: {} ({}MB compressed)",
-              self.graph_id, filename, compressed.len() / 1_048_576);
+        info!(
+            "ORION graph {} snapshot saved: {} ({}MB compressed)",
+            self.graph_id,
+            filename,
+            compressed.len() / 1_048_576
+        );
 
         // Clean up old snapshots if needed
         self.cleanup_old_snapshots().await?;
@@ -250,15 +311,23 @@ impl OrionPersistence {
         info!("Loading ORION snapshot from {:?}", snapshot_path.as_ref());
 
         // Read compressed snapshot
-        let compressed = self.filesystem_factory.read(snapshot_path.as_ref().to_str().unwrap()).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+        let compressed = self
+            .filesystem_factory
+            .read(snapshot_path.as_ref().to_str().unwrap())
+            .await
+            .map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+            })?;
 
         // Decompress data
         let decompressed = self.decompress_data(&compressed)?;
 
         // Deserialize
-        let snapshot: OrionSnapshot = bincode::deserialize(&decompressed)
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+        let snapshot: OrionSnapshot = bincode::deserialize(&decompressed).map_err(|e| {
+            ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                e.to_string(),
+            ))
+        })?;
 
         // Clear existing data
         engine.memory_pool.nodes.clear();
@@ -267,7 +336,10 @@ impl OrionPersistence {
 
         // Restore nodes
         for node in snapshot.nodes {
-            engine.memory_pool.nodes.insert(node.id.clone(), Arc::new(node));
+            engine
+                .memory_pool
+                .nodes
+                .insert(node.id.clone(), Arc::new(node));
         }
 
         // Restore edges
@@ -297,7 +369,8 @@ impl OrionPersistence {
         {
             let mut index_to_node = engine.index_to_node.write().await;
             index_to_node.clear();
-            let mut node_indices: Vec<(NodeId, usize)> = engine.node_to_index
+            let mut node_indices: Vec<(NodeId, usize)> = engine
+                .node_to_index
                 .iter()
                 .map(|entry| (entry.key().clone(), *entry.value()))
                 .collect();
@@ -315,9 +388,11 @@ impl OrionPersistence {
             stats.edges_created = engine.edge_metadata.len() as u64;
         }
 
-        info!("ORION snapshot loaded: {} nodes, {} edges",
-              engine.memory_pool.nodes.len(),
-              engine.edge_metadata.len());
+        info!(
+            "ORION snapshot loaded: {} nodes, {} edges",
+            engine.memory_pool.nodes.len(),
+            engine.edge_metadata.len()
+        );
 
         Ok(())
     }
@@ -333,8 +408,16 @@ impl OrionPersistence {
             };
 
             let unified_op = UnifiedWALOperation::GraphOp(graph_op);
-            wal_writer.lock().await.append(unified_op).await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
         }
 
         Ok(())
@@ -351,8 +434,16 @@ impl OrionPersistence {
             };
 
             let unified_op = UnifiedWALOperation::GraphOp(graph_op);
-            wal_writer.lock().await.append(unified_op).await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
         }
 
         Ok(())
@@ -364,8 +455,16 @@ impl OrionPersistence {
             use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
 
             let unified_op = UnifiedWALOperation::GraphOp(op);
-            wal_writer.lock().await.append(unified_op).await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
         }
 
         Ok(())
@@ -376,12 +475,24 @@ impl OrionPersistence {
         if let Some(ref wal_path) = self.wal_path {
             use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALReader;
 
-            let reader = UnifiedWALReader::new(wal_path.to_string_lossy().to_string()).await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
-            let entries = reader.read_all().await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+            let reader = UnifiedWALReader::new(wal_path.to_string_lossy().to_string())
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+            let entries = reader.read_all().await.map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                    e.to_string(),
+                ))
+            })?;
 
-            tracing::info!("Replaying {} WAL entries for graph {}", entries.len(), self.graph_id);
+            tracing::info!(
+                "Replaying {} WAL entries for graph {}",
+                entries.len(),
+                self.graph_id
+            );
 
             for entry in entries {
                 if entry.is_graph_operation() {
@@ -398,46 +509,70 @@ impl OrionPersistence {
     }
 
     /// Apply a graph operation to the engine during WAL replay
-    fn apply_graph_operation<'a>(&'a self, engine: &'a OrionGraphEngine, op: GraphOperation) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    fn apply_graph_operation<'a>(
+        &'a self,
+        engine: &'a OrionGraphEngine,
+        op: GraphOperation,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-        match op {
-            GraphOperation::CreateNode { graph_id: _, node } => {
-                engine.create_node(node).await?;
-            }
-            GraphOperation::CreateEdge { graph_id: _, edge } => {
-                engine.create_edge(edge).await?;
-            }
-            GraphOperation::UpdateNode { graph_id: _, node_id: _, update: _ } => {
-                // Update operations need to be implemented in OrionGraphEngine
-                warn!("Update node operation not yet implemented in ORION engine");
-            }
-            GraphOperation::DeleteNode { graph_id: _, node_id } => {
-                engine.delete_node(&node_id).await?;
-            }
-            GraphOperation::DeleteEdge { graph_id: _, edge_id } => {
-                engine.delete_edge(&edge_id).await?;
-            }
-            GraphOperation::CreateEdgeIndex { graph_id: _, index_config: _ } => {
-                // Index operations need to be implemented in OrionGraphEngine
-                warn!("Create edge index operation not yet implemented in ORION engine");
-            }
-            GraphOperation::DropEdgeIndex { graph_id: _, index_name: _ } => {
-                // Index operations need to be implemented in OrionGraphEngine
-                warn!("Drop edge index operation not yet implemented in ORION engine");
-            }
-            GraphOperation::UpdateEdge { graph_id: _, edge_id: _, update: _ } => {
-                // Update operations need to be implemented in OrionGraphEngine
-                warn!("Update edge operation not yet implemented in ORION engine");
-            }
-            GraphOperation::BatchOperation { operations } => {
-                // Apply each operation in the batch
-                for op in operations {
-                    self.apply_graph_operation(engine, op).await?;
+            match op {
+                GraphOperation::CreateNode { graph_id: _, node } => {
+                    engine.create_node(node).await?;
+                }
+                GraphOperation::CreateEdge { graph_id: _, edge } => {
+                    engine.create_edge(edge).await?;
+                }
+                GraphOperation::UpdateNode {
+                    graph_id: _,
+                    node_id: _,
+                    update: _,
+                } => {
+                    // Update operations need to be implemented in OrionGraphEngine
+                    warn!("Update node operation not yet implemented in ORION engine");
+                }
+                GraphOperation::DeleteNode {
+                    graph_id: _,
+                    node_id,
+                } => {
+                    engine.delete_node(&node_id).await?;
+                }
+                GraphOperation::DeleteEdge {
+                    graph_id: _,
+                    edge_id,
+                } => {
+                    engine.delete_edge(&edge_id).await?;
+                }
+                GraphOperation::CreateEdgeIndex {
+                    graph_id: _,
+                    index_config: _,
+                } => {
+                    // Index operations need to be implemented in OrionGraphEngine
+                    warn!("Create edge index operation not yet implemented in ORION engine");
+                }
+                GraphOperation::DropEdgeIndex {
+                    graph_id: _,
+                    index_name: _,
+                } => {
+                    // Index operations need to be implemented in OrionGraphEngine
+                    warn!("Drop edge index operation not yet implemented in ORION engine");
+                }
+                GraphOperation::UpdateEdge {
+                    graph_id: _,
+                    edge_id: _,
+                    update: _,
+                } => {
+                    // Update operations need to be implemented in OrionGraphEngine
+                    warn!("Update edge operation not yet implemented in ORION engine");
+                }
+                GraphOperation::BatchOperation { operations } => {
+                    // Apply each operation in the batch
+                    for op in operations {
+                        self.apply_graph_operation(engine, op).await?;
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
         })
     }
 
@@ -455,70 +590,91 @@ impl OrionPersistence {
 
     /// Compress data using the configured algorithm
     fn compress_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        use zstd::encode_all;
         use lz4_flex::compress_prepend_size;
         use snap::raw::Encoder as SnapEncoder;
+        use zstd::encode_all;
 
         match self.compression {
             CompressionAlgorithm::None => Ok(data.to_vec()),
-            CompressionAlgorithm::Zstd => {
-                encode_all(data, self.compression_level)
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::Serialization(e.to_string())))
-            }
-            CompressionAlgorithm::Lz4 => {
-                Ok(compress_prepend_size(data))
-            }
+            CompressionAlgorithm::Zstd => encode_all(data, self.compression_level).map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::Serialization(
+                    e.to_string(),
+                ))
+            }),
+            CompressionAlgorithm::Lz4 => Ok(compress_prepend_size(data)),
             CompressionAlgorithm::Snappy => {
                 let mut encoder = SnapEncoder::new();
-                encoder.compress_vec(data)
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::Serialization(e.to_string())))
+                encoder.compress_vec(data).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::Serialization(
+                        e.to_string(),
+                    ))
+                })
             }
             _ => {
                 // For other algorithms, default to Zstd
-                encode_all(data, self.compression_level)
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::Serialization(e.to_string())))
+                encode_all(data, self.compression_level).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::Serialization(
+                        e.to_string(),
+                    ))
+                })
             }
         }
     }
 
     /// Decompress data based on the configured algorithm
     fn decompress_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        use zstd::decode_all;
         use lz4_flex::decompress_size_prepended;
         use snap::raw::Decoder as SnapDecoder;
+        use zstd::decode_all;
 
         match self.compression {
             CompressionAlgorithm::None => Ok(data.to_vec()),
-            CompressionAlgorithm::Zstd => {
-                decode_all(data)
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::Serialization(e.to_string())))
-            }
-            CompressionAlgorithm::Lz4 => {
-                decompress_size_prepended(data)
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::Serialization(e.to_string())))
-            }
+            CompressionAlgorithm::Zstd => decode_all(data).map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::Serialization(
+                    e.to_string(),
+                ))
+            }),
+            CompressionAlgorithm::Lz4 => decompress_size_prepended(data).map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::Serialization(
+                    e.to_string(),
+                ))
+            }),
             CompressionAlgorithm::Snappy => {
                 let mut decoder = SnapDecoder::new();
-                decoder.decompress_vec(data)
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::Serialization(e.to_string())))
+                decoder.decompress_vec(data).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::Serialization(
+                        e.to_string(),
+                    ))
+                })
             }
             _ => {
                 // For other algorithms, default to Zstd
-                decode_all(data)
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::Serialization(e.to_string())))
+                decode_all(data).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::Serialization(
+                        e.to_string(),
+                    ))
+                })
             }
         }
     }
 
     /// Clean up old snapshots keeping only max_snapshots
     async fn cleanup_old_snapshots(&self) -> Result<()> {
-        let snapshots_dir = format!("{}/graphs/{}/snapshots",
-            self.base_url.trim_end_matches('/'), self.graph_id);
+        let snapshots_dir = format!(
+            "{}/graphs/{}/snapshots",
+            self.base_url.trim_end_matches('/'),
+            self.graph_id
+        );
 
         // List all snapshot files
         let mut snapshots = Vec::new();
-        let entries = self.filesystem_factory.list(&snapshots_dir).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+        let entries = self
+            .filesystem_factory
+            .list(&snapshots_dir)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+            })?;
 
         for entry in entries {
             if entry.url.ends_with(".bin.zst") {
@@ -533,8 +689,14 @@ impl OrionPersistence {
         if snapshots.len() > self.max_snapshots {
             let to_remove = snapshots.len() - self.max_snapshots;
             for snapshot in snapshots.iter().take(to_remove) {
-                self.filesystem_factory.delete(snapshot).await
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+                self.filesystem_factory
+                    .delete(snapshot)
+                    .await
+                    .map_err(|e| {
+                        ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                            e.to_string(),
+                        ))
+                    })?;
                 debug!("Removed old snapshot: {:?}", snapshot);
             }
         }
@@ -543,18 +705,17 @@ impl OrionPersistence {
     }
 
     /// Export graph to a portable format
-    pub async fn export(
-        &self,
-        engine: &OrionGraphEngine,
-        path: impl AsRef<Path>,
-    ) -> Result<()> {
+    pub async fn export(&self, engine: &OrionGraphEngine, path: impl AsRef<Path>) -> Result<()> {
         // Create snapshot
-        let nodes: Vec<Node> = engine.memory_pool.nodes
+        let nodes: Vec<Node> = engine
+            .memory_pool
+            .nodes
             .iter()
             .map(|entry| (**entry.value()).clone())
             .collect();
 
-        let edges: Vec<Edge> = engine.edge_metadata
+        let edges: Vec<Edge> = engine
+            .edge_metadata
             .iter()
             .map(|entry| (**entry.value()).clone())
             .collect();
@@ -572,31 +733,46 @@ impl OrionPersistence {
             }
         });
 
-        let json = serde_json::to_string_pretty(&export_data)
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+        let json = serde_json::to_string_pretty(&export_data).map_err(|e| {
+            ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                e.to_string(),
+            ))
+        })?;
 
-        let export_url = path.as_ref().to_str()
+        let export_url = path
+            .as_ref()
+            .to_str()
             .ok_or_else(|| ProximaDBError::InvalidInput("Invalid export path".to_string()))?;
-        self.filesystem_factory.write(export_url, json.as_bytes(), None).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+        self.filesystem_factory
+            .write(export_url, json.as_bytes(), None)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+            })?;
         info!("Graph {} exported to {:?}", self.graph_id, path.as_ref());
 
         Ok(())
     }
 
     /// Import graph from portable format
-    pub async fn import(
-        &self,
-        engine: &OrionGraphEngine,
-        path: impl AsRef<Path>,
-    ) -> Result<()> {
-        let import_url = path.as_ref().to_str()
+    pub async fn import(&self, engine: &OrionGraphEngine, path: impl AsRef<Path>) -> Result<()> {
+        let import_url = path
+            .as_ref()
+            .to_str()
             .ok_or_else(|| ProximaDBError::InvalidInput("Invalid import path".to_string()))?;
-        let data = self.filesystem_factory.read(import_url).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+        let data = self
+            .filesystem_factory
+            .read(import_url)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+            })?;
 
-        let import_data: serde_json::Value = serde_json::from_slice(&data)
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+        let import_data: serde_json::Value = serde_json::from_slice(&data).map_err(|e| {
+            ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                e.to_string(),
+            ))
+        })?;
 
         // Clear existing data
         engine.memory_pool.nodes.clear();
@@ -605,8 +781,11 @@ impl OrionPersistence {
         // Import nodes
         if let Some(nodes) = import_data["nodes"].as_array() {
             for node_val in nodes {
-                let node: Node = serde_json::from_value(node_val.clone())
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+                let node: Node = serde_json::from_value(node_val.clone()).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
                 engine.create_node(node).await?;
             }
         }
@@ -614,8 +793,11 @@ impl OrionPersistence {
         // Import edges
         if let Some(edges) = import_data["edges"].as_array() {
             for edge_val in edges {
-                let edge: Edge = serde_json::from_value(edge_val.clone())
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
+                let edge: Edge = serde_json::from_value(edge_val.clone()).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
                 engine.create_edge(edge).await?;
             }
         }

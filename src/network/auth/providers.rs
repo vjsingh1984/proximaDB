@@ -16,11 +16,11 @@
 
 //! Authentication Providers for ProximaDB
 
-use crate::network::auth::{AuthError, AuthResult, AuthMethod, Permission, AuthProvider};
+use crate::network::auth::{AuthError, AuthMethod, AuthProvider, AuthResult, Permission};
 use async_trait::async_trait;
+use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
-use reqwest::Client;
 
 /// LDAP authentication provider
 pub struct LdapAuthProvider {
@@ -66,24 +66,26 @@ impl AuthProvider for LdapAuthProvider {
         if parts.len() != 2 {
             return Err(AuthError::InvalidCredentials);
         }
-        
+
         let (username, password) = (parts[0], parts[1]);
-        
+
         // Implement actual LDAP authentication
         if username.is_empty() || password.is_empty() {
             return Err(AuthError::InvalidCredentials);
         }
-        
+
         // Build user DN from template
         let user_dn = self.user_filter.replace("{}", username);
         let full_user_dn = format!("{},{}", user_dn, self.user_base_dn);
-        
+
         // Try to authenticate user with LDAP bind
         match self.authenticate_ldap_user(&full_user_dn, password).await {
             Ok(user_info) => {
-                let roles = self.get_user_roles(&user_info.dn).await
+                let roles = self
+                    .get_user_roles(&user_info.dn)
+                    .await
                     .unwrap_or_else(|_| vec!["user".to_string()]);
-                
+
                 Ok(AuthResult {
                     user_id: user_info.username,
                     tenant_id: user_info.tenant_id,
@@ -93,10 +95,10 @@ impl AuthProvider for LdapAuthProvider {
                     token_expires_at: None,
                 })
             }
-            Err(e) => Err(e)
+            Err(e) => Err(e),
         }
     }
-    
+
     fn name(&self) -> &str {
         "ldap"
     }
@@ -104,12 +106,16 @@ impl AuthProvider for LdapAuthProvider {
 
 impl LdapAuthProvider {
     /// Authenticate user credentials against LDAP server
-    async fn authenticate_ldap_user(&self, user_dn: &str, password: &str) -> Result<LdapUserInfo, AuthError> {
+    async fn authenticate_ldap_user(
+        &self,
+        user_dn: &str,
+        password: &str,
+    ) -> Result<LdapUserInfo, AuthError> {
         // In a real implementation, this would use an LDAP client like ldap3
         // For now, we'll implement a basic connection attempt
-        
+
         use std::process::Command;
-        
+
         // Use ldapsearch command to verify credentials
         let output = Command::new("ldapsearch")
             .arg("-H")
@@ -122,34 +128,40 @@ impl LdapAuthProvider {
             .arg(user_dn)
             .arg("(objectClass=*)")
             .output();
-            
+
         match output {
             Ok(result) => {
                 if result.status.success() {
                     // Parse username from DN
-                    let username = user_dn.split(',').next()
+                    let username = user_dn
+                        .split(',')
+                        .next()
                         .and_then(|part| part.split('=').nth(1))
                         .unwrap_or("unknown")
                         .to_string();
-                    
+
                     Ok(LdapUserInfo {
                         username,
                         dn: user_dn.to_string(),
                         tenant_id: None, // Could be derived from LDAP attributes
                     })
                 } else {
-                    Err(AuthError::AuthenticationFailed("LDAP authentication failed".to_string()))
+                    Err(AuthError::AuthenticationFailed(
+                        "LDAP authentication failed".to_string(),
+                    ))
                 }
             }
             Err(_) => {
                 // Fallback: if ldapsearch is not available, use simplified validation
                 // In production, you would use a proper LDAP client library
                 if password.len() >= 8 && !password.is_empty() {
-                    let username = user_dn.split(',').next()
+                    let username = user_dn
+                        .split(',')
+                        .next()
                         .and_then(|part| part.split('=').nth(1))
                         .unwrap_or("unknown")
                         .to_string();
-                    
+
                     Ok(LdapUserInfo {
                         username,
                         dn: user_dn.to_string(),
@@ -161,14 +173,14 @@ impl LdapAuthProvider {
             }
         }
     }
-    
+
     /// Get user roles from LDAP groups
     async fn get_user_roles(&self, user_dn: &str) -> Result<Vec<String>, AuthError> {
         // Query LDAP for groups that contain this user
         let group_query = self.group_filter.replace("{}", user_dn);
-        
+
         use std::process::Command;
-        
+
         let output = Command::new("ldapsearch")
             .arg("-H")
             .arg(&self.server_url)
@@ -181,12 +193,12 @@ impl LdapAuthProvider {
             .arg(&group_query)
             .arg("cn")
             .output();
-            
+
         match output {
             Ok(result) if result.status.success() => {
                 let output_str = String::from_utf8_lossy(&result.stdout);
                 let mut roles = Vec::new();
-                
+
                 // Parse LDAP search results to extract group CNs
                 for line in output_str.lines() {
                     if line.starts_with("cn: ") {
@@ -200,11 +212,11 @@ impl LdapAuthProvider {
                         }
                     }
                 }
-                
+
                 if roles.is_empty() {
                     roles.push("user".to_string()); // Default role
                 }
-                
+
                 Ok(roles)
             }
             _ => {
@@ -213,10 +225,10 @@ impl LdapAuthProvider {
             }
         }
     }
-    
+
     fn map_roles_to_permissions(&self, roles: &[String]) -> Vec<Permission> {
         let mut permissions = Vec::new();
-        
+
         for role in roles {
             match role.as_str() {
                 "admin" | "administrators" => {
@@ -279,7 +291,7 @@ impl LdapAuthProvider {
                 }
             }
         }
-        
+
         permissions
     }
 }
@@ -325,7 +337,7 @@ impl AuthProvider for OAuth2AuthProvider {
     async fn authenticate(&self, credentials: &str) -> Result<AuthResult, AuthError> {
         // Credentials should be an OAuth2 access token
         let user_info = self.get_user_info(credentials).await?;
-        
+
         Ok(AuthResult {
             user_id: user_info.id,
             tenant_id: user_info.tenant_id,
@@ -335,7 +347,7 @@ impl AuthProvider for OAuth2AuthProvider {
             token_expires_at: user_info.expires_at,
         })
     }
-    
+
     fn name(&self) -> &str {
         "oauth2"
     }
@@ -349,23 +361,26 @@ impl OAuth2AuthProvider {
             .bearer_auth(access_token)
             .send()
             .await
-            .map_err(|e| AuthError::AuthenticationFailed(format!("Failed to fetch user info: {}", e)))?;
-        
+            .map_err(|e| {
+                AuthError::AuthenticationFailed(format!("Failed to fetch user info: {}", e))
+            })?;
+
         if !response.status().is_success() {
-            return Err(AuthError::AuthenticationFailed("Invalid access token".to_string()));
+            return Err(AuthError::AuthenticationFailed(
+                "Invalid access token".to_string(),
+            ));
         }
-        
-        let user_info: OAuth2UserInfo = response
-            .json()
-            .await
-            .map_err(|e| AuthError::AuthenticationFailed(format!("Failed to parse user info: {}", e)))?;
-        
+
+        let user_info: OAuth2UserInfo = response.json().await.map_err(|e| {
+            AuthError::AuthenticationFailed(format!("Failed to parse user info: {}", e))
+        })?;
+
         Ok(user_info)
     }
-    
+
     fn map_roles_to_permissions(&self, roles: &[String]) -> Vec<Permission> {
         let mut permissions = Vec::new();
-        
+
         for role in roles {
             match role.as_str() {
                 "admin" => {
@@ -421,7 +436,7 @@ impl OAuth2AuthProvider {
                 _ => {} // Unknown roles get no permissions
             }
         }
-        
+
         permissions
     }
 }
@@ -476,7 +491,10 @@ impl SamlAuthProvider {
         })
     }
 
-    async fn validate_saml_assertion(&self, _response: &SamlResponse) -> Result<SamlAssertion, AuthError> {
+    async fn validate_saml_assertion(
+        &self,
+        _response: &SamlResponse,
+    ) -> Result<SamlAssertion, AuthError> {
         // TODO: Implement SAML assertion validation
         Ok(SamlAssertion {
             user_id: "placeholder_user".to_string(),
@@ -497,10 +515,10 @@ impl AuthProvider for SamlAuthProvider {
     async fn authenticate(&self, credentials: &str) -> Result<AuthResult, AuthError> {
         // Implement SAML authentication
         // Credentials should be a SAML response (base64 encoded XML)
-        
+
         let saml_response = self.decode_saml_response(credentials)?;
         let assertion = self.validate_saml_assertion(&saml_response).await?;
-        
+
         Ok(AuthResult {
             user_id: assertion.user_id,
             tenant_id: Some(assertion.tenant_id),
@@ -512,7 +530,7 @@ impl AuthProvider for SamlAuthProvider {
             }),
         })
     }
-    
+
     fn name(&self) -> &str {
         "saml"
     }
@@ -528,15 +546,19 @@ impl DatabaseAuthProvider {
     pub fn new(connection_string: String) -> Self {
         Self { connection_string }
     }
-    
-    async fn verify_user_password(&self, username: &str, password: &str) -> Result<DatabaseUser, AuthError> {
+
+    async fn verify_user_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<DatabaseUser, AuthError> {
         // TODO: Implement database lookup
         // This would involve:
         // 1. Connect to database
         // 2. Query user table
         // 3. Verify password hash
         // 4. Return user info with roles
-        
+
         // Placeholder implementation
         if username == "admin" && password == "admin123" {
             Ok(DatabaseUser {
@@ -560,14 +582,16 @@ impl AuthProvider for DatabaseAuthProvider {
         if parts.len() != 2 {
             return Err(AuthError::InvalidCredentials);
         }
-        
+
         let (username, password) = (parts[0], parts[1]);
         let user = self.verify_user_password(username, password).await?;
-        
+
         if !user.active {
-            return Err(AuthError::AuthenticationFailed("Account is disabled".to_string()));
+            return Err(AuthError::AuthenticationFailed(
+                "Account is disabled".to_string(),
+            ));
         }
-        
+
         Ok(AuthResult {
             user_id: user.id,
             tenant_id: user.tenant_id,
@@ -577,7 +601,7 @@ impl AuthProvider for DatabaseAuthProvider {
             token_expires_at: None,
         })
     }
-    
+
     fn name(&self) -> &str {
         "database"
     }
@@ -586,7 +610,7 @@ impl AuthProvider for DatabaseAuthProvider {
 impl DatabaseAuthProvider {
     fn map_roles_to_permissions(&self, roles: &[String]) -> Vec<Permission> {
         let mut permissions = Vec::new();
-        
+
         for role in roles {
             match role.as_str() {
                 "admin" => {
@@ -642,7 +666,7 @@ impl DatabaseAuthProvider {
                 _ => {} // Unknown roles get no permissions
             }
         }
-        
+
         permissions
     }
 }
@@ -659,25 +683,25 @@ struct DatabaseUser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_database_auth_provider() {
         let provider = DatabaseAuthProvider::new("sqlite://test.db".to_string());
-        
+
         // Test successful authentication
         let result = provider.authenticate("admin:admin123").await;
         assert!(result.is_ok());
-        
+
         let auth_result = result.unwrap();
         assert_eq!(auth_result.user_id, "admin");
         assert!(auth_result.roles.contains(&"admin".to_string()));
         assert!(auth_result.permissions.contains(&Permission::ManageUsers));
-        
+
         // Test failed authentication
         let result = provider.authenticate("admin:wrongpassword").await;
         assert!(result.is_err());
     }
-    
+
     #[tokio::test]
     async fn test_ldap_auth_provider() {
         let provider = LdapAuthProvider::new(
@@ -698,7 +722,9 @@ mod tests {
         // Test with valid format - skip if LDAP server is not available
         let result = provider.authenticate("testuser:password").await;
         if result.is_err() {
-            println!("Skipping LDAP authentication test - LDAP server not available or ldapsearch command not found");
+            println!(
+                "Skipping LDAP authentication test - LDAP server not available or ldapsearch command not found"
+            );
             return; // Skip the test if LDAP is not available
         }
         assert!(result.is_ok());

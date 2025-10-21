@@ -94,14 +94,30 @@ impl super::VectorBatchSerializer for AvroSerializer {
                         .iter()
                         .map(|(key, value)| {
                             let value_str = match &value.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => "[binary]".to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => "null".to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => "[array]".to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => "[object]".to_string(),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                ) => s.clone(),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
+                                ) => n.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
+                                    b,
+                                )) => b.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                                    i,
+                                )) => i.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(
+                                    _,
+                                )) => "[binary]".to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(
+                                    _,
+                                )) => "null".to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
+                                    _,
+                                )) => "[array]".to_string(),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_),
+                                ) => "[object]".to_string(),
                                 None => String::new(),
                             };
                             (key.clone(), value_str)
@@ -378,11 +394,14 @@ mod tests {
             vector: vec![0.1, 0.2, 0.3, 0.4],
             metadata: {
                 let mut map = std::collections::HashMap::new();
-                map.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "test".to_string(),
-                    )),
-                });
+                map.insert(
+                    "category".to_string(),
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "test".to_string(),
+                        )),
+                    },
+                );
                 map
             },
             timestamp: Some(1234567890),
@@ -419,16 +438,22 @@ mod tests {
         let mut vector = create_test_vector();
         {
             let mut map = std::collections::HashMap::new();
-            map.insert("key1".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "value1".to_string(),
-                )),
-            });
-            map.insert("key2".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "value2".to_string(),
-                )),
-            });
+            map.insert(
+                "key1".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "value1".to_string(),
+                    )),
+                },
+            );
+            map.insert(
+                "key2".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "value2".to_string(),
+                    )),
+                },
+            );
             vector.metadata = map;
         }
 

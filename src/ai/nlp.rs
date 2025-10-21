@@ -2,26 +2,26 @@
 
 use anyhow::Result;
 use dashmap::DashMap;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::storage::tenant::BusinessContext;
 use crate::auth::sso::EnterpriseUserContext;
+use crate::storage::tenant::BusinessContext;
 
 /// Enterprise NLP engine for business intelligence queries
 pub struct EnterpriseNLPEngine {
     /// Business entity recognizer
     entity_recognizer: Arc<BusinessEntityRecognizer>,
-    
+
     /// Intent classifier for enterprise queries
     intent_classifier: Arc<EnterpriseIntentClassifier>,
-    
+
     /// Industry-specific terminology processor
     terminology_processor: Arc<IndustryTerminologyProcessor>,
-    
+
     /// Query complexity analyzer
     complexity_analyzer: Arc<QueryComplexityAnalyzer>,
-    
+
     /// Business context integrator
     context_integrator: Arc<BusinessContextIntegrator>,
 }
@@ -30,13 +30,13 @@ pub struct EnterpriseNLPEngine {
 pub struct BusinessEntityRecognizer {
     /// Financial entity patterns
     financial_patterns: HashMap<String, EntityPattern>,
-    
+
     /// Healthcare entity patterns
     healthcare_patterns: HashMap<String, EntityPattern>,
-    
+
     /// Technology entity patterns
     technology_patterns: HashMap<String, EntityPattern>,
-    
+
     /// Custom entity patterns by tenant
     custom_patterns: Arc<DashMap<String, HashMap<String, EntityPattern>>>,
 }
@@ -45,10 +45,10 @@ pub struct BusinessEntityRecognizer {
 pub struct EnterpriseIntentClassifier {
     /// Pre-trained intent models by industry
     industry_intent_models: Arc<DashMap<String, IntentModel>>,
-    
+
     /// Business operation classifiers
     operation_classifiers: HashMap<String, OperationClassifier>,
-    
+
     /// Regulatory intent recognition
     regulatory_intent_recognizer: Arc<RegulatoryIntentRecognizer>,
 }
@@ -64,7 +64,7 @@ impl EnterpriseNLPEngine {
             context_integrator: Arc::new(BusinessContextIntegrator::new().await?),
         })
     }
-    
+
     /// Process enterprise natural language query
     pub async fn process_enterprise_query(
         &self,
@@ -73,39 +73,40 @@ impl EnterpriseNLPEngine {
         user_context: &EnterpriseUserContext,
     ) -> Result<ProcessedEnterpriseQuery> {
         // Extract business entities
-        let business_entities = self.entity_recognizer.extract_business_entities(
-            natural_query,
-            business_context,
-        ).await?;
-        
+        let business_entities = self
+            .entity_recognizer
+            .extract_business_entities(natural_query, business_context)
+            .await?;
+
         // Classify business intent
-        let business_intent = self.intent_classifier.classify_enterprise_intent(
-            natural_query,
-            business_context,
-            user_context,
-        ).await?;
-        
+        let business_intent = self
+            .intent_classifier
+            .classify_enterprise_intent(natural_query, business_context, user_context)
+            .await?;
+
         // Process industry terminology
-        let terminology_analysis = self.terminology_processor.process_industry_terminology(
-            natural_query,
-            &business_context.primary_function,
-        ).await?;
-        
+        let terminology_analysis = self
+            .terminology_processor
+            .process_industry_terminology(natural_query, &business_context.primary_function)
+            .await?;
+
         // Analyze query complexity
-        let complexity_analysis = self.complexity_analyzer.analyze_query_complexity(
-            natural_query,
-            &business_entities,
-            &business_intent,
-        ).await?;
-        
+        let complexity_analysis = self
+            .complexity_analyzer
+            .analyze_query_complexity(natural_query, &business_entities, &business_intent)
+            .await?;
+
         // Integrate business context
-        let context_integration = self.context_integrator.integrate_business_context(
-            natural_query,
-            business_context,
-            &business_entities,
-            &business_intent,
-        ).await?;
-        
+        let context_integration = self
+            .context_integrator
+            .integrate_business_context(
+                natural_query,
+                business_context,
+                &business_entities,
+                &business_intent,
+            )
+            .await?;
+
         // Extract values before moving
         let confidence_score = business_intent.confidence;
         let business_relevance_score = context_integration.relevance_score as f32;
@@ -132,45 +133,75 @@ impl BusinessEntityRecognizer {
         let mut financial_patterns = HashMap::new();
         let mut healthcare_patterns = HashMap::new();
         let mut technology_patterns = HashMap::new();
-        
+
         // Initialize financial entity patterns
-        financial_patterns.insert("portfolio".to_string(), EntityPattern {
-            pattern_type: EntityType::FinancialInstrument,
-            recognition_patterns: vec!["portfolio", "fund", "investment", "asset"].into_iter().map(|s| s.to_string()).collect(),
-            business_context: "financial_services".to_string(),
-            regulatory_classification: Some("financial_data".to_string()),
-        });
-        
-        financial_patterns.insert("risk".to_string(), EntityPattern {
-            pattern_type: EntityType::RiskMetric,
-            recognition_patterns: vec!["risk", "var", "volatility", "exposure"].into_iter().map(|s| s.to_string()).collect(),
-            business_context: "risk_management".to_string(),
-            regulatory_classification: Some("basel_iii_data".to_string()),
-        });
-        
+        financial_patterns.insert(
+            "portfolio".to_string(),
+            EntityPattern {
+                pattern_type: EntityType::FinancialInstrument,
+                recognition_patterns: vec!["portfolio", "fund", "investment", "asset"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                business_context: "financial_services".to_string(),
+                regulatory_classification: Some("financial_data".to_string()),
+            },
+        );
+
+        financial_patterns.insert(
+            "risk".to_string(),
+            EntityPattern {
+                pattern_type: EntityType::RiskMetric,
+                recognition_patterns: vec!["risk", "var", "volatility", "exposure"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                business_context: "risk_management".to_string(),
+                regulatory_classification: Some("basel_iii_data".to_string()),
+            },
+        );
+
         // Initialize healthcare entity patterns
-        healthcare_patterns.insert("patient".to_string(), EntityPattern {
-            pattern_type: EntityType::HealthcareSubject,
-            recognition_patterns: vec!["patient", "individual", "case", "subject"].into_iter().map(|s| s.to_string()).collect(),
-            business_context: "clinical_care".to_string(),
-            regulatory_classification: Some("phi_data".to_string()),
-        });
-        
-        healthcare_patterns.insert("treatment".to_string(), EntityPattern {
-            pattern_type: EntityType::ClinicalIntervention,
-            recognition_patterns: vec!["treatment", "therapy", "intervention", "medication"].into_iter().map(|s| s.to_string()).collect(),
-            business_context: "clinical_care".to_string(),
-            regulatory_classification: Some("clinical_data".to_string()),
-        });
-        
+        healthcare_patterns.insert(
+            "patient".to_string(),
+            EntityPattern {
+                pattern_type: EntityType::HealthcareSubject,
+                recognition_patterns: vec!["patient", "individual", "case", "subject"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                business_context: "clinical_care".to_string(),
+                regulatory_classification: Some("phi_data".to_string()),
+            },
+        );
+
+        healthcare_patterns.insert(
+            "treatment".to_string(),
+            EntityPattern {
+                pattern_type: EntityType::ClinicalIntervention,
+                recognition_patterns: vec!["treatment", "therapy", "intervention", "medication"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                business_context: "clinical_care".to_string(),
+                regulatory_classification: Some("clinical_data".to_string()),
+            },
+        );
+
         // Initialize technology entity patterns
-        technology_patterns.insert("customer".to_string(), EntityPattern {
-            pattern_type: EntityType::BusinessCustomer,
-            recognition_patterns: vec!["customer", "client", "user", "account"].into_iter().map(|s| s.to_string()).collect(),
-            business_context: "customer_intelligence".to_string(),
-            regulatory_classification: Some("customer_data".to_string()),
-        });
-        
+        technology_patterns.insert(
+            "customer".to_string(),
+            EntityPattern {
+                pattern_type: EntityType::BusinessCustomer,
+                recognition_patterns: vec!["customer", "client", "user", "account"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                business_context: "customer_intelligence".to_string(),
+                regulatory_classification: Some("customer_data".to_string()),
+            },
+        );
+
         Ok(Self {
             financial_patterns,
             healthcare_patterns,
@@ -178,7 +209,7 @@ impl BusinessEntityRecognizer {
             custom_patterns: Arc::new(DashMap::new()),
         })
     }
-    
+
     /// Extract business entities from natural language query
     async fn extract_business_entities(
         &self,
@@ -187,15 +218,21 @@ impl BusinessEntityRecognizer {
     ) -> Result<Vec<BusinessEntity>> {
         let mut entities = Vec::new();
         let query_lower = query.to_lowercase();
-        
+
         // Select appropriate pattern set based on business context
         let patterns = match business_context.primary_function.as_str() {
-            s if s.contains("risk") || s.contains("trading") || s.contains("financial") => &self.financial_patterns,
-            s if s.contains("clinical") || s.contains("medical") || s.contains("healthcare") => &self.healthcare_patterns,
-            s if s.contains("customer") || s.contains("product") || s.contains("technology") => &self.technology_patterns,
+            s if s.contains("risk") || s.contains("trading") || s.contains("financial") => {
+                &self.financial_patterns
+            }
+            s if s.contains("clinical") || s.contains("medical") || s.contains("healthcare") => {
+                &self.healthcare_patterns
+            }
+            s if s.contains("customer") || s.contains("product") || s.contains("technology") => {
+                &self.technology_patterns
+            }
             _ => &self.technology_patterns, // Default to technology patterns
         };
-        
+
         // Extract entities using pattern matching
         for (entity_name, pattern) in patterns {
             for recognition_pattern in &pattern.recognition_patterns {
@@ -212,7 +249,7 @@ impl BusinessEntityRecognizer {
                 }
             }
         }
-        
+
         Ok(entities)
     }
 }
@@ -225,7 +262,7 @@ impl EnterpriseIntentClassifier {
             regulatory_intent_recognizer: Arc::new(RegulatoryIntentRecognizer::new().await?),
         })
     }
-    
+
     /// Classify enterprise intent from natural language
     async fn classify_enterprise_intent(
         &self,
@@ -234,7 +271,7 @@ impl EnterpriseIntentClassifier {
         user_context: &EnterpriseUserContext,
     ) -> Result<ClassifiedBusinessIntent> {
         let query_lower = query.to_lowercase();
-        
+
         // Classify primary intent based on business context and query content
         let primary_intent = if query_lower.contains("risk") || query_lower.contains("exposure") {
             EnterpriseIntent::RiskAnalysis
@@ -249,7 +286,7 @@ impl EnterpriseIntentClassifier {
         } else {
             EnterpriseIntent::GeneralInquiry
         };
-        
+
         // Determine operation type
         let operation_type = if query_lower.contains("show") || query_lower.contains("list") {
             OperationType::Retrieve
@@ -262,23 +299,27 @@ impl EnterpriseIntentClassifier {
         } else {
             OperationType::Inquire
         };
-        
+
         // Calculate confidence based on clarity and business context alignment
-        let confidence = self.calculate_intent_confidence(&query_lower, &primary_intent, business_context);
-        
+        let confidence =
+            self.calculate_intent_confidence(&query_lower, &primary_intent, business_context);
+
         Ok(ClassifiedBusinessIntent {
             primary_intent,
             operation_type,
             confidence,
             business_domain: business_context.primary_function.clone(),
             user_role_context: user_context.roles.clone(),
-            regulatory_implications: self.regulatory_intent_recognizer.identify_regulatory_implications(
-                query,
-                business_context,
-            ).await?.into_iter().map(|ri| ri.framework).collect(),
+            regulatory_implications: self
+                .regulatory_intent_recognizer
+                .identify_regulatory_implications(query, business_context)
+                .await?
+                .into_iter()
+                .map(|ri| ri.framework)
+                .collect(),
         })
     }
-    
+
     fn calculate_intent_confidence(
         &self,
         query_lower: &str,
@@ -286,29 +327,43 @@ impl EnterpriseIntentClassifier {
         business_context: &BusinessContext,
     ) -> f32 {
         let mut confidence = 0.5_f32; // Base confidence
-        
+
         // Increase confidence based on intent-query alignment
         match intent {
             EnterpriseIntent::RiskAnalysis => {
-                if query_lower.contains("risk") { confidence += 0.3; }
-                if query_lower.contains("var") || query_lower.contains("exposure") { confidence += 0.2; }
-            },
+                if query_lower.contains("risk") {
+                    confidence += 0.3;
+                }
+                if query_lower.contains("var") || query_lower.contains("exposure") {
+                    confidence += 0.2;
+                }
+            }
             EnterpriseIntent::CustomerAnalysis => {
-                if query_lower.contains("customer") { confidence += 0.3; }
-                if query_lower.contains("segment") || query_lower.contains("behavior") { confidence += 0.2; }
-            },
+                if query_lower.contains("customer") {
+                    confidence += 0.3;
+                }
+                if query_lower.contains("segment") || query_lower.contains("behavior") {
+                    confidence += 0.2;
+                }
+            }
             EnterpriseIntent::ComplianceAnalysis => {
-                if query_lower.contains("compliance") { confidence += 0.3; }
-                if query_lower.contains("regulatory") || query_lower.contains("audit") { confidence += 0.2; }
-            },
+                if query_lower.contains("compliance") {
+                    confidence += 0.3;
+                }
+                if query_lower.contains("regulatory") || query_lower.contains("audit") {
+                    confidence += 0.2;
+                }
+            }
             _ => {}
         }
-        
+
         // Adjust based on business context alignment
-        if business_context.primary_function.contains("risk") && matches!(intent, EnterpriseIntent::RiskAnalysis) {
+        if business_context.primary_function.contains("risk")
+            && matches!(intent, EnterpriseIntent::RiskAnalysis)
+        {
             confidence += 0.15;
         }
-        
+
         confidence.min(0.95_f32) // Cap at 95%
     }
 }
@@ -493,7 +548,7 @@ impl BusinessEntity {
     pub fn has_regulatory_implications(&self) -> bool {
         self.regulatory_classification.is_some()
     }
-    
+
     /// Get regulatory requirements for entity
     pub fn get_regulatory_requirements(&self) -> Vec<String> {
         match self.regulatory_classification.as_ref() {
@@ -511,19 +566,29 @@ impl BusinessEntity {
 impl ClassifiedBusinessIntent {
     /// Check if intent requires cross-domain analysis
     pub fn requires_cross_domain_analysis(&self) -> bool {
-        matches!(self.primary_intent, 
-            EnterpriseIntent::StrategicAnalysis | 
-            EnterpriseIntent::PredictiveAnalysis |
-            EnterpriseIntent::PerformanceAnalysis
+        matches!(
+            self.primary_intent,
+            EnterpriseIntent::StrategicAnalysis
+                | EnterpriseIntent::PredictiveAnalysis
+                | EnterpriseIntent::PerformanceAnalysis
         )
     }
-    
+
     /// Get required domains for intent
     pub fn get_required_domains(&self) -> Vec<String> {
         match self.primary_intent {
-            EnterpriseIntent::RiskAnalysis => vec!["risk_management".to_string(), "trading_operations".to_string()],
-            EnterpriseIntent::CustomerAnalysis => vec!["customer_intelligence".to_string(), "product_analytics".to_string()],
-            EnterpriseIntent::ComplianceAnalysis => vec!["regulatory_compliance".to_string(), "audit_management".to_string()],
+            EnterpriseIntent::RiskAnalysis => vec![
+                "risk_management".to_string(),
+                "trading_operations".to_string(),
+            ],
+            EnterpriseIntent::CustomerAnalysis => vec![
+                "customer_intelligence".to_string(),
+                "product_analytics".to_string(),
+            ],
+            EnterpriseIntent::ComplianceAnalysis => vec![
+                "regulatory_compliance".to_string(),
+                "audit_management".to_string(),
+            ],
             EnterpriseIntent::StrategicAnalysis => vec!["all_domains".to_string()],
             _ => vec![self.business_domain.clone()],
         }
@@ -554,7 +619,7 @@ pub struct RegulatoryImplication {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::context::{PerformanceRequirements, DataSensitivityLevel};
+    use crate::storage::tenant::context::{DataSensitivityLevel, PerformanceRequirements};
 
     #[tokio::test]
     async fn test_enterprise_nlp_engine_creation() {
@@ -566,7 +631,7 @@ mod tests {
     #[tokio::test]
     async fn test_business_entity_recognition() {
         let recognizer = BusinessEntityRecognizer::new().await.unwrap();
-        
+
         let business_context = BusinessContext {
             primary_function: "enterprise_risk_assessment".to_string(),
             data_sensitivity: DataSensitivityLevel::Confidential,
@@ -576,12 +641,15 @@ mod tests {
                 availability_requirement: 0.999_f32,
             },
         };
-        
-        let entities = recognizer.extract_business_entities(
-            "What is the risk exposure of our portfolio?",
-            &business_context,
-        ).await.unwrap();
-        
+
+        let entities = recognizer
+            .extract_business_entities(
+                "What is the risk exposure of our portfolio?",
+                &business_context,
+            )
+            .await
+            .unwrap();
+
         // Should recognize "risk" and "portfolio" entities
         assert!(entities.len() >= 1);
         assert!(entities.iter().any(|e| e.entity_name == "risk"));
@@ -590,7 +658,7 @@ mod tests {
     #[tokio::test]
     async fn test_enterprise_intent_classification() {
         let classifier = EnterpriseIntentClassifier::new().await.unwrap();
-        
+
         let business_context = BusinessContext {
             primary_function: "customer_relationship_management".to_string(),
             data_sensitivity: DataSensitivityLevel::Internal,
@@ -600,16 +668,22 @@ mod tests {
                 availability_requirement: 0.99_f32,
             },
         };
-        
+
         let user_context = EnterpriseUserContext::system_admin();
-        
-        let intent = classifier.classify_enterprise_intent(
-            "Show me customer segment analysis for high-value customers",
-            &business_context,
-            &user_context,
-        ).await.unwrap();
-        
-        assert!(matches!(intent.primary_intent, EnterpriseIntent::CustomerAnalysis));
+
+        let intent = classifier
+            .classify_enterprise_intent(
+                "Show me customer segment analysis for high-value customers",
+                &business_context,
+                &user_context,
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            intent.primary_intent,
+            EnterpriseIntent::CustomerAnalysis
+        ));
         assert!(matches!(intent.operation_type, OperationType::Retrieve));
         assert!(intent.confidence > 0.7);
     }
@@ -624,7 +698,7 @@ mod tests {
             regulatory_classification: Some("phi_data".to_string()),
             extracted_from_position: 0,
         };
-        
+
         assert!(phi_entity.has_regulatory_implications());
         let requirements = phi_entity.get_regulatory_requirements();
         assert!(requirements.contains(&"hipaa".to_string()));
@@ -640,7 +714,7 @@ mod tests {
             user_role_context: vec!["risk_analyst".to_string()],
             regulatory_implications: vec!["basel_iii".to_string()],
         };
-        
+
         let domains = intent.get_required_domains();
         assert!(domains.contains(&"risk_management".to_string()));
         assert!(domains.contains(&"trading_operations".to_string()));

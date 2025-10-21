@@ -8,19 +8,19 @@
 //! 5. Customer APIs (get_by_id, delete_by_id) work correctly
 
 use super::*;
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, QuantizationConfig};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+use crate::proto::proximadb_v1::{QuantizationConfig, SqlValue, VectorRecord};
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio;
-use anyhow::Result;
 // Import column constants
-use super::constants::{FIELD_ID, FIELD_VECTOR_FP32, FIELD_TIMESTAMP};
-use super::{ParquetWriterConfig, StreamingParquetWriter, UnifiedParquetReader};
+use super::constants::{FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32};
+use super::create_columnar_schema;
 use super::{FilterCondition, FilterLogic, MetadataFilter as ColumnarMetadataFilter};
-use super::{OptimizationRecommendations, QueryPattern, StorageBudget, QuantizationStrategy};
-use super::{create_columnar_schema};
+use super::{OptimizationRecommendations, QuantizationStrategy, QueryPattern, StorageBudget};
+use super::{ParquetWriterConfig, StreamingParquetWriter, UnifiedParquetReader};
 
 #[tokio::test]
 async fn test_id_column_always_preserved() {
@@ -36,7 +36,9 @@ async fn test_id_column_always_preserved() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
+        .await
+        .unwrap();
 
     // Write test records with IDs
     let test_records = create_test_records(100);
@@ -91,8 +93,9 @@ async fn test_id_less_storage_warning() {
         128,
         config,
         None,
-        filesystem_factory.clone()
-    ).unwrap();
+        filesystem_factory.clone(),
+    )
+    .unwrap();
 
     let test_records = create_test_records(50);
     writer.write_batch(&test_records).await.unwrap();
@@ -105,7 +108,9 @@ async fn test_id_less_storage_warning() {
         overwrite: true,
         ..Default::default()
     };
-    fs.write(&file_url, &data, Some(write_options)).await.unwrap();
+    fs.write(&file_url, &data, Some(write_options))
+        .await
+        .unwrap();
 
     // Even with id_less_storage = true, ID column should still be present
     let file_path = dir.path().join(&file_name);
@@ -138,7 +143,9 @@ async fn test_parquet_flush_and_read_pattern() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
+        .await
+        .unwrap();
 
     // Create records as would happen during flush
     let test_records: Vec<VectorRecord> = (0..300)
@@ -171,11 +178,14 @@ async fn test_parquet_flush_and_read_pattern() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .unwrap()
+            .unwrap(),
     );
 
     // Verify file exists using filesystem API
-    let file_metadata = filesystem.metadata(file_path.to_str().unwrap()).await.unwrap();
+    let file_metadata = filesystem
+        .metadata(file_path.to_str().unwrap())
+        .await
+        .unwrap();
     assert!(file_metadata.size > 0);
 
     // Create UnifiedCachingFilesystem for optimal performance
@@ -185,7 +195,7 @@ async fn test_parquet_flush_and_read_pattern() {
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
-        )
+        ),
     );
     let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
@@ -194,7 +204,8 @@ async fn test_parquet_flush_and_read_pattern() {
         cached_filesystem,
         "test_collection".to_string(),
         "test".to_string(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Read all data back
     let batches = reader
@@ -246,7 +257,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
         // Add metadata - some will be filterable columns, some won't
         metadata.insert(
-            "category".to_string(),  // This will be a filterable column
+            "category".to_string(), // This will be a filterable column
             SqlValue {
                 value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                     format!("cat_{}", i % 5),
@@ -255,7 +266,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         );
 
         metadata.insert(
-            "priority".to_string(),  // This will be a filterable column
+            "priority".to_string(), // This will be a filterable column
             SqlValue {
                 value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
                     (i % 10) as i64,
@@ -264,7 +275,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         );
 
         metadata.insert(
-            "custom_field".to_string(),  // This will NOT be filterable
+            "custom_field".to_string(), // This will NOT be filterable
             SqlValue {
                 value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                     format!("custom_{}", i % 3),
@@ -288,14 +299,13 @@ async fn test_branched_filtering_fast_vs_slow_path() {
     let config = ParquetWriterConfig {
         enable_bloom_filters: true,
         row_group_size: 100,
-        filterable_metadata_columns: Some(vec![
-            "category".to_string(),
-            "priority".to_string(),
-        ]),
+        filterable_metadata_columns: Some(vec!["category".to_string(), "priority".to_string()]),
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
+        .await
+        .unwrap();
     writer.write_batch(&test_records).await.unwrap();
     let (stats, data, _collector) = writer.finalize().await.unwrap();
     assert_eq!(stats.total_records, 200);
@@ -307,7 +317,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .unwrap()
+            .unwrap(),
     );
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
@@ -316,7 +326,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
-        )
+        ),
     );
     let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
@@ -325,7 +335,8 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         cached_filesystem,
         "test_collection".to_string(),
         "test".to_string(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Note: Filterable columns would be configured during reader creation
     // For now, we'll use the reader as-is
@@ -334,15 +345,13 @@ async fn test_branched_filtering_fast_vs_slow_path() {
     // This should use column projection and pushdown
     // Create proto MetadataFilter for fast path
     let fast_filter = crate::proto::proximadb_v1::MetadataFilter {
-        clauses: vec![
-            crate::proto::proximadb_v1::FilterClause {
-                field: "category".to_string(),
-                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
-                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
-                    "cat_2".to_string(),
-                )),
-            },
-        ],
+        clauses: vec![crate::proto::proximadb_v1::FilterClause {
+            field: "category".to_string(),
+            op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+            value: Some(
+                crate::proto::proximadb_v1::filter_clause::Value::StringValue("cat_2".to_string()),
+            ),
+        }],
         op: crate::proto::proximadb_v1::LogicalOp::And as i32,
     };
 
@@ -369,21 +378,25 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         }
     }
 
-    println!("Fast path: {} results in {:?}", fast_results.len(), fast_duration);
+    println!(
+        "Fast path: {} results in {:?}",
+        fast_results.len(),
+        fast_duration
+    );
 
     // Test 2: Slow path - filter on non-filterable column (custom_field)
     // This should require full scan and post-filtering
     // Create proto MetadataFilter for slow path
     let slow_filter = crate::proto::proximadb_v1::MetadataFilter {
-        clauses: vec![
-            crate::proto::proximadb_v1::FilterClause {
-                field: "custom_field".to_string(), // NOT filterable
-                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
-                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
+        clauses: vec![crate::proto::proximadb_v1::FilterClause {
+            field: "custom_field".to_string(), // NOT filterable
+            op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+            value: Some(
+                crate::proto::proximadb_v1::filter_clause::Value::StringValue(
                     "custom_1".to_string(),
-                )),
-            },
-        ],
+                ),
+            ),
+        }],
         op: crate::proto::proximadb_v1::LogicalOp::And as i32,
     };
 
@@ -396,9 +409,17 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         )
         .await;
 
-    assert!(slow_result.is_err(), "Should return error when slow queries not allowed");
-    assert!(slow_result.unwrap_err().to_string().contains("allow_slow_queries"),
-        "Error message should mention allow_slow_queries");
+    assert!(
+        slow_result.is_err(),
+        "Should return error when slow queries not allowed"
+    );
+    assert!(
+        slow_result
+            .unwrap_err()
+            .to_string()
+            .contains("allow_slow_queries"),
+        "Error message should mention allow_slow_queries"
+    );
 
     // Should succeed with allow_slow_queries
     let start_slow = std::time::Instant::now();
@@ -412,7 +433,11 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         .unwrap();
     let slow_duration = start_slow.elapsed();
 
-    println!("Slow path: {} results in {:?} (with warning)", slow_results.len(), slow_duration);
+    println!(
+        "Slow path: {} results in {:?} (with warning)",
+        slow_results.len(),
+        slow_duration
+    );
 
     // Test 3: Mixed path - both filterable and non-filterable
     // Create proto MetadataFilter for mixed path
@@ -421,16 +446,20 @@ async fn test_branched_filtering_fast_vs_slow_path() {
             crate::proto::proximadb_v1::FilterClause {
                 field: "category".to_string(), // filterable
                 op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
-                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
-                    "cat_1".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::filter_clause::Value::StringValue(
+                        "cat_1".to_string(),
+                    ),
+                ),
             },
             crate::proto::proximadb_v1::FilterClause {
                 field: "custom_field".to_string(), // NOT filterable
                 op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
-                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
-                    "custom_0".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::filter_clause::Value::StringValue(
+                        "custom_0".to_string(),
+                    ),
+                ),
             },
         ],
         op: crate::proto::proximadb_v1::LogicalOp::And as i32,
@@ -447,7 +476,11 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         .unwrap();
     let mixed_duration = start_mixed.elapsed();
 
-    println!("Mixed path: {} results in {:?}", mixed_results.len(), mixed_duration);
+    println!(
+        "Mixed path: {} results in {:?}",
+        mixed_results.len(),
+        mixed_duration
+    );
 
     // Verify results match both filters
     for record in &mixed_results {
@@ -480,7 +513,7 @@ async fn test_multi_file_directory_scan() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .unwrap()
+            .unwrap(),
     );
 
     // Simulate multiple flush operations creating multiple files
@@ -507,8 +540,9 @@ async fn test_multi_file_directory_scan() {
             256,
             config,
             None,
-            filesystem.clone()
-        ).unwrap();
+            filesystem.clone(),
+        )
+        .unwrap();
 
         // Each file contains different records simulating different flush batches
         let batch_size = 1000 * (batch_idx + 1); // 1000, 2000, 3000 records
@@ -539,7 +573,9 @@ async fn test_multi_file_directory_scan() {
             overwrite: true,
             ..Default::default()
         };
-        fs.write(&file_url, &data, Some(write_options)).await.unwrap();
+        fs.write(&file_url, &data, Some(write_options))
+            .await
+            .unwrap();
 
         total_written += batch_size;
 
@@ -560,42 +596,59 @@ async fn test_multi_file_directory_scan() {
 
     // Now read from all files using directory scanning pattern
     // Create UnifiedCachingFilesystem for optimal performance
-    let base_fs = filesystem.get_filesystem(data_dir.to_str().unwrap()).unwrap();
+    let base_fs = filesystem
+        .get_filesystem(data_dir.to_str().unwrap())
+        .unwrap();
     let cached_filesystem = Arc::new(
         crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
-        )
+        ),
     );
     let reader = UnifiedParquetReader::new(
         parquet_files.clone(),
-        256,  // dimension from test
+        256, // dimension from test
         filesystem.clone(),
         cached_filesystem,
         "test_collection".to_string(),
         "test".to_string(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Read from all files and verify total record count
     let all_records = reader.read_all_records(0, None).await.unwrap();
     let record_ids: Vec<String> = all_records.iter().map(|r| r.id.clone()).collect();
 
-    assert_eq!(record_ids.len(), 6000, "Should read all 6000 records from 3 files");
+    assert_eq!(
+        record_ids.len(),
+        6000,
+        "Should read all 6000 records from 3 files"
+    );
 
     // Verify records are unique and in expected format
     let unique_records: std::collections::HashSet<_> = record_ids.iter().collect();
     assert_eq!(unique_records.len(), 6000, "All records should be unique");
 
     // Test filtering by timestamp
-    let filtered_count = all_records.iter().filter(|record| record.timestamp.unwrap() > 3000).count();
+    let filtered_count = all_records
+        .iter()
+        .filter(|record| record.timestamp.unwrap() > 3000)
+        .count();
 
-    assert_eq!(filtered_count, 2999, "Should find exactly 2999 records with timestamp > 3000");
+    assert_eq!(
+        filtered_count, 2999,
+        "Should find exactly 2999 records with timestamp > 3000"
+    );
 
     // Verify all files are accessible via filesystem API
     for file_path in &parquet_files {
         let metadata = filesystem.metadata(file_path).await.unwrap();
-        assert!(metadata.size > 0, "File {} should have non-zero size", file_path);
+        assert!(
+            metadata.size > 0,
+            "File {} should have non-zero size",
+            file_path
+        );
     }
 }
 
@@ -607,23 +660,33 @@ async fn test_dictionary_encoding_optimization() {
     let file_path = dir.path().join("test_dictionary_encoding.parquet");
 
     let config = ParquetWriterConfig {
-        enable_dictionary: true, // Enable dictionary encoding
+        enable_dictionary: true,     // Enable dictionary encoding
         enable_bloom_filters: false, // Disable bloom filters to see compression benefits
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
+        .await
+        .unwrap();
 
     // Create records with repeated ID patterns (good for dictionary encoding)
     let test_records: Vec<VectorRecord> = (0..1000)
         .map(|i| {
             let mut metadata = HashMap::new();
-            metadata.insert("group".to_string(), SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("group_{}", i % 20))),
-            });
-            metadata.insert("member_id".to_string(), SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
-            });
+            metadata.insert(
+                "group".to_string(),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        format!("group_{}", i % 20),
+                    )),
+                },
+            );
+            metadata.insert(
+                "member_id".to_string(),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
+                },
+            );
 
             VectorRecord {
                 id: format!("user_group_{:02}", i % 20), // Only 20 unique IDs, repeated
@@ -662,7 +725,7 @@ async fn test_dictionary_encoding_optimization() {
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
-        )
+        ),
     );
     let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
@@ -671,7 +734,8 @@ async fn test_dictionary_encoding_optimization() {
         cached_filesystem,
         "test_collection".to_string(),
         "test".to_string(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // TODO: Implement optimized_batch_id_lookup method
     // For now, simulate ID lookup results
@@ -717,7 +781,9 @@ async fn test_customer_api_compatibility() {
 
     // Test that customer-facing APIs work correctly
     let config = ParquetWriterConfig::default(); // Uses default: id_less_storage = false
-    let mut writer = StreamingParquetWriter::new(&file_path, 384, config, None).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 384, config, None)
+        .await
+        .unwrap();
 
     let test_records = vec![
         VectorRecord {
@@ -765,7 +831,7 @@ async fn test_customer_api_compatibility() {
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
-        )
+        ),
     );
     let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
@@ -774,22 +840,21 @@ async fn test_customer_api_compatibility() {
         cached_filesystem,
         "test_collection".to_string(),
         "test".to_string(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Single ID lookup
     // TODO: Implement optimized_batch_id_lookup method
-    let single_result = vec![
-        VectorRecord {
-            id: "cust_002".to_string(),
-            vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(2000),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        },
-    ];
+    let single_result = vec![VectorRecord {
+        id: "cust_002".to_string(),
+        vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
+        metadata: HashMap::new(),
+        timestamp: Some(2000),
+        updated_at: None,
+        expires_at: None,
+        version: Some(1),
+        source: None,
+    }];
 
     assert_eq!(single_result.len(), 1);
     assert_eq!(&single_result[0].id, "cust_002");
@@ -849,7 +914,9 @@ async fn test_row_group_offset_optimization() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None)
+        .await
+        .unwrap();
 
     let test_records = create_test_records(250); // Multiple row groups
     writer.write_batch(&test_records).await.unwrap();
@@ -880,7 +947,7 @@ async fn test_row_group_offset_optimization() {
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
-        )
+        ),
     );
     let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
@@ -889,21 +956,20 @@ async fn test_row_group_offset_optimization() {
         cached_filesystem,
         "test_collection".to_string(),
         "test".to_string(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // TODO: Implement optimized_batch_id_lookup method
-    let lookup_result = vec![
-        VectorRecord {
-            id: "test_id_050".to_string(),
-            vector: (0..128).map(|j| (50 + j) as f32 * 0.01).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(1050),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        },
-    ];
+    let lookup_result = vec![VectorRecord {
+        id: "test_id_050".to_string(),
+        vector: (0..128).map(|j| (50 + j) as f32 * 0.01).collect(),
+        metadata: HashMap::new(),
+        timestamp: Some(1050),
+        updated_at: None,
+        expires_at: None,
+        version: Some(1),
+        source: None,
+    }];
 
     assert_eq!(lookup_result.len(), 1);
     assert_eq!(&lookup_result[0].id, "test_id_050");
@@ -916,9 +982,14 @@ fn create_test_records(count: usize) -> Vec<VectorRecord> {
         .map(|i| {
             let metadata = if i % 3 == 0 {
                 let mut map = HashMap::new();
-                map.insert("tag".to_string(), SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("tag_{}", i % 10))),
-                });
+                map.insert(
+                    "tag".to_string(),
+                    SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            format!("tag_{}", i % 10),
+                        )),
+                    },
+                );
                 map
             } else {
                 HashMap::new()
@@ -1100,15 +1171,21 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Vec
     let mut records = Vec::new();
 
     for batch in batches {
-        let id_col = batch.column_by_name(FIELD_ID)
+        let id_col = batch
+            .column_by_name(FIELD_ID)
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::StringArray>())
             .unwrap();
 
-        let vector_col = batch.column_by_name(FIELD_VECTOR_FP32)
-            .and_then(|col| col.as_any().downcast_ref::<arrow_array::FixedSizeListArray>())
+        let vector_col = batch
+            .column_by_name(FIELD_VECTOR_FP32)
+            .and_then(|col| {
+                col.as_any()
+                    .downcast_ref::<arrow_array::FixedSizeListArray>()
+            })
             .unwrap();
 
-        let timestamp_col = batch.column_by_name(FIELD_TIMESTAMP)
+        let timestamp_col = batch
+            .column_by_name(FIELD_TIMESTAMP)
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .unwrap();
 
@@ -1118,8 +1195,13 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Vec
 
             // Extract vector from FixedSizeListArray
             let vector_list = vector_col.value(i);
-            let vector_values = vector_list.as_any().downcast_ref::<arrow_array::Float32Array>().unwrap();
-            let vector: Vec<f32> = (0..vector_values.len()).map(|j| vector_values.value(j)).collect();
+            let vector_values = vector_list
+                .as_any()
+                .downcast_ref::<arrow_array::Float32Array>()
+                .unwrap();
+            let vector: Vec<f32> = (0..vector_values.len())
+                .map(|j| vector_values.value(j))
+                .collect();
 
             records.push(VectorRecord {
                 id,

@@ -67,7 +67,8 @@ impl QueryExecutor {
                                 continuation_token: None,
                             };
                             self.graph_service
-                                .query_nodes(&context.graph_id, query).await?
+                                .query_nodes(&context.graph_id, query)
+                                .await?
                         } else {
                             Vec::new()
                         }
@@ -78,8 +79,12 @@ impl QueryExecutor {
 
                     for node in nodes {
                         let mut result_map = HashMap::new();
-                        result_map.insert("node".to_string(), serde_json::to_value(node.as_ref())
-                            .map_err(|e| VectorDBError::Internal(format!("JSON serialization error: {}", e)))?);
+                        result_map.insert(
+                            "node".to_string(),
+                            serde_json::to_value(node.as_ref()).map_err(|e| {
+                                VectorDBError::Internal(format!("JSON serialization error: {}", e))
+                            })?,
+                        );
                         current_results.push(result_map);
                     }
                 }
@@ -142,7 +147,10 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        graph_service.create_graph_collection(create_graph_request).await.unwrap();
+        graph_service
+            .create_graph_collection(create_graph_request)
+            .await
+            .unwrap();
 
         // Create a dummy node
         let node = crate::graph::Node {
@@ -155,12 +163,18 @@ mod tests {
         };
         // Try to create node, but handle URL parsing errors gracefully in tests
         match graph_service.create_node("test_graph", node).await {
-            Ok(_) => {},
-            Err(e) if e.to_string().contains("URL") || e.to_string().contains("Serialization error") => {
+            Ok(_) => {}
+            Err(e)
+                if e.to_string().contains("URL")
+                    || e.to_string().contains("Serialization error") =>
+            {
                 // Skip the test if we encounter URL parsing issues in test environment
-                tracing::warn!("Skipping test due to URL parsing issue in test environment: {}", e);
+                tracing::warn!(
+                    "Skipping test due to URL parsing issue in test environment: {}",
+                    e
+                );
                 return;
-            },
+            }
             Err(e) => panic!("Unexpected error: {}", e),
         }
 
@@ -181,7 +195,7 @@ mod tests {
             created_at: SystemTime::now(),
         };
 
-        let context = QueryContext::new(); // Dummy context
+        let context = QueryContext::new().with_graph_id("test_graph".to_string());
         let results = executor.execute(&plan, &context).await.unwrap();
 
         assert_eq!(results.len(), 1);

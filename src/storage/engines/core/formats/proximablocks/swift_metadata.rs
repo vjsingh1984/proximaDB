@@ -320,9 +320,8 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         collection_id: &str,
     ) -> Result<Vec<u8>, ProximaDBError> {
         // Extract metadata using blocking
-        let metadata = futures::executor::block_on(
-            self.extract_metadata(file_path, collection_id)
-        )?;
+        let metadata =
+            futures::executor::block_on(self.extract_metadata(file_path, collection_id))?;
 
         // Serialize using efficient format
         let mut serialized = Vec::new();

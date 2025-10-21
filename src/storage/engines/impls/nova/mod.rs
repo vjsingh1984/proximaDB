@@ -167,12 +167,10 @@ pub use engine::NovaEngine;
 pub use nova_meta_reader::{NovaMetaReader, QueryOptimizationHints};
 
 // Re-export modularized operations
-pub use operations::{NovaFlushOperations, NovaCompactionOperations, NovaSearchOperations};
+pub use operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 
 // Re-export unified strategy readers
-pub use unified_strategy_reader::{
-    UnifiedNOVAReader, DirectNOVAReader, CachedNOVAReader
-};
+pub use unified_strategy_reader::{CachedNOVAReader, DirectNOVAReader, UnifiedNOVAReader};
 
 // Re-export unified columnar integration
 pub use hierarchical_cache::{
@@ -378,20 +376,15 @@ fn create_vector_schema_internal(
         use crate::proto::proximadb_v1::FilterableDataType;
         for spec in filterable_specs {
             let arrow_data_type = match FilterableDataType::try_from(spec.data_type) {
-                Ok(FilterableDataType::FilterableString) | Ok(FilterableDataType::FilterableArrayString) => {
-                    DataType::Utf8
-                }
-                Ok(FilterableDataType::FilterableInteger) | Ok(FilterableDataType::FilterableArrayInteger) => {
-                    DataType::Int64
-                }
-                Ok(FilterableDataType::FilterableFloat) | Ok(FilterableDataType::FilterableArrayFloat) => {
-                    DataType::Float64
-                }
-                Ok(FilterableDataType::FilterableBoolean) => {
-                    DataType::Boolean
-                }
+                Ok(FilterableDataType::FilterableString)
+                | Ok(FilterableDataType::FilterableArrayString) => DataType::Utf8,
+                Ok(FilterableDataType::FilterableInteger)
+                | Ok(FilterableDataType::FilterableArrayInteger) => DataType::Int64,
+                Ok(FilterableDataType::FilterableFloat)
+                | Ok(FilterableDataType::FilterableArrayFloat) => DataType::Float64,
+                Ok(FilterableDataType::FilterableBoolean) => DataType::Boolean,
                 Ok(FilterableDataType::FilterableDatetime) => {
-                    DataType::Int64  // Store as timestamp
+                    DataType::Int64 // Store as timestamp
                 }
                 _ => {
                     // Default to string for unknown types
@@ -465,9 +458,9 @@ mod tests {
 
         // Test protobuf QuantizationConfig default values
         // Default proto values are all false/0
-        assert!(!config.enabled.unwrap_or(false));  // Proto bools default to false
-        assert_eq!(config.strategy.unwrap_or(0), 0);  // Proto enums default to 0 (SMART_DEFAULTS)
-        assert!(config.custom_levels.is_empty());  // Proto repeated fields default to empty
+        assert!(!config.enabled.unwrap_or(false)); // Proto bools default to false
+        assert_eq!(config.strategy.unwrap_or(0), 0); // Proto enums default to 0 (SMART_DEFAULTS)
+        assert!(config.custom_levels.is_empty()); // Proto repeated fields default to empty
         assert!(!config.enable_progressive_search.unwrap_or(false));
         assert_eq!(config.binary_filter_selectivity.unwrap_or(0.0), 0.0);
         assert_eq!(config.int8_ranking_selectivity.unwrap_or(0.0), 0.0);

@@ -1258,7 +1258,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 
     /// Extract collection ID from compaction parameters or collection config
-    fn get_collection_id_from_compaction_params(&self, params: &CompactionParameters) -> Result<String> {
+    fn get_collection_id_from_compaction_params(
+        &self,
+        params: &CompactionParameters,
+    ) -> Result<String> {
         params.get_collection_id()
     }
 
@@ -1271,7 +1274,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// - {base_location} comes from collection.storage_assignment.base_location
     /// - {collection_id} is the collection identifier
     /// - /data is the standard data subdirectory
-    fn get_data_dir_from_collection_config(&self, collection_config: &Collection) -> Result<String> {
+    fn get_data_dir_from_collection_config(
+        &self,
+        collection_config: &Collection,
+    ) -> Result<String> {
         let collection_id = &collection_config.id;
 
         if let Some(ref storage_assignment) = collection_config.storage_assignment {
@@ -1700,11 +1706,11 @@ impl StorageQueryContext {
                 .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
             storage_strategy: config
                 .map(|c| match c.storage_engine {
-                    Some(0) => StorageEngineStrategy::Viper, // VIPER
-                    Some(1) => StorageEngineStrategy::Sst,   // SST
+                    Some(0) => StorageEngineStrategy::Viper,  // VIPER
+                    Some(1) => StorageEngineStrategy::Sst,    // SST
                     Some(2) => StorageEngineStrategy::Nova,   // NOVA
-                    Some(3) => StorageEngineStrategy::Swift,   // SWIFT
-                    Some(4) => StorageEngineStrategy::Raptor,   // RAPTOR
+                    Some(3) => StorageEngineStrategy::Swift,  // SWIFT
+                    Some(4) => StorageEngineStrategy::Raptor, // RAPTOR
                     _ => StorageEngineStrategy::Viper,
                 })
                 .unwrap_or(StorageEngineStrategy::Viper),
@@ -1716,7 +1722,7 @@ impl StorageQueryContext {
             performance_tier: PerformanceTier::Warm, // Default since preset field doesn't exist
             compression_enabled: config
                 .and_then(|c| c.storage_config.as_ref())
-                .map(|s| s.compression.unwrap_or(0) != 0)  // Assume 0 means no compression
+                .map(|s| s.compression.unwrap_or(0) != 0) // Assume 0 means no compression
                 .unwrap_or(false),
             quantization_enabled: config
                 .and_then(|c| c.quantization.as_ref())
@@ -1865,8 +1871,9 @@ impl StorageQueryContext {
 
     /// Get collection-specific storage path
     pub fn collection_storage_path(&self) -> Option<String> {
-        self.storage_url()
-            .map(|base| crate::utils::StoragePath::collection_data_path(base, &self.collection_id()))
+        self.storage_url().map(|base| {
+            crate::utils::StoragePath::collection_data_path(base, &self.collection_id())
+        })
     }
 }
 
@@ -2044,7 +2051,9 @@ impl FlushParameters {
         } else if let Some(ref collection_config) = self.collection_config {
             Ok(collection_config.id.clone())
         } else {
-            Err(anyhow::anyhow!("No collection_id provided and no collection_config available"))
+            Err(anyhow::anyhow!(
+                "No collection_id provided and no collection_config available"
+            ))
         }
     }
 
@@ -2054,10 +2063,14 @@ impl FlushParameters {
             if let Some(ref storage_assignment) = collection_config.storage_assignment {
                 Ok(storage_assignment.base_location.clone())
             } else {
-                Err(anyhow::anyhow!("No storage assignment found in collection config"))
+                Err(anyhow::anyhow!(
+                    "No storage assignment found in collection config"
+                ))
             }
         } else {
-            Err(anyhow::anyhow!("No collection_config available to extract base_path"))
+            Err(anyhow::anyhow!(
+                "No collection_config available to extract base_path"
+            ))
         }
     }
 
@@ -2117,7 +2130,9 @@ impl CompactionParameters {
         } else if let Some(ref collection_config) = self.collection_config {
             Ok(collection_config.id.clone())
         } else {
-            Err(anyhow::anyhow!("No collection_id provided and no collection_config available"))
+            Err(anyhow::anyhow!(
+                "No collection_id provided and no collection_config available"
+            ))
         }
     }
 
@@ -2127,10 +2142,14 @@ impl CompactionParameters {
             if let Some(ref storage_assignment) = collection_config.storage_assignment {
                 Ok(storage_assignment.base_location.clone())
             } else {
-                Err(anyhow::anyhow!("No storage assignment found in collection config"))
+                Err(anyhow::anyhow!(
+                    "No storage assignment found in collection config"
+                ))
             }
         } else {
-            Err(anyhow::anyhow!("No collection_config available to extract base_path"))
+            Err(anyhow::anyhow!(
+                "No collection_config available to extract base_path"
+            ))
         }
     }
 

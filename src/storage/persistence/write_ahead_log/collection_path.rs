@@ -22,4 +22,3 @@ fn base62_7(mut v: u64) -> String {
     }
     String::from_utf8_lossy(&buf).to_string()
 }
-

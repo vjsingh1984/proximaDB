@@ -196,9 +196,7 @@ impl PulsarMonitor {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
-                suggestion: Some(
-                    "Consider loading graph data for optimal performance".to_string(),
-                ),
+                suggestion: Some("Consider loading graph data for optimal performance".to_string()),
             });
         }
 

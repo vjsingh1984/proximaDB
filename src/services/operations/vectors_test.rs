@@ -13,9 +13,7 @@ mod tests {
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::{Config, VectorRecord};
-    use crate::proto::proximadb_v1::{
-        VectorRecord as ProtoVectorRecord,
-    };
+    use crate::proto::proximadb_v1::VectorRecord as ProtoVectorRecord;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::engines::impls::viper::ViperEngine;
@@ -33,9 +31,14 @@ mod tests {
             metadata: {
                 let mut map = std::collections::HashMap::new();
                 for (k, v) in metadata {
-                    map.insert(k.to_string(), crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string())),
-                    });
+                    map.insert(
+                        k.to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                v.to_string(),
+                            )),
+                        },
+                    );
                 }
                 map
             },
@@ -85,11 +88,7 @@ mod tests {
             ),
         );
 
-        let sst_engine = Arc::new(
-            SstEngine::new()
-            .await
-            .expect("Failed to create SST engine"),
-        );
+        let sst_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
 
         // Create WAL manager
         let wal_config = WALConfig::default();
@@ -109,23 +108,32 @@ mod tests {
         );
 
         // Create required services for VectorOperationsService
-        let axis_manager = Arc::new(crate::index::axis::management::manager::AxisManager::new(crate::index::axis::types::AxisConfig::default()).await.unwrap());
+        let axis_manager = Arc::new(
+            crate::index::axis::management::manager::AxisManager::new(
+                crate::index::axis::types::AxisConfig::default(),
+            )
+            .await
+            .unwrap(),
+        );
         let metadata_backend = Arc::new(
-            crate::storage::metadata::MetadataStore::new(crate::storage::metadata::MetadataStoreConfig::default()).await.unwrap()
-        ) as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
+            crate::storage::metadata::MetadataStore::new(
+                crate::storage::metadata::MetadataStoreConfig::default(),
+            )
+            .await
+            .unwrap(),
+        )
+            as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
         let collection_service = Arc::new(
             crate::services::collection::manager::CollectionService::new(
                 metadata_backend,
                 config.storage.clone(),
-            ).await.unwrap()
+            )
+            .await
+            .unwrap(),
         );
 
-        let service = VectorOperationsService::new(
-            sst_engine,
-            wal_manager,
-            axis_manager,
-            collection_service,
-        );
+        let service =
+            VectorOperationsService::new(sst_engine, wal_manager, axis_manager, collection_service);
 
         (service, temp_dir)
     }

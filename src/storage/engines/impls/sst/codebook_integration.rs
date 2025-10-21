@@ -8,12 +8,11 @@ use bytes::{Bytes, BytesMut};
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::compute::quantization::{
+    storage_engine::StorageQuantizationEngine, unified::UnifiedQuantizationEngine,
+};
 use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, ProximaBlockFooter, QuantizationCodebookMetadata,
-};
-use crate::compute::quantization::{
-    unified::UnifiedQuantizationEngine,
-    storage_engine::StorageQuantizationEngine,
 };
 
 /// SST-specific codebook manager
@@ -67,7 +66,7 @@ impl SstCodebookManager {
         // Create and write footer
         let footer = ProximaBlockFooter {
             magic: ProximaBlockFooter::MAGIC,
-            metadata_offset: 0,  // SST stores metadata separately
+            metadata_offset: 0, // SST stores metadata separately
             metadata_size: 0,
             codebook_offset,
             codebook_size,
@@ -80,14 +79,19 @@ impl SstCodebookManager {
 
         info!(
             "SST: Wrote file with {} data blocks, index at {}, codebook at {:?}",
-            data_blocks.len(), index_offset, codebook_offset
+            data_blocks.len(),
+            index_offset,
+            codebook_offset
         );
 
         Ok(buffer.freeze())
     }
 
     /// Read SST file and extract codebook metadata
-    pub async fn read_codebook_from_sst(&self, file_data: &[u8]) -> Result<Option<QuantizationCodebookMetadata>> {
+    pub async fn read_codebook_from_sst(
+        &self,
+        file_data: &[u8],
+    ) -> Result<Option<QuantizationCodebookMetadata>> {
         // Check minimum size for footer
         if file_data.len() < ProximaBlockFooter::FOOTER_SIZE {
             return Ok(None);
@@ -131,7 +135,9 @@ impl SstCodebookManager {
         &self,
         engine: &UnifiedQuantizationEngine,
     ) -> Result<QuantizationCodebookMetadata> {
-        self.serializer.extract_from_engine(engine, &self.collection_id).await
+        self.serializer
+            .extract_from_engine(engine, &self.collection_id)
+            .await
     }
 
     /// Create codebook metadata from quantization config
@@ -140,7 +146,8 @@ impl SstCodebookManager {
         config: &crate::proto::proximadb_v1::QuantizationConfig,
         dimension: usize,
     ) -> QuantizationCodebookMetadata {
-        self.serializer.create_from_config(&self.collection_id, config, dimension)
+        self.serializer
+            .create_from_config(&self.collection_id, config, dimension)
     }
 
     /// Calculate checksum for buffer
@@ -241,10 +248,7 @@ mod tests {
         };
 
         // Create test data
-        let data_blocks = vec![
-            Bytes::from(vec![1u8; 1000]),
-            Bytes::from(vec![2u8; 1000]),
-        ];
+        let data_blocks = vec![Bytes::from(vec![1u8; 1000]), Bytes::from(vec![2u8; 1000])];
         let index_data = Bytes::from(vec![3u8; 500]);
 
         // Write SST with codebook
@@ -277,6 +281,9 @@ mod tests {
         // Test large file
         let large_rec = manager.optimize_layout(200_000_000);
         assert!(large_rec.compression_recommended);
-        assert!(matches!(large_rec.codebook_placement, CodebookPlacement::Footer));
+        assert!(matches!(
+            large_rec.codebook_placement,
+            CodebookPlacement::Footer
+        ));
     }
 }

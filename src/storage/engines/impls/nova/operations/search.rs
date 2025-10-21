@@ -1,21 +1,25 @@
 //! Search operations module for NOVA engine
 //! Handles all search-related logic including hierarchical pruning and progressive refinement
 
-use anyhow::{Result, Context};
-use std::sync::Arc;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
-use tracing::{info, debug};
+use std::sync::Arc;
+use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{VectorRecord, MetadataFilter};
-use crate::core::search::unified_interface::SearchPlan;
-use crate::storage::engines::core::search::search_common::SearchConfig;
-use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::compute::distance_computation::DistanceMetric;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::unified_interface::SearchPlan;
+use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
+use crate::storage::engines::core::search::search_common::SearchConfig;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
-use crate::storage::engines::impls::nova::progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig};
-use crate::storage::engines::impls::nova::streaming_search::{StreamingSearchEngine, StreamingSearchConfig};
+use crate::storage::engines::impls::nova::progressive_search::{
+    ProgressiveColumnarSearch, ProgressiveSearchConfig,
+};
+use crate::storage::engines::impls::nova::streaming_search::{
+    StreamingSearchConfig, StreamingSearchEngine,
+};
 
 /// Handles all search operations for NOVA engine
 pub struct NovaSearchOperations {
@@ -25,16 +29,13 @@ pub struct NovaSearchOperations {
 
 impl NovaSearchOperations {
     /// Create new search operations handler
-    pub fn new(
-        filesystem: Arc<FilesystemFactory>,
-        distance_metric: DistanceMetric,
-    ) -> Self {
+    pub fn new(filesystem: Arc<FilesystemFactory>, distance_metric: DistanceMetric) -> Self {
         Self {
             filesystem,
             distance_engine: Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                     distance_metric,
-                )
+                ),
             ),
         }
     }
@@ -45,7 +46,8 @@ impl NovaSearchOperations {
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         // Extract search parameters from context
-        let query_vector = ctx.query_vector()
+        let query_vector = ctx
+            .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
@@ -54,7 +56,9 @@ impl NovaSearchOperations {
 
         info!(
             "🔍 NOVA: Searching with k={}, query_dim={}, filters={:?}",
-            k, query_vector.len(), filter_expression.is_some()
+            k,
+            query_vector.len(),
+            filter_expression.is_some()
         );
 
         let collection_size = 1000; // Default collection size estimate
@@ -62,7 +66,8 @@ impl NovaSearchOperations {
         // For now, implement direct search logic here
         // Check if we should use progressive search
         if self.should_use_progressive_search(k, collection_size, filter_expression.is_some()) {
-            self.search_with_progressive_refinement(ctx, collection_id).await
+            self.search_with_progressive_refinement(ctx, collection_id)
+                .await
         } else if self.should_use_streaming_search(k, collection_size) {
             self.search_with_streaming(ctx, collection_id).await
         } else {
@@ -96,14 +101,15 @@ impl NovaSearchOperations {
         ctx: &crate::storage::traits::StorageQueryContext,
         collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
+        use crate::core::search::results::OptimizedSearchRecord;
         use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
         use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-        use crate::core::search::results::OptimizedSearchRecord;
-        use std::collections::BinaryHeap;
         use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
 
         // Get search parameters from context
-        let query_vector = ctx.query_vector()
+        let query_vector = ctx
+            .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
         let k = ctx.top_k();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
@@ -111,14 +117,19 @@ impl NovaSearchOperations {
         // Get files for the collection
         // NOVA stores files in {base_location}/{collection_id}/data (standard path)
         // Production behavior: metadata.storage_path is base_location
-        let base_location = ctx.storage_url()
+        let base_location = ctx
+            .storage_url()
             .ok_or_else(|| anyhow::anyhow!("No storage path in context"))?;
         let collection_id = &ctx.collection.id;
 
         // Use standard collection data path (same as other engines)
-        let data_path = crate::utils::StoragePath::collection_data_path(base_location, collection_id);
+        let data_path =
+            crate::utils::StoragePath::collection_data_path(base_location, collection_id);
 
-        debug!("📂 NOVA search: base_location={}, collection_id={}", base_location, collection_id);
+        debug!(
+            "📂 NOVA search: base_location={}, collection_id={}",
+            base_location, collection_id
+        );
         debug!("📂 NOVA search: Constructed data_path={}", data_path);
 
         let fs = self.filesystem.get_filesystem(&data_path)?;
@@ -127,14 +138,24 @@ impl NovaSearchOperations {
         let entries = match fs.list(&data_path).await {
             Ok(e) => e,
             Err(err) => {
-                debug!("📂 NOVA search: Failed to list directory {}: {}", data_path, err);
+                debug!(
+                    "📂 NOVA search: Failed to list directory {}: {}",
+                    data_path, err
+                );
                 return Ok(Vec::new());
             }
         };
 
-        debug!("📂 NOVA search: Listed {} entries in {}", entries.len(), data_path);
+        debug!(
+            "📂 NOVA search: Listed {} entries in {}",
+            entries.len(),
+            data_path
+        );
         for entry in &entries {
-            debug!("  - {} (is_dir={}, name={})", entry.url, entry.metadata.is_directory, entry.name);
+            debug!(
+                "  - {} (is_dir={}, name={})",
+                entry.url, entry.metadata.is_directory, entry.name
+            );
         }
 
         let files: Vec<String> = entries
@@ -148,7 +169,11 @@ impl NovaSearchOperations {
             return Ok(Vec::new());
         }
 
-        debug!("📂 NOVA search: Found {} parquet files in {}", files.len(), data_path);
+        debug!(
+            "📂 NOVA search: Found {} parquet files in {}",
+            files.len(),
+            data_path
+        );
 
         // Use bounded priority queue to maintain only top-k results
         let mut priority_queue = BoundedPriorityQueue::new(k);
@@ -225,7 +250,12 @@ impl NovaSearchOperations {
     }
 
     /// Determine if progressive search should be used
-    fn should_use_progressive_search(&self, _k: usize, collection_size: usize, has_filter: bool) -> bool {
+    fn should_use_progressive_search(
+        &self,
+        _k: usize,
+        collection_size: usize,
+        has_filter: bool,
+    ) -> bool {
         // Use progressive search for large collections or complex filters
         let is_large_collection = collection_size > 100000;
 

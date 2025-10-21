@@ -5,18 +5,18 @@
 mod common;
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
+use common::unique_collection_id;
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::StorageEngine;
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
-use common::unique_collection_id;
-use proximadb::proto::proximadb_v1::StorageEngine;
 use tempfile::TempDir;
 use tokio;
+use tracing::{debug, error, info, warn};
 
 // Use unified test utilities instead of duplicated sst_test_config
 use proximadb::storage::persistence::filesystem::FilesystemConfig;
@@ -51,19 +51,19 @@ async fn test_sst_atomic_flush_creates_staging_directory() {
     }
 
     // Prepare test vectors using unified utilities
-    let vectors = vec![env.create_test_vector_record(
-        "vec1".to_string(),
-        vec![1.0, 2.0, 3.0],
-        1000,
-        None,
-        {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert("category".to_string(), SqlValue {
-                value: Some(sql_value::Value::StringValue("A".to_string())),
-            });
-            metadata
-        },
-    )];
+    let vectors =
+        vec![
+            env.create_test_vector_record("vec1".to_string(), vec![1.0, 2.0, 3.0], 1000, None, {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("A".to_string())),
+                    },
+                );
+                metadata
+            }),
+        ];
 
     // Use production code directly with proper parameters
     let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst)
@@ -237,9 +237,12 @@ async fn test_concurrent_flushes_across_collections() {
                 None,
                 {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("collection".to_string(), SqlValue {
-                        value: Some(sql_value::Value::StringValue(format!("col_{}", i))),
-                    });
+                    metadata.insert(
+                        "collection".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(format!("col_{}", i))),
+                        },
+                    );
                     metadata
                 },
             )];

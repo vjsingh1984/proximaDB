@@ -1720,7 +1720,11 @@ mod tests {
 
         // Search
         let results = index.search(&[1.0, 0.0, 0.0, 0.0], 2, None).await.unwrap();
-        assert!(results.len() >= 1, "Should find at least 1 result, got {}", results.len());
+        assert!(
+            results.len() >= 1,
+            "Should find at least 1 result, got {}",
+            results.len()
+        );
         assert_eq!(results[0].0, "vec1");
     }
 

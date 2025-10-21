@@ -111,10 +111,7 @@ fn encode_patched_base_i64_base(wire_values: &[i64], base: i64, patch_bits: u8) 
     result.push(patch_bits);
 
     // Compute deltas
-    let deltas: Vec<i64> = wire_values
-        .iter()
-        .map(|&v| v.wrapping_sub(base))
-        .collect();
+    let deltas: Vec<i64> = wire_values.iter().map(|&v| v.wrapping_sub(base)).collect();
 
     // Threshold for patching
     let threshold = if patch_bits >= 63 {
@@ -211,7 +208,9 @@ fn decode_patched_base_i32_base(data: &[u8], count: usize) -> Result<Vec<i32>> {
 
     // Patches are 12 bytes each: 4 (pos) + 8 (value i64)
     if data.len() < 9 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PatchedBase decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PatchedBase decode: insufficient data for patches"
+        ));
     }
 
     // Unpack all values
@@ -261,8 +260,7 @@ fn decode_patched_base_i64_base(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     // Read base
     let base = i64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 
     // Read patch bit width
@@ -276,7 +274,9 @@ fn decode_patched_base_i64_base(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     // Patches are 12 bytes each
     if data.len() < 13 + bitpacked_bytes + num_patches * 12 {
-        return Err(anyhow::anyhow!("PatchedBase decode: insufficient data for patches"));
+        return Err(anyhow::anyhow!(
+            "PatchedBase decode: insufficient data for patches"
+        ));
     }
 
     // Unpack all values
@@ -388,12 +388,7 @@ mod tests {
         assert_eq!(values, decoded);
 
         // Should have 0 patches
-        let num_patches = u32::from_le_bytes([
-            encoded[5],
-            encoded[6],
-            encoded[7],
-            encoded[8],
-        ]);
+        let num_patches = u32::from_le_bytes([encoded[5], encoded[6], encoded[7], encoded[8]]);
         assert_eq!(num_patches, 0);
     }
 
@@ -408,12 +403,7 @@ mod tests {
         assert_eq!(values, decoded);
 
         // Should have many patches
-        let num_patches = u32::from_le_bytes([
-            encoded[5],
-            encoded[6],
-            encoded[7],
-            encoded[8],
-        ]);
+        let num_patches = u32::from_le_bytes([encoded[5], encoded[6], encoded[7], encoded[8]]);
         assert!(num_patches > 0, "Expected patches for outliers");
     }
 

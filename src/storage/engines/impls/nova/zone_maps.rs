@@ -357,9 +357,12 @@ impl AdvancedZoneMap {
                 max_similarity,
                 &mut result,
             ),
-            OptimizationStrategy::Hybrid => {
-                self.check_hybrid_intersection(query, distance_metric.clone(), max_similarity, &mut result)
-            }
+            OptimizationStrategy::Hybrid => self.check_hybrid_intersection(
+                query,
+                distance_metric.clone(),
+                max_similarity,
+                &mut result,
+            ),
         }
 
         result
@@ -449,7 +452,7 @@ impl AdvancedZoneMap {
         // Build zone maps for different distance metrics
         for metric in &[
             "euclidean".to_string(),
-            "cosine".to_string(), 
+            "cosine".to_string(),
             "dot_product".to_string(),
         ] {
             let scaled_zone = Self::build_scaled_zone_map(vectors, metric.clone())?;
@@ -523,9 +526,9 @@ impl AdvancedZoneMap {
     ) {
         // Check from coarsest to finest resolution
         for zone in self.hierarchical_zones.iter().rev() {
-            let intersects = zone
-                .zone_map
-                .intersects_query(query, distance_metric.clone(), max_similarity);
+            let intersects =
+                zone.zone_map
+                    .intersects_query(query, distance_metric.clone(), max_similarity);
 
             if !intersects {
                 result.intersects = false;
@@ -902,8 +905,7 @@ mod tests {
     #[test]
     fn test_query_characteristics() {
         let query = vec![1.0, 0.0, 2.0, 0.0, 3.0];
-        let characteristics =
-            QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
+        let characteristics = QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
 
         assert_eq!(characteristics.top_k, 10);
         assert_eq!(characteristics.sparsity, 0.4); // 2/5 zeros

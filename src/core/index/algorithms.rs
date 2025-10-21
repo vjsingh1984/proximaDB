@@ -1,6 +1,5 @@
 //! Index algorithm implementations
 
-
 /// Index algorithm configuration placeholder
 #[derive(Debug, Clone)]
 pub struct IndexAlgorithmConfig {

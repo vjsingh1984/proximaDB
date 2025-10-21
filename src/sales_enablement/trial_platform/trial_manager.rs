@@ -2,14 +2,14 @@
 //!
 //! Self-service trial platform for enterprise customer evaluation
 
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc, Duration};
+use tracing::{debug, info};
 use uuid::Uuid;
-use anyhow::{Result, anyhow};
-use tracing::{info, debug};
 
 /// Enterprise trial management for self-service customer evaluation
 #[derive(Debug, Clone)]
@@ -48,11 +48,11 @@ pub struct EnterpriseTrial {
 /// Types of enterprise trials
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TrialType {
-    AIShowcase,           // Focus on AI and natural language capabilities
-    PerformanceTrial,     // Focus on performance and scale
-    SecurityEvaluation,   // Focus on enterprise security and compliance
-    ComprehensiveEval,    // Full platform evaluation
-    CustomPOC,           // Custom proof-of-concept
+    AIShowcase,         // Focus on AI and natural language capabilities
+    PerformanceTrial,   // Focus on performance and scale
+    SecurityEvaluation, // Focus on enterprise security and compliance
+    ComprehensiveEval,  // Full platform evaluation
+    CustomPOC,          // Custom proof-of-concept
 }
 
 /// Trial status tracking
@@ -128,7 +128,10 @@ impl EnterpriseTrialManager {
         let trial_environments = Arc::new(TrialEnvironmentManager::new().await?);
         let customer_analytics = Arc::new(CustomerEngagementAnalytics::new().await?);
 
-        info!("🚀 Enterprise trial manager initialized with {} day trial duration", config.trial_duration_days);
+        info!(
+            "🚀 Enterprise trial manager initialized with {} day trial duration",
+            config.trial_duration_days
+        );
 
         Ok(Self {
             active_trials: Arc::new(RwLock::new(HashMap::new())),
@@ -139,8 +142,14 @@ impl EnterpriseTrialManager {
     }
 
     /// Create new enterprise trial for customer
-    pub async fn create_enterprise_trial(&self, request: TrialCreationRequest) -> Result<EnterpriseTrial> {
-        info!("🎯 Creating enterprise trial for {}: {}", request.company_name, request.customer_email);
+    pub async fn create_enterprise_trial(
+        &self,
+        request: TrialCreationRequest,
+    ) -> Result<EnterpriseTrial> {
+        info!(
+            "🎯 Creating enterprise trial for {}: {}",
+            request.company_name, request.customer_email
+        );
 
         // Step 1: Validate trial request
         self.validate_trial_request(&request).await?;
@@ -148,14 +157,21 @@ impl EnterpriseTrialManager {
         // Step 2: Check concurrent trial limits
         let active_trial_count = self.count_active_trials().await;
         if active_trial_count >= self.config.max_concurrent_trials {
-            return Err(anyhow!("Maximum concurrent trials reached: {}", self.config.max_concurrent_trials));
+            return Err(anyhow!(
+                "Maximum concurrent trials reached: {}",
+                self.config.max_concurrent_trials
+            ));
         }
 
         // Step 3: Provision trial environment
-        let trial_environment = self.trial_environments.provision_trial_environment(&request).await?;
+        let trial_environment = self
+            .trial_environments
+            .provision_trial_environment(&request)
+            .await?;
 
         // Step 4: Load appropriate sample data
-        self.load_trial_sample_data(&trial_environment, &request.trial_type).await?;
+        self.load_trial_sample_data(&trial_environment, &request.trial_type)
+            .await?;
 
         // Step 5: Create trial record
         let trial = EnterpriseTrial {
@@ -179,14 +195,22 @@ impl EnterpriseTrialManager {
         self.send_trial_welcome_email(&trial).await?;
         self.customer_analytics.start_trial_tracking(&trial).await?;
 
-        info!("✅ Enterprise trial created successfully: {} for {} (expires: {})",
-              trial.trial_id, trial.company_name, trial.expires_at.format("%Y-%m-%d"));
+        info!(
+            "✅ Enterprise trial created successfully: {} for {} (expires: {})",
+            trial.trial_id,
+            trial.company_name,
+            trial.expires_at.format("%Y-%m-%d")
+        );
 
         Ok(trial)
     }
 
     /// Load trial sample data based on trial type
-    async fn load_trial_sample_data(&self, environment: &TrialEnvironment, trial_type: &TrialType) -> Result<()> {
+    async fn load_trial_sample_data(
+        &self,
+        environment: &TrialEnvironment,
+        trial_type: &TrialType,
+    ) -> Result<()> {
         info!("📊 Loading sample data for trial type: {:?}", trial_type);
 
         match trial_type {
@@ -221,7 +245,11 @@ impl EnterpriseTrialManager {
     }
 
     /// Track customer engagement and update conversion signals
-    pub async fn track_customer_engagement(&self, trial_id: &str, activity: CustomerActivity) -> Result<()> {
+    pub async fn track_customer_engagement(
+        &self,
+        trial_id: &str,
+        activity: CustomerActivity,
+    ) -> Result<()> {
         let mut trials = self.active_trials.write().await;
 
         if let Some(trial) = trials.get_mut(trial_id) {
@@ -229,10 +257,15 @@ impl EnterpriseTrialManager {
             trial.engagement_metrics.record_activity(&activity);
 
             // Check for milestone completion
-            if let Some(milestone) = self.check_milestone_completion(&activity, &trial.evaluation_progress) {
+            if let Some(milestone) =
+                self.check_milestone_completion(&activity, &trial.evaluation_progress)
+            {
                 let milestone_name = milestone.name.clone();
                 trial.evaluation_progress.complete_milestone(milestone);
-                info!("🎉 Milestone completed for trial {}: {}", trial_id, milestone_name);
+                info!(
+                    "🎉 Milestone completed for trial {}: {}",
+                    trial_id, milestone_name
+                );
             }
 
             // Update completion percentage
@@ -243,8 +276,12 @@ impl EnterpriseTrialManager {
                 self.trigger_sales_outreach(trial).await?;
             }
 
-            debug!("📊 Updated engagement for trial {}: {:.1}% complete, {} API calls",
-                   trial_id, trial.evaluation_progress.completion_percentage, trial.engagement_metrics.total_api_calls);
+            debug!(
+                "📊 Updated engagement for trial {}: {:.1}% complete, {} API calls",
+                trial_id,
+                trial.evaluation_progress.completion_percentage,
+                trial.engagement_metrics.total_api_calls
+            );
         }
 
         Ok(())
@@ -253,22 +290,26 @@ impl EnterpriseTrialManager {
     /// Check if sales outreach should be triggered
     fn should_trigger_sales_outreach(&self, metrics: &EngagementMetrics) -> bool {
         // High engagement indicators
-        metrics.ai_queries_executed > 20 ||
-        metrics.dashboard_views > 10 ||
-        metrics.total_api_calls > 100 ||
-        metrics.unique_features_used > 5
+        metrics.ai_queries_executed > 20
+            || metrics.dashboard_views > 10
+            || metrics.total_api_calls > 100
+            || metrics.unique_features_used > 5
     }
 
     /// Check if a milestone should be completed based on customer activity
     fn check_milestone_completion(
         &self,
         activity: &CustomerActivity,
-        progress: &EvaluationProgress
+        progress: &EvaluationProgress,
     ) -> Option<EvaluationMilestone> {
         // Define milestones based on activity types
         match activity.activity_type {
             ActivityType::TrialStarted => {
-                if !progress.milestones_completed.iter().any(|m| m.milestone_id == "onboarding_complete") {
+                if !progress
+                    .milestones_completed
+                    .iter()
+                    .any(|m| m.milestone_id == "onboarding_complete")
+                {
                     Some(EvaluationMilestone {
                         milestone_id: "onboarding_complete".to_string(),
                         name: "Trial Onboarding Complete".to_string(),
@@ -279,9 +320,13 @@ impl EnterpriseTrialManager {
                 } else {
                     None
                 }
-            },
+            }
             ActivityType::DataUploaded => {
-                if !progress.milestones_completed.iter().any(|m| m.milestone_id == "data_ingestion") {
+                if !progress
+                    .milestones_completed
+                    .iter()
+                    .any(|m| m.milestone_id == "data_ingestion")
+                {
                     Some(EvaluationMilestone {
                         milestone_id: "data_ingestion".to_string(),
                         name: "First Data Successfully Ingested".to_string(),
@@ -292,10 +337,12 @@ impl EnterpriseTrialManager {
                 } else {
                     None
                 }
-            },
+            }
             ActivityType::AIQueryExecuted => {
                 // Check if they've executed enough queries for search milestone
-                let query_count = progress.milestones_completed.iter()
+                let query_count = progress
+                    .milestones_completed
+                    .iter()
                     .filter(|m| m.milestone_id == "query_milestone")
                     .count();
                 if query_count == 0 {
@@ -309,15 +356,17 @@ impl EnterpriseTrialManager {
                 } else {
                     None
                 }
-            },
+            }
             _ => None, // No milestone for other activity types yet
         }
     }
 
     /// Trigger sales outreach for high-engagement trial
     async fn trigger_sales_outreach(&self, trial: &EnterpriseTrial) -> Result<()> {
-        info!("📞 Triggering sales outreach for high-engagement trial: {} ({})",
-              trial.trial_id, trial.company_name);
+        info!(
+            "📞 Triggering sales outreach for high-engagement trial: {} ({})",
+            trial.trial_id, trial.company_name
+        );
 
         // Send internal sales notification
         self.send_sales_notification(trial).await?;
@@ -372,7 +421,12 @@ ProximaDB Enterprise Team",
         );
 
         // Send email (placeholder - would integrate with email service)
-        self.send_email(&trial.customer_email, "ProximaDB Enterprise Trial Ready", &welcome_content).await?;
+        self.send_email(
+            &trial.customer_email,
+            "ProximaDB Enterprise Trial Ready",
+            &welcome_content,
+        )
+        .await?;
 
         info!("📧 Welcome email sent to: {}", trial.customer_email);
         Ok(())
@@ -407,7 +461,8 @@ ProximaDB Enterprise Team",
     async fn load_performance_test_data(&self, environment: &TrialEnvironment) -> Result<()> {
         // Load large dataset for performance demonstrations
         let performance_data = self.create_performance_dataset().await?;
-        self.upload_sample_data(environment, performance_data).await?;
+        self.upload_sample_data(environment, performance_data)
+            .await?;
         Ok(())
     }
 
@@ -421,7 +476,8 @@ ProximaDB Enterprise Team",
     async fn load_comprehensive_demo_data(&self, environment: &TrialEnvironment) -> Result<()> {
         // Load comprehensive dataset covering all features
         let comprehensive_data = self.create_comprehensive_dataset().await?;
-        self.upload_sample_data(environment, comprehensive_data).await?;
+        self.upload_sample_data(environment, comprehensive_data)
+            .await?;
         Ok(())
     }
 
@@ -446,7 +502,10 @@ ProximaDB Enterprise Team",
 
     async fn count_active_trials(&self) -> u32 {
         let trials = self.active_trials.read().await;
-        trials.values().filter(|trial| matches!(trial.status, TrialStatus::Active)).count() as u32
+        trials
+            .values()
+            .filter(|trial| matches!(trial.status, TrialStatus::Active))
+            .count() as u32
     }
 
     async fn send_email(&self, _to: &str, _subject: &str, _content: &str) -> Result<()> {
@@ -479,7 +538,11 @@ ProximaDB Enterprise Team",
         Ok(SampleDataset::comprehensive())
     }
 
-    async fn upload_sample_data(&self, _environment: &TrialEnvironment, _data: SampleDataset) -> Result<()> {
+    async fn upload_sample_data(
+        &self,
+        _environment: &TrialEnvironment,
+        _data: SampleDataset,
+    ) -> Result<()> {
         // Upload sample data to trial environment
         Ok(())
     }
@@ -502,7 +565,8 @@ ProximaDB Enterprise Team",
         let time_investment = (trial.engagement_metrics.total_api_calls as f64).log10() / 3.0; // Log scale
 
         // Weighted conversion probability
-        let probability = (engagement_score * 0.4) + (completion_score * 0.4) + (time_investment * 0.2);
+        let probability =
+            (engagement_score * 0.4) + (completion_score * 0.4) + (time_investment * 0.2);
 
         Ok(probability.min(1.0))
     }
@@ -511,19 +575,25 @@ ProximaDB Enterprise Team",
         let mut recommendations = Vec::new();
 
         if trial.engagement_metrics.ai_queries_executed > 10 {
-            recommendations.push("Emphasize AI differentiation and business intelligence capabilities".to_string());
+            recommendations.push(
+                "Emphasize AI differentiation and business intelligence capabilities".to_string(),
+            );
         }
 
         if trial.engagement_metrics.dashboard_views > 5 {
-            recommendations.push("Focus on executive dashboard automation and business value".to_string());
+            recommendations
+                .push("Focus on executive dashboard automation and business value".to_string());
         }
 
         if trial.evaluation_progress.completion_percentage > 50.0 {
-            recommendations.push("Schedule closing call within 48 hours - high engagement signals".to_string());
+            recommendations.push(
+                "Schedule closing call within 48 hours - high engagement signals".to_string(),
+            );
         }
 
         if recommendations.is_empty() {
-            recommendations.push("Provide additional technical resources and use case examples".to_string());
+            recommendations
+                .push("Provide additional technical resources and use case examples".to_string());
         }
 
         Ok(recommendations)
@@ -553,18 +623,26 @@ impl TrialEnvironmentManager {
         let mut templates = HashMap::new();
 
         // AI showcase environment template
-        templates.insert(TrialType::AIShowcase, EnvironmentTemplate {
-            cpu_allocation: 2,
-            memory_gb: 8,
-            storage_gb: 50,
-            ai_providers_enabled: vec!["OpenAI".to_string(), "Anthropic".to_string()],
-            sample_data_size: 10000,
-        });
+        templates.insert(
+            TrialType::AIShowcase,
+            EnvironmentTemplate {
+                cpu_allocation: 2,
+                memory_gb: 8,
+                storage_gb: 50,
+                ai_providers_enabled: vec!["OpenAI".to_string(), "Anthropic".to_string()],
+                sample_data_size: 10000,
+            },
+        );
 
-        Ok(Self { environment_templates: templates })
+        Ok(Self {
+            environment_templates: templates,
+        })
     }
 
-    pub async fn provision_trial_environment(&self, request: &TrialCreationRequest) -> Result<TrialEnvironment> {
+    pub async fn provision_trial_environment(
+        &self,
+        request: &TrialCreationRequest,
+    ) -> Result<TrialEnvironment> {
         let environment_id = Uuid::new_v4().to_string();
         let subdomain = format!("trial-{}", &environment_id[..8]);
 
@@ -580,7 +658,10 @@ impl TrialEnvironmentManager {
             trial_subdomain: subdomain,
         };
 
-        info!("🌐 Trial environment provisioned: {}", environment.trial_subdomain);
+        info!(
+            "🌐 Trial environment provisioned: {}",
+            environment.trial_subdomain
+        );
         Ok(environment)
     }
 }
@@ -609,7 +690,10 @@ impl CustomerEngagementAnalytics {
     }
 
     pub async fn start_trial_tracking(&self, trial: &EnterpriseTrial) -> Result<()> {
-        info!("📈 Starting engagement tracking for trial: {}", trial.trial_id);
+        info!(
+            "📈 Starting engagement tracking for trial: {}",
+            trial.trial_id
+        );
         Ok(())
     }
 }
@@ -652,8 +736,15 @@ impl SampleDataset {
         Self {
             dataset_type: "AI Showcase".to_string(),
             vector_count: 10000,
-            collections: vec!["business_data".to_string(), "customer_analytics".to_string()],
-            metadata_fields: vec!["category".to_string(), "revenue".to_string(), "region".to_string()],
+            collections: vec![
+                "business_data".to_string(),
+                "customer_analytics".to_string(),
+            ],
+            metadata_fields: vec![
+                "category".to_string(),
+                "revenue".to_string(),
+                "region".to_string(),
+            ],
         }
     }
 
@@ -679,8 +770,16 @@ impl SampleDataset {
         Self {
             dataset_type: "Comprehensive".to_string(),
             vector_count: 100000,
-            collections: vec!["products".to_string(), "customers".to_string(), "transactions".to_string()],
-            metadata_fields: vec!["category".to_string(), "value".to_string(), "date".to_string()],
+            collections: vec![
+                "products".to_string(),
+                "customers".to_string(),
+                "transactions".to_string(),
+            ],
+            metadata_fields: vec![
+                "category".to_string(),
+                "value".to_string(),
+                "date".to_string(),
+            ],
         }
     }
 }
@@ -798,7 +897,7 @@ mod tests {
 
         let invalid_request = TrialCreationRequest {
             customer_email: "invalid-email".to_string(), // Invalid email
-            company_name: "".to_string(), // Empty company name
+            company_name: "".to_string(),                // Empty company name
             trial_type: TrialType::AIShowcase,
             industry: None,
             use_case_description: None,
@@ -806,7 +905,12 @@ mod tests {
             technical_contact: None,
         };
 
-        assert!(manager.validate_trial_request(&invalid_request).await.is_err());
+        assert!(
+            manager
+                .validate_trial_request(&invalid_request)
+                .await
+                .is_err()
+        );
     }
 
     async fn create_test_trial_manager() -> EnterpriseTrialManager {

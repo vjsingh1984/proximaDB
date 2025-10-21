@@ -1,29 +1,29 @@
 //! Automated insight generation for enterprise business intelligence
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
-use crate::storage::tenant::BusinessContext;
 use crate::auth::sso::EnterpriseUserContext;
+use crate::storage::tenant::BusinessContext;
 
 /// Automated insight generation engine for enterprise business intelligence
 pub struct AutomatedInsightEngine {
     /// Industry-specific insight generators
     industry_insight_generators: Arc<DashMap<String, Arc<IndustryInsightGenerator>>>,
-    
+
     /// Cross-domain pattern analyzer
     cross_domain_analyzer: Arc<CrossDomainPatternAnalyzer>,
-    
+
     /// Business intelligence synthesizer
     bi_synthesizer: Arc<BusinessIntelligenceSynthesizer>,
-    
+
     /// Regulatory insight validator
     regulatory_validator: Arc<RegulatoryInsightValidator>,
-    
+
     /// Insight performance optimizer
     performance_optimizer: Arc<InsightPerformanceOptimizer>,
 }
@@ -32,13 +32,13 @@ pub struct AutomatedInsightEngine {
 pub struct BusinessInsightsGenerator {
     /// Strategic insight templates by industry
     strategic_templates: Arc<DashMap<String, StrategicInsightTemplate>>,
-    
+
     /// Operational insight analyzer
     operational_analyzer: Arc<OperationalInsightAnalyzer>,
-    
+
     /// Financial insight calculator
     financial_calculator: Arc<FinancialInsightCalculator>,
-    
+
     /// Competitive intelligence analyzer
     competitive_analyzer: Arc<CompetitiveIntelligenceAnalyzer>,
 }
@@ -54,7 +54,7 @@ impl AutomatedInsightEngine {
             performance_optimizer: Arc::new(InsightPerformanceOptimizer::new()?),
         })
     }
-    
+
     /// Generate automated business insights across domains with AI
     pub async fn generate_automated_business_insights(
         &self,
@@ -63,40 +63,47 @@ impl AutomatedInsightEngine {
         insight_type: &InsightType,
         user_context: &EnterpriseUserContext,
     ) -> Result<AutomatedBusinessInsights> {
-        info!("Generating automated business insights for {} domains in tenant {}", 
-              domains.len(), tenant_id);
-        
+        info!(
+            "Generating automated business insights for {} domains in tenant {}",
+            domains.len(),
+            tenant_id
+        );
+
         // Step 1: Analyze patterns across domains
-        let cross_domain_patterns = self.cross_domain_analyzer.analyze_cross_domain_patterns(
-            domains,
-            user_context,
-        ).await?;
-        
+        let cross_domain_patterns = self
+            .cross_domain_analyzer
+            .analyze_cross_domain_patterns(domains, user_context)
+            .await?;
+
         // Step 2: Generate industry-specific insights
-        let industry_insights = self.generate_industry_specific_insights(
-            &cross_domain_patterns,
-            insight_type,
-            user_context,
-        ).await?;
-        
+        let industry_insights = self
+            .generate_industry_specific_insights(&cross_domain_patterns, insight_type, user_context)
+            .await?;
+
         // Step 3: Synthesize business intelligence
-        let synthesized_intelligence = self.bi_synthesizer.synthesize_business_intelligence(
-            &cross_domain_patterns,
-            &industry_insights,
-            &crate::storage::tenant::BusinessContext::default(),
-        ).await?;
-        
+        let synthesized_intelligence = self
+            .bi_synthesizer
+            .synthesize_business_intelligence(
+                &cross_domain_patterns,
+                &industry_insights,
+                &crate::storage::tenant::BusinessContext::default(),
+            )
+            .await?;
+
         // Step 4: Validate regulatory compliance
-        let compliance_validated_insights = self.regulatory_validator.validate_insights_compliance(
-            &synthesized_intelligence,
-            &crate::storage::tenant::BusinessContext::default(),
-        ).await?;
-        
+        let compliance_validated_insights = self
+            .regulatory_validator
+            .validate_insights_compliance(
+                &synthesized_intelligence,
+                &crate::storage::tenant::BusinessContext::default(),
+            )
+            .await?;
+
         // Step 5: Optimize for performance and actionability
-        let optimized_insights = self.performance_optimizer.optimize_insight_delivery(
-            &compliance_validated_insights,
-            user_context,
-        ).await?;
+        let optimized_insights = self
+            .performance_optimizer
+            .optimize_insight_delivery(&compliance_validated_insights, user_context)
+            .await?;
 
         // Extract pattern count before moving cross_domain_patterns
         let pattern_count = cross_domain_patterns.pattern_count;
@@ -124,7 +131,7 @@ impl AutomatedInsightEngine {
             generated_by: user_context.user_id.clone(),
         })
     }
-    
+
     /// Generate executive strategic insights for C-level intelligence
     pub async fn generate_executive_strategic_insights(
         &self,
@@ -133,41 +140,45 @@ impl AutomatedInsightEngine {
         executive_context: &ExecutiveUserContext,
     ) -> Result<ExecutiveStrategicInsights> {
         // Generate high-level strategic insights for executives
-        let strategic_analysis = self.analyze_strategic_patterns(
-            &StrategicContext {
-                business_domain: "enterprise".to_string(),
-                time_horizon: "quarterly".to_string(),
-                strategic_objectives: vec!["growth".to_string()],
-            },
-            &BusinessIntelligenceData {
-                data_sources: vec!["tenant_data".to_string()],
-                metrics: vec!["performance".to_string()],
-                insights: vec!["strategic".to_string()],
-            },
-        ).await?;
-        
+        let strategic_analysis = self
+            .analyze_strategic_patterns(
+                &StrategicContext {
+                    business_domain: "enterprise".to_string(),
+                    time_horizon: "quarterly".to_string(),
+                    strategic_objectives: vec!["growth".to_string()],
+                },
+                &BusinessIntelligenceData {
+                    data_sources: vec!["tenant_data".to_string()],
+                    metrics: vec!["performance".to_string()],
+                    insights: vec!["strategic".to_string()],
+                },
+            )
+            .await?;
+
         // Create executive-level recommendations
-        let executive_recommendations = self.generate_executive_recommendations(
-            &strategic_analysis,
-            executive_context,
-        ).await?;
-        
+        let executive_recommendations = self
+            .generate_executive_recommendations(&strategic_analysis, executive_context)
+            .await?;
+
         Ok(ExecutiveStrategicInsights {
             strategic_analysis,
-            executive_recommendations: executive_recommendations.into_iter().map(|er| StrategicRecommendation {
-                recommendation_type: RecommendationType::StrategicInitiative,
-                title: er.executive_summary,
-                description: format!("Strategic impact: {}", er.strategic_impact),
-                business_impact: BusinessImpact {
-                    revenue_impact: er.expected_roi,
-                    risk_impact: er.risk_assessment,
-                    operational_impact: er.implementation_complexity,
-                    competitive_impact: er.competitive_advantage_score,
-                },
-                implementation_complexity: ImplementationComplexity::Medium,
-                timeline_months: 12,
-                confidence_score: er.regulatory_compliance_score,
-            }).collect(),
+            executive_recommendations: executive_recommendations
+                .into_iter()
+                .map(|er| StrategicRecommendation {
+                    recommendation_type: RecommendationType::StrategicInitiative,
+                    title: er.executive_summary,
+                    description: format!("Strategic impact: {}", er.strategic_impact),
+                    business_impact: BusinessImpact {
+                        revenue_impact: er.expected_roi,
+                        risk_impact: er.risk_assessment,
+                        operational_impact: er.implementation_complexity,
+                        competitive_impact: er.competitive_advantage_score,
+                    },
+                    implementation_complexity: ImplementationComplexity::Medium,
+                    timeline_months: 12,
+                    confidence_score: er.regulatory_compliance_score,
+                })
+                .collect(),
             strategic_metrics: StrategicMetrics {
                 business_impact_score: 0.87,
                 implementation_feasibility: 0.82,
@@ -177,7 +188,7 @@ impl AutomatedInsightEngine {
             generated_for_executive: executive_context.executive_role.clone(),
         })
     }
-    
+
     // Helper methods
     async fn generate_industry_specific_insights(
         &self,
@@ -187,34 +198,50 @@ impl AutomatedInsightEngine {
     ) -> Result<IndustrySpecificInsights> {
         // Get or create industry insight generator
         let industry_type = self.determine_industry_from_context(user_context);
-        let industry_generator = self.get_or_create_industry_generator(&industry_type).await?;
-        
+        let industry_generator = self
+            .get_or_create_industry_generator(&industry_type)
+            .await?;
+
         // Generate industry-specific insights
-        industry_generator.generate_insights(patterns, insight_type, user_context).await
+        industry_generator
+            .generate_insights(patterns, insight_type, user_context)
+            .await
     }
-    
-    async fn get_or_create_industry_generator(&self, industry: &str) -> Result<Arc<IndustryInsightGenerator>> {
+
+    async fn get_or_create_industry_generator(
+        &self,
+        industry: &str,
+    ) -> Result<Arc<IndustryInsightGenerator>> {
         if let Some(generator) = self.industry_insight_generators.get(industry) {
             Ok(generator.clone())
         } else {
             let generator = IndustryInsightGenerator::new_for_industry(industry).await?;
             let generator_arc = Arc::new(generator);
-            self.industry_insight_generators.insert(industry.to_string(), generator_arc.clone());
+            self.industry_insight_generators
+                .insert(industry.to_string(), generator_arc.clone());
             Ok(generator_arc)
         }
     }
-    
+
     fn determine_industry_from_context(&self, user_context: &EnterpriseUserContext) -> String {
         // Determine industry from user context or tenant configuration
-        if user_context.roles.iter().any(|r| r.contains("risk") || r.contains("trading")) {
+        if user_context
+            .roles
+            .iter()
+            .any(|r| r.contains("risk") || r.contains("trading"))
+        {
             "financial_services".to_string()
-        } else if user_context.roles.iter().any(|r| r.contains("clinical") || r.contains("medical")) {
+        } else if user_context
+            .roles
+            .iter()
+            .any(|r| r.contains("clinical") || r.contains("medical"))
+        {
             "healthcare".to_string()
         } else {
             "technology".to_string()
         }
     }
-    
+
     fn extract_compliance_frameworks(&self, user_context: &EnterpriseUserContext) -> Vec<String> {
         match self.determine_industry_from_context(user_context).as_str() {
             "financial_services" => vec!["basel_iii".to_string(), "sox".to_string()],
@@ -222,7 +249,7 @@ impl AutomatedInsightEngine {
             _ => vec!["soc2".to_string(), "gdpr".to_string()],
         }
     }
-    
+
     fn generate_regulatory_insight_notes(&self, insight_type: &InsightType) -> Vec<String> {
         match insight_type {
             InsightType::RiskAssessment => vec![
@@ -254,7 +281,7 @@ impl BusinessInsightsGenerator {
             competitive_analyzer: Arc::new(CompetitiveIntelligenceAnalyzer::new()?),
         })
     }
-    
+
     /// Generate strategic business insights for executive intelligence
     pub async fn generate_strategic_insights(
         &self,
@@ -263,29 +290,40 @@ impl BusinessInsightsGenerator {
         executive_context: &ExecutiveUserContext,
     ) -> Result<StrategicBusinessInsights> {
         // Generate financial insights
-        let financial_insights = self.financial_calculator.calculate_financial_insights(
-            business_data,
-            &crate::storage::tenant::BusinessContext::default(),
-        ).await?;
-        
+        let financial_insights = self
+            .financial_calculator
+            .calculate_financial_insights(
+                business_data,
+                &crate::storage::tenant::BusinessContext::default(),
+            )
+            .await?;
+
         // Generate operational insights
-        let operational_insights = self.operational_analyzer.analyze_operational_patterns(
-            business_data,
-            &crate::storage::tenant::BusinessContext::default(),
-        ).await?;
-        
+        let operational_insights = self
+            .operational_analyzer
+            .analyze_operational_patterns(
+                business_data,
+                &crate::storage::tenant::BusinessContext::default(),
+            )
+            .await?;
+
         // Generate competitive insights
-        let competitive_insights = self.competitive_analyzer.analyze_competitive_position(
-            business_data,
-            &crate::storage::tenant::BusinessContext::default(),
-        ).await?;
-        
-        let strategic_recommendations = self.generate_strategic_recommendations(
-            &financial_insights,
-            &operational_insights,
-            &competitive_insights,
-            executive_context,
-        ).await?;
+        let competitive_insights = self
+            .competitive_analyzer
+            .analyze_competitive_position(
+                business_data,
+                &crate::storage::tenant::BusinessContext::default(),
+            )
+            .await?;
+
+        let strategic_recommendations = self
+            .generate_strategic_recommendations(
+                &financial_insights,
+                &operational_insights,
+                &competitive_insights,
+                executive_context,
+            )
+            .await?;
 
         // Convert StrategicRecommendation to String for the struct
         let recommendations_strings: Vec<String> = strategic_recommendations
@@ -300,7 +338,7 @@ impl BusinessInsightsGenerator {
             strategic_recommendations: recommendations_strings,
         })
     }
-    
+
     async fn generate_strategic_recommendations(
         &self,
         financial: &FinancialInsights,
@@ -309,7 +347,7 @@ impl BusinessInsightsGenerator {
         executive_context: &ExecutiveUserContext,
     ) -> Result<Vec<StrategicRecommendation>> {
         let mut recommendations = Vec::new();
-        
+
         // Generate role-specific recommendations
         match executive_context.executive_role.as_str() {
             "CEO" => {
@@ -327,7 +365,7 @@ impl BusinessInsightsGenerator {
                     timeline_months: 12,
                     confidence_score: 0.87,
                 });
-            },
+            }
             "CFO" => {
                 recommendations.push(StrategicRecommendation {
                     recommendation_type: RecommendationType::FinancialOptimization,
@@ -343,7 +381,7 @@ impl BusinessInsightsGenerator {
                     timeline_months: 6,
                     confidence_score: 0.92,
                 });
-            },
+            }
             "CRO" => {
                 recommendations.push(StrategicRecommendation {
                     recommendation_type: RecommendationType::RiskMitigation,
@@ -359,12 +397,14 @@ impl BusinessInsightsGenerator {
                     timeline_months: 9,
                     confidence_score: 0.89,
                 });
-            },
+            }
             _ => {
                 recommendations.push(StrategicRecommendation {
                     recommendation_type: RecommendationType::GeneralOptimization,
                     title: "Business Intelligence Enhancement".to_string(),
-                    description: "Cross-domain insights reveal operational efficiency opportunities".to_string(),
+                    description:
+                        "Cross-domain insights reveal operational efficiency opportunities"
+                            .to_string(),
                     business_impact: BusinessImpact {
                         revenue_impact: 0.10,
                         risk_impact: -0.03,
@@ -377,7 +417,7 @@ impl BusinessInsightsGenerator {
                 });
             }
         }
-        
+
         Ok(recommendations)
     }
 }
@@ -838,10 +878,13 @@ mod tests {
         let risk_insight = InsightType::RiskAssessment;
         let customer_insight = InsightType::CustomerAnalytics;
         let clinical_insight = InsightType::ClinicalIntelligence;
-        
+
         assert!(matches!(risk_insight, InsightType::RiskAssessment));
         assert!(matches!(customer_insight, InsightType::CustomerAnalytics));
-        assert!(matches!(clinical_insight, InsightType::ClinicalIntelligence));
+        assert!(matches!(
+            clinical_insight,
+            InsightType::ClinicalIntelligence
+        ));
     }
 
     #[test]
@@ -860,7 +903,7 @@ mod tests {
             timeline_months: 12,
             confidence_score: 0.85,
         };
-        
+
         assert_eq!(recommendation.title, "Market Expansion");
         assert_eq!(recommendation.timeline_months, 12);
         assert!(recommendation.confidence_score > 0.8);

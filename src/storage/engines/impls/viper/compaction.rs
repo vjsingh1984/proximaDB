@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::storage::engines::core::formats::columnar::{
-    UnifiedColumnarCompaction, ColumnarCompactionResult, VersionContinuityMode,
+    ColumnarCompactionResult, UnifiedColumnarCompaction, VersionContinuityMode,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 

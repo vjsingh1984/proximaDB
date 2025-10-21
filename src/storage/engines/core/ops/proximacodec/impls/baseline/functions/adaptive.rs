@@ -7,8 +7,8 @@
 //! This is the orchestrator that chooses between all available schemes.
 //! Returns ONLY the compressed data - headers are added by WireFormatManager.
 
-use anyhow::Result;
 use super::*;
+use anyhow::Result;
 
 /// Data pattern analysis results
 #[derive(Debug)]
@@ -68,7 +68,11 @@ fn analyze_i64(values: &[i64]) -> DataPattern {
     let min = values.iter().min().copied().unwrap_or(0);
     let max = values.iter().max().copied().unwrap_or(0);
     let range = (max - min) as u64;
-    let max_bits = if range == 0 { 1 } else { 64 - range.leading_zeros() as u8 };
+    let max_bits = if range == 0 {
+        1
+    } else {
+        64 - range.leading_zeros() as u8
+    };
 
     DataPattern {
         zero_ratio,
@@ -81,7 +85,10 @@ fn analyze_i64(values: &[i64]) -> DataPattern {
 }
 
 /// Select best scheme based on data pattern
-fn select_scheme_i64(pattern: &DataPattern, values: &[i64]) -> crate::storage::engines::core::ops::proximacodec::types::ProximaScheme {
+fn select_scheme_i64(
+    pattern: &DataPattern,
+    values: &[i64],
+) -> crate::storage::engines::core::ops::proximacodec::types::ProximaScheme {
     use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
     // Constant data -> RunLength
@@ -112,7 +119,10 @@ fn select_scheme_i64(pattern: &DataPattern, values: &[i64]) -> crate::storage::e
         } else {
             0
         };
-        return ProximaScheme::DoubleDelta { first_value, first_delta };
+        return ProximaScheme::DoubleDelta {
+            first_value,
+            first_delta,
+        };
     }
 
     // Small range values -> Simple8b
@@ -131,7 +141,7 @@ fn select_scheme_i64(pattern: &DataPattern, values: &[i64]) -> crate::storage::e
         let bits = pattern.max_bits;
         return ProximaScheme::FrameOfReference {
             reference: min,
-            bits
+            bits,
         };
     }
 
@@ -288,15 +298,21 @@ pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
 
 // Adaptive decoding not supported - decoder needs explicit scheme from header
 pub fn decode_f32(_data: &[u8], _count: usize) -> Result<Vec<f32>> {
-    Err(anyhow::anyhow!("Adaptive decode not supported - scheme must be known from wire format header"))
+    Err(anyhow::anyhow!(
+        "Adaptive decode not supported - scheme must be known from wire format header"
+    ))
 }
 
 pub fn decode_i64(_data: &[u8], _count: usize) -> Result<Vec<i64>> {
-    Err(anyhow::anyhow!("Adaptive decode not supported - scheme must be known from wire format header"))
+    Err(anyhow::anyhow!(
+        "Adaptive decode not supported - scheme must be known from wire format header"
+    ))
 }
 
 pub fn decode_i32(_data: &[u8], _count: usize) -> Result<Vec<i32>> {
-    Err(anyhow::anyhow!("Adaptive decode not supported - scheme must be known from wire format header"))
+    Err(anyhow::anyhow!(
+        "Adaptive decode not supported - scheme must be known from wire format header"
+    ))
 }
 
 #[cfg(test)]
@@ -412,8 +428,8 @@ mod tests {
         // Should select sparse encoding
         assert!(matches!(
             scheme,
-            crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::SparseBitmap |
-            crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::SparseCOO
+            crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::SparseBitmap
+                | crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::SparseCOO
         ));
     }
 }

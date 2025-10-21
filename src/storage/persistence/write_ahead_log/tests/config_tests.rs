@@ -53,16 +53,25 @@ mod tests {
         assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // Updated to 2MB for faster recovery
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);
         assert_eq!(config.write_buffer_size, 8 * 1024 * 1024);
-        assert!(matches!(config.sync_mode, crate::storage::persistence::write_ahead_log::config::SyncMode::PerBatch));
+        assert!(matches!(
+            config.sync_mode,
+            crate::storage::persistence::write_ahead_log::config::SyncMode::PerBatch
+        ));
     }
 
     #[tokio::test]
     async fn test_wal_config_default() {
         let config = WALConfig::default();
 
-        assert!(matches!(config.strategy_type, WriteBufferStrategyType::BincodeBatch));
+        assert!(matches!(
+            config.strategy_type,
+            WriteBufferStrategyType::BincodeBatch
+        ));
         assert!(matches!(config.memtable.memtable_type, MemTableType::Art));
-        assert!(matches!(config.multi_disk.distribution_strategy, DiskDistributionStrategy::LoadBalanced));
+        assert!(matches!(
+            config.multi_disk.distribution_strategy,
+            DiskDistributionStrategy::LoadBalanced
+        ));
         assert!(!&config.compression.compress_memory);
         assert!(&config.compression.compress_disk);
     }
@@ -119,16 +128,31 @@ mod tests {
             optimized_writer_enable_combining: None,
         };
 
-        assert!(matches!(config.strategy_type, WriteBufferStrategyType::BincodeBatch));
-        assert!(matches!(config.memtable.memtable_type, MemTableType::SkipList));
-        assert!(matches!(config.multi_disk.distribution_strategy, DiskDistributionStrategy::Hash));
-        assert!(matches!(config.compression.algorithm, CompressionAlgorithm::Zstd));
+        assert!(matches!(
+            config.strategy_type,
+            WriteBufferStrategyType::BincodeBatch
+        ));
+        assert!(matches!(
+            config.memtable.memtable_type,
+            MemTableType::SkipList
+        ));
+        assert!(matches!(
+            config.multi_disk.distribution_strategy,
+            DiskDistributionStrategy::Hash
+        ));
+        assert!(matches!(
+            config.compression.algorithm,
+            CompressionAlgorithm::Zstd
+        ));
         assert!(&config.compression.compress_memory);
         assert_eq!(
             config.performance.memory_flush_size_bytes,
             128 * 1024 * 1024
         );
-        assert!(matches!(config.performance.sync_mode, crate::storage::persistence::write_ahead_log::config::SyncMode::Always));
+        assert!(matches!(
+            config.performance.sync_mode,
+            crate::storage::persistence::write_ahead_log::config::SyncMode::Always
+        ));
     }
 
     #[tokio::test]

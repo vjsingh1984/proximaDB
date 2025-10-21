@@ -172,7 +172,8 @@ impl EngineMetadataSerializer for HelixUnifiedMetadataSerializer {
         // [MAGIC][Header][PCA Model][Zone Maps][Hilbert Index][Data]
         // The header, PCA model, and zone maps are most valuable to cache
 
-        if data.len() < 16 { // Minimum header size
+        if data.len() < 16 {
+            // Minimum header size
             return None;
         }
 
@@ -182,19 +183,19 @@ impl EngineMetadataSerializer for HelixUnifiedMetadataSerializer {
         }
 
         // Read header size (bytes 4-8)
-        let header_size = u32::from_le_bytes([
-            data[4], data[5], data[6], data[7],
-        ]) as usize;
+        let header_size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
 
         // Read metadata section size (bytes 8-16)
         let metadata_size = u64::from_le_bytes([
-            data[8], data[9], data[10], data[11],
-            data[12], data[13], data[14], data[15],
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
         ]) as usize;
 
         // Validate sizes
-        if header_size == 0 || header_size > data.len() ||
-           metadata_size == 0 || header_size + metadata_size > data.len() {
+        if header_size == 0
+            || header_size > data.len()
+            || metadata_size == 0
+            || header_size + metadata_size > data.len()
+        {
             return None;
         }
 
@@ -207,13 +208,13 @@ impl EngineMetadataSerializer for HelixUnifiedMetadataSerializer {
 
     fn should_cache_metadata(&self, file_path: &str) -> bool {
         // Cache metadata for HELIX files
-        file_path.ends_with(".hlx") ||
-        file_path.contains("/helix/") ||
-        file_path.contains("_helix_") ||
-        file_path.contains("/hilbert/") ||
-        file_path.contains("/pca_model/") ||
-        file_path.contains("/zone_maps/") ||
-        file_path.contains("/liquid_clusters/")
+        file_path.ends_with(".hlx")
+            || file_path.contains("/helix/")
+            || file_path.contains("_helix_")
+            || file_path.contains("/hilbert/")
+            || file_path.contains("/pca_model/")
+            || file_path.contains("/zone_maps/")
+            || file_path.contains("/liquid_clusters/")
     }
 }
 
@@ -249,16 +250,14 @@ mod tests {
                 hot_clusters: vec![0, 1, 2, 3, 4],
                 cold_clusters: vec![60, 61, 62, 63],
             },
-            zone_maps: vec![
-                ZoneMapEntry {
-                    zone_id: 0,
-                    hilbert_range: (0, 1000000),
-                    vector_count: 1000,
-                    min_values: vec![-1.0; 32],
-                    max_values: vec![1.0; 32],
-                    time_range: Some((1234567000, 1234567890)),
-                },
-            ],
+            zone_maps: vec![ZoneMapEntry {
+                zone_id: 0,
+                hilbert_range: (0, 1000000),
+                vector_count: 1000,
+                min_values: vec![-1.0; 32],
+                max_values: vec![1.0; 32],
+                time_range: Some((1234567000, 1234567890)),
+            }],
             sstable_metadata: SstableMetadata {
                 lsm_level: 3,
                 level_counts: vec![4, 10, 25, 50],
@@ -290,8 +289,14 @@ mod tests {
         assert_eq!(restored.file_size, metadata.file_size);
         assert_eq!(restored.vector_count, metadata.vector_count);
         assert_eq!(restored.dimension, metadata.dimension);
-        assert_eq!(restored.hilbert_config.bits_per_dimension, metadata.hilbert_config.bits_per_dimension);
-        assert_eq!(restored.pca_model.explained_variance, metadata.pca_model.explained_variance);
+        assert_eq!(
+            restored.hilbert_config.bits_per_dimension,
+            metadata.hilbert_config.bits_per_dimension
+        );
+        assert_eq!(
+            restored.pca_model.explained_variance,
+            metadata.pca_model.explained_variance
+        );
     }
 
     #[test]

@@ -146,7 +146,7 @@
 //! - **Maintenance**: Single codebase for core functionality
 //! - **Testing**: Unified test suite for common components
 
-pub mod block_reader;  // ✅ NEW: Unified Proxima block reader with strategies
+pub mod block_reader; // ✅ NEW: Unified Proxima block reader with strategies
 pub mod block_structures;
 pub mod bloom_filter; // Row-based bloom filter for SST and Swift
 // Block-level compression now integrated into main block_structures.rs
@@ -161,11 +161,10 @@ pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
 pub mod swift_metadata;
 pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
 
-
 // Re-exports for common use
 pub use block_structures::{
-    BlockCompressionConfig, BlockLayout, BlockLocation, BlockMetadataStats, ProximaBlockMetadata, ProximaDataBlock,
-    QuantizationStatistics, SuperBlock, VectorEncodingLayout,
+    BlockCompressionConfig, BlockLayout, BlockLocation, BlockMetadataStats, ProximaBlockMetadata,
+    ProximaDataBlock, QuantizationStatistics, SuperBlock, VectorEncodingLayout,
 };
 pub use compression_config::{
     CompressionParameters, CompressionStats, RowBasedCompressionConfig, VectorCompressionStrategy,
@@ -190,7 +189,6 @@ pub use sst_io_layer::{
 
 // NEW: Export zero-copy metadata serialization components
 pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadataSerializer};
-
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;
@@ -489,14 +487,16 @@ pub mod utils {
             WorkloadType::HighThroughputWrite => {
                 // Optimize for writes
                 config.compression.algorithm = CompressionAlgorithm::Lz4; // Fast compression
-                config.compression.block_compression.compression_stages.push(
-                    compression_config::CompressionStage {
+                config
+                    .compression
+                    .block_compression
+                    .compression_stages
+                    .push(compression_config::CompressionStage {
                         stage_name: "primary".to_string(),
                         algorithm: CompressionAlgorithm::Lz4,
                         level: 1,
                         condition: compression_config::CompressionCondition::Always,
-                    }
-                );
+                    });
                 config.performance.max_concurrent_operations = 16;
                 config.records_per_block = 4000; // Larger blocks
             }
@@ -562,9 +562,14 @@ mod tests {
 
         assert_eq!(config.dimension, 384);
         // Check that compression stages include LZ4
-        assert!(config.compression.block_compression.compression_stages
-            .iter()
-            .any(|stage| stage.algorithm == CompressionAlgorithm::Lz4));
+        assert!(
+            config
+                .compression
+                .block_compression
+                .compression_stages
+                .iter()
+                .any(|stage| stage.algorithm == CompressionAlgorithm::Lz4)
+        );
         assert_eq!(config.records_per_block, 4000);
         assert_eq!(config.performance.max_concurrent_operations, 16);
     }

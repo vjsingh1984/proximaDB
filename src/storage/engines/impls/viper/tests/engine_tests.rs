@@ -12,17 +12,17 @@ use tempfile::TempDir;
 use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
 use crate::proto::proximadb_v1::SqlValue;
-use std::collections::HashMap;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use crate::utils::StoragePath;
-use crate::core::search::unified_interface::{SearchPlan, CollectionConfig, StorageInfo};
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use arrow_array::{StringArray, Int32Array, RecordBatch};
+use arrow_array::{Int32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
+use std::collections::HashMap;
 use std::fs::File;
 // TODO: Refactor test code to use columnar module's exports
 // Currently using direct parquet imports for test compatibility
@@ -31,9 +31,8 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::properties::WriterProperties;
 // Also use columnar module's exports
 use crate::storage::engines::core::formats::columnar::{
-    FIELD_ID, FIELD_TIMESTAMP,
-    BatchParquetWriter, ParquetWriterConfig,
-    UnifiedParquetReader, ReaderConfig,
+    BatchParquetWriter, FIELD_ID, FIELD_TIMESTAMP, ParquetWriterConfig, ReaderConfig,
+    UnifiedParquetReader,
 };
 
 /// Create test configuration
@@ -45,7 +44,10 @@ fn create_test_config(_base_path: &str) -> ViperEngineConfig {
 }
 
 /// Helper to convert SearchParams to SearchPlan
-fn convert_search_params_to_plan(params: &crate::core::search::SearchParams, collection_id: &str) -> SearchPlan {
+fn convert_search_params_to_plan(
+    params: &crate::core::search::SearchParams,
+    collection_id: &str,
+) -> SearchPlan {
     SearchPlan {
         collection_id: collection_id.to_string(),
         collection_config: Some(CollectionConfig {
@@ -113,9 +115,9 @@ fn create_test_collection(
         id: collection_id.to_string(),
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
-            dimension: 128,  // Match actual test vector dimension
-            distance_metric: Some(0),            // Cosine
-            storage_engine: Some(0),             // VIPER
+            dimension: 128,           // Match actual test vector dimension
+            distance_metric: Some(0), // Cosine
+            storage_engine: Some(0),  // VIPER
             tags: vec![],
             description: None,
             filterable_columns: vec![],
@@ -147,10 +149,9 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
     metadata.insert(
         "category".to_string(),
         SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!(
-                "cat_{}",
-                (value * 10.0) as i32 % 5
-            ))),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                format!("cat_{}", (value * 10.0) as i32 % 5),
+            )),
         },
     );
     metadata.insert(
@@ -191,7 +192,8 @@ async fn search_with_context(
         top_k,
         DistanceMetric::Cosine,
         None,
-    ).await
+    )
+    .await
 }
 
 /// Extended helper with full parameter support
@@ -405,10 +407,7 @@ async fn test_batch_insertion_and_flush() {
     }
 
     // Create collection with matching dimension
-    let mut collection = create_test_collection(
-        collection_id,
-        temp_dir.path().to_str().unwrap(),
-    );
+    let mut collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     if let Some(ref mut config) = collection.config {
         config.dimension = vector_dimension as u32;
     }
@@ -800,10 +799,14 @@ async fn test_persistence_across_restarts() {
 
         // Search for persisted vectors - use collection-specific path
         // VIPER stores files in {base_path}/{collection_id}/data
-        let storage_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
-        let results = search_with_context(&engine, collection_id, &storage_url, &vec![0.1; 128], 30)
-            .await
-            .unwrap();
+        let storage_url = format!(
+            "file://{}",
+            StoragePath::collection_data_path(base_path, &collection_id)
+        );
+        let results =
+            search_with_context(&engine, collection_id, &storage_url, &vec![0.1; 128], 30)
+                .await
+                .unwrap();
 
         assert_eq!(results.len(), 30, "Not all vectors were persisted");
     }
@@ -846,17 +849,16 @@ async fn test_search_vectors_unified() {
         vector.metadata.insert(
             key.to_string(),
             SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value.to_string())),
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    value.to_string(),
+                )),
             },
         );
         vectors_to_flush.push(vector);
     }
 
     // Create collection config with dimension 3 to match the test vectors
-    let mut collection = create_test_collection(
-        collection_id,
-        temp_dir.path().to_str().unwrap(),
-    );
+    let mut collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     if let Some(ref mut config) = collection.config {
         config.dimension = 3; // Match the 3D test vectors
     }
@@ -917,7 +919,7 @@ async fn test_search_vectors_unified() {
                 base_fs,
                 collection_id.to_string(),
                 "viper".to_string(),
-            )
+            ),
         );
         let reader = UnifiedParquetReader::new(
             vec![],
@@ -926,7 +928,8 @@ async fn test_search_vectors_unified() {
             cached_filesystem,
             collection_id.to_string(),
             "viper".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Find the parquet file
         let mut parquet_file = String::new();
@@ -961,7 +964,10 @@ async fn test_search_vectors_unified() {
             let search_plan = convert_search_params_to_plan(&search_params, &context.collection_id);
             match reader.search_vectors(&search_plan, &context).await {
                 Ok(reader_results) => {
-                    debug!("Direct reader found {} results", reader_results.results.len());
+                    debug!(
+                        "Direct reader found {} results",
+                        reader_results.results.len()
+                    );
                     for (i, result) in reader_results.results.iter().take(3).enumerate() {
                         debug!(
                             "  Result {}: id={}, distance={:?}",
@@ -1072,10 +1078,11 @@ async fn test_search_vectors_unified() {
 
             // List what's in the data directory using filesystem
             let data_url = format!("file://{}", data_dir);
-            let fs_factory =
-                crate::storage::persistence::filesystem::FilesystemFactory::create(Default::default())
-                    .await
-                    .unwrap();
+            let fs_factory = crate::storage::persistence::filesystem::FilesystemFactory::create(
+                Default::default(),
+            )
+            .await
+            .unwrap();
             let fs = fs_factory.get_filesystem(&data_url).unwrap();
             match fs.list(&data_url).await {
                 Ok(entries) => {
@@ -1096,15 +1103,9 @@ async fn test_search_vectors_unified() {
     // Test 1: Basic search with cosine distance
     let base_path = temp_dir.path().to_str().unwrap();
     let storage_url = format!("file://{}/{}/data", base_path, collection_id);
-    let results = search_with_context(
-        &engine,
-        collection_id,
-        &storage_url,
-        &[1.0, 0.0, 0.0],
-        3,
-    )
-    .await
-    .expect("Search failed");
+    let results = search_with_context(&engine, collection_id, &storage_url, &[1.0, 0.0, 0.0], 3)
+        .await
+        .expect("Search failed");
 
     assert!(
         !results.is_empty(),
@@ -1125,7 +1126,10 @@ async fn test_search_vectors_unified() {
     // Verify that basic search returns results
     assert!(!results.is_empty(), "Basic search should return results");
     assert!(results.len() <= 3, "Should return at most top_k results");
-    debug!("First result: id={}, score={}", results[0].id, results[0].score);
+    debug!(
+        "First result: id={}, score={}",
+        results[0].id, results[0].score
+    );
     assert_eq!(results[0].id, "vec1"); // Should be the exact match
 
     // Test that we can search with filters (even if filtering is not applied without config)
@@ -1284,10 +1288,8 @@ async fn test_parquet_bloom_filter_support() {
         Field::new("value", DataType::Int32, false),
     ]));
 
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![Arc::new(ids), Arc::new(values)],
-    ).expect("Failed to create record batch");
+    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids), Arc::new(values)])
+        .expect("Failed to create record batch");
 
     // Configure writer with bloom filters
     let props = WriterProperties::builder()
@@ -1304,8 +1306,8 @@ async fn test_parquet_bloom_filter_support() {
     // Write Parquet file
     {
         let file = File::create(&file_path).expect("Failed to create parquet file");
-        let mut writer = ArrowWriter::try_new(file, schema, Some(props))
-            .expect("Failed to create ArrowWriter");
+        let mut writer =
+            ArrowWriter::try_new(file, schema, Some(props)).expect("Failed to create ArrowWriter");
         writer.write(&batch).expect("Failed to write batch");
         writer.close().expect("Failed to close writer");
     }
@@ -1314,8 +1316,8 @@ async fn test_parquet_bloom_filter_support() {
 
     // Read back and check metadata
     let file = File::open(&file_path).expect("Failed to open parquet file");
-    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
-        .expect("Failed to create parquet reader");
+    let reader =
+        ParquetRecordBatchReaderBuilder::try_new(file).expect("Failed to create parquet reader");
     let metadata = reader.metadata();
 
     println!("📊 Parquet file metadata:");
@@ -1334,15 +1336,17 @@ async fn test_parquet_bloom_filter_support() {
                 has_bloom = true;
             }
 
-            println!("    Column {}: bloom_filter_offset = {:?}, bloom_filter_length = {:?}",
-                     col_idx,
-                     bloom_offset,
-                     bloom_length);
+            println!(
+                "    Column {}: bloom_filter_offset = {:?}, bloom_filter_length = {:?}",
+                col_idx, bloom_offset, bloom_length
+            );
         }
     }
 
     if has_bloom {
-        println!("✅ BLOOM FILTERS CONFIRMED: ArrowWriter DOES write bloom filters to Parquet files!");
+        println!(
+            "✅ BLOOM FILTERS CONFIRMED: ArrowWriter DOES write bloom filters to Parquet files!"
+        );
     } else {
         println!("❌ WARNING: No bloom filters found in Parquet metadata!");
         println!("   This might mean:");
@@ -1352,5 +1356,8 @@ async fn test_parquet_bloom_filter_support() {
 
     // For VIPER engine, this is important because bloom filters can significantly
     // improve query performance when filtering by ID or other indexed columns
-    assert!(has_bloom, "Parquet should support bloom filters for optimal VIPER performance");
+    assert!(
+        has_bloom,
+        "Parquet should support bloom filters for optimal VIPER performance"
+    );
 }

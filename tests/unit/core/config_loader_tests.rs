@@ -4,23 +4,23 @@
 
 #[cfg(test)]
 mod tests {
-    use proximadb::core::config_loader::ConfigLoader;
+    use anyhow::Result;
     use proximadb::core::config::Config;
+    use proximadb::core::config_loader::ConfigLoader;
     use std::fs;
     use tempfile::TempDir;
-    use anyhow::Result;
 
     #[test]
     fn test_load_default_config() -> Result<()> {
         let config = Config::default();
-        
+
         // Verify default values
         assert_eq!(config.server.port, 5678);
         assert_eq!(config.api.grpc_port, 5679);
         assert_eq!(config.api.rest_port, 5678);
         assert!(config.storage.mmap_enabled);
         assert_eq!(config.storage.cache_size_mb, 2048);
-        
+
         Ok(())
     }
 
@@ -28,7 +28,7 @@ mod tests {
     fn test_load_config_from_file() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let config_path = temp_dir.path().join("test_config.toml");
-        
+
         // Write test configuration
         let config_content = r#"
 [server]
@@ -62,13 +62,13 @@ memtable_size_mb = 128
 compaction_threshold = 2
 block_size_kb = 2048
 "#;
-        
+
         fs::write(&config_path, config_content)?;
-        
+
         // Load configuration
         let config = ConfigLoader::load_with_defaults(config_path.to_string_lossy().as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
-        
+
         // Verify loaded values
         assert_eq!(config.server.node_id, "test-node");
         assert_eq!(config.server.bind_address, "127.0.0.1");
@@ -84,7 +84,7 @@ block_size_kb = 2048
             assert_eq!(sst_config.compaction_threshold, 2);
             assert_eq!(sst_config.block_size_kb, 2048);
         }
-        
+
         Ok(())
     }
 
@@ -93,7 +93,7 @@ block_size_kb = 2048
         let mut base_config = Config::default();
         base_config.server.port = 5678;
         base_config.storage.cache_size_mb = 2048;
-        
+
         let override_config = r#"
 [server]
 port = 9090
@@ -101,21 +101,21 @@ port = 9090
 [storage]
 mmap_enabled = false
 "#;
-        
+
         let temp_dir = TempDir::new()?;
         let override_path = temp_dir.path().join("override.toml");
         fs::write(&override_path, override_config)?;
-        
+
         // Merge configurations
         // Note: merge_configs method not available, using load_with_defaults
         let merged = ConfigLoader::load_with_defaults(override_path.to_string_lossy().as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
-        
+
         // Verify merged values
         assert_eq!(merged.server.port, 9090); // Overridden
         assert!(!merged.storage.mmap_enabled); // Overridden
         assert_eq!(merged.storage.cache_size_mb, 2048); // Kept from base
-        
+
         Ok(())
     }
 
@@ -124,11 +124,11 @@ mmap_enabled = false
         // Test valid configuration
         let mut config = Config::default();
         // Note: validate_config method not available, skipping validation
-        
+
         // Test invalid SST configuration
         // config.storage.sst_config.level_count = 0; // Field doesn't exist
         // Note: validate_config method not available
-        
+
         // Fix and test another invalid config
         // config.storage.sst_config.level_count = 7; // Using available field
         if let Some(ref mut sst_config) = config.storage.sst_config {
@@ -141,7 +141,7 @@ mmap_enabled = false
             sst_config.block_size_kb = 1024;
         }
         // Note: validate_config method not available, skipping validation
-        
+
         Ok(())
     }
 
@@ -153,24 +153,24 @@ mmap_enabled = false
             std::env::set_var("PROXIMADB_API_GRPC_PORT", "7778");
             std::env::set_var("PROXIMADB_STORAGE_CACHE_SIZE_MB", "8192");
         }
-        
+
         // Load configuration with env overrides
         // Note: load_with_env_overrides method not available
         let config = Config::default();
-        
+
         // Verify environment overrides (env vars don't auto-apply in default config)
         // These assertions expect env override, but Config::default() doesn't apply them
         assert_eq!(config.server.port, 5678); // Default value
         assert_eq!(config.api.grpc_port, 5679); // Default value
         assert_eq!(config.storage.cache_size_mb, 2048); // Default value
-        
+
         // Clean up env vars (unsafe in Rust 2024)
         unsafe {
             std::env::remove_var("PROXIMADB_SERVER_PORT");
             std::env::remove_var("PROXIMADB_API_GRPC_PORT");
             std::env::remove_var("PROXIMADB_STORAGE_CACHE_SIZE_MB");
         }
-        
+
         Ok(())
     }
 
@@ -183,21 +183,21 @@ cert_file = "/path/to/cert.pem"
 key_file = "/path/to/key.pem"
 bind_interface = "0.0.0.0:8443"
 "#;
-        
+
         let temp_dir = TempDir::new()?;
         let config_path = temp_dir.path().join("tls_config.toml");
         fs::write(&config_path, config_content)?;
-        
+
         let config = ConfigLoader::load_with_defaults(config_path.to_string_lossy().as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
-        
+
         assert!(config.tls.is_some());
         let tls_config = config.tls.unwrap();
         assert!(tls_config.enabled);
         assert_eq!(tls_config.cert_file, Some("/path/to/cert.pem".to_string()));
         assert_eq!(tls_config.key_file, Some("/path/to/key.pem".to_string()));
         assert_eq!(tls_config.bind_interface, Some("0.0.0.0:8443".to_string()));
-        
+
         Ok(())
     }
 
@@ -218,19 +218,26 @@ region = "us-west-2"
 bucket = "my-bucket"
 use_iam_role = true
 "#;
-        
+
         let temp_dir = TempDir::new()?;
         let config_path = temp_dir.path().join("cloud_config.toml");
         fs::write(&config_path, config_content)?;
-        
+
         let config = ConfigLoader::load_with_defaults(config_path.to_string_lossy().as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
-        
+
         // Verify cloud storage configuration
         assert_eq!(config.storage.storage_locations.len(), 1);
-        assert_eq!(config.storage.storage_locations[0].url, "s3://my-bucket/proximadb");
-        assert!(config.storage.storage_locations[0].tags.contains(&"cloud".to_string()));
-        
+        assert_eq!(
+            config.storage.storage_locations[0].url,
+            "s3://my-bucket/proximadb"
+        );
+        assert!(
+            config.storage.storage_locations[0]
+                .tags
+                .contains(&"cloud".to_string())
+        );
+
         Ok(())
     }
 
@@ -241,35 +248,38 @@ use_iam_role = true
 metrics_enabled = true
 log_level = "debug"
 "#;
-        
+
         let temp_dir = TempDir::new()?;
         let config_path = temp_dir.path().join("monitoring_config.toml");
         fs::write(&config_path, config_content)?;
-        
+
         let config = ConfigLoader::load_with_defaults(config_path.to_string_lossy().as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
-        
+
         assert!(config.monitoring.metrics_enabled);
         assert_eq!(config.monitoring.log_level, "debug");
-        
+
         Ok(())
     }
 
     #[test]
     fn test_config_serialization() -> Result<()> {
         let config = Config::default();
-        
+
         // Serialize to TOML
         let toml_string = toml::to_string_pretty(&config)?;
         assert!(!toml_string.is_empty());
-        
+
         // Deserialize back
         let deserialized: Config = toml::from_str(&toml_string)?;
-        
+
         // Verify round-trip
         assert_eq!(deserialized.server.port, config.server.port);
-        assert_eq!(deserialized.storage.cache_size_mb, config.storage.cache_size_mb);
-        
+        assert_eq!(
+            deserialized.storage.cache_size_mb,
+            config.storage.cache_size_mb
+        );
+
         Ok(())
     }
 
@@ -280,21 +290,21 @@ log_level = "debug"
 [server]
 port = 6789
 "#;
-        
+
         let temp_dir = TempDir::new()?;
         let config_path = temp_dir.path().join("partial_config.toml");
         fs::write(&config_path, config_content)?;
-        
+
         let config = ConfigLoader::load_with_defaults(config_path.to_string_lossy().as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
-        
+
         // Modified value
         assert_eq!(config.server.port, 6789);
-        
+
         // Default values for undefined sections
         assert_eq!(config.api.grpc_port, 5679);
         assert_eq!(config.storage.cache_size_mb, 2048);
-        
+
         Ok(())
     }
 }

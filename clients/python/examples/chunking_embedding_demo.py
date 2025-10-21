@@ -6,6 +6,7 @@ complete separation between chunking and embedding operations.
 """
 
 import os
+import time
 from typing import List
 
 from proximadb import ProximaDBClient
@@ -17,9 +18,8 @@ from proximadb.chunking import (
     chunk_and_embed_text
 )
 from proximadb.embedding_providers import (
-    get_embedding_provider,
-    recommend_free_providers,
-    get_default_embedding_provider
+    get_provider,
+    recommend_free_providers
 )
 from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
 
@@ -70,7 +70,7 @@ def demo_separation_of_concerns():
     print("-" * 40)
     
     # Use simulated provider (no dependencies)
-    embedding_provider = get_embedding_provider("simulated", dimension=384)
+    embedding_provider = get_provider("simulated", dimension=384)
     print(f"Using embedding provider: {embedding_provider}")
     
     # Extract texts from chunks
@@ -158,13 +158,12 @@ def demo_embedding_providers():
     providers_to_test = [
         "simulated",
         "sentence-transformer",
-        "fastembed",
-        "instructor",
+        # Note: fastembed and instructor are not in the available provider list
     ]
     
     for provider_name in providers_to_test:
         try:
-            provider = get_embedding_provider(provider_name)
+            provider = get_provider(provider_name)
             available = provider.is_available()
             
             if available:
@@ -187,7 +186,7 @@ def demo_complete_workflow():
     
     # Initialize client
     try:
-        client = ProximaDBClient()
+        client = ProximaDBClient(url="http://localhost:5678")
         print("✓ Connected to ProximaDB")
     except Exception as e:
         print(f"✗ Could not connect to ProximaDB: {e}")
@@ -230,7 +229,7 @@ def demo_complete_workflow():
     # Use convenience function for complete workflow
     print("\nProcessing document...")
     
-    embedding_provider = get_default_embedding_provider()
+    embedding_provider = get_provider("simulated")
     
     records = chunk_and_embed_text(
         text=document,
@@ -256,22 +255,25 @@ def demo_complete_workflow():
     query_text = "What are vector databases used for?"
     query_embedding = embedding_provider.embed_text(query_text)
     
-    results = client.search_vectors(
+    results = client.search(
         collection_id=collection_name,
-        query_vector=query_embedding.tolist(),
+        vector=query_embedding.tolist(),
         top_k=3
     )
-    
-    print(f"✓ Found {len(results.get('results', []))} results")
-    for i, result in enumerate(results.get('results', [])[:3]):
+
+    print(f"✓ Found {len(results)} results")
+    for i, result in enumerate(results[:3]):
         print(f"\nResult {i + 1}:")
-        print(f"  Score: {result.get('score', 0):.3f}")
-        print(f"  Text: {result.get('metadata', {}).get('text_preview', '')[:80]}...")
+        print(f"  Score: {result.score:.3f}")
+        print(f"  Text: {result.metadata.get('text_preview', '')[:80]}...")
     
     # Cleanup
     print("\nCleaning up...")
     client.delete_collection(collection_name)
     print("✓ Collection deleted")
+
+    # Allow graceful cleanup of gRPC connections
+    time.sleep(0.5)
 
 
 def main():

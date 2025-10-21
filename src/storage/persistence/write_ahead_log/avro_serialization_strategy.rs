@@ -16,8 +16,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
-    MemtableManager, RecoveryManager, WALFlushCoordinator, WriteAheadLogDiskManager,
-    WalFileInfo,
+    MemtableManager, RecoveryManager, WALFlushCoordinator, WalFileInfo, WriteAheadLogDiskManager,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -98,7 +97,7 @@ impl AvroSerializationStrategy {
                 ),
             ),
             filesystem_factory.clone(),
-            Arc::new(tokio::sync::RwLock::new(None)),  // Metadata provider will be set later if needed
+            Arc::new(tokio::sync::RwLock::new(None)), // Metadata provider will be set later if needed
         ));
 
         Ok(Self {
@@ -224,7 +223,9 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         base_location: &str,
         immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let sequences = self.write_native_batch(batch, collection_id, base_location).await?;
+        let sequences = self
+            .write_native_batch(batch, collection_id, base_location)
+            .await?;
 
         if immediate_sync {
             self.force_sync(None).await?;
@@ -466,9 +467,11 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                 let file_info = WalFileInfo {
                     collection_id: collection_id.to_string(),
                     batch_id: batch.batch_id.clone(),
-                    file_url: self
-                        .disk_manager
-                        .batch_url(collection_id, &batch.batch_id, SerializationFormat::Avro),
+                    file_url: self.disk_manager.batch_url(
+                        collection_id,
+                        &batch.batch_id,
+                        SerializationFormat::Avro,
+                    ),
                     size_bytes: 0,
                     format: SerializationFormat::Avro,
                 };
@@ -625,17 +628,26 @@ impl AvroSerializationStrategy {
         collection_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<WALVectorBatch>> {
-        debug!("Reading disk Avro WAL batches for collection: {}", collection_id);
-        
+        debug!(
+            "Reading disk Avro WAL batches for collection: {}",
+            collection_id
+        );
+
         // Get the WAL directory for this collection
-        let collection_wal_dir = format!("{}/{}", 
-            self.config.multi_disk.data_directories.first()
+        let collection_wal_dir = format!(
+            "{}/{}",
+            self.config
+                .multi_disk
+                .data_directories
+                .first()
                 .map(|d| d.as_str())
-                .unwrap_or("./data/wal"), 
-            collection_id);
+                .unwrap_or("./data/wal"),
+            collection_id
+        );
 
         // List all Avro WAL files in the directory
-        let filesystem = self.disk_manager
+        let filesystem = self
+            .disk_manager
             .filesystem_factory()
             .get_filesystem(&collection_wal_dir)?;
 
@@ -663,13 +675,17 @@ impl AvroSerializationStrategy {
             }
 
             let file_path = format!("{}/{}", collection_wal_dir, entry.name);
-            
+
             // Read and deserialize the Avro WAL file
             match self.read_and_deserialize_avro_file(&file_path).await {
                 Ok(file_batches) => {
                     batches.extend(file_batches);
                     files_processed += 1;
-                    debug!("Loaded {} batches from Avro WAL file: {}", batches.len(), entry.name);
+                    debug!(
+                        "Loaded {} batches from Avro WAL file: {}",
+                        batches.len(),
+                        entry.name
+                    );
                 }
                 Err(e) => {
                     warn!("Failed to read Avro WAL file {}: {}", entry.name, e);
@@ -679,8 +695,10 @@ impl AvroSerializationStrategy {
         }
 
         debug!(
-            "Read {} batches from {} disk Avro WAL files for collection: {}", 
-            batches.len(), files_processed, collection_id
+            "Read {} batches from {} disk Avro WAL files for collection: {}",
+            batches.len(),
+            files_processed,
+            collection_id
         );
 
         Ok(batches)
@@ -688,12 +706,15 @@ impl AvroSerializationStrategy {
 
     /// Read and deserialize a single Avro WAL file
     async fn read_and_deserialize_avro_file(&self, file_path: &str) -> Result<Vec<WALVectorBatch>> {
-        let filesystem = self.disk_manager
+        let filesystem = self
+            .disk_manager
             .filesystem_factory()
             .get_filesystem(file_path)?;
 
         // Read the file data
-        let data = filesystem.read(file_path).await
+        let data = filesystem
+            .read(file_path)
+            .await
             .with_context(|| format!("Failed to read Avro WAL file: {}", file_path))?;
 
         // Verify data integrity
@@ -703,7 +724,9 @@ impl AvroSerializationStrategy {
         }
 
         // Deserialize using Avro
-        let vector_records = self.serializer.deserialize_batch(&data)
+        let vector_records = self
+            .serializer
+            .deserialize_batch(&data)
             .with_context(|| format!("Failed to deserialize Avro WAL file: {}", file_path))?;
 
         if vector_records.is_empty() {

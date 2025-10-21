@@ -1,19 +1,17 @@
 //! Flush operations module for NOVA engine
 //! Handles all flush-related logic including writing to disk and metadata management
 
-use anyhow::{Result, Context};
-use std::sync::Arc;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
-use tracing::{info, debug};
+use std::sync::Arc;
+use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::traits::{FlushParameters, FlushResult};
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::core::formats::columnar::{
-    HybridParquetWriter, HybridWriterConfig,
-    ParquetWriterConfig, StreamingParquetWriter,
-    FIELD_ID,
+    FIELD_ID, HybridParquetWriter, HybridWriterConfig, ParquetWriterConfig, StreamingParquetWriter,
 };
+use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::traits::{FlushParameters, FlushResult};
 
 use crate::storage::engines::impls::nova::nova_meta_collector::NovaMetadataCollector;
 
@@ -39,8 +37,8 @@ impl NovaFlushOperations {
         filterable_columns: Option<Vec<crate::proto::proximadb_v1::FilterableColumnSpec>>,
     ) -> Result<(String, u64, HashMap<String, serde_json::Value>)> {
         use crate::storage::engines::core::formats::columnar::{
-            parquet_write_engine::ParquetWriterConfig,
             hybrid_writer::{HybridParquetWriter, HybridWriterConfig},
+            parquet_write_engine::ParquetWriterConfig,
         };
 
         info!(
@@ -58,10 +56,14 @@ impl NovaFlushOperations {
         );
 
         // Use standard path: {base_location}/{collection_id}/data (same as other engines)
-        let storage_path = crate::utils::StoragePath::collection_data_path(base_location, collection_id);
+        let storage_path =
+            crate::utils::StoragePath::collection_data_path(base_location, collection_id);
         let full_path = format!("{}/{}", storage_path, file_name);
 
-        debug!("📂 NOVA flush: base_location={}, collection_id={}", base_location, collection_id);
+        debug!(
+            "📂 NOVA flush: base_location={}, collection_id={}",
+            base_location, collection_id
+        );
         debug!("📂 NOVA flush: storage_path={}", storage_path);
         debug!("📂 NOVA flush: full_path={}", full_path);
 
@@ -69,7 +71,10 @@ impl NovaFlushOperations {
         let fs = self.filesystem.get_filesystem(&storage_path)?;
         match fs.create_dir_all(&storage_path).await {
             Ok(_) => debug!("📂 NOVA flush: Created directory {}", storage_path),
-            Err(e) => debug!("📂 NOVA flush: Failed to create directory {}: {}", storage_path, e),
+            Err(e) => debug!(
+                "📂 NOVA flush: Failed to create directory {}: {}",
+                storage_path, e
+            ),
         }
 
         // Configure writer with NOVA-specific optimizations
@@ -113,18 +118,24 @@ impl NovaFlushOperations {
         };
 
         // Use HybridParquetWriter with integrated disk cache and metadata collection
-        let collector_config = crate::storage::engines::impls::nova::nova_meta_collector::NovaCollectorConfig {
-            row_groups_per_superblock: 4,
-            compute_vector_stats: true,
-            sample_rate: 0.1,
-        };
-        let metadata_collector = Some(Box::new(NovaMetadataCollector::new(collector_config)) as Box<dyn crate::storage::engines::core::formats::columnar::MetadataCollector>);
+        let collector_config =
+            crate::storage::engines::impls::nova::nova_meta_collector::NovaCollectorConfig {
+                row_groups_per_superblock: 4,
+                compute_vector_stats: true,
+                sample_rate: 0.1,
+            };
+        let metadata_collector = Some(Box::new(NovaMetadataCollector::new(collector_config))
+            as Box<dyn crate::storage::engines::core::formats::columnar::MetadataCollector>);
 
         // Get filesystem instance for writer
         let fs = self.filesystem.get_filesystem(&full_path)?;
 
         debug!("📂 NOVA flush: About to call HybridParquetWriter::write_with_cache");
-        debug!("📂 NOVA flush: records.len()={}, dimension={}", records.len(), dimension);
+        debug!(
+            "📂 NOVA flush: records.len()={}, dimension={}",
+            records.len(),
+            dimension
+        );
         debug!("📂 NOVA flush: full_path={}", full_path);
 
         let (stats, collector) = match HybridParquetWriter::write_with_cache(
@@ -136,13 +147,17 @@ impl NovaFlushOperations {
             filterable_columns,
             metadata_collector,
         )
-        .await {
+        .await
+        {
             Ok(result) => {
                 debug!("✅ NOVA flush: HybridParquetWriter::write_with_cache succeeded");
                 result
-            },
+            }
             Err(e) => {
-                debug!("❌ NOVA flush: HybridParquetWriter::write_with_cache failed: {:?}", e);
+                debug!(
+                    "❌ NOVA flush: HybridParquetWriter::write_with_cache failed: {:?}",
+                    e
+                );
                 return Err(e);
             }
         };
@@ -154,7 +169,10 @@ impl NovaFlushOperations {
         let metadata_path = full_path.replace(".parquet", ".nova_meta.json");
         let metadata_json = serde_json::to_string_pretty(&nova_metadata)?;
         debug!("📂 NOVA flush: Writing metadata to {}", metadata_path);
-        match fs.write(&metadata_path, metadata_json.as_bytes(), None).await {
+        match fs
+            .write(&metadata_path, metadata_json.as_bytes(), None)
+            .await
+        {
             Ok(_) => debug!("✅ NOVA flush: Metadata file written successfully"),
             Err(e) => debug!("❌ NOVA flush: Failed to write metadata: {:?}", e),
         }
@@ -167,8 +185,7 @@ impl NovaFlushOperations {
 
         info!(
             "✅ NOVA: Written {} bytes with {} compression ratio",
-            stats.file_size,
-            stats.compression_ratio
+            stats.file_size, stats.compression_ratio
         );
 
         // Return file info
@@ -190,10 +207,7 @@ impl NovaFlushOperations {
     }
 
     /// Perform flush operation
-    pub async fn flush(
-        &self,
-        params: &FlushParameters,
-    ) -> Result<FlushResult> {
+    pub async fn flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         let start = std::time::Instant::now();
 
         // Get dimension from collection config FIRST (authoritative), then fall back to actual vectors
@@ -205,35 +219,47 @@ impl NovaFlushOperations {
             ))?;
 
         // Get compression from hints or use default
-        let compression_algo = params.hints.get("compression")
+        let compression_algo = params
+            .hints
+            .get("compression")
             .and_then(|v| v.as_str())
             .unwrap_or("zstd");
 
         // Get base_location from storage assignment
-        let base_location = params.collection_config
+        let base_location = params
+            .collection_config
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
             .map(|s| s.base_location.as_str())
             .unwrap_or("/data/collections");
 
         // Extract filterable_columns from collection config
-        let filterable_columns = params.collection_config.as_ref()
+        let filterable_columns = params
+            .collection_config
+            .as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.filterable_columns.clone());
 
         // Delegate to write_nova_file_to_disk
-        let (path, bytes_written, metadata) = self.write_nova_file_to_disk(
-            params.collection_id.as_deref().unwrap_or("default"),
-            params.vector_records.clone(),
-            compression_algo,
-            dimension,
-            base_location,
-            filterable_columns,
-        ).await?;
+        let (path, bytes_written, metadata) = self
+            .write_nova_file_to_disk(
+                params.collection_id.as_deref().unwrap_or("default"),
+                params.vector_records.clone(),
+                compression_algo,
+                dimension,
+                base_location,
+                filterable_columns,
+            )
+            .await?;
 
         Ok(FlushResult {
             success: true,
-            collections_affected: vec![params.collection_id.clone().unwrap_or("default".to_string())],
+            collections_affected: vec![
+                params
+                    .collection_id
+                    .clone()
+                    .unwrap_or("default".to_string()),
+            ],
             entries_flushed: Some(params.vector_records.len() as u64),
             bytes_written: Some(bytes_written),
             files_created: Some(1),

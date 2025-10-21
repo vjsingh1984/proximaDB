@@ -393,7 +393,7 @@ impl RowBasedCompressionConfig {
 
     /// Centralized conversion from proto config to BlockCompressionConfig
     /// Used by all engines (SST, SWIFT, HELIX) to avoid duplication
-    pub fn to_block_compression_config(&self) -> crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig {
+    pub fn to_block_compression_config(&self) -> crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig{
         use crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig;
 
         BlockCompressionConfig {
@@ -403,14 +403,15 @@ impl RowBasedCompressionConfig {
             enable_metadata_compression: self.metadata_compression.enabled,
             compression_threshold_bytes: self.compression_thresholds.min_compression_size,
             dictionary_compression: self.adaptive_compression.enabled,
-            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             metadata_algorithm: None, // Use main algorithm for metadata
         }
     }
 
     /// Create BlockCompressionConfig from proto config directly
     /// Convenience method that combines from_proto_config() and to_block_compression_config()
-    pub fn create_block_config_from_proto(proto_config: Option<&ProtoCompressionConfig>) -> crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig {
+    pub fn create_block_config_from_proto(proto_config: Option<&ProtoCompressionConfig>) -> crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig{
         match proto_config {
             Some(config) => {
                 let unified_config = Self::from_proto_config(config);
@@ -610,7 +611,9 @@ mod tests {
         // Disabled config should not compress
         let mut disabled_config = config.clone();
         disabled_config.enabled = false;
-        assert!(!disabled_config.should_compress(100 * 1024, &CompressionContext::VectorSerialization));
+        assert!(
+            !disabled_config.should_compress(100 * 1024, &CompressionContext::VectorSerialization)
+        );
     }
 
     #[test]

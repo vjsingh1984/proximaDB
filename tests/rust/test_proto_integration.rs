@@ -4,34 +4,30 @@
 //! with the server implementation and quantization features.
 
 use anyhow::Result;
+use proximadb::proto::proximadb_v1::{DistanceMetric, StorageEngine as StorageEngineType};
 use serde_json::json;
 use tracing::{debug, error, info, warn};
+
+// Import test utilities - accessible from tests/common/
+#[path = "../common/collection_builder.rs"]
+mod collection_builder;
+use collection_builder::TestCollectionBuilder;
 
 #[tokio::test]
 async fn test_quantization_config_fields() -> Result<()> {
     // Test that quantization field exists and can be used
     use proximadb::proto::proximadb_v1::*;
 
-    // Check if we can find the QuantizationConfig message
-    // This test validates that our proto updates were applied correctly
+    // BEFORE: 15+ lines of boilerplate CollectionConfig creation
+    // AFTER: Use the test utility builder
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_name("basic_collection")
+        .with_dimension(128)
+        .with_engine(StorageEngineType::Viper)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
 
-    // First, let's test a CollectionConfig without quantization
-    let basic_config = CollectionConfig {
-        name: "basic_collection".to_string(),
-        dimension: 128,
-        distance_metric: Some(1),            // COSINE
-        storage_engine: Some(1),             // VIPER
-        tags: vec![],
-        description: Some("Test collection".to_string()),
-        filterable_columns: vec![],
-        index_configs: vec![],
-        quantization: None,
-        storage_config: None,
-        primary_index: Some("default".to_string()),
-        auto_index_selection: Some(false),
-        owner: None,
-        embedding_models: vec![],
-    };
+    let basic_config = collection.config.as_ref().unwrap();
 
     assert_eq!(basic_config.name, "basic_collection");
     assert!(basic_config.quantization.is_none());
@@ -45,22 +41,15 @@ async fn test_index_config_field() -> Result<()> {
     // Test that index_config field exists and can be used
     use proximadb::proto::proximadb_v1::*;
 
-    let config_with_index = CollectionConfig {
-        name: "indexed_collection".to_string(),
-        dimension: 256,
-        distance_metric: Some(1),            // COSINE
-        storage_engine: Some(1),             // VIPER
-        tags: vec![],
-        description: Some("Test collection".to_string()),
-        filterable_columns: vec![],
-        index_configs: vec![],
-        quantization: None,
-        storage_config: None,
-        primary_index: Some("default".to_string()),
-        auto_index_selection: Some(false),
-        owner: None,
-        embedding_models: vec![],
-    };
+    // Using test utility - much cleaner!
+    let (collection, _temp) = TestCollectionBuilder::new()
+        .with_name("indexed_collection")
+        .with_dimension(256)
+        .with_engine(StorageEngineType::Viper)
+        .with_distance_metric(DistanceMetric::Cosine)
+        .build();
+
+    let config_with_index = collection.config.as_ref().unwrap();
 
     assert_eq!(config_with_index.name, "indexed_collection");
     assert!(config_with_index.index_configs.is_empty());
@@ -146,7 +135,10 @@ async fn test_handler_hint_processing() -> Result<()> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let candidate_multiplier = hints_json.get("candidate_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+    let candidate_multiplier = hints_json
+        .get("candidate_multiplier")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0) as f32;
 
     let quantization_hint = hints_json
         .get("quantization_hint")

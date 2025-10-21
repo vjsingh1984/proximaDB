@@ -19,11 +19,11 @@
 //! Tracks access patterns for nodes and edges to make intelligent tiering decisions.
 //! Uses LRU eviction policy with access frequency and recency tracking.
 
+use crate::storage::cache::orchestrator::{CacheStatsProvider, UsageStats};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use crate::storage::cache::orchestrator::{CacheStatsProvider, UsageStats};
 
 /// Tracks access patterns for intelligent hot/cold tiering
 #[derive(Debug)]
@@ -357,7 +357,9 @@ pub struct QuasarAccessCacheStatsProvider {
 }
 
 impl QuasarAccessCacheStatsProvider {
-    pub fn new(cache: Arc<AccessPatternCache>) -> Self { Self { cache } }
+    pub fn new(cache: Arc<AccessPatternCache>) -> Self {
+        Self { cache }
+    }
 }
 
 impl CacheStatsProvider for QuasarAccessCacheStatsProvider {
@@ -377,7 +379,12 @@ impl CacheStatsProvider for QuasarAccessCacheStatsProvider {
                 last_rebalance: std::time::SystemTime::now(),
             };
         }
-        UsageStats { hit_rate: 0.0, avg_entry_size: 1024, access_frequency: 0.0, last_rebalance: std::time::SystemTime::now() }
+        UsageStats {
+            hit_rate: 0.0,
+            avg_entry_size: 1024,
+            access_frequency: 0.0,
+            last_rebalance: std::time::SystemTime::now(),
+        }
     }
 }
 

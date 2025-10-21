@@ -257,15 +257,15 @@ impl TierDataMovement {
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
         // Create UnifiedCachingFilesystem for the reader
-        let base_fs = filesystem.get_filesystem("file://")
+        let base_fs = filesystem
+            .get_filesystem("file://")
             .map_err(|e| anyhow!("Failed to get base filesystem: {}", e))?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
             self.collection_id.clone(),
             "sst".to_string(),
         ));
-        let reader =
-            UnifiedSstableReader::new(filesystem, unified_fs, self.collection_id.clone());
+        let reader = UnifiedSstableReader::new(filesystem, unified_fs, self.collection_id.clone());
         let mut vectors = Vec::new();
 
         // SSTable reader reads individual vectors

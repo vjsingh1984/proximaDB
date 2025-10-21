@@ -464,6 +464,32 @@ class ProximaDBSyncGrpcClient:
                         # Assign SqlValue directly to the map
                         vector_record.metadata[key].CopyFrom(sql_value)
 
+                # Add timestamp field (accept both 'timestamp' and 'timestamp_ms')
+                if 'timestamp' in vector_data and vector_data['timestamp'] is not None:
+                    vector_record.timestamp = int(vector_data['timestamp'])
+                elif 'timestamp_ms' in vector_data and vector_data['timestamp_ms'] is not None:
+                    vector_record.timestamp = int(vector_data['timestamp_ms'])
+
+                # Add updated_at field (accept both forms)
+                if 'updated_at' in vector_data and vector_data['updated_at'] is not None:
+                    vector_record.updated_at = int(vector_data['updated_at'])
+                elif 'updated_at_ms' in vector_data and vector_data['updated_at_ms'] is not None:
+                    vector_record.updated_at = int(vector_data['updated_at_ms'])
+
+                # Add expires_at field (accept both forms)
+                if 'expires_at' in vector_data and vector_data['expires_at'] is not None:
+                    vector_record.expires_at = int(vector_data['expires_at'])
+                elif 'expires_at_ms' in vector_data and vector_data['expires_at_ms'] is not None:
+                    vector_record.expires_at = int(vector_data['expires_at_ms'])
+
+                # Add version field
+                if 'version' in vector_data and vector_data['version'] is not None:
+                    vector_record.version = int(vector_data['version'])
+
+                # Add source field (original content that generated this vector)
+                if 'source' in vector_data and vector_data['source'] is not None:
+                    vector_record.source = str(vector_data['source'])
+
                 proto_vectors.append(vector_record)
 
             # Use VectorBatch endpoint for inserts (v1)
@@ -597,6 +623,43 @@ class ProximaDBSyncGrpcClient:
                             metadata_dict[item] = sql_value.bool_value
                     vector_result['metadata'] = metadata_dict
 
+                # Add timestamp fields (use _ms suffix for SDK consistency)
+                if result.HasField('timestamp'):
+                    vector_result['timestamp_ms'] = result.timestamp
+                    vector_result['timestamp'] = result.timestamp
+
+                # Add version field (proto field 5)
+                if result.HasField('version'):
+                    vector_result['version'] = result.version
+
+                # Add similarity field (proto field 6)
+                if result.HasField('similarity'):
+                    vector_result['similarity'] = result.similarity
+
+                # Add source field (proto field 8 - original content for RAG)
+                if result.HasField('source'):
+                    vector_result['source'] = result.source
+
+                # Add expanded_context field (proto field 9)
+                if result.expanded_context:
+                    vector_result['expanded_context'] = list(result.expanded_context)
+
+                # Add semantic_similarity field (proto field 10)
+                if result.HasField('semantic_similarity'):
+                    vector_result['semantic_similarity'] = result.semantic_similarity
+
+                # Add quantization_info field (proto field 11)
+                if result.HasField('quantization_info'):
+                    vector_result['quantization_info'] = result.quantization_info
+
+                # Add engine_stats field (proto field 12)
+                if result.engine_stats:
+                    vector_result['engine_stats'] = dict(result.engine_stats)
+
+                # Add index_path field (proto field 13)
+                if result.HasField('index_path'):
+                    vector_result['index_path'] = result.index_path
+
                 results.append(vector_result)
 
             # Return list of SearchResult dataclass objects
@@ -606,7 +669,17 @@ class ProximaDBSyncGrpcClient:
                     id=result['id'],
                     score=result['score'],
                     metadata=result.get('metadata', {}),
-                    vector=result.get('vector', None)
+                    vector=result.get('vector', None),
+                    # Add all SearchVectorRecord fields
+                    timestamp=result.get('timestamp'),
+                    version=result.get('version'),
+                    similarity=result.get('similarity'),
+                    source=result.get('source'),
+                    expanded_context=result.get('expanded_context'),
+                    semantic_similarity=result.get('semantic_similarity'),
+                    quantization_info=result.get('quantization_info'),
+                    engine_stats=result.get('engine_stats'),
+                    index_path=result.get('index_path')
                 )
                 search_results.append(search_result)
             return search_results
@@ -657,6 +730,22 @@ class ProximaDBSyncGrpcClient:
                         elif sql_value.HasField('bool_value'):
                             metadata_dict[key] = sql_value.bool_value
                     result['metadata'] = metadata_dict
+
+                # Add timestamp field (SearchVectorRecord has timestamp at field 7)
+                if result_item.HasField('timestamp'):
+                    result['timestamp_ms'] = result_item.timestamp
+
+                # Add version field (SearchVectorRecord has version at field 5)
+                if result_item.HasField('version'):
+                    result['version'] = result_item.version
+
+                # Add source field (SearchVectorRecord has source at field 8)
+                if result_item.HasField('source'):
+                    result['source'] = result_item.source
+
+                # NOTE: SearchVectorRecord does NOT have updated_at or expires_at fields
+                # Those fields only exist in the insert VectorRecord proto
+
                 return result
             else:
                 raise ProximaDBError(f"Vector {vector_id} not found")

@@ -7,14 +7,14 @@
 //! - Memory management and flush operations
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
-use std::collections::HashMap;
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     BatchId, BincodeSerializationStrategy, WALBatchStrategy, WALConfig,
 };
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
@@ -49,16 +49,22 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         vector: vec![value; dimension],
         metadata: {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("type".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "bincode_test".to_string()
-                ))
-            });
-            metadata.insert("value".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    value.to_string()
-                ))
-            });
+            metadata.insert(
+                "type".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "bincode_test".to_string(),
+                    )),
+                },
+            );
+            metadata.insert(
+                "value".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        value.to_string(),
+                    )),
+                },
+            );
             metadata
         },
         timestamp: Some(1234567890i64),
@@ -451,17 +457,26 @@ async fn test_bincode_batch_metadata() {
     let mut vectors = Vec::new();
     for i in 0..5 {
         let mut vector = create_test_vector(&format!("meta_{}", i), 128, 0.1);
-        vector.metadata.insert("index".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue(i.to_string())),
-        });
-        vector.metadata.insert("binary_data".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue(format!("{:08b}", i))),
-        });
-        vector.metadata.insert("timestamp".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue(
-                (1234567890 + i * 1000).to_string()
-            ))
-        });
+        vector.metadata.insert(
+            "index".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(i.to_string())),
+            },
+        );
+        vector.metadata.insert(
+            "binary_data".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(format!("{:08b}", i))),
+            },
+        );
+        vector.metadata.insert(
+            "timestamp".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(
+                    (1234567890 + i * 1000).to_string(),
+                )),
+            },
+        );
         vectors.push(vector);
     }
 

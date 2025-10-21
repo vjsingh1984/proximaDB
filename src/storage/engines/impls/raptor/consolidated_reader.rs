@@ -14,9 +14,11 @@ use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
 
 // Use unified components instead of custom implementations
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
-use crate::core::search::results::OptimizedSearchRecord;
+use crate::compute::distance_computation::engine::{
+    DistanceMetric, SimilarityResult, UnifiedDistanceCompute,
+};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::results::OptimizedSearchRecord;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
@@ -550,7 +552,11 @@ impl RaptorReader {
         let elapsed = start_time.elapsed();
         let throughput = bytes_read as f64 / elapsed.as_secs_f64() / 1024.0 / 1024.0;
 
-        trace!("READER: Scan completed - {} vectors from {} rowgroups", all_vectors.len(), total_rowgroups);
+        trace!(
+            "READER: Scan completed - {} vectors from {} rowgroups",
+            all_vectors.len(),
+            total_rowgroups
+        );
         info!(
             "Full scan completed: {} vectors from {} rowgroups in {:.2}s ({:.1} MB/s)",
             all_vectors.len(),
@@ -819,11 +825,19 @@ impl RaptorReader {
             .ok_or_else(|| anyhow::anyhow!("Missing 'vector' column in RecordBatch"))?;
 
         // Try FixedSizeListArray first (most common from writer)
-        let is_fixed_size_list = vector_col.as_any().downcast_ref::<arrow_array::FixedSizeListArray>().is_some();
-        let is_list = vector_col.as_any().downcast_ref::<arrow_array::ListArray>().is_some();
+        let is_fixed_size_list = vector_col
+            .as_any()
+            .downcast_ref::<arrow_array::FixedSizeListArray>()
+            .is_some();
+        let is_list = vector_col
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .is_some();
 
         if !is_fixed_size_list && !is_list {
-            return Err(anyhow::anyhow!("'vector' column is neither ListArray nor FixedSizeListArray"));
+            return Err(anyhow::anyhow!(
+                "'vector' column is neither ListArray nor FixedSizeListArray"
+            ));
         }
 
         // Optional columns (may not exist in all rowgroups)
@@ -867,18 +881,28 @@ impl RaptorReader {
 
             // Extract vector (required field) - handle both FixedSizeListArray and ListArray
             if is_fixed_size_list {
-                let fixed_array = vector_col.as_any().downcast_ref::<arrow_array::FixedSizeListArray>().unwrap();
+                let fixed_array = vector_col
+                    .as_any()
+                    .downcast_ref::<arrow_array::FixedSizeListArray>()
+                    .unwrap();
                 if !fixed_array.is_null(row_idx) {
                     let vector_list = fixed_array.value(row_idx);
-                    if let Some(float_array) = vector_list.as_primitive_opt::<arrow_array::types::Float32Type>() {
+                    if let Some(float_array) =
+                        vector_list.as_primitive_opt::<arrow_array::types::Float32Type>()
+                    {
                         record.vector = float_array.values().to_vec();
                     }
                 }
             } else if is_list {
-                let list_array = vector_col.as_any().downcast_ref::<arrow_array::ListArray>().unwrap();
+                let list_array = vector_col
+                    .as_any()
+                    .downcast_ref::<arrow_array::ListArray>()
+                    .unwrap();
                 if !list_array.is_null(row_idx) {
                     let vector_list = list_array.value(row_idx);
-                    if let Some(float_array) = vector_list.as_primitive_opt::<arrow_array::types::Float32Type>() {
+                    if let Some(float_array) =
+                        vector_list.as_primitive_opt::<arrow_array::types::Float32Type>()
+                    {
                         record.vector = float_array.values().to_vec();
                     }
                 }
@@ -1025,8 +1049,11 @@ impl RaptorReader {
 
         // Check if file is too small to have a footer
         if file_size < 8 {
-            tracing::error!("RAPTOR read_metadata: File {} is too small ({} bytes), need at least 8 bytes for footer",
-                file_path, file_size);
+            tracing::error!(
+                "RAPTOR read_metadata: File {} is too small ({} bytes), need at least 8 bytes for footer",
+                file_path,
+                file_size
+            );
             return Err(anyhow::anyhow!(
                 "RAPTOR file {} is too small ({} bytes) to contain a valid footer",
                 file_path,
@@ -1034,7 +1061,11 @@ impl RaptorReader {
             ));
         }
 
-        tracing::debug!("RAPTOR get_metadata: File {} has size {} bytes", file_path, file_size);
+        tracing::debug!(
+            "RAPTOR get_metadata: File {} has size {} bytes",
+            file_path,
+            file_size
+        );
 
         // Read magic number and footer size in one 8-byte read (optimization)
         let footer_metadata_offset = file_size - 8;
@@ -1068,12 +1099,18 @@ impl RaptorReader {
         .await?;
 
         // Deserialize the footer to get metadata
-        tracing::debug!("RAPTOR read_metadata: Deserializing {} bytes of footer", footer_data.len());
+        tracing::debug!(
+            "RAPTOR read_metadata: Deserializing {} bytes of footer",
+            footer_data.len()
+        );
         let footer: RaptorFooter = bincode::deserialize(&footer_data)?;
         let metadata = footer.file_metadata;
 
-        tracing::info!("RAPTOR read_metadata: Successfully loaded metadata with {} row groups, {} total vectors",
-                      metadata.row_groups.len(), metadata.total_vectors);
+        tracing::info!(
+            "RAPTOR read_metadata: Successfully loaded metadata with {} row groups, {} total vectors",
+            metadata.row_groups.len(),
+            metadata.total_vectors
+        );
 
         // Metadata caching is handled by the zero-copy filesystem infrastructure
         // No need to manually cache here
@@ -1462,9 +1499,7 @@ impl RaptorReader {
             distances: vec![128; (1000 * 999) / 2], // Default quantized distances
             min_distance: 0.0,
             max_distance: 2.0,
-            compression: ProximaScheme::BitPacked {
-                bits: 8,
-            },
+            compression: ProximaScheme::BitPacked { bits: 8 },
             compressed_size: 64000,
         };
         Ok(Arc::new(default_matrix))
@@ -2006,13 +2041,19 @@ impl RaptorReader {
         tracing::debug!("RAPTOR load_footer: File size: {} bytes", file_size);
 
         if file_size < 8 {
-            tracing::error!("RAPTOR load_footer: File too small ({} bytes), needs at least 8 bytes for footer metadata", file_size);
+            tracing::error!(
+                "RAPTOR load_footer: File too small ({} bytes), needs at least 8 bytes for footer metadata",
+                file_size
+            );
             return Err(anyhow::anyhow!("File too small to contain RAPTOR footer"));
         }
 
         // Read magic number and footer size
         let footer_metadata_offset = file_size - 8;
-        tracing::debug!("RAPTOR load_footer: Reading footer metadata from offset: {}", footer_metadata_offset);
+        tracing::debug!(
+            "RAPTOR load_footer: Reading footer metadata from offset: {}",
+            footer_metadata_offset
+        );
         let footer_metadata_bytes = FileSystem::read_range(
             self.filesystem.as_ref(),
             file_path,
@@ -2020,7 +2061,10 @@ impl RaptorReader {
             8,
         )
         .await?;
-        tracing::debug!("RAPTOR load_footer: Footer metadata bytes: {:?}", footer_metadata_bytes);
+        tracing::debug!(
+            "RAPTOR load_footer: Footer metadata bytes: {:?}",
+            footer_metadata_bytes
+        );
 
         // Validate we read the expected 8 bytes
         if footer_metadata_bytes.len() < 8 {
@@ -2032,12 +2076,19 @@ impl RaptorReader {
 
         let footer_size = u32::from_le_bytes(footer_metadata_bytes[0..4].try_into()?) as u64;
         let magic = &footer_metadata_bytes[4..8];
-        tracing::debug!("RAPTOR load_footer: Footer size: {} bytes, magic: {:?}, expected: {:?}",
-                       footer_size, magic, constants::RAPTOR_MAGIC);
+        tracing::debug!(
+            "RAPTOR load_footer: Footer size: {} bytes, magic: {:?}, expected: {:?}",
+            footer_size,
+            magic,
+            constants::RAPTOR_MAGIC
+        );
 
         if magic != constants::RAPTOR_MAGIC {
-            tracing::error!("RAPTOR load_footer: Magic mismatch! Got {:?}, expected {:?}",
-                          magic, constants::RAPTOR_MAGIC);
+            tracing::error!(
+                "RAPTOR load_footer: Magic mismatch! Got {:?}, expected {:?}",
+                magic,
+                constants::RAPTOR_MAGIC
+            );
             return Err(anyhow::anyhow!(
                 "Invalid RAPTOR file: magic number mismatch"
             ));
@@ -2045,7 +2096,11 @@ impl RaptorReader {
 
         // Read the actual footer
         let footer_offset = file_size as u64 - 8 - footer_size;
-        tracing::debug!("RAPTOR load_footer: Reading footer from offset: {}, size: {}", footer_offset, footer_size);
+        tracing::debug!(
+            "RAPTOR load_footer: Reading footer from offset: {}, size: {}",
+            footer_offset,
+            footer_size
+        );
         let footer_bytes = FileSystem::read_range(
             self.filesystem.as_ref(),
             file_path,
@@ -2055,11 +2110,17 @@ impl RaptorReader {
         .await?;
 
         // Deserialize footer
-        tracing::debug!("RAPTOR load_footer: Deserializing {} bytes of footer data", footer_bytes.len());
+        tracing::debug!(
+            "RAPTOR load_footer: Deserializing {} bytes of footer data",
+            footer_bytes.len()
+        );
         let footer: RaptorFooter = bincode::deserialize(&footer_bytes)?;
 
-        tracing::info!("RAPTOR load_footer: Successfully loaded footer with {} centroids, {} row groups",
-                      footer.centroids.count, footer.file_metadata.row_groups.len());
+        tracing::info!(
+            "RAPTOR load_footer: Successfully loaded footer with {} centroids, {} row groups",
+            footer.centroids.count,
+            footer.file_metadata.row_groups.len()
+        );
 
         // The zero-copy filesystem will cache this automatically
         Ok(Arc::new(footer))
@@ -3486,13 +3547,20 @@ impl RaptorReader {
         file_path: &str,
         indices: &[u16],
     ) -> Result<Vec<RecordBatch>> {
-        tracing::debug!("RAPTOR read_rowgroups: Reading {} row groups from {}", indices.len(), file_path);
+        tracing::debug!(
+            "RAPTOR read_rowgroups: Reading {} row groups from {}",
+            indices.len(),
+            file_path
+        );
         let mut batches = Vec::new();
         for &idx in indices {
             tracing::debug!("RAPTOR read_rowgroups: Reading row group {}", idx);
             // Read specific row group
             let batch = self.read_rowgroup(idx).await?;
-            tracing::debug!("RAPTOR read_rowgroups: Got batch with {} rows", batch.num_rows());
+            tracing::debug!(
+                "RAPTOR read_rowgroups: Got batch with {} rows",
+                batch.num_rows()
+            );
             batches.push(batch);
         }
         tracing::debug!("RAPTOR read_rowgroups: Returning {} batches", batches.len());
@@ -3501,7 +3569,11 @@ impl RaptorReader {
 
     /// Read a single row group by index
     pub async fn read_rowgroup(&self, rg_id: u16) -> Result<RecordBatch> {
-        tracing::debug!("RAPTOR read_rowgroup: Reading actual data for row group {} from {}", rg_id, self.base_path);
+        tracing::debug!(
+            "RAPTOR read_rowgroup: Reading actual data for row group {} from {}",
+            rg_id,
+            self.base_path
+        );
 
         // Load metadata to get row group information
         let metadata = self.read_metadata(&self.base_path).await?;
@@ -3511,13 +3583,20 @@ impl RaptorReader {
         }
 
         let rg_metadata = &metadata.row_groups[rg_id as usize];
-        tracing::debug!("RAPTOR read_rowgroup: Row group {} has {} vectors",
-                       rg_id, rg_metadata.vector_count);
+        tracing::debug!(
+            "RAPTOR read_rowgroup: Row group {} has {} vectors",
+            rg_id,
+            rg_metadata.vector_count
+        );
 
         // Get column metadata
-        let vector_column_meta = rg_metadata.column_pages.get(&ColumnType::VectorsFp32)
+        let vector_column_meta = rg_metadata
+            .column_pages
+            .get(&ColumnType::VectorsFp32)
             .ok_or_else(|| anyhow::anyhow!("Vector column not found in row group metadata"))?;
-        let id_column_meta = rg_metadata.column_pages.get(&ColumnType::Ids)
+        let id_column_meta = rg_metadata
+            .column_pages
+            .get(&ColumnType::Ids)
             .ok_or_else(|| anyhow::anyhow!("ID column not found in row group metadata"))?;
 
         // Use dimension from metadata, not from config
@@ -3525,35 +3604,51 @@ impl RaptorReader {
         let num_rows = rg_metadata.vector_count as usize;
 
         // Read and decompress VECTOR column separately
-        tracing::debug!("Reading vector column: offset={}, compressed_size={}",
-                       vector_column_meta.offset, vector_column_meta.compressed_size);
+        tracing::debug!(
+            "Reading vector column: offset={}, compressed_size={}",
+            vector_column_meta.offset,
+            vector_column_meta.compressed_size
+        );
         let vector_compressed = FileSystem::read_range(
             self.filesystem.as_ref(),
             &self.base_path,
             vector_column_meta.offset,
             vector_column_meta.compressed_size,
-        ).await?;
+        )
+        .await?;
 
         let vector_data = if vector_column_meta.compression != CompressionAlgorithm::None {
-            use crate::core::compression::{decompress, CompressionContext};
-            decompress(&vector_compressed, vector_column_meta.compression, CompressionContext::VectorSerialization)?
+            use crate::core::compression::{CompressionContext, decompress};
+            decompress(
+                &vector_compressed,
+                vector_column_meta.compression,
+                CompressionContext::VectorSerialization,
+            )?
         } else {
             vector_compressed
         };
 
         // Read and decompress ID column separately
-        tracing::debug!("Reading ID column: offset={}, compressed_size={}",
-                       id_column_meta.offset, id_column_meta.compressed_size);
+        tracing::debug!(
+            "Reading ID column: offset={}, compressed_size={}",
+            id_column_meta.offset,
+            id_column_meta.compressed_size
+        );
         let id_compressed = FileSystem::read_range(
             self.filesystem.as_ref(),
             &self.base_path,
             id_column_meta.offset,
             id_column_meta.compressed_size,
-        ).await?;
+        )
+        .await?;
 
         let id_data = if id_column_meta.compression != CompressionAlgorithm::None {
-            use crate::core::compression::{decompress, CompressionContext};
-            decompress(&id_compressed, id_column_meta.compression, CompressionContext::Column)?
+            use crate::core::compression::{CompressionContext, decompress};
+            decompress(
+                &id_compressed,
+                id_column_meta.compression,
+                CompressionContext::Column,
+            )?
         } else {
             id_compressed
         };
@@ -3592,27 +3687,50 @@ impl RaptorReader {
         // Read columnar vectors (transposed format)
         let mut columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); dimension];
 
-        tracing::debug!("Decoding {} dimension columns for {} rows, vector_data len: {}",
-                       dimension, num_rows, vector_data.len());
+        tracing::debug!(
+            "Decoding {} dimension columns for {} rows, vector_data len: {}",
+            dimension,
+            num_rows,
+            vector_data.len()
+        );
 
         for dim_idx in 0..dimension {
             // Read encoded column length
             let mut len_bytes = [0u8; 4];
             if let Err(e) = cursor.read_exact(&mut len_bytes) {
-                tracing::error!("Failed to read column {} length at position {}: {}",
-                              dim_idx, cursor.position(), e);
-                return Err(anyhow::anyhow!("Failed to read column {} length: {}", dim_idx, e));
+                tracing::error!(
+                    "Failed to read column {} length at position {}: {}",
+                    dim_idx,
+                    cursor.position(),
+                    e
+                );
+                return Err(anyhow::anyhow!(
+                    "Failed to read column {} length: {}",
+                    dim_idx,
+                    e
+                ));
             }
             let encoded_len = u32::from_le_bytes(len_bytes) as usize;
 
-            tracing::debug!("Dimension {}: encoded_len={}, cursor position={}",
-                          dim_idx, encoded_len, cursor.position());
+            tracing::debug!(
+                "Dimension {}: encoded_len={}, cursor position={}",
+                dim_idx,
+                encoded_len,
+                cursor.position()
+            );
 
             // Validate we have enough data
             if cursor.position() as usize + encoded_len > vector_data.len() {
-                tracing::error!("Not enough data for dimension {}: need {}, have {}",
-                              dim_idx, encoded_len, vector_data.len() - cursor.position() as usize);
-                return Err(anyhow::anyhow!("Insufficient data for dimension {}", dim_idx));
+                tracing::error!(
+                    "Not enough data for dimension {}: need {}, have {}",
+                    dim_idx,
+                    encoded_len,
+                    vector_data.len() - cursor.position() as usize
+                );
+                return Err(anyhow::anyhow!(
+                    "Insufficient data for dimension {}",
+                    dim_idx
+                ));
             }
 
             // Read encoded column data
@@ -3632,10 +3750,14 @@ impl RaptorReader {
             }
         }
 
-        tracing::debug!("RAPTOR: Decoded {} vectors of dimension {}", num_rows, dimension);
+        tracing::debug!(
+            "RAPTOR: Decoded {} vectors of dimension {}",
+            num_rows,
+            dimension
+        );
 
         // Create Arrow arrays
-        use arrow_array::{StringArray, Float32Array, UInt32Array, Int64Array};
+        use arrow_array::{Float32Array, Int64Array, StringArray, UInt32Array};
         use arrow_schema::{DataType, Field, Schema};
         use std::sync::Arc as StdArc;
 
@@ -3655,8 +3777,12 @@ impl RaptorReader {
         ));
 
         // Debug: log array sizes
-        tracing::debug!("Array sizes - IDs: {}, Vector rows: {} (dimension {})",
-                       id_array.len(), vector_array.len(), dimension);
+        tracing::debug!(
+            "Array sizes - IDs: {}, Vector rows: {} (dimension {})",
+            id_array.len(),
+            vector_array.len(),
+            dimension
+        );
 
         // Create placeholder arrays for metadata, version, and timestamp
         // These are nullable fields that can be empty for now
@@ -3664,17 +3790,24 @@ impl RaptorReader {
         let version_array = StdArc::new(UInt32Array::from(vec![None as Option<u32>; num_rows]));
         let timestamp_array = StdArc::new(Int64Array::from(vec![None as Option<i64>; num_rows]));
 
-        tracing::debug!("RAPTOR read_rowgroup: Returning batch with {} rows, {} values per vector",
-                       num_rows, dimension);
+        tracing::debug!(
+            "RAPTOR read_rowgroup: Returning batch with {} rows, {} values per vector",
+            num_rows,
+            dimension
+        );
 
         // Create the schema that matches RAPTOR's expected format
         // But use FixedSizeList for vector field to properly represent the data
         let schema = StdArc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
-            Field::new("vector", DataType::FixedSizeList(
-                StdArc::new(Field::new("item", DataType::Float32, false)),
-                dimension as i32,
-            ), false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(
+                    StdArc::new(Field::new("item", DataType::Float32, false)),
+                    dimension as i32,
+                ),
+                false,
+            ),
             Field::new("metadata", DataType::Utf8, true),
             Field::new("version", DataType::UInt32, true),
             Field::new("timestamp", DataType::Int64, true),

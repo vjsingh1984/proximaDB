@@ -60,7 +60,7 @@
 use axum::{
     Router,
     extract::{Path, State},
-    http::{StatusCode, HeaderMap},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
 };
@@ -72,11 +72,9 @@ use tracing::{debug, error, info, warn};
 // use base64;
 
 // Use proto types directly with custom serde implementations
-use crate::proto::proximadb_v1::{
-    Edge, Node,
-};
 use crate::network::rest::v1::handlers::AppState;
-use crate::proto::proximadb_v1::{PropertyValue, EmbeddingVersion};
+use crate::proto::proximadb_v1::{Edge, Node};
+use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
 
 /// REST-compatible TraversalRequest wrapper for JSON deserialization
 #[derive(Debug, serde::Deserialize)]
@@ -114,11 +112,13 @@ struct RestEdgeQuery {
 // Conversion implementations for REST types to Proto types
 impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest {
     fn from(rest: RestTraversalRequest) -> Self {
-        // Convert algorithm string to enum value (simplified)
-        let algorithm = match rest.algorithm.as_str() {
-            "dfs" => 1, // TraversalAlgorithm::Dfs
-            "bfs" => 2, // TraversalAlgorithm::Bfs
-            _ => 0, // TraversalAlgorithm::Unspecified
+        // Convert algorithm string to enum value
+        // graph.proto: BFS=1, DFS=2, PARALLEL_BFS=3
+        let algorithm = match rest.algorithm.to_ascii_lowercase().as_str() {
+            "bfs" => 1,
+            "dfs" => 2,
+            "parallel_bfs" | "pbfs" | "parallel" => 3,
+            _ => 0, // Unspecified
         };
 
         crate::proto::proximadb_v1::TraversalRequest {
@@ -127,7 +127,7 @@ impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest
             max_depth: rest.max_depth,
             edge_types: rest.edge_types,
             node_labels: rest.node_labels,
-            filters: vec![], // REST doesn't have filters yet
+            filters: vec![], // Filters not supported in this wrapper
             algorithm,
             limit: None,
             timeout_ms: None,
@@ -138,10 +138,20 @@ impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest
 
 impl From<RestNodeQuery> for crate::proto::proximadb_v1::NodeQuery {
     fn from(rest: RestNodeQuery) -> Self {
+        // Convert properties map into equals PropertyFilter list
+        let mut filters: Vec<crate::proto::proximadb_v1::PropertyFilter> = Vec::new();
+        for (k, v) in rest.properties {
+            filters.push(crate::proto::proximadb_v1::PropertyFilter {
+                key: k,
+                operator: crate::proto::proximadb_v1::PropertyFilterOperator::Equals as i32,
+                value: Some(convert_json_to_property_value(v)),
+            });
+        }
+
         crate::proto::proximadb_v1::NodeQuery {
-            graph_id: "default".to_string(), // TODO: Extract from REST API path
+            graph_id: "default".to_string(), // Path param used by handler
             labels: rest.labels,
-            filters: vec![], // Convert properties to filters if needed
+            filters,
             limit: Some(rest.limit),
             offset: rest.offset,
             continuation_token: rest.continuation_token,
@@ -151,12 +161,26 @@ impl From<RestNodeQuery> for crate::proto::proximadb_v1::NodeQuery {
 
 impl From<RestEdgeQuery> for crate::proto::proximadb_v1::EdgeQuery {
     fn from(rest: RestEdgeQuery) -> Self {
+        // Convert properties map into equals PropertyFilter list
+        let mut filters: Vec<crate::proto::proximadb_v1::PropertyFilter> = Vec::new();
+        for (k, v) in rest.properties {
+            filters.push(crate::proto::proximadb_v1::PropertyFilter {
+                key: k,
+                operator: crate::proto::proximadb_v1::PropertyFilterOperator::Equals as i32,
+                value: Some(convert_json_to_property_value(v)),
+            });
+        }
+
         crate::proto::proximadb_v1::EdgeQuery {
-            graph_id: "default".to_string(), // TODO: Extract from REST API path
+            graph_id: "default".to_string(), // Path param used by handler
             from_node_id: rest.from_node_id,
             to_node_id: rest.to_node_id,
-            edge_types: vec![rest.edge_type], // Convert single edge_type to vector
-            filters: vec![], // Convert properties to filters if needed
+            edge_types: if rest.edge_type.is_empty() {
+                vec![]
+            } else {
+                vec![rest.edge_type]
+            },
+            filters,
             limit: Some(rest.limit),
             offset: rest.offset,
             continuation_token: rest.continuation_token,
@@ -392,9 +416,7 @@ impl From<&crate::proto::proximadb_v1::GraphPath> for RestGraphPath {
     fn from(path: &crate::proto::proximadb_v1::GraphPath) -> Self {
         // Convert entities to node IDs (GraphPath has entities and relations, not direct node_ids)
         let node_ids: Vec<String> = path.entities.iter().map(|e| e.id.clone()).collect();
-        RestGraphPath {
-            node_ids,
-        }
+        RestGraphPath { node_ids }
     }
 }
 
@@ -414,7 +436,11 @@ impl From<&crate::proto::proximadb_v1::GraphStats> for RestGraphStats {
             total_nodes: stats.total_nodes,
             total_edges: stats.total_edges,
             label_stats: stats.label_stats.iter().map(RestLabelStats::from).collect(),
-            edge_type_stats: stats.edge_type_stats.iter().map(RestEdgeTypeStats::from).collect(),
+            edge_type_stats: stats
+                .edge_type_stats
+                .iter()
+                .map(RestEdgeTypeStats::from)
+                .collect(),
             total_properties: stats.total_properties,
             memory_usage_bytes: stats.memory_usage_bytes,
             average_degree: stats.average_degree,
@@ -481,56 +507,116 @@ impl From<RestEdgeInput> for Edge {
     }
 }
 
-fn convert_properties_to_json(props: &HashMap<String, PropertyValue>) -> HashMap<String, serde_json::Value> {
-    props.iter().map(|(k, v)| {
-        let json_val = match &v.value {
-            Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-            Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
-            Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(f)) => serde_json::Number::from_f64(*f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null),
-            Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-            Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(arr)) => {
-                serde_json::Value::Array(arr.values.iter().map(|v| convert_property_value_to_json(v)).collect())
-            },
-            Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
-                serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
-            },
-            Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
-                serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
-            },
-            Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
-                serde_json::Value::Array(vec.values.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
-            },
-            None => serde_json::Value::Null,
-        };
-        (k.clone(), json_val)
-    }).collect()
+fn convert_properties_to_json(
+    props: &HashMap<String, PropertyValue>,
+) -> HashMap<String, serde_json::Value> {
+    props
+        .iter()
+        .map(|(k, v)| {
+            let json_val = match &v.value {
+                Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
+                    serde_json::Value::String(s.clone())
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
+                    serde_json::Value::Number(serde_json::Number::from(*i))
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(f)) => {
+                    serde_json::Number::from_f64(*f)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null)
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
+                    serde_json::Value::Bool(*b)
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(arr)) => {
+                    serde_json::Value::Array(
+                        arr.values
+                            .iter()
+                            .map(|v| convert_property_value_to_json(v))
+                            .collect(),
+                    )
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+                    serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
+                    serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
+                    serde_json::Value::Array(
+                        vec.values
+                            .iter()
+                            .map(|f| {
+                                serde_json::Value::Number(
+                                    serde_json::Number::from_f64(*f as f64)
+                                        .unwrap_or(serde_json::Number::from(0)),
+                                )
+                            })
+                            .collect(),
+                    )
+                }
+                None => serde_json::Value::Null,
+            };
+            (k.clone(), json_val)
+        })
+        .collect()
 }
 
-fn convert_json_to_properties(props: HashMap<String, serde_json::Value>) -> HashMap<String, PropertyValue> {
-    props.into_iter().map(|(k, v)| {
-        let prop_val = convert_json_to_property_value(v);
-        (k, prop_val)
-    }).collect()
+fn convert_json_to_properties(
+    props: HashMap<String, serde_json::Value>,
+) -> HashMap<String, PropertyValue> {
+    props
+        .into_iter()
+        .map(|(k, v)| {
+            let prop_val = convert_json_to_property_value(v);
+            (k, prop_val)
+        })
+        .collect()
 }
 
 fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
     match &prop.value {
-        Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-        Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
-        Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(f)) => serde_json::Number::from_f64(*f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null),
-        Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+        Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
+            serde_json::Value::String(s.clone())
+        }
+        Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
+            serde_json::Value::Number(serde_json::Number::from(*i))
+        }
+        Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(f)) => {
+            serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
+            serde_json::Value::Bool(*b)
+        }
         Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(arr)) => {
-            serde_json::Value::Array(arr.values.iter().map(|v| convert_property_value_to_json(v)).collect())
-        },
+            serde_json::Value::Array(
+                arr.values
+                    .iter()
+                    .map(|v| convert_property_value_to_json(v))
+                    .collect(),
+            )
+        }
         Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
             serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
-        },
+        }
         Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
             serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
-        },
+        }
         Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
-            serde_json::Value::Array(vec.values.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
-        },
+            serde_json::Value::Array(
+                vec.values
+                    .iter()
+                    .map(|f| {
+                        serde_json::Value::Number(
+                            serde_json::Number::from_f64(*f as f64)
+                                .unwrap_or(serde_json::Number::from(0)),
+                        )
+                    })
+                    .collect(),
+            )
+        }
         None => serde_json::Value::Null,
     }
 }
@@ -548,12 +634,17 @@ fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
             } else {
                 None
             }
-        },
+        }
         serde_json::Value::Bool(b) => Some(Value::BoolValue(b)),
         serde_json::Value::Array(arr) => {
-            let values: Vec<PropertyValue> = arr.into_iter().map(convert_json_to_property_value).collect();
-            Some(Value::ArrayValue(crate::proto::proximadb_v1::PropertyArray { values }))
-        },
+            let values: Vec<PropertyValue> = arr
+                .into_iter()
+                .map(convert_json_to_property_value)
+                .collect();
+            Some(Value::ArrayValue(
+                crate::proto::proximadb_v1::PropertyArray { values },
+            ))
+        }
         _ => None,
     };
     PropertyValue { value: prop_value }
@@ -580,7 +671,10 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/:graph_id/nodes/:id", get(get_node))
         .route("/graphs/:graph_id/nodes/:id", put(update_node))
         .route("/graphs/:graph_id/nodes/:id", delete(delete_node))
-        .route("/graphs/:graph_id/nodes/:id/neighbors", get(get_node_neighbors))
+        .route(
+            "/graphs/:graph_id/nodes/:id/neighbors",
+            get(get_node_neighbors),
+        )
         // Multi-graph edge operations
         .route("/graphs/:graph_id/edges", post(create_edge))
         .route("/graphs/:graph_id/edges/:id", get(get_edge))
@@ -597,10 +691,19 @@ pub fn create_graph_router() -> Router<AppState> {
         // Multi-graph statistics
         .route("/graphs/:graph_id/stats", get(get_graph_stats))
         // Multi-graph constraints DDL
-        .route("/graphs/:graph_id/constraints/unique", post(add_unique_constraint))
-        .route("/graphs/:graph_id/constraints/unique", delete(remove_unique_constraint))
+        .route(
+            "/graphs/:graph_id/constraints/unique",
+            post(add_unique_constraint),
+        )
+        .route(
+            "/graphs/:graph_id/constraints/unique",
+            delete(remove_unique_constraint),
+        )
         // Multi-graph analysis
-        .route("/graphs/:graph_id/components", get(get_connected_components))
+        .route(
+            "/graphs/:graph_id/components",
+            get(get_connected_components),
+        )
         .route("/graphs/:graph_id/cycles", get(check_cycles))
         // Legacy compatibility endpoints (using default graph)
         .route("/nodes", post(create_node_legacy))
@@ -615,7 +718,10 @@ pub async fn create_node(
     Path(graph_id): Path<String>,
     Json(request): Json<CreateNodeRequest>,
 ) -> impl IntoResponse {
-    debug!("Creating node: {:?} in graph: {}", request.node.id, graph_id);
+    debug!(
+        "Creating node: {:?} in graph: {}",
+        request.node.id, graph_id
+    );
 
     // Convert REST input to proto Node
     let proto_node: Node = request.node.into();
@@ -657,7 +763,12 @@ pub async fn get_node(
 ) -> impl IntoResponse {
     debug!("Getting node: {} from graph: {}", node_id, graph_id);
 
-    match app_state.unified_handlers.graph_operations_service.get_node(&graph_id, &node_id).await {
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .get_node(&graph_id, &node_id)
+        .await
+    {
         Ok(Some(node)) => {
             info!("Successfully retrieved node: {}", node_id);
             let rest_node = RestNode::from(&*node);
@@ -708,7 +819,12 @@ pub async fn update_node(
     // Convert REST input to proto Node
     let proto_node: Node = node_input.into();
 
-    match app_state.unified_handlers.graph_operations_service.update_node(&graph_id, proto_node).await {
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .update_node(&graph_id, proto_node)
+        .await
+    {
         Ok(updated_node) => {
             info!("Successfully updated node: {}", node_id);
             let rest_node = RestNode::from(&*updated_node);
@@ -787,7 +903,10 @@ pub async fn get_node_neighbors(
     State(app_state): State<AppState>,
     Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    debug!("Getting neighbors for node: {} in graph: {}", node_id, graph_id);
+    debug!(
+        "Getting neighbors for node: {} in graph: {}",
+        node_id, graph_id
+    );
 
     match app_state
         .unified_handlers
@@ -801,10 +920,8 @@ pub async fn get_node_neighbors(
                 neighbors.len(),
                 node_id
             );
-            let rest_nodes: Vec<RestNode> = neighbors
-                .into_iter()
-                .map(|n| RestNode::from(&*n))
-                .collect();
+            let rest_nodes: Vec<RestNode> =
+                neighbors.into_iter().map(|n| RestNode::from(&*n)).collect();
             Json(GraphSuccessResponse {
                 success: true,
                 data: rest_nodes,
@@ -832,7 +949,10 @@ pub async fn create_edge(
     Path(graph_id): Path<String>,
     Json(request): Json<CreateEdgeRequest>,
 ) -> impl IntoResponse {
-    debug!("Creating edge: {:?} in graph: {}", request.edge.id, graph_id);
+    debug!(
+        "Creating edge: {:?} in graph: {}",
+        request.edge.id, graph_id
+    );
 
     // Convert REST input to proto Edge
     let proto_edge: Edge = request.edge.into();
@@ -906,12 +1026,18 @@ pub async fn shortest_path(
 ) -> impl IntoResponse {
     // Header-based overrides if JSON fields not provided
     if req.enable_prefetch.is_none() {
-        if let Some(v) = headers.get("x-graph-prefetch-enabled").and_then(|v| v.to_str().ok()) {
+        if let Some(v) = headers
+            .get("x-graph-prefetch-enabled")
+            .and_then(|v| v.to_str().ok())
+        {
             req.enable_prefetch = Some(v.eq_ignore_ascii_case("true") || v == "1");
         }
     }
     if req.prefetch_budget.is_none() {
-        if let Some(v) = headers.get("x-graph-prefetch-budget").and_then(|v| v.to_str().ok()) {
+        if let Some(v) = headers
+            .get("x-graph-prefetch-budget")
+            .and_then(|v| v.to_str().ok())
+        {
             if let Ok(n) = v.parse::<usize>() {
                 req.prefetch_budget = Some(n);
             }
@@ -964,12 +1090,8 @@ fn parse_sp_algorithm(
     s: Option<&str>,
 ) -> Option<crate::proto::proximadb_v1::ShortestPathAlgorithm> {
     match s.unwrap_or("DIJKSTRA").to_ascii_uppercase().as_str() {
-        "ASTAR" => {
-            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::Astar)
-        }
-        "DIJKSTRA" => {
-            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra)
-        }
+        "ASTAR" => Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::Astar),
+        "DIJKSTRA" => Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra),
         _ => None,
     }
 }
@@ -1058,7 +1180,12 @@ pub async fn check_cycles(
     State(app_state): State<AppState>,
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
-    match app_state.unified_handlers.graph_operations_service.has_cycle(&graph_id).await {
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .has_cycle(&graph_id)
+        .await
+    {
         Ok(has) => Json(CycleResponse {
             success: true,
             has_cycle: has,
@@ -1083,7 +1210,12 @@ pub async fn get_edge(
 ) -> impl IntoResponse {
     debug!("Getting edge: {} from graph: {}", edge_id, graph_id);
 
-    match app_state.unified_handlers.graph_operations_service.get_edge(&graph_id, &edge_id).await {
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .get_edge(&graph_id, &edge_id)
+        .await
+    {
         Ok(Some(edge)) => {
             info!("Successfully retrieved edge: {}", edge_id);
             let rest_edge = RestEdge::from(&*edge);
@@ -1134,7 +1266,12 @@ pub async fn update_edge(
     // Convert REST input to proto Edge
     let proto_edge: Edge = edge_input.into();
 
-    match app_state.unified_handlers.graph_operations_service.update_edge(&graph_id, proto_edge).await {
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .update_edge(&graph_id, proto_edge)
+        .await
+    {
         Ok(updated_edge) => {
             info!("Successfully updated edge: {}", edge_id);
             let rest_edge = RestEdge::from(&*updated_edge);
@@ -1226,7 +1363,12 @@ pub async fn traverse_graph(
     match app_state
         .unified_handlers
         .graph_operations_service
-        .traverse_with_overrides(&graph_id, request.into(), override_enable_prefetch, override_prefetch_budget)
+        .traverse_with_overrides(
+            &graph_id,
+            request.into(),
+            override_enable_prefetch,
+            override_prefetch_budget,
+        )
         .await
     {
         Ok(response) => {
@@ -1259,7 +1401,10 @@ pub async fn query_nodes(
     Path(graph_id): Path<String>,
     Json(query): Json<RestNodeQuery>,
 ) -> impl IntoResponse {
-    debug!("Querying nodes with labels: {:?} in graph: {}", query.labels, graph_id);
+    debug!(
+        "Querying nodes with labels: {:?} in graph: {}",
+        query.labels, graph_id
+    );
     let mut q = query;
     // Continuation token support: format "offset:<n>"
     if q.offset.is_none() {
@@ -1286,7 +1431,8 @@ pub async fn query_nodes(
                 let next_off = q.offset.unwrap_or(0).saturating_add(lim);
                 next_token = Some(format!("offset:{}", next_off));
             }
-            let rest_nodes: Vec<RestNode> = nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
+            let rest_nodes: Vec<RestNode> =
+                nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
             Json(GraphQueryResponse {
                 success: true,
                 data: rest_nodes,
@@ -1340,7 +1486,8 @@ pub async fn query_edges(
                 let next_off = q.offset.unwrap_or(0).saturating_add(lim);
                 next_token = Some(format!("offset:{}", next_off));
             }
-            let rest_edges: Vec<RestEdge> = edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
+            let rest_edges: Vec<RestEdge> =
+                edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
             Json(GraphQueryResponse {
                 success: true,
                 data: rest_edges,
@@ -1369,7 +1516,11 @@ pub async fn batch_create_nodes(
     Path(graph_id): Path<String>,
     Json(request): Json<BatchCreateNodesRequest>,
 ) -> impl IntoResponse {
-    debug!("Batch creating {} nodes in graph: {}", request.nodes.len(), graph_id);
+    debug!(
+        "Batch creating {} nodes in graph: {}",
+        request.nodes.len(),
+        graph_id
+    );
     let strategy = request.if_exists.unwrap_or_else(|| "error".into());
 
     // Convert REST inputs to proto Nodes
@@ -1383,7 +1534,8 @@ pub async fn batch_create_nodes(
     {
         Ok(nodes) => {
             info!("Successfully batch created {} nodes", nodes.len());
-            let rest_nodes: Vec<RestNode> = nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
+            let rest_nodes: Vec<RestNode> =
+                nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
             Json(GraphBatchResponse {
                 success: true,
                 created_count: rest_nodes.len(),
@@ -1414,7 +1566,11 @@ pub async fn batch_create_edges(
     Path(graph_id): Path<String>,
     Json(request): Json<BatchCreateEdgesRequest>,
 ) -> impl IntoResponse {
-    debug!("Batch creating {} edges in graph: {}", request.edges.len(), graph_id);
+    debug!(
+        "Batch creating {} edges in graph: {}",
+        request.edges.len(),
+        graph_id
+    );
     let _strategy = request.if_exists.clone().unwrap_or_else(|| "error".into());
 
     // Convert REST inputs to proto Edges
@@ -1428,7 +1584,8 @@ pub async fn batch_create_edges(
     {
         Ok(edges) => {
             info!("Successfully batch created {} edges", edges.len());
-            let rest_edges: Vec<RestEdge> = edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
+            let rest_edges: Vec<RestEdge> =
+                edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
             Json(GraphBatchResponse {
                 success: true,
                 created_count: rest_edges.len(),
@@ -1472,7 +1629,12 @@ pub async fn get_graph_stats(
 ) -> impl IntoResponse {
     debug!("Getting graph statistics for graph: {}", graph_id);
 
-    match app_state.unified_handlers.graph_operations_service.get_stats(&graph_id).await {
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .get_stats(&graph_id)
+        .await
+    {
         Ok(stats) => {
             info!("Successfully retrieved graph statistics");
             let rest_stats = RestGraphStats::from(&stats);
@@ -1508,7 +1670,12 @@ pub async fn create_node_legacy(
     State(app_state): State<AppState>,
     Json(request): Json<CreateNodeRequest>,
 ) -> impl IntoResponse {
-    create_node(State(app_state), Path(DEFAULT_GRAPH_ID.to_string()), Json(request)).await
+    create_node(
+        State(app_state),
+        Path(DEFAULT_GRAPH_ID.to_string()),
+        Json(request),
+    )
+    .await
 }
 
 /// Legacy get node handler (uses default graph)
@@ -1516,7 +1683,11 @@ pub async fn get_node_legacy(
     State(app_state): State<AppState>,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
-    get_node(State(app_state), Path((DEFAULT_GRAPH_ID.to_string(), node_id))).await
+    get_node(
+        State(app_state),
+        Path((DEFAULT_GRAPH_ID.to_string(), node_id)),
+    )
+    .await
 }
 
 /// Legacy create edge handler (uses default graph)
@@ -1524,13 +1695,16 @@ pub async fn create_edge_legacy(
     State(app_state): State<AppState>,
     Json(request): Json<CreateEdgeRequest>,
 ) -> impl IntoResponse {
-    create_edge(State(app_state), Path(DEFAULT_GRAPH_ID.to_string()), Json(request)).await
+    create_edge(
+        State(app_state),
+        Path(DEFAULT_GRAPH_ID.to_string()),
+        Json(request),
+    )
+    .await
 }
 
 /// Legacy get graph stats handler (uses default graph)
-pub async fn get_graph_stats_legacy(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn get_graph_stats_legacy(State(app_state): State<AppState>) -> impl IntoResponse {
     get_graph_stats(State(app_state), Path(DEFAULT_GRAPH_ID.to_string())).await
 }
 
@@ -1580,7 +1754,10 @@ pub async fn create_graph_collection(
         .await
     {
         Ok(collection) => {
-            info!("Successfully created graph collection: {}", collection.graph_id);
+            info!(
+                "Successfully created graph collection: {}",
+                collection.graph_id
+            );
             Json(GraphCollectionResponse {
                 success: true,
                 graph_id: collection.graph_id.clone(),
@@ -1607,9 +1784,7 @@ pub async fn create_graph_collection(
 }
 
 /// List all graph collections
-pub async fn list_graph_collections(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl IntoResponse {
     match app_state
         .unified_handlers
         .graph_collection_service
@@ -1656,17 +1831,15 @@ pub async fn get_graph_collection(
         .get_graph(&graph_id)
         .await
     {
-        Ok(Some(collection)) => {
-            Json(GraphCollectionResponse {
-                success: true,
-                graph_id: collection.graph_id.clone(),
-                name: collection.name.clone(),
-                description: collection.description.clone(),
-                created_at: format_timestamp(&collection.created_at),
-                updated_at: format_timestamp(&collection.updated_at),
-            })
-            .into_response()
-        }
+        Ok(Some(collection)) => Json(GraphCollectionResponse {
+            success: true,
+            graph_id: collection.graph_id.clone(),
+            name: collection.name.clone(),
+            description: collection.description.clone(),
+            created_at: format_timestamp(&collection.created_at),
+            updated_at: format_timestamp(&collection.updated_at),
+        })
+        .into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(GraphErrorResponse {
@@ -1742,4 +1915,3 @@ pub async fn update_graph_schema(
     )
         .into_response()
 }
-

@@ -3,16 +3,16 @@
 //! This module implements the branched filtering strategy for efficient
 //! query execution with fast path (column projection) and slow path (full scan).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arrow::record_batch::RecordBatch;
 use std::collections::HashSet;
 use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
+    FilterCondition, MetadataFilter,
     metadata_filter_strategy::{MetadataFilterAnalyzer, MetadataFilterStrategy},
     unified_columnar_io::UnifiedColumnarReader,
-    FilterCondition, MetadataFilter,
 };
 
 /// Branched filter executor for optimized queries
@@ -32,7 +32,9 @@ impl BranchedFilterExecutor {
     ) -> Result<Self> {
         // TODO: Fix API incompatibilities after module restructuring
         // Temporarily return error to avoid complex API fixes
-        Err(anyhow::anyhow!("BranchedFilterExecutor temporarily disabled due to API changes"))
+        Err(anyhow::anyhow!(
+            "BranchedFilterExecutor temporarily disabled due to API changes"
+        ))
     }
 
     /// Execute query with branched filtering
@@ -43,7 +45,9 @@ impl BranchedFilterExecutor {
         _allow_slow_queries: bool,
     ) -> Result<Vec<VectorRecord>> {
         // TODO: Re-enable after API compatibility issues resolved
-        Err(anyhow::anyhow!("BranchedFilterExecutor temporarily disabled due to API changes"))
+        Err(anyhow::anyhow!(
+            "BranchedFilterExecutor temporarily disabled due to API changes"
+        ))
     }
 
     /// Execute fast path with column projection
@@ -54,7 +58,9 @@ impl BranchedFilterExecutor {
         _projection_columns: &[String],
         _pushdown_filters: &[FilterCondition],
     ) -> Result<Vec<VectorRecord>> {
-        Err(anyhow::anyhow!("Method temporarily disabled due to API changes"))
+        Err(anyhow::anyhow!(
+            "Method temporarily disabled due to API changes"
+        ))
     }
 
     /// Execute slow path with full scan
@@ -65,7 +71,9 @@ impl BranchedFilterExecutor {
         _filterable_filters: &[MetadataFilter],
         _non_filterable_filters: &[MetadataFilter],
     ) -> Result<Vec<VectorRecord>> {
-        Err(anyhow::anyhow!("Method temporarily disabled due to API changes"))
+        Err(anyhow::anyhow!(
+            "Method temporarily disabled due to API changes"
+        ))
     }
 
     /// Execute mixed path with pushdown and post-filtering
@@ -77,7 +85,9 @@ impl BranchedFilterExecutor {
         _post_filters: &[MetadataFilter],
         _projection_columns: &[String],
     ) -> Result<Vec<VectorRecord>> {
-        Err(anyhow::anyhow!("Method temporarily disabled due to API changes"))
+        Err(anyhow::anyhow!(
+            "Method temporarily disabled due to API changes"
+        ))
     }
 
     /// Apply filters in memory (post-filtering)
@@ -88,7 +98,9 @@ impl BranchedFilterExecutor {
         _records: Vec<VectorRecord>,
         _filters: &[MetadataFilter],
     ) -> Result<Vec<VectorRecord>> {
-        Err(anyhow::anyhow!("Method temporarily disabled due to API changes"))
+        Err(anyhow::anyhow!(
+            "Method temporarily disabled due to API changes"
+        ))
     }
 
     /// Check if a record matches a filter
@@ -133,8 +145,12 @@ impl FilterPath {
     /// Get warning message for non-optimal paths
     pub fn warning_message(&self) -> Option<&'static str> {
         match self {
-            FilterPath::Slow => Some("Query requires full scan - consider adding filterable columns"),
-            FilterPath::Mixed => Some("Query partially optimized - some filters cannot be pushed down"),
+            FilterPath::Slow => {
+                Some("Query requires full scan - consider adding filterable columns")
+            }
+            FilterPath::Mixed => {
+                Some("Query partially optimized - some filters cannot be pushed down")
+            }
             _ => None,
         }
     }

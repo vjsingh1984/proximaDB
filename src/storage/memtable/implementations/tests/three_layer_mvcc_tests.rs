@@ -5,11 +5,11 @@
 
 use super::super::global_partitioned::GlobalPartitionedMemtable;
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
-use std::collections::HashMap;
 use crate::proto::proximadb_v1::SqlValue;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::write_ahead_log::BatchId;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Helper function to create a vector record with specific parameters
@@ -149,8 +149,8 @@ async fn test_get_before_delete_update_consistency() {
 
     // Update: Construct new version with same ID but new vector
     let updated_vector = create_vector_record(
-        &current_vector.id,               // Use same ID
-        vec![4.0, 5.0, 6.0],              // New vector
+        &current_vector.id,                           // Use same ID
+        vec![4.0, 5.0, 6.0],                          // New vector
         current_vector.version.map(|v| v as u32 + 1), // Increment version
         None,
     );
@@ -171,10 +171,10 @@ async fn test_get_before_delete_update_consistency() {
     // Delete: Construct tombstone with same ID
     let current_time = chrono::Utc::now().timestamp() as u32; // Current time in seconds
     let delete_vector = create_vector_record(
-        &current_vector.id,             // Use same ID
-        vec![0.0, 0.0, 0.0],            // Vector content irrelevant for delete
+        &current_vector.id,                         // Use same ID
+        vec![0.0, 0.0, 0.0],                        // Vector content irrelevant for delete
         found_vector.version.map(|v| v as u32 + 1), // Increment version
-        Some(current_time - 1),         // Mark as expired 1 second ago
+        Some(current_time - 1),                     // Mark as expired 1 second ago
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![delete_vector]);
     memtable.add_wal_batch(collection_id, batch3).await.unwrap();

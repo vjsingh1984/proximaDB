@@ -88,8 +88,8 @@ pub enum IndexAlgorithm {
 
     /// Global ID Index - for O(1) vector ID to storage location mapping
     GlobalId {
-        cache_size: usize,           // Maximum number of cached entries
-        persistence_enabled: bool,   // Enable persistence for recovery
+        cache_size: usize,         // Maximum number of cached entries
+        persistence_enabled: bool, // Enable persistence for recovery
     },
 }
 

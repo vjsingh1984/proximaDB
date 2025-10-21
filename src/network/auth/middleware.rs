@@ -16,7 +16,9 @@
 
 //! Unified Authentication Middleware for ProximaDB REST API
 
-use crate::network::auth::{AuthError, AuthResult, AuthService, Permission, PermissionContext, ResourceType};
+use crate::network::auth::{
+    AuthError, AuthResult, AuthService, Permission, PermissionContext, ResourceType,
+};
 use axum::{
     extract::State,
     http::{Request, StatusCode},
@@ -49,30 +51,30 @@ pub async fn auth_middleware<B>(
     let uri = request.uri();
     let method = request.method();
     let path = uri.path();
-    
+
     debug!("Processing auth for {} {}", method, path);
-    
+
     // Skip authentication for health endpoints (configurable)
     if should_skip_auth(path) {
         debug!("Skipping auth for health endpoint: {}", path);
         return Ok(next.run(request).await);
     }
-    
+
     // Extract authorization header
     let auth_header = extract_auth_header(&request)?;
-    
+
     // Authenticate the request
     let auth_result = auth_state
         .auth_service
         .authenticate(&auth_header)
         .await
         .map_err(|e| auth_error_to_response(e))?;
-    
+
     // Check basic permissions for the endpoint
     let required_permission = determine_required_permission(method.as_str(), path);
     if let Some(permission) = required_permission {
         let context = build_permission_context(path, &auth_result);
-        
+
         auth_state
             .auth_service
             .rbac
@@ -80,15 +82,17 @@ pub async fn auth_middleware<B>(
             .await
             .map_err(|e| auth_error_to_response(e))?;
     }
-    
+
     // Add auth result to request extensions for use by handlers
     request.extensions_mut().insert(auth_result);
-    
+
     Ok(next.run(request).await)
 }
 
 /// Extract authorization header from request
-fn extract_auth_header<B>(request: &Request<B>) -> Result<String, (StatusCode, Json<AuthErrorResponse>)> {
+fn extract_auth_header<B>(
+    request: &Request<B>,
+) -> Result<String, (StatusCode, Json<AuthErrorResponse>)> {
     let auth_header = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -102,7 +106,7 @@ fn extract_auth_header<B>(request: &Request<B>) -> Result<String, (StatusCode, J
                 }),
             )
         })?;
-    
+
     let auth_str = auth_header.to_str().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -113,7 +117,7 @@ fn extract_auth_header<B>(request: &Request<B>) -> Result<String, (StatusCode, J
             }),
         )
     })?;
-    
+
     Ok(auth_str.to_string())
 }
 
@@ -123,17 +127,17 @@ fn should_skip_auth(path: &str) -> bool {
     if path.starts_with("/health") {
         return true;
     }
-    
+
     // Auth endpoints (login, etc.)
     if path.starts_with("/auth/") {
         return true;
     }
-    
+
     // Public documentation endpoints
     if path.starts_with("/docs") || path.starts_with("/openapi") {
         return true;
     }
-    
+
     false
 }
 
@@ -141,52 +145,46 @@ fn should_skip_auth(path: &str) -> bool {
 fn determine_required_permission(method: &str, path: &str) -> Option<Permission> {
     match path {
         // Vector endpoints (check before general collection endpoints)
-        path if path.contains("/vectors") => {
-            match method {
-                "GET" => Some(Permission::ReadVectors),
-                "POST" => {
-                    if path.contains("/search") {
-                        Some(Permission::SearchVectors)
-                    } else {
-                        Some(Permission::InsertVectors)
-                    }
+        path if path.contains("/vectors") => match method {
+            "GET" => Some(Permission::ReadVectors),
+            "POST" => {
+                if path.contains("/search") {
+                    Some(Permission::SearchVectors)
+                } else {
+                    Some(Permission::InsertVectors)
                 }
-                "PUT" | "PATCH" => Some(Permission::UpdateVectors),
-                "DELETE" => Some(Permission::DeleteVectors),
-                _ => None,
             }
-        }
-        
+            "PUT" | "PATCH" => Some(Permission::UpdateVectors),
+            "DELETE" => Some(Permission::DeleteVectors),
+            _ => None,
+        },
+
         // Graph endpoints
-        path if path.contains("/graph") => {
-            match method {
-                "GET" => Some(Permission::ReadGraphRelations),
-                "POST" => Some(Permission::CreateGraphRelations),
-                "DELETE" => Some(Permission::DeleteGraphRelations),
-                _ => None,
-            }
-        }
-        
+        path if path.contains("/graph") => match method {
+            "GET" => Some(Permission::ReadGraphRelations),
+            "POST" => Some(Permission::CreateGraphRelations),
+            "DELETE" => Some(Permission::DeleteGraphRelations),
+            _ => None,
+        },
+
         // SQL query endpoints
         path if path.contains("/sql") || path.contains("/query") => {
             Some(Permission::ExecuteSqlQueries)
         }
-        
+
         // System endpoints
-        path if path.starts_with("/system") => {
-            match method {
-                "GET" => {
-                    if path.contains("/metrics") {
-                        Some(Permission::ViewSystemMetrics)
-                    } else {
-                        Some(Permission::ViewSystemHealth)
-                    }
+        path if path.starts_with("/system") => match method {
+            "GET" => {
+                if path.contains("/metrics") {
+                    Some(Permission::ViewSystemMetrics)
+                } else {
+                    Some(Permission::ViewSystemHealth)
                 }
-                "POST" | "PUT" | "PATCH" => Some(Permission::ConfigureSystem),
-                _ => None,
             }
-        }
-        
+            "POST" | "PUT" | "PATCH" => Some(Permission::ConfigureSystem),
+            _ => None,
+        },
+
         // Admin endpoints
         path if path.starts_with("/admin") => {
             if path.contains("/users") {
@@ -203,21 +201,19 @@ fn determine_required_permission(method: &str, path: &str) -> Option<Permission>
         }
 
         // Collection endpoints (checked last as they're more general)
-        path if path.starts_with("/collections") => {
-            match method {
-                "GET" => {
-                    if path.ends_with("/collections") {
-                        Some(Permission::ListCollections)
-                    } else {
-                        Some(Permission::ReadCollectionMetadata)
-                    }
+        path if path.starts_with("/collections") => match method {
+            "GET" => {
+                if path.ends_with("/collections") {
+                    Some(Permission::ListCollections)
+                } else {
+                    Some(Permission::ReadCollectionMetadata)
                 }
-                "POST" => Some(Permission::CreateCollection),
-                "PUT" | "PATCH" => Some(Permission::UpdateCollectionMetadata),
-                "DELETE" => Some(Permission::DeleteCollection),
-                _ => None,
             }
-        }
+            "POST" => Some(Permission::CreateCollection),
+            "PUT" | "PATCH" => Some(Permission::UpdateCollectionMetadata),
+            "DELETE" => Some(Permission::DeleteCollection),
+            _ => None,
+        },
 
         _ => None, // No specific permission required
     }
@@ -240,10 +236,10 @@ fn build_permission_context(path: &str, auth_result: &AuthResult) -> PermissionC
     } else {
         ResourceType::System
     };
-    
+
     // Extract resource ID from path if possible
     let resource_id = extract_resource_id(path);
-    
+
     PermissionContext {
         resource_type,
         resource_id,
@@ -255,7 +251,7 @@ fn build_permission_context(path: &str, auth_result: &AuthResult) -> PermissionC
 /// Extract resource ID from URL path
 fn extract_resource_id(path: &str) -> Option<String> {
     let path_segments: Vec<&str> = path.split('/').collect();
-    
+
     // Look for patterns like /collections/{id}, /vectors/{id}, etc.
     for (i, segment) in path_segments.iter().enumerate() {
         if matches!(*segment, "collections" | "vectors" | "users" | "roles") {
@@ -266,7 +262,7 @@ fn extract_resource_id(path: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -343,13 +339,14 @@ impl<B> RequestAuthExt for Request<B> {
     fn auth_result(&self) -> Option<&AuthResult> {
         self.extensions().get::<AuthResult>()
     }
-    
+
     fn user_id(&self) -> Option<&str> {
         self.auth_result().map(|auth| auth.user_id.as_str())
     }
-    
+
     fn tenant_id(&self) -> Option<&str> {
-        self.auth_result().and_then(|auth| auth.tenant_id.as_deref())
+        self.auth_result()
+            .and_then(|auth| auth.tenant_id.as_deref())
     }
 }
 
@@ -367,7 +364,7 @@ pub async fn check_permission(
         tenant_id: auth_result.tenant_id.clone(),
         metadata: std::collections::HashMap::new(),
     };
-    
+
     auth_service
         .rbac
         .check_permission_with_context(&auth_result.user_id, permission, &context)
@@ -378,7 +375,7 @@ pub async fn check_permission(
 mod tests {
     use super::*;
     use axum::http::{Method, Uri};
-    
+
     #[test]
     fn test_should_skip_auth() {
         assert!(should_skip_auth("/health"));
@@ -388,7 +385,7 @@ mod tests {
         assert!(!should_skip_auth("/collections"));
         assert!(!should_skip_auth("/api/collections"));
     }
-    
+
     #[test]
     fn test_determine_required_permission() {
         // Collection endpoints
@@ -404,7 +401,7 @@ mod tests {
             determine_required_permission("DELETE", "/collections/test"),
             Some(Permission::DeleteCollection)
         );
-        
+
         // Vector endpoints
         assert_eq!(
             determine_required_permission("POST", "/collections/test/vectors/search"),
@@ -414,7 +411,7 @@ mod tests {
             determine_required_permission("POST", "/collections/test/vectors"),
             Some(Permission::InsertVectors)
         );
-        
+
         // System endpoints
         assert_eq!(
             determine_required_permission("GET", "/system/metrics"),
@@ -425,7 +422,7 @@ mod tests {
             Some(Permission::ConfigureSystem)
         );
     }
-    
+
     #[test]
     fn test_extract_resource_id() {
         assert_eq!(

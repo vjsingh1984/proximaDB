@@ -3,7 +3,10 @@
 //! Complete vLLM API integration for self-hosted high-performance LLM inference.
 
 use super::{LLMClient, RateLimitStatus, validate_request_safety};
-use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason, VLLMConfig};
+use crate::ai::llm_integration::types::{
+    FinishReason, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
+    VLLMConfig,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -49,7 +52,9 @@ impl VLLMClient {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))
             .build()
-            .map_err(|e| LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let vllm_client = Self { client, config };
         vllm_client.test_authentication().await?;
@@ -59,19 +64,29 @@ impl VLLMClient {
 
 #[async_trait]
 impl LLMClient for VLLMClient {
-    async fn query(&self, request: &LLMRequest, _context: &LLMRequestContext) -> Result<LLMResponse, LLMError> {
+    async fn query(
+        &self,
+        request: &LLMRequest,
+        _context: &LLMRequestContext,
+    ) -> Result<LLMResponse, LLMError> {
         let start_time = Instant::now();
         validate_request_safety(request)?;
 
         // Build prompt for vLLM
         let full_prompt = if let Some(ref system_prompt) = request.system_prompt {
-            format!("System: {}\n\nUser: {}\n\nAssistant:", system_prompt, request.prompt)
+            format!(
+                "System: {}\n\nUser: {}\n\nAssistant:",
+                system_prompt, request.prompt
+            )
         } else {
             format!("User: {}\n\nAssistant:", request.prompt)
         };
 
         let vllm_request = VLLMRequest {
-            model: request.model.clone().unwrap_or_else(|| self.config.model_name.clone()),
+            model: request
+                .model
+                .clone()
+                .unwrap_or_else(|| self.config.model_name.clone()),
             prompt: full_prompt,
             max_tokens: request.max_tokens,
             temperature: request.temperature,
@@ -83,13 +98,15 @@ impl LLMClient for VLLMClient {
 
         debug!("Sending vLLM request to: {}/generate", self.config.base_url);
 
-        let mut request_builder = self.client
+        let mut request_builder = self
+            .client
             .post(&format!("{}/generate", self.config.base_url))
             .header("Content-Type", "application/json");
 
         // Add API key if configured
         if let Some(ref api_key) = self.config.api_key {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", api_key));
         }
 
         let response = request_builder
@@ -99,7 +116,9 @@ impl LLMClient for VLLMClient {
             .map_err(|e| LLMError::NetworkError(format!("Request failed: {}", e)))?;
 
         let status = response.status();
-        let response_body = response.text().await
+        let response_body = response
+            .text()
+            .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to read response: {}", e)))?;
 
         if !status.is_success() {
@@ -112,11 +131,15 @@ impl LLMClient for VLLMClient {
         let vllm_response: VLLMResponse = serde_json::from_str(&response_body)
             .map_err(|e| LLMError::ParseError(format!("Failed to parse vLLM response: {}", e)))?;
 
-        let content = vllm_response.text.into_iter().next()
-            .ok_or_else(|| LLMError::InvalidResponse {
-                provider: LLMProvider::VLLM,
-                reason: "No text in response".to_string(),
-            })?;
+        let content =
+            vllm_response
+                .text
+                .into_iter()
+                .next()
+                .ok_or_else(|| LLMError::InvalidResponse {
+                    provider: LLMProvider::VLLM,
+                    reason: "No text in response".to_string(),
+                })?;
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -162,7 +185,8 @@ impl LLMClient for VLLMClient {
 
     async fn is_healthy(&self) -> bool {
         // Check if vLLM server is running
-        match self.client
+        match self
+            .client
             .get(&format!("{}/health", self.config.base_url))
             .send()
             .await
@@ -178,7 +202,8 @@ impl LLMClient for VLLMClient {
 
     async fn test_authentication(&self) -> Result<(), LLMError> {
         // Test by checking server health
-        let response = self.client
+        let response = self
+            .client
             .get(&format!("{}/health", self.config.base_url))
             .send()
             .await
@@ -190,7 +215,10 @@ impl LLMClient for VLLMClient {
         } else {
             Err(LLMError::AuthenticationFailed {
                 provider: LLMProvider::VLLM,
-                reason: format!("Failed to connect to vLLM server at {}", self.config.base_url),
+                reason: format!(
+                    "Failed to connect to vLLM server at {}",
+                    self.config.base_url
+                ),
             })
         }
     }

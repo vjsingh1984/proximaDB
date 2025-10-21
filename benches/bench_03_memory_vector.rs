@@ -5,7 +5,7 @@
 //! 2. Optimized approach with Arc<Vec<f32>> sharing
 
 mod common;
-use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+use common::benchmark_utils::{STANDARD_BATCH_SIZES, STANDARD_DIMENSIONS, print_system_info};
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashMap;

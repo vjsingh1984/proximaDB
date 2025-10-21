@@ -11,7 +11,9 @@
 //! - src/storage/engines/impls/raptor/compression_tests.rs (10 tests)
 
 use super::helpers::*;
-use crate::proto::proximadb_v1::{Collection, CollectionConfig, CompressionAlgorithm, StorageEngine};
+use crate::proto::proximadb_v1::{
+    Collection, CollectionConfig, CompressionAlgorithm, StorageEngine,
+};
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use anyhow::Result;
 
@@ -63,7 +65,8 @@ async fn test_compression_lz4() -> Result<()> {
 
 #[tokio::test]
 async fn test_compression_snappy() -> Result<()> {
-    let engine = create_test_engine_with_compression(CompressionAlgorithm::CompressionSnappy).await?;
+    let engine =
+        create_test_engine_with_compression(CompressionAlgorithm::CompressionSnappy).await?;
     let vectors = create_test_vector_records(10, 4);
     let collection = create_collection_with_compression(CompressionAlgorithm::CompressionSnappy);
 
@@ -127,7 +130,8 @@ async fn test_compression_gzip() -> Result<()> {
 #[tokio::test]
 async fn test_compression_brotli() -> Result<()> {
     // Note: Brotli might not be implemented in RaptorConfig yet, so this will default to LZ4
-    let engine = create_test_engine_with_compression(CompressionAlgorithm::CompressionBrotli).await?;
+    let engine =
+        create_test_engine_with_compression(CompressionAlgorithm::CompressionBrotli).await?;
     let vectors = create_test_vector_records(10, 4);
     let collection = create_collection_with_compression(CompressionAlgorithm::CompressionBrotli);
 
@@ -149,7 +153,8 @@ async fn test_compression_brotli() -> Result<()> {
 #[tokio::test]
 async fn test_compression_bzip2() -> Result<()> {
     // Note: Bzip2 might not be implemented in RaptorConfig yet, so this will default to LZ4
-    let engine = create_test_engine_with_compression(CompressionAlgorithm::CompressionBzip2).await?;
+    let engine =
+        create_test_engine_with_compression(CompressionAlgorithm::CompressionBzip2).await?;
     let vectors = create_test_vector_records(10, 4);
     let collection = create_collection_with_compression(CompressionAlgorithm::CompressionBzip2);
 
@@ -192,8 +197,8 @@ async fn test_compression_xz() -> Result<()> {
 
 #[tokio::test]
 async fn test_lz4_is_default_compression() -> Result<()> {
-    use std::collections::HashMap;
     use crate::proto::proximadb_v1::StorageAssignment;
+    use std::collections::HashMap;
 
     // Test that LZ4 is used when no compression is explicitly specified
     let default_collection = Collection {
@@ -269,7 +274,11 @@ async fn test_compression_performance_comparison() -> Result<()> {
         assert!(result.success);
 
         let elapsed = start.elapsed();
-        println!("✅ Compression {:?} completed in {:?}", compression.as_str_name(), elapsed);
+        println!(
+            "✅ Compression {:?} completed in {:?}",
+            compression.as_str_name(),
+            elapsed
+        );
     }
 
     Ok(())

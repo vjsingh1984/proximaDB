@@ -21,9 +21,7 @@
 //!
 //! It uses the `nom` parser-combinator library for robust and efficient parsing.
 
-use super::ast::{
-    CompiledPattern, NodePattern, PropertyConstraint, ReturnSpec,
-};
+use super::ast::{CompiledPattern, NodePattern, PropertyConstraint, ReturnSpec};
 use crate::core::error::ProximaDBError;
 use nom::{
     IResult,
@@ -75,8 +73,16 @@ fn identifier(input: &str) -> IResult<&str, String> {
 fn string_literal(input: &str) -> IResult<&str, String> {
     map(
         alt((
-            delimited(char::<&str, nom::error::Error<_>>('"'), take_while1(|c| c != '"'), char('"')),
-            delimited(char::<&str, nom::error::Error<_>>('\''), take_while1(|c| c != '\''), char('\'')),
+            delimited(
+                char::<&str, nom::error::Error<_>>('"'),
+                take_while1(|c| c != '"'),
+                char('"'),
+            ),
+            delimited(
+                char::<&str, nom::error::Error<_>>('\''),
+                take_while1(|c| c != '\''),
+                char('\''),
+            ),
         )),
         |s| s.to_string(),
     )(input)

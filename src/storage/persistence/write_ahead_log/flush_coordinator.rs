@@ -9,7 +9,7 @@
 //! both AvroWAL and BincodeWAL implementations to manage flush state tracking,
 //! cleanup of memory structures, and coordination between memory/disk WAL modes.
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -203,10 +203,15 @@ impl WALFlushCoordinator {
                     files.len()
                 );
                 // Implement comprehensive disk WAL file reading and recovery
-                self.extract_vectors_from_disk_files(&files).await.unwrap_or_else(|e| {
-                    warn!("📋 Coordinator: Failed to extract vectors from disk files: {}", e);
-                    Vec::new()
-                })
+                self.extract_vectors_from_disk_files(&files)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!(
+                            "📋 Coordinator: Failed to extract vectors from disk files: {}",
+                            e
+                        );
+                        Vec::new()
+                    })
             }
             FlushDataSource::VectorRecords(records) => {
                 info!(
@@ -696,7 +701,7 @@ impl WALFlushCoordinator {
                     all_vectors.extend(file_vectors);
                     total_vectors_extracted += count;
                     files_processed += 1;
-                    
+
                     debug!(
                         "📋 Coordinator: Extracted {} vectors from {}",
                         count, file_path
@@ -714,7 +719,9 @@ impl WALFlushCoordinator {
 
         info!(
             "📋 Coordinator: Extracted {} vectors from {}/{} WAL files",
-            total_vectors_extracted, files_processed, wal_files.len()
+            total_vectors_extracted,
+            files_processed,
+            wal_files.len()
         );
 
         Ok(all_vectors)
@@ -727,18 +734,22 @@ impl WALFlushCoordinator {
         format: crate::storage::persistence::write_ahead_log::serialization::SerializationFormat,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         use crate::storage::persistence::write_ahead_log::serialization::SerializerFactory;
-        
+
         // Create filesystem interface to read the file
         // Note: This assumes we have access to a filesystem factory
         // In production, this would be injected as a dependency
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
-            .await?;
-        
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_factory =
+            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
+                .await?;
+
         let filesystem = filesystem_factory.get_filesystem(file_path)?;
-        
+
         // Read the file data
-        let data = filesystem.read(file_path).await
+        let data = filesystem
+            .read(file_path)
+            .await
             .context("Failed to read WAL file")?;
 
         if data.is_empty() {
@@ -750,7 +761,8 @@ impl WALFlushCoordinator {
         let serializer = SerializerFactory::create(format);
 
         // Deserialize the batch
-        let vectors = serializer.deserialize_batch(&data)
+        let vectors = serializer
+            .deserialize_batch(&data)
             .context("Failed to deserialize WAL file")?;
 
         Ok(vectors)

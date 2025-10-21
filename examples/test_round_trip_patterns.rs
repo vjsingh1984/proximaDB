@@ -1,8 +1,8 @@
+use proximadb::core::compression::CompressionAlgorithm;
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use proximadb::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
 };
-use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use std::collections::HashMap;
 
 /// Different data patterns to test
@@ -181,11 +181,7 @@ fn test_round_trip(
 
     // Verify
     if deserialized_block.records.len() != original_count {
-        return Ok((
-            false,
-            serialized_size,
-            compression_ratio,
-        ));
+        return Ok((false, serialized_size, compression_ratio));
     }
 
     // Check vectors
@@ -217,9 +213,11 @@ fn main() {
     println!("\n📊 Test Configuration:");
     println!("   Vectors: {}", num_vectors);
     println!("   Dimensions: {}", dimension);
-    println!("   Total data: {} floats ({:.2} KB)\n",
-             num_vectors * dimension,
-             (num_vectors * dimension * 4) as f64 / 1024.0);
+    println!(
+        "   Total data: {} floats ({:.2} KB)\n",
+        num_vectors * dimension,
+        (num_vectors * dimension * 4) as f64 / 1024.0
+    );
 
     // Data patterns to test
     let patterns = vec![
@@ -234,10 +232,22 @@ fn main() {
     // Encoding strategies to test
     let strategies = vec![
         ("FullVector", VectorEncodingLayout::FullVector),
-        ("TransposeField", VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
-        ("GroupedField", VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector),
-        ("TransposeBlock", VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector),
-        ("GroupedBlock", VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector),
+        (
+            "TransposeField",
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
+        ),
+        (
+            "GroupedField",
+            VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
+        ),
+        (
+            "TransposeBlock",
+            VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector,
+        ),
+        (
+            "GroupedBlock",
+            VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector,
+        ),
     ];
 
     // Compression algorithms to test
@@ -308,16 +318,23 @@ fn main() {
     // Print summary table
     println!("\n\n📈 COMPREHENSIVE TEST RESULTS");
     println!("{}", "=".repeat(80));
-    println!("{:<12} │ {:<30} │ {:<8} │ {:>10} │ {:>8}",
-             "Pattern", "Strategy", "Status", "Size", "Ratio");
+    println!(
+        "{:<12} │ {:<30} │ {:<8} │ {:>10} │ {:>8}",
+        "Pattern", "Strategy", "Status", "Size", "Ratio"
+    );
     println!("{}", "-".repeat(80));
 
     for (pattern, strategy, status, size, ratio) in &results {
         let status_icon = if status == "PASS" { "✅" } else { "❌" };
-        println!("{:<12} │ {:<30} │ {} {:<6} │ {:>10} │ {:>8.2}x",
-                 pattern, strategy, status_icon,
-                 if status == "PASS" { "PASS" } else { "FAIL" },
-                 size, ratio);
+        println!(
+            "{:<12} │ {:<30} │ {} {:<6} │ {:>10} │ {:>8.2}x",
+            pattern,
+            strategy,
+            status_icon,
+            if status == "PASS" { "PASS" } else { "FAIL" },
+            size,
+            ratio
+        );
     }
 
     println!("{}", "=".repeat(80));
@@ -351,14 +368,16 @@ fn main() {
     }
 
     println!("\n{}", "=".repeat(80));
-    println!("📊 Overall Results: {}/{} tests passed ({:.1}%)",
-             passed_tests, total_tests,
-             (passed_tests as f64 / total_tests as f64) * 100.0);
+    println!(
+        "📊 Overall Results: {}/{} tests passed ({:.1}%)",
+        passed_tests,
+        total_tests,
+        (passed_tests as f64 / total_tests as f64) * 100.0
+    );
 
     if passed_tests == total_tests {
         println!("\n🎉 ALL TESTS PASSED!");
     } else {
         println!("\n⚠️  Some tests failed. Check results above.");
     }
-
 }

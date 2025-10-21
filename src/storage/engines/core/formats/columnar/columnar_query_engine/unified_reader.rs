@@ -3,24 +3,19 @@
 //! This module provides the UnifiedParquetReader that other parts of the
 //! codebase expect, delegating to the appropriate modular components.
 
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::unified_interface::SearchPlan;
+use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use anyhow::Result;
 use arrow::datatypes::Schema;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, info, trace};
-use crate::proto::proximadb_v1::{VectorRecord, MetadataFilter};
-use crate::core::search::unified_interface::SearchPlan;
-use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 // SearchResponse should come from service types
 type SearchResponse = crate::core::service_types::VectorSearchResponse;
 
-use super::{
-    ParquetReader,
-    QueryConfig,
-    CacheStrategy,
-    BranchedFilterExecutor,
-};
+use super::{BranchedFilterExecutor, CacheStrategy, ParquetReader, QueryConfig};
 
 // Simple cosine similarity function for scoring
 fn compute_cosine_similarity(a: &[f32], b: &Arc<Vec<f32>>) -> f32 {
@@ -109,7 +104,8 @@ pub struct ReaderConfig {
 /// Cache context for unified caching filesystem integration
 #[derive(Debug, Clone)]
 pub struct CacheContext {
-    pub cached_filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    pub cached_filesystem:
+        Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     pub collection_id: String,
     pub engine_type: String,
 }
@@ -223,7 +219,9 @@ impl UnifiedParquetReader {
         file_paths: Vec<String>,
         dimension: usize,
         filesystem_factory: Arc<FilesystemFactory>,
-        cached_filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        cached_filesystem: Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         collection_id: String,
         engine_type: String,
     ) -> Result<Self> {
@@ -251,7 +249,8 @@ impl UnifiedParquetReader {
 
     /// Get filesystem for a given file path
     fn get_filesystem_for_path(&self, file_path: &str) -> Result<Arc<dyn FileSystem>> {
-        self.filesystem_factory.get_filesystem(file_path)
+        self.filesystem_factory
+            .get_filesystem(file_path)
             .map_err(|e| anyhow::anyhow!("Failed to get filesystem for path {}: {}", file_path, e))
     }
 
@@ -309,7 +308,8 @@ impl UnifiedParquetReader {
         &self,
         filters: &[MetadataFilter],
     ) -> Result<Vec<VectorRecord>> {
-        let filterable_columns = self.schema_mapping
+        let filterable_columns = self
+            .schema_mapping
             .as_ref()
             .map(|s| s.filterable_columns.clone())
             .unwrap_or_default();
@@ -351,10 +351,14 @@ impl UnifiedParquetReader {
     }
 
     /// Get file metadata using filesystem API
-    async fn get_file_metadata_async(&self, file_path: &str) -> Result<crate::storage::persistence::filesystem::FileMetadata> {
+    async fn get_file_metadata_async(
+        &self,
+        file_path: &str,
+    ) -> Result<crate::storage::persistence::filesystem::FileMetadata> {
         let fs = self.get_filesystem_for_path(file_path)?;
         let path = FilesystemFactory::resolve_path(file_path)?;
-        fs.metadata(&path).await
+        fs.metadata(&path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get metadata for {}: {}", file_path, e))
     }
 
@@ -409,7 +413,8 @@ impl UnifiedParquetReader {
 
         // Determine what columns we actually need based on the search requirements
         let needs_vectors = true; // Always need vectors for similarity search
-        let needs_metadata = search_plan.collection_config
+        let needs_metadata = search_plan
+            .collection_config
             .as_ref()
             .map(|c| c.enable_metadata_filtering)
             .unwrap_or(false);
@@ -419,8 +424,14 @@ impl UnifiedParquetReader {
 
         debug!("UnifiedParquetReader: Optimized search starting");
         debug!("  Files to scan: {}", self.file_paths.len());
-        debug!("  Column projection: vectors={}, metadata={}", needs_vectors, needs_metadata);
-        debug!("  Top-k: {}, Early termination: {}", search_plan.top_k, search_plan.enable_early_termination);
+        debug!(
+            "  Column projection: vectors={}, metadata={}",
+            needs_vectors, needs_metadata
+        );
+        debug!(
+            "  Top-k: {}, Early termination: {}",
+            search_plan.top_k, search_plan.enable_early_termination
+        );
         if filter_expression.is_some() {
             debug!("  Filter expression: present");
         }
@@ -432,7 +443,9 @@ impl UnifiedParquetReader {
         let mut files_skipped_early = 0;
 
         // Check if quantization is enabled for this search
-        let quantization_enabled = search_plan.collection_config.as_ref()
+        let quantization_enabled = search_plan
+            .collection_config
+            .as_ref()
             .map(|c| c.enable_quantization)
             .unwrap_or(false);
 
@@ -444,21 +457,26 @@ impl UnifiedParquetReader {
                 // This requires file-level statistics (max similarity bounds)
                 // For now, just skip if we have very good results already
                 let min_threshold = priority_queue.min_score_threshold();
-                if min_threshold > 0.95 {  // Very high quality results already
+                if min_threshold > 0.95 {
+                    // Very high quality results already
                     files_skipped_early = self.file_paths.len() - file_idx;
-                    debug!("Early termination: Skipping {} files (min_score: {})",
-                           files_skipped_early, min_threshold);
+                    debug!(
+                        "Early termination: Skipping {} files (min_score: {})",
+                        files_skipped_early, min_threshold
+                    );
                     break;
                 }
             }
             // Read from this file with optimizations including filter-based row group pruning
-            let (file_records, skipped) = self.read_file_with_optimization_and_filters(
-                file_path,
-                needs_vectors,
-                needs_metadata,
-                filter_expression.as_ref(),
-                quantization_enabled,
-            ).await?;
+            let (file_records, skipped) = self
+                .read_file_with_optimization_and_filters(
+                    file_path,
+                    needs_vectors,
+                    needs_metadata,
+                    filter_expression.as_ref(),
+                    quantization_enabled,
+                )
+                .await?;
 
             total_records_scanned += file_records.len();
             row_groups_skipped += skipped;
@@ -467,7 +485,8 @@ impl UnifiedParquetReader {
             if let Some(query_vector) = &search_plan.query_vector {
                 for record in file_records {
                     // Compute similarity score
-                    let score = compute_cosine_similarity(query_vector, &Arc::new(record.vector.clone()));
+                    let score =
+                        compute_cosine_similarity(query_vector, &Arc::new(record.vector.clone()));
 
                     // Check if score meets minimum threshold (if set)
                     if let Some(min_score) = search_plan.min_score {
@@ -488,7 +507,11 @@ impl UnifiedParquetReader {
                         score,
                         similarity: Some(score),
                         vector: Some(Arc::new(record.vector)),
-                        metadata: if needs_metadata { record.metadata } else { HashMap::new() },
+                        metadata: if needs_metadata {
+                            record.metadata
+                        } else {
+                            HashMap::new()
+                        },
                         debug_info: None,
                         version: record.version,
                         timestamp: record.timestamp,
@@ -514,7 +537,11 @@ impl UnifiedParquetReader {
                         score: 0.0,
                         similarity: Some(0.0),
                         vector: Some(Arc::new(record.vector)),
-                        metadata: if needs_metadata { record.metadata } else { HashMap::new() },
+                        metadata: if needs_metadata {
+                            record.metadata
+                        } else {
+                            HashMap::new()
+                        },
                         debug_info: None,
                         version: record.version,
                         timestamp: record.timestamp,
@@ -541,8 +568,14 @@ impl UnifiedParquetReader {
 
         let processing_time_us = start_time.elapsed().as_micros() as i64;
 
-        info!("UnifiedParquetReader: Search complete - scanned: {}, skipped: {}, returned: {}, files_skipped: {}, time: {}ms",
-              total_records_scanned, row_groups_skipped, total_results, files_skipped_early, processing_time_us / 1000);
+        info!(
+            "UnifiedParquetReader: Search complete - scanned: {}, skipped: {}, returned: {}, files_skipped: {}, time: {}ms",
+            total_records_scanned,
+            row_groups_skipped,
+            total_results,
+            files_skipped_early,
+            processing_time_us / 1000
+        );
 
         // For queries without filters, the main optimizations are:
         // 1. Column projection (skip metadata if not needed)
@@ -562,8 +595,10 @@ impl UnifiedParquetReader {
                 query_complexity: 0.0,
                 total_results: total_results as i64,
                 search_time_ms: (processing_time_us / 1000) as f64,
-                performance_hint: Some(format!("Column projection active. Scanned {} records, skipped {} row groups",
-                    total_records_scanned, row_groups_skipped)),
+                performance_hint: Some(format!(
+                    "Column projection active. Scanned {} records, skipped {} row groups",
+                    total_records_scanned, row_groups_skipped
+                )),
                 index_stats: None,
             },
             debug_info: Some(crate::core::service_types::SearchDebugInfo {
@@ -575,9 +610,18 @@ impl UnifiedParquetReader {
                 clusters_searched: vec![],
                 filter_pushdown_enabled: false, // TODO: Enable when metadata filters are present
                 parquet_columns_scanned: if needs_metadata {
-                    vec!["id".to_string(), "vector".to_string(), "metadata".to_string(), "version".to_string()]
+                    vec![
+                        "id".to_string(),
+                        "vector".to_string(),
+                        "metadata".to_string(),
+                        "version".to_string(),
+                    ]
                 } else {
-                    vec!["id".to_string(), "vector".to_string(), "version".to_string()]
+                    vec![
+                        "id".to_string(),
+                        "vector".to_string(),
+                        "version".to_string(),
+                    ]
                 },
                 timing_breakdown: {
                     let mut timing = std::collections::HashMap::new();
@@ -602,10 +646,12 @@ impl UnifiedParquetReader {
         filter_expression: Option<&crate::core::search::FilterExpression>,
         quantization_enabled: bool,
     ) -> Result<(Vec<VectorRecord>, usize)> {
-        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-        use parquet::arrow::ProjectionMask;
-        use arrow_array::{StringArray, Float32Array, FixedSizeListArray, ListArray, MapArray, Int64Array};
+        use arrow_array::{
+            FixedSizeListArray, Float32Array, Int64Array, ListArray, MapArray, StringArray,
+        };
         use bytes::Bytes;
+        use parquet::arrow::ProjectionMask;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use parquet::file::reader::FileReader;
         use parquet::file::serialized_reader::SerializedFileReader;
 
@@ -633,7 +679,9 @@ impl UnifiedParquetReader {
         // For now, we skip row group pruning with FilterExpression until FilterPushdown is updated
         // TODO: Update FilterPushdown to work with FilterExpression instead of MetadataFilter
         let selected_row_groups: Vec<usize> = if filter_expression.is_some() {
-            debug!("  Filter expression present - row group pruning with FilterExpression not yet implemented");
+            debug!(
+                "  Filter expression present - row group pruning with FilterExpression not yet implemented"
+            );
             // Select all row groups for now - will implement statistics-based pruning later
             (0..total_row_groups).collect()
         } else {
@@ -657,9 +705,20 @@ impl UnifiedParquetReader {
 
         // Check for quantized vector columns first (for pre-filtering optimization)
         // Only check if quantization is enabled in collection config
-        let has_binary_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY).is_ok();
-        let has_int8_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8).is_ok();
-        let has_pq_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8).is_ok();
+        let has_binary_vectors = quantization_enabled
+            && schema
+                .index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+                )
+                .is_ok();
+        let has_int8_vectors = quantization_enabled
+            && schema
+                .index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8)
+                .is_ok();
+        let has_pq_vectors = quantization_enabled
+            && schema
+                .index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8)
+                .is_ok();
 
         // Always need ID
         if let Ok(idx) = schema.index_of("id") {
@@ -670,17 +729,23 @@ impl UnifiedParquetReader {
         if needs_vectors && (has_binary_vectors || has_int8_vectors || has_pq_vectors) {
             // Read quantized vectors for fast approximate filtering
             if has_binary_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY) {
+                if let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+                ) {
                     projection.push(idx);
                 }
             }
             if has_int8_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8) {
+                if let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
+                ) {
                     projection.push(idx);
                 }
             }
             if has_pq_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8) {
+                if let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
+                ) {
                     projection.push(idx);
                 }
             }
@@ -711,11 +776,28 @@ impl UnifiedParquetReader {
                 let field_name = schema.field(field_idx).name();
 
                 // Skip columns we've already added or reserved columns
-                if matches!(field_name.as_str(),
-                    "id" | "row_group_offset" | "row_index" | "vector" | "vector_fp32" |
-                    "q_binary" | "q_int8" | "qp_int8_scale" | "qp_int8_min" | "qp_int8_max" |
-                    "q_pq4" | "q_pq8" | "q_pq16" | "q_pq32" |
-                    "timestamp" | "updated_at" | "expires_at" | "version" | "source" | "extra_meta" | "metadata"
+                if matches!(
+                    field_name.as_str(),
+                    "id" | "row_group_offset"
+                        | "row_index"
+                        | "vector"
+                        | "vector_fp32"
+                        | "q_binary"
+                        | "q_int8"
+                        | "qp_int8_scale"
+                        | "qp_int8_min"
+                        | "qp_int8_max"
+                        | "q_pq4"
+                        | "q_pq8"
+                        | "q_pq16"
+                        | "q_pq32"
+                        | "timestamp"
+                        | "updated_at"
+                        | "expires_at"
+                        | "version"
+                        | "source"
+                        | "extra_meta"
+                        | "metadata"
                 ) {
                     continue;
                 }
@@ -742,10 +824,7 @@ impl UnifiedParquetReader {
         }
 
         // Create projection mask
-        let projection_mask = ProjectionMask::roots(
-            reader_builder.parquet_schema(),
-            projection
-        );
+        let projection_mask = ProjectionMask::roots(reader_builder.parquet_schema(), projection);
 
         // Create reader with projection and selected row groups
         let mut reader = reader_builder
@@ -761,7 +840,8 @@ impl UnifiedParquetReader {
             let batch = batch?;
 
             // Extract records from this batch
-            let batch_records = self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
+            let batch_records =
+                self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
 
             // Apply filter expression to records if present
             if let Some(filter_expr) = filter_expression {
@@ -776,8 +856,12 @@ impl UnifiedParquetReader {
             }
         }
 
-        debug!("  Row groups: {}/{} selected (skipped {})",
-               total_row_groups - row_groups_skipped, total_row_groups, row_groups_skipped);
+        debug!(
+            "  Row groups: {}/{} selected (skipped {})",
+            total_row_groups - row_groups_skipped,
+            total_row_groups,
+            row_groups_skipped
+        );
         debug!("  Records after filtering: {}", records.len());
 
         Ok((records, row_groups_skipped))
@@ -831,17 +915,34 @@ impl UnifiedParquetReader {
         needs_vectors: bool,
         needs_metadata: bool,
     ) -> Result<Vec<VectorRecord>> {
-        use arrow_array::{StringArray, Float32Array, FixedSizeListArray, ListArray, Int64Array, BinaryArray, UInt8Array, MapArray};
+        use arrow_array::{
+            BinaryArray, FixedSizeListArray, Float32Array, Int64Array, ListArray, MapArray,
+            StringArray, UInt8Array,
+        };
 
         // Check if we have quantized vectors for pre-filtering
-        let has_binary = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY).is_some();
-        let has_int8 = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8).is_some();
-        let has_pq8 = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8).is_some();
+        let has_binary = batch
+            .column_by_name(
+                crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+            )
+            .is_some();
+        let has_int8 = batch
+            .column_by_name(
+                crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
+            )
+            .is_some();
+        let has_pq8 = batch
+            .column_by_name(
+                crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
+            )
+            .is_some();
 
         let quantized_prefilter = has_binary || has_int8 || has_pq8;
         if quantized_prefilter {
-            debug!("  Using quantized vectors for pre-filtering (binary={}, int8={}, pq8={})",
-                   has_binary, has_int8, has_pq8);
+            debug!(
+                "  Using quantized vectors for pre-filtering (binary={}, int8={}, pq8={})",
+                has_binary, has_int8, has_pq8
+            );
         }
 
         let mut records = Vec::new();
@@ -855,21 +956,30 @@ impl UnifiedParquetReader {
 
         // Extract quantized vectors if available (for pre-filtering)
         let binary_vectors = if has_binary {
-            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY)
+            batch
+                .column_by_name(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+                )
                 .and_then(|c| c.as_any().downcast_ref::<BinaryArray>())
         } else {
             None
         };
 
         let int8_vectors = if has_int8 {
-            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8)
+            batch
+                .column_by_name(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
+                )
                 .and_then(|c| c.as_any().downcast_ref::<BinaryArray>())
         } else {
             None
         };
 
         let pq8_vectors = if has_pq8 {
-            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8)
+            batch
+                .column_by_name(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
+                )
                 .and_then(|c| c.as_any().downcast_ref::<BinaryArray>())
         } else {
             None
@@ -878,7 +988,10 @@ impl UnifiedParquetReader {
         // Get full-precision vector column if needed
         let vector_values = if needs_vectors {
             // Try different vector column names and types
-            if let Some(col) = batch.column_by_name("vector").or_else(|| batch.column_by_name("vector_fp32")) {
+            if let Some(col) = batch
+                .column_by_name("vector")
+                .or_else(|| batch.column_by_name("vector_fp32"))
+            {
                 // Try FixedSizeList first (preferred)
                 if let Some(fixed_list) = col.as_any().downcast_ref::<FixedSizeListArray>() {
                     Some(self.extract_vectors_from_fixed_list(fixed_list, num_rows)?)
@@ -958,7 +1071,9 @@ impl UnifiedParquetReader {
                 // then from "extra_meta" Map column (as strings)
                 let mut meta_map = HashMap::new();
                 use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-                use arrow_array::{Array as ArrowArrayTrait, BooleanArray, Int64Array, Float64Array};
+                use arrow_array::{
+                    Array as ArrowArrayTrait, BooleanArray, Float64Array, Int64Array,
+                };
 
                 // First, extract from typed filterable columns (if any exist in the schema)
                 // Common filterable columns: category, price, enabled, etc.
@@ -969,11 +1084,27 @@ impl UnifiedParquetReader {
                     let field_name = field.name();
 
                     // Skip reserved columns
-                    if matches!(field_name.as_str(),
-                        "id" | "row_group_offset" | "row_index" | "vector" | "vector_fp32" |
-                        "q_binary" | "q_int8" | "qp_int8_scale" | "qp_int8_min" | "qp_int8_max" |
-                        "q_pq4" | "q_pq8" | "q_pq16" | "q_pq32" |
-                        "timestamp" | "updated_at" | "expires_at" | "version" | "source" | "extra_meta"
+                    if matches!(
+                        field_name.as_str(),
+                        "id" | "row_group_offset"
+                            | "row_index"
+                            | "vector"
+                            | "vector_fp32"
+                            | "q_binary"
+                            | "q_int8"
+                            | "qp_int8_scale"
+                            | "qp_int8_min"
+                            | "qp_int8_max"
+                            | "q_pq4"
+                            | "q_pq8"
+                            | "q_pq16"
+                            | "q_pq32"
+                            | "timestamp"
+                            | "updated_at"
+                            | "expires_at"
+                            | "version"
+                            | "source"
+                            | "extra_meta"
                     ) {
                         continue;
                     }
@@ -983,53 +1114,66 @@ impl UnifiedParquetReader {
                         use arrow::datatypes::DataType;
                         match field.data_type() {
                             DataType::Utf8 => {
-                                if let Some(str_array) = col.as_any().downcast_ref::<StringArray>() {
+                                if let Some(str_array) = col.as_any().downcast_ref::<StringArray>()
+                                {
                                     if !ArrowArrayTrait::is_null(str_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
-                                                value: Some(Value::StringValue(str_array.value(row_idx).to_string()))
-                                            }
+                                                value: Some(Value::StringValue(
+                                                    str_array.value(row_idx).to_string(),
+                                                )),
+                                            },
                                         );
                                     }
                                 }
-                            },
+                            }
                             DataType::Int64 => {
                                 if let Some(int_array) = col.as_any().downcast_ref::<Int64Array>() {
                                     if !ArrowArrayTrait::is_null(int_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
-                                                value: Some(Value::Int64Value(int_array.value(row_idx)))
-                                            }
+                                                value: Some(Value::Int64Value(
+                                                    int_array.value(row_idx),
+                                                )),
+                                            },
                                         );
                                     }
                                 }
-                            },
+                            }
                             DataType::Float64 => {
-                                if let Some(float_array) = col.as_any().downcast_ref::<Float64Array>() {
+                                if let Some(float_array) =
+                                    col.as_any().downcast_ref::<Float64Array>()
+                                {
                                     if !ArrowArrayTrait::is_null(float_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
-                                                value: Some(Value::NumberValue(float_array.value(row_idx)))
-                                            }
+                                                value: Some(Value::NumberValue(
+                                                    float_array.value(row_idx),
+                                                )),
+                                            },
                                         );
                                     }
                                 }
-                            },
+                            }
                             DataType::Boolean => {
-                                if let Some(bool_array) = col.as_any().downcast_ref::<BooleanArray>() {
+                                if let Some(bool_array) =
+                                    col.as_any().downcast_ref::<BooleanArray>()
+                                {
                                     if !ArrowArrayTrait::is_null(bool_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
-                                                value: Some(Value::BoolValue(bool_array.value(row_idx)))
-                                            }
+                                                value: Some(Value::BoolValue(
+                                                    bool_array.value(row_idx),
+                                                )),
+                                            },
                                         );
                                     }
                                 }
-                            },
+                            }
                             _ => {
                                 // Unsupported type - skip
                             }
@@ -1046,16 +1190,25 @@ impl UnifiedParquetReader {
                             let map_value = map_array.value(row_idx);
 
                             // Map is stored as a struct array with "key" and "value" fields
-                            if let Some(struct_array) = map_value.as_any().downcast_ref::<arrow_array::StructArray>() {
-                                if let Some(keys) = struct_array.column_by_name("key").and_then(|c| c.as_any().downcast_ref::<StringArray>()) {
-                                    if let Some(values) = struct_array.column_by_name("value").and_then(|c| c.as_any().downcast_ref::<StringArray>()) {
+                            if let Some(struct_array) = map_value
+                                .as_any()
+                                .downcast_ref::<arrow_array::StructArray>()
+                            {
+                                if let Some(keys) = struct_array
+                                    .column_by_name("key")
+                                    .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                                {
+                                    if let Some(values) = struct_array
+                                        .column_by_name("value")
+                                        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                                    {
                                         for i in 0..keys.len() {
                                             if !keys.is_null(i) && !values.is_null(i) {
                                                 let key = keys.value(i).to_string();
                                                 let value = values.value(i).to_string();
                                                 // Only insert if not already present from typed columns
                                                 meta_map.entry(key).or_insert(SqlValue {
-                                                    value: Some(Value::StringValue(value))
+                                                    value: Some(Value::StringValue(value)),
                                                 });
                                             }
                                         }
@@ -1100,7 +1253,8 @@ impl UnifiedParquetReader {
     ) -> Result<Vec<Vec<f32>>> {
         use arrow_array::Float32Array;
 
-        let values = array.values()
+        let values = array
+            .values()
             .as_any()
             .downcast_ref::<Float32Array>()
             .ok_or_else(|| anyhow::anyhow!("Invalid vector values type"))?;
@@ -1111,9 +1265,7 @@ impl UnifiedParquetReader {
         for i in 0..num_rows {
             let start = i * dim;
             let end = start + dim;
-            let vector: Vec<f32> = (start..end)
-                .map(|idx| values.value(idx))
-                .collect();
+            let vector: Vec<f32> = (start..end).map(|idx| values.value(idx)).collect();
             vectors.push(vector);
         }
 
@@ -1128,7 +1280,8 @@ impl UnifiedParquetReader {
     ) -> Result<Vec<Vec<f32>>> {
         use arrow_array::Float32Array;
 
-        let values = array.values()
+        let values = array
+            .values()
             .as_any()
             .downcast_ref::<Float32Array>()
             .ok_or_else(|| anyhow::anyhow!("Invalid vector values type"))?;
@@ -1138,9 +1291,7 @@ impl UnifiedParquetReader {
         for i in 0..num_rows {
             let start = array.value_offsets()[i] as usize;
             let end = array.value_offsets()[i + 1] as usize;
-            let vector: Vec<f32> = (start..end)
-                .map(|idx| values.value(idx))
-                .collect();
+            let vector: Vec<f32> = (start..end).map(|idx| values.value(idx)).collect();
             vectors.push(vector);
         }
 
@@ -1167,7 +1318,9 @@ impl UnifiedParquetReader {
 
             // For similarity search, we can use range reads for better performance
             // This is especially beneficial for cloud storage
-            let records = self.read_with_filter_and_limit(&path, fs, filter, Some(top_k)).await?;
+            let records = self
+                .read_with_filter_and_limit(&path, fs, filter, Some(top_k))
+                .await?;
             all_records.extend(records);
 
             // Early termination if we have enough results
@@ -1221,7 +1374,11 @@ impl UnifiedParquetReader {
     }
 
     /// Test bloom filter efficiency
-    pub async fn test_bloom_filter_efficiency(&self, file_path: &str, sample_ids: &[String]) -> Result<(f64, f64)> {
+    pub async fn test_bloom_filter_efficiency(
+        &self,
+        file_path: &str,
+        sample_ids: &[String],
+    ) -> Result<(f64, f64)> {
         let bloom_filters = self.load_bloom_filters(file_path).await?;
 
         // Simulate efficiency metrics
@@ -1284,14 +1441,19 @@ impl UnifiedParquetReader {
             }
         }
 
-        debug!("Schema detection for {}: {} direct columns, extra_meta scan: {}",
-               file_path, direct_columns.len(), needs_extra_meta_scan);
+        debug!(
+            "Schema detection for {}: {} direct columns, extra_meta scan: {}",
+            file_path,
+            direct_columns.len(),
+            needs_extra_meta_scan
+        );
 
         // Decision: Choose fast or slow path based on schema analysis
         if !direct_columns.is_empty() && !needs_extra_meta_scan {
             // FAST PATH: All filter columns are directly available in schema
             debug!("  Fast path: Using direct column filtering with bloom filters");
-            self.fast_path_query(file_path, filter, &direct_columns).await
+            self.fast_path_query(file_path, filter, &direct_columns)
+                .await
         } else if needs_extra_meta_scan && allow_slow_queries {
             // SLOW PATH: Need to scan extra_meta column for some filters
             debug!("  Slow path: Full scan with extra_meta filtering");
@@ -1299,7 +1461,8 @@ impl UnifiedParquetReader {
         } else if !direct_columns.is_empty() {
             // MIXED PATH: Some columns direct, some need extra_meta - partial optimization
             debug!("  Mixed path: Partial direct filtering");
-            self.mixed_path_query(file_path, filter, &direct_columns).await
+            self.mixed_path_query(file_path, filter, &direct_columns)
+                .await
         } else if !allow_slow_queries {
             // No optimization possible and slow queries not allowed
             debug!("  Rejected: Slow scan required but not allowed");
@@ -1321,7 +1484,8 @@ impl UnifiedParquetReader {
         direct_columns: &[String],
     ) -> Result<Vec<VectorRecord>> {
         // 1. Use bloom filters to find candidate row groups
-        let column_filters: Vec<(String, String)> = filter.clauses
+        let column_filters: Vec<(String, String)> = filter
+            .clauses
             .iter()
             .filter(|cond| direct_columns.contains(&cond.field))
             .filter_map(|cond| {
@@ -1336,28 +1500,38 @@ impl UnifiedParquetReader {
             .collect();
 
         let candidate_row_groups = if !column_filters.is_empty() {
-            self.get_candidate_row_groups(file_path, &column_filters).await?
+            self.get_candidate_row_groups(file_path, &column_filters)
+                .await?
         } else {
             // No bloom filter optimization available - read all row groups
             let bloom_filters = self.load_bloom_filters(file_path).await?;
             (0..bloom_filters.num_row_groups).collect()
         };
 
-        trace!("    Bloom filters reduced to {} row groups", candidate_row_groups.len());
+        trace!(
+            "    Bloom filters reduced to {} row groups",
+            candidate_row_groups.len()
+        );
 
         // 2. Read only candidate row groups with projection
         let fs = self.get_filesystem_for_path(file_path)?;
         let path = FilesystemFactory::resolve_path(file_path)?;
 
         // For direct columns, we can use parquet's built-in predicate pushdown
-        let records = self.read_specific_row_groups(&path, fs, &candidate_row_groups, Some(filter)).await?;
+        let records = self
+            .read_specific_row_groups(&path, fs, &candidate_row_groups, Some(filter))
+            .await?;
 
         // 3. Apply any remaining filters (parquet predicate pushdown might not catch everything)
-        let filtered_records: Vec<VectorRecord> = records.into_iter()
+        let filtered_records: Vec<VectorRecord> = records
+            .into_iter()
             .filter(|record| self.matches_direct_filter(record, filter, direct_columns))
             .collect();
 
-        trace!("    Final results: {} records after direct filtering", filtered_records.len());
+        trace!(
+            "    Final results: {} records after direct filtering",
+            filtered_records.len()
+        );
         Ok(filtered_records)
     }
 
@@ -1372,14 +1546,21 @@ impl UnifiedParquetReader {
         let path = FilesystemFactory::resolve_path(file_path)?;
 
         let all_records = self.read_entire_file_raw(&path, fs).await?;
-        trace!("    Read {} total records for extra_meta filtering", all_records.len());
+        trace!(
+            "    Read {} total records for extra_meta filtering",
+            all_records.len()
+        );
 
         // 2. Apply filters by examining each record's metadata
-        let filtered_records = all_records.into_iter()
+        let filtered_records = all_records
+            .into_iter()
             .filter(|record| self.matches_extra_meta_filter(record, filter))
             .collect::<Vec<_>>();
 
-        trace!("    Final results: {} records after extra_meta filtering", filtered_records.len());
+        trace!(
+            "    Final results: {} records after extra_meta filtering",
+            filtered_records.len()
+        );
         Ok(filtered_records)
     }
 
@@ -1392,7 +1573,9 @@ impl UnifiedParquetReader {
     ) -> Result<Vec<VectorRecord>> {
         // 1. First apply direct column filters to reduce dataset
         let direct_filter = MetadataFilter {
-            clauses: filter.clauses.iter()
+            clauses: filter
+                .clauses
+                .iter()
                 .filter(|cond| direct_columns.contains(&cond.field))
                 .cloned()
                 .collect(),
@@ -1400,7 +1583,8 @@ impl UnifiedParquetReader {
         };
 
         let mut records = if !direct_filter.clauses.is_empty() {
-            self.fast_path_query(file_path, &direct_filter, direct_columns).await?
+            self.fast_path_query(file_path, &direct_filter, direct_columns)
+                .await?
         } else {
             // No direct filters - read all
             let fs = self.get_filesystem_for_path(file_path)?;
@@ -1413,12 +1597,20 @@ impl UnifiedParquetReader {
         // 2. Apply extra_meta filters to remaining records
         records.retain(|record| self.matches_extra_meta_filter(record, filter));
 
-        trace!("    Final results: {} records after mixed filtering", records.len());
+        trace!(
+            "    Final results: {} records after mixed filtering",
+            records.len()
+        );
         Ok(records)
     }
 
     /// Check if record matches direct column filters
-    fn matches_direct_filter(&self, record: &VectorRecord, filter: &MetadataFilter, direct_columns: &[String]) -> bool {
+    fn matches_direct_filter(
+        &self,
+        record: &VectorRecord,
+        filter: &MetadataFilter,
+        direct_columns: &[String],
+    ) -> bool {
         // For direct columns, the basic fields (id, timestamp, etc.) are already accessible
         // This is a simplified implementation - in practice would handle more data types
 
@@ -1428,7 +1620,9 @@ impl UnifiedParquetReader {
                     "id" => {
                         // Extract the expected value from the condition
                         let expected_id = match &condition.value {
-                            Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => s,
+                            Some(
+                                crate::proto::proximadb_v1::filter_clause::Value::StringValue(s),
+                            ) => s,
                             _ => return false,
                         };
                         if &record.id != expected_id {
@@ -1438,10 +1632,12 @@ impl UnifiedParquetReader {
                     "timestamp" => {
                         // Extract timestamp value
                         let expected_timestamp = match &condition.value {
-                            Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i)) => *i,
-                            Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => {
-                                s.parse::<i64>().unwrap_or(0)
+                            Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i)) => {
+                                *i
                             }
+                            Some(
+                                crate::proto::proximadb_v1::filter_clause::Value::StringValue(s),
+                            ) => s.parse::<i64>().unwrap_or(0),
                             _ => return false,
                         };
                         {
@@ -1462,7 +1658,11 @@ impl UnifiedParquetReader {
 
     /// Check if record matches filter expression using centralized sql_value_filter
     /// This ensures consistency with SST and other engines
-    fn matches_filter_expression(&self, record: &VectorRecord, filter_expr: &crate::core::search::FilterExpression) -> bool {
+    fn matches_filter_expression(
+        &self,
+        record: &VectorRecord,
+        filter_expr: &crate::core::search::FilterExpression,
+    ) -> bool {
         // Use centralized type-safe SqlValue filtering from core::search::sql_value_filter
         // VectorRecord.metadata is map<string, SqlValue> per proto definition
         crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata)
@@ -1479,8 +1679,11 @@ impl UnifiedParquetReader {
     }
 
     /// Convert legacy MetadataFilter to FilterExpression
-    fn convert_metadata_filter_to_expression(&self, filter: &MetadataFilter) -> crate::core::search::FilterExpression {
-        use crate::core::search::{FilterExpression, ComparisonOperator};
+    fn convert_metadata_filter_to_expression(
+        &self,
+        filter: &MetadataFilter,
+    ) -> crate::core::search::FilterExpression {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
 
         if filter.clauses.is_empty() {
             // Empty filter matches everything - return a trivial true condition
@@ -1492,32 +1695,36 @@ impl UnifiedParquetReader {
         }
 
         // Convert each clause to a Comparison expression
-        let expressions: Vec<FilterExpression> = filter.clauses.iter().map(|clause| {
-            // Convert filter_clause::Value to serde_json::Value
-            let value = match &clause.value {
-                Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => {
-                    serde_json::Value::String(s.clone())
-                }
-                Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i)) => {
-                    serde_json::Value::Number((*i).into())
-                }
-                Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f)) => {
-                    serde_json::Number::from_f64(*f)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null)
-                }
-                Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b)) => {
-                    serde_json::Value::Bool(*b)
-                }
-                _ => serde_json::Value::Null,
-            };
+        let expressions: Vec<FilterExpression> = filter
+            .clauses
+            .iter()
+            .map(|clause| {
+                // Convert filter_clause::Value to serde_json::Value
+                let value = match &clause.value {
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i)) => {
+                        serde_json::Value::Number((*i).into())
+                    }
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f)) => {
+                        serde_json::Number::from_f64(*f)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null)
+                    }
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b)) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    _ => serde_json::Value::Null,
+                };
 
-            FilterExpression::Comparison {
-                field: clause.field.clone(),
-                operator: ComparisonOperator::Equals, // MetadataFilter only supports equals
-                value,
-            }
-        }).collect();
+                FilterExpression::Comparison {
+                    field: clause.field.clone(),
+                    operator: ComparisonOperator::Equals, // MetadataFilter only supports equals
+                    value,
+                }
+            })
+            .collect();
 
         // Combine with AND logic (MetadataFilter default)
         if expressions.len() == 1 {
@@ -1528,7 +1735,11 @@ impl UnifiedParquetReader {
     }
 
     /// Get schema from cached metadata (leverages UnifiedCachingFilesystem)
-    async fn get_cached_schema(&self, file_path: &str, _fs: Arc<dyn FileSystem>) -> Result<Arc<parquet::schema::types::SchemaDescriptor>> {
+    async fn get_cached_schema(
+        &self,
+        file_path: &str,
+        _fs: Arc<dyn FileSystem>,
+    ) -> Result<Arc<parquet::schema::types::SchemaDescriptor>> {
         use parquet::file::reader::{FileReader, SerializedFileReader};
 
         // Use UnifiedCachingFilesystem for metadata caching
@@ -1556,7 +1767,9 @@ impl UnifiedParquetReader {
             let footer_start = file_size.saturating_sub(footer_size);
 
             // Use UnifiedCachingFilesystem for efficient range reads with caching
-            let footer_data = cached_fs.read_range(file_path, footer_start, footer_size).await?;
+            let footer_data = cached_fs
+                .read_range(file_path, footer_start, footer_size)
+                .await?;
 
             // Parse footer to extract schema
             let bytes = bytes::Bytes::from(footer_data);
@@ -1576,8 +1789,12 @@ impl UnifiedParquetReader {
             let schema = metadata.file_metadata().schema_descr_ptr();
 
             // Schema is now cached in UnifiedCachingFilesystem automatically
-            trace!("Schema cached for {}: {} columns (engine: {})",
-                   file_path, schema.num_columns(), cache_context.engine_type);
+            trace!(
+                "Schema cached for {}: {} columns (engine: {})",
+                file_path,
+                schema.num_columns(),
+                cache_context.engine_type
+            );
 
             Ok(schema)
         } else {
@@ -1595,9 +1812,13 @@ impl UnifiedParquetReader {
     }
 
     /// Read entire file without row group optimization
-    async fn read_entire_file_raw(&self, path: &str, fs: Arc<dyn FileSystem>) -> Result<Vec<VectorRecord>> {
+    async fn read_entire_file_raw(
+        &self,
+        path: &str,
+        fs: Arc<dyn FileSystem>,
+    ) -> Result<Vec<VectorRecord>> {
         let query_config = QueryConfig {
-            enable_pushdown: false, // Disable pushdown for raw read
+            enable_pushdown: false,   // Disable pushdown for raw read
             enable_projection: false, // Read all columns
             enable_statistics: false,
             cache_strategy: CacheStrategy::LRU,
@@ -1626,9 +1847,11 @@ impl UnifiedParquetReader {
             .get_candidate_row_groups(file_path, &column_filters)
             .await?;
 
-        trace!("Bloom filter optimization: Checking {} out of {} row groups",
-               candidate_row_groups.len(),
-               self.load_bloom_filters(file_path).await?.num_row_groups);
+        trace!(
+            "Bloom filter optimization: Checking {} out of {} row groups",
+            candidate_row_groups.len(),
+            self.load_bloom_filters(file_path).await?.num_row_groups
+        );
 
         // Only read from candidate row groups
         let fs = self.get_filesystem_for_path(file_path)?;
@@ -1641,7 +1864,9 @@ impl UnifiedParquetReader {
         // Read only the candidate row groups
         // This is where the major optimization happens - we skip row groups
         // where bloom filters indicate the values definitely don't exist
-        let records = self.read_specific_row_groups(&path, fs, &candidate_row_groups, None).await?;
+        let records = self
+            .read_specific_row_groups(&path, fs, &candidate_row_groups, None)
+            .await?;
 
         // Filter to exact matches (bloom filters can have false positives)
         let id_set: std::collections::HashSet<_> = id_filters.iter().collect();
@@ -1730,7 +1955,8 @@ impl UnifiedParquetReader {
                 // For a real implementation, we would check if bloom filters exist
                 // using the column metadata and file structure
 
-                let column_name = metadata.file_metadata()
+                let column_name = metadata
+                    .file_metadata()
                     .schema_descr()
                     .column(col_idx)
                     .name()
@@ -1738,9 +1964,9 @@ impl UnifiedParquetReader {
 
                 // Check if this column likely has a bloom filter
                 // Most parquet writers create bloom filters for string columns and high-cardinality columns
-                let likely_has_bloom_filter = column_name == "id" ||
-                                            column_name.contains("string") ||
-                                            column_metadata.num_values() > 1000;
+                let likely_has_bloom_filter = column_name == "id"
+                    || column_name.contains("string")
+                    || column_metadata.num_values() > 1000;
 
                 if likely_has_bloom_filter {
                     // Estimate bloom filter size (typical range: 64KB to 1MB per column)
@@ -1767,7 +1993,12 @@ impl UnifiedParquetReader {
     }
 
     /// Check if a value might be present using bloom filters
-    pub fn might_contain_value(&self, bloom_filters: &BloomFilterCollection, column: &str, value: &str) -> bool {
+    pub fn might_contain_value(
+        &self,
+        bloom_filters: &BloomFilterCollection,
+        column: &str,
+        value: &str,
+    ) -> bool {
         // In a real implementation, this would:
         // 1. Find the bloom filter for the specified column
         // 2. Hash the value using the same hash function as the bloom filter
@@ -1777,7 +2008,10 @@ impl UnifiedParquetReader {
         // TODO: Implement actual bloom filter checking using parquet crate APIs
 
         // Check if we have a bloom filter for this column
-        bloom_filters.bloom_filters.iter().any(|bf| bf.column_name == column)
+        bloom_filters
+            .bloom_filters
+            .iter()
+            .any(|bf| bf.column_name == column)
     }
 
     /// Get row groups that might contain the specified values (using bloom filters)
@@ -1851,7 +2085,7 @@ impl StreamingIterator {
 /// Branch filter type for performance testing
 #[derive(Debug, Clone)]
 pub enum BranchFilterType {
-    Fast,    // Use bloom filters and statistics only
-    Slow,    // Full scan with complex predicates
-    Mixed,   // Hybrid approach
+    Fast,  // Use bloom filters and statistics only
+    Slow,  // Full scan with complex predicates
+    Mixed, // Hybrid approach
 }

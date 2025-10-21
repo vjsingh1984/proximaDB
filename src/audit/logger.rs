@@ -3,15 +3,18 @@
 //! Main audit logging system with comprehensive event tracking,
 //! encryption, and compliance reporting capabilities.
 
-use super::types::{AuditEvent, AuditEventType, AuditResult, AuditResource, SecurityAlert, SecurityAlertType, SecurityAlertSeverity};
 use super::storage::AuditStorage;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::collections::HashMap;
-use chrono::{Utc, Duration, Timelike};
-use uuid::Uuid;
+use super::types::{
+    AuditEvent, AuditEventType, AuditResource, AuditResult, SecurityAlert, SecurityAlertSeverity,
+    SecurityAlertType,
+};
 use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn, error};
+use chrono::{Duration, Timelike, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 /// Comprehensive audit logger for enterprise compliance
 #[derive(Clone)]
@@ -55,10 +58,20 @@ impl Default for AuditConfig {
 /// Audit storage backend options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditStorageBackend {
-    File { directory: String },
-    Database { connection_string: String },
-    S3 { bucket: String, region: String },
-    Combined { primary: Box<AuditStorageBackend>, secondary: Box<AuditStorageBackend> },
+    File {
+        directory: String,
+    },
+    Database {
+        connection_string: String,
+    },
+    S3 {
+        bucket: String,
+        region: String,
+    },
+    Combined {
+        primary: Box<AuditStorageBackend>,
+        secondary: Box<AuditStorageBackend>,
+    },
 }
 
 /// Encryption key for sensitive audit data
@@ -124,7 +137,10 @@ impl AuditLogger {
             None
         };
 
-        info!("✅ Audit logger initialized with {} compliance frameworks", config.compliance_frameworks.len());
+        info!(
+            "✅ Audit logger initialized with {} compliance frameworks",
+            config.compliance_frameworks.len()
+        );
 
         Ok(Self {
             storage,
@@ -136,7 +152,10 @@ impl AuditLogger {
 
     /// Log comprehensive audit event
     pub async fn log_event(&self, event: AuditEvent) -> Result<()> {
-        debug!("📝 Logging audit event: {:?} for user {:?}", event.event_type, event.user_id);
+        debug!(
+            "📝 Logging audit event: {:?} for user {:?}",
+            event.event_type, event.user_id
+        );
 
         // Step 1: Validate event structure
         self.validate_audit_event(&event)?;
@@ -152,12 +171,17 @@ impl AuditLogger {
         };
 
         // Step 4: Store in primary audit storage
-        self.storage.store_audit_event(&processed_event).await
+        self.storage
+            .store_audit_event(&processed_event)
+            .await
             .map_err(|e| anyhow!("Failed to store audit event: {}", e))?;
 
         // Step 5: Send to external audit systems if configured
         if let Some(ref external_endpoint) = self.config.external_audit_endpoint {
-            if let Err(e) = self.send_to_external_audit(&processed_event, external_endpoint).await {
+            if let Err(e) = self
+                .send_to_external_audit(&processed_event, external_endpoint)
+                .await
+            {
                 warn!("Failed to send audit event to external system: {}", e);
                 // Don't fail the operation if external audit fails
             }
@@ -166,7 +190,10 @@ impl AuditLogger {
         // Step 6: Evaluate for security alerts
         self.evaluate_security_alerts(&processed_event).await?;
 
-        debug!("✅ Audit event logged successfully: {}", processed_event.event_id);
+        debug!(
+            "✅ Audit event logged successfully: {}",
+            processed_event.event_id
+        );
         Ok(())
     }
 
@@ -180,7 +207,9 @@ impl AuditLogger {
         user_agent: Option<String>,
     ) -> Result<()> {
         // Calculate risk score before moving ip_address
-        let risk_score = self.calculate_authentication_risk(user_id, &ip_address).await;
+        let risk_score = self
+            .calculate_authentication_risk(user_id, &ip_address)
+            .await;
 
         let event = AuditEvent {
             event_id: Uuid::new_v4().to_string(),
@@ -237,14 +266,17 @@ impl AuditLogger {
     }
 
     /// Create storage backend based on configuration
-    async fn create_storage_backend(config: &AuditConfig) -> Result<Arc<dyn AuditStorage + Send + Sync>> {
+    async fn create_storage_backend(
+        config: &AuditConfig,
+    ) -> Result<Arc<dyn AuditStorage + Send + Sync>> {
         match &config.storage_backend {
             AuditStorageBackend::File { directory } => {
                 let storage = super::storage::FileAuditStorage::new(directory.clone()).await?;
                 Ok(Arc::new(storage))
             }
             AuditStorageBackend::Database { connection_string } => {
-                let storage = super::storage::DatabaseAuditStorage::new(connection_string.clone()).await?;
+                let storage =
+                    super::storage::DatabaseAuditStorage::new(connection_string.clone()).await?;
                 Ok(Arc::new(storage))
             }
             AuditStorageBackend::S3 { bucket, region } => {
@@ -278,24 +310,35 @@ impl AuditLogger {
     /// Enrich audit event with additional metadata
     async fn enrich_audit_event(&self, mut event: AuditEvent) -> Result<AuditEvent> {
         // Add system metadata
-        event.details.insert("audit_version".to_string(), serde_json::Value::String("1.0".to_string()));
-        event.details.insert("system_hostname".to_string(), serde_json::Value::String(
-            std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string())
-        ));
+        event.details.insert(
+            "audit_version".to_string(),
+            serde_json::Value::String("1.0".to_string()),
+        );
+        event.details.insert(
+            "system_hostname".to_string(),
+            serde_json::Value::String(
+                std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string()),
+            ),
+        );
 
         // Add compliance framework tags
-        event.details.insert("compliance_frameworks".to_string(),
+        event.details.insert(
+            "compliance_frameworks".to_string(),
             serde_json::Value::Array(
-                self.config.compliance_frameworks.iter()
+                self.config
+                    .compliance_frameworks
+                    .iter()
                     .map(|f| serde_json::Value::String(f.clone()))
-                    .collect()
-            )
+                    .collect(),
+            ),
         );
 
         // Add geolocation for IP address if available
         if let Some(ref ip) = event.ip_address {
             if let Ok(location) = self.get_ip_geolocation(ip).await {
-                event.details.insert("geolocation".to_string(), serde_json::to_value(location)?);
+                event
+                    .details
+                    .insert("geolocation".to_string(), serde_json::to_value(location)?);
             }
         }
 
@@ -325,7 +368,9 @@ impl AuditLogger {
             if self.is_sensitive_field(key) {
                 if let serde_json::Value::String(string_value) = value {
                     let encrypted_value = self.encryption_key.encrypt(string_value.as_bytes())?;
-                    *value = serde_json::Value::String(crate::utils::encoding::base64_encode(&encrypted_value));
+                    *value = serde_json::Value::String(crate::utils::encoding::base64_encode(
+                        &encrypted_value,
+                    ));
                 }
             }
         }
@@ -336,13 +381,20 @@ impl AuditLogger {
     /// Check if field contains sensitive data
     fn is_sensitive_field(&self, field_name: &str) -> bool {
         let sensitive_fields = [
-            "email", "phone", "ssn", "credit_card", "password",
-            "api_key", "token", "secret", "private_key"
+            "email",
+            "phone",
+            "ssn",
+            "credit_card",
+            "password",
+            "api_key",
+            "token",
+            "secret",
+            "private_key",
         ];
 
-        sensitive_fields.iter().any(|&sensitive|
-            field_name.to_lowercase().contains(sensitive)
-        )
+        sensitive_fields
+            .iter()
+            .any(|&sensitive| field_name.to_lowercase().contains(sensitive))
     }
 
     /// Evaluate security alerts from audit events
@@ -352,10 +404,12 @@ impl AuditLogger {
         // Check for failed authentication attempts
         if event.event_type == AuditEventType::Authentication {
             if let AuditResult::Failure { .. } = &event.result {
-                let recent_failures = self.count_recent_auth_failures(
-                    event.user_id.as_deref().unwrap_or("unknown"),
-                    Duration::minutes(15)
-                ).await?;
+                let recent_failures = self
+                    .count_recent_auth_failures(
+                        event.user_id.as_deref().unwrap_or("unknown"),
+                        Duration::minutes(15),
+                    )
+                    .await?;
 
                 if recent_failures > 5 {
                     alerts.push(SecurityAlert {
@@ -363,7 +417,10 @@ impl AuditLogger {
                         timestamp: Utc::now(),
                         alert_type: SecurityAlertType::SuspiciousAuthActivity,
                         severity: SecurityAlertSeverity::High,
-                        description: format!("Multiple authentication failures: {} in 15 minutes", recent_failures),
+                        description: format!(
+                            "Multiple authentication failures: {} in 15 minutes",
+                            recent_failures
+                        ),
                         user_id: event.user_id.clone(),
                         ip_address: event.ip_address.clone(),
                         related_event_id: event.event_id.clone(),
@@ -380,7 +437,10 @@ impl AuditLogger {
                     timestamp: Utc::now(),
                     alert_type: SecurityAlertType::CrossTenantAccess,
                     severity: SecurityAlertSeverity::Critical,
-                    description: format!("Cross-tenant access attempt: user tenant {} accessing resource tenant {}", user_tenant, resource_tenant),
+                    description: format!(
+                        "Cross-tenant access attempt: user tenant {} accessing resource tenant {}",
+                        user_tenant, resource_tenant
+                    ),
                     user_id: event.user_id.clone(),
                     ip_address: event.ip_address.clone(),
                     related_event_id: event.event_id.clone(),
@@ -398,7 +458,10 @@ impl AuditLogger {
 
     /// Send security alert
     async fn send_security_alert(&self, alert: SecurityAlert) -> Result<()> {
-        error!("🚨 SECURITY ALERT: {:?} - {}", alert.alert_type, alert.description);
+        error!(
+            "🚨 SECURITY ALERT: {:?} - {}",
+            alert.alert_type, alert.description
+        );
 
         if let Some(ref alert_sender) = self.alert_sender {
             alert_sender.send_alert(&alert).await?;
@@ -417,7 +480,12 @@ impl AuditLogger {
             },
             action: format!("security_alert_{:?}", alert.alert_type),
             result: AuditResult::Success,
-            details: serde_json::to_value(&alert)?.as_object().unwrap().clone().into_iter().collect(),
+            details: serde_json::to_value(&alert)?
+                .as_object()
+                .unwrap()
+                .clone()
+                .into_iter()
+                .collect(),
             ip_address: alert.ip_address,
             user_agent: None,
             request_id: None,
@@ -438,19 +506,27 @@ impl AuditLogger {
     }
 
     /// Count recent authentication failures for a user
-    async fn count_recent_auth_failures(&self, user_id: &str, time_window: Duration) -> Result<u32> {
+    async fn count_recent_auth_failures(
+        &self,
+        user_id: &str,
+        time_window: Duration,
+    ) -> Result<u32> {
         let since = Utc::now() - time_window;
 
         // Query audit storage for recent auth failures
-        let recent_events = self.storage.query_events(
-            Some(AuditEventType::Authentication),
-            Some(user_id.to_string()),
-            Some(since),
-            None,
-            Some(100)
-        ).await?;
+        let recent_events = self
+            .storage
+            .query_events(
+                Some(AuditEventType::Authentication),
+                Some(user_id.to_string()),
+                Some(since),
+                None,
+                Some(100),
+            )
+            .await?;
 
-        let failure_count = recent_events.iter()
+        let failure_count = recent_events
+            .iter()
             .filter(|event| matches!(event.result, AuditResult::Failure { .. }))
             .count() as u32;
 
@@ -458,7 +534,11 @@ impl AuditLogger {
     }
 
     /// Calculate authentication risk score
-    async fn calculate_authentication_risk(&self, user_id: &str, ip_address: &Option<String>) -> Option<f64> {
+    async fn calculate_authentication_risk(
+        &self,
+        user_id: &str,
+        ip_address: &Option<String>,
+    ) -> Option<f64> {
         let mut risk_score: f64 = 0.0;
 
         // Check for unusual IP address
@@ -469,7 +549,10 @@ impl AuditLogger {
         }
 
         // Check recent failure rate
-        if let Ok(recent_failures) = self.count_recent_auth_failures(user_id, Duration::hours(1)).await {
+        if let Ok(recent_failures) = self
+            .count_recent_auth_failures(user_id, Duration::hours(1))
+            .await
+        {
             risk_score += (recent_failures as f64) * 0.1;
         }
 
@@ -537,7 +620,10 @@ impl AuditLogger {
             .await?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("External audit system returned HTTP {}", response.status()));
+            return Err(anyhow!(
+                "External audit system returned HTTP {}",
+                response.status()
+            ));
         }
 
         debug!("✅ Sent audit event to external system: {}", endpoint);
@@ -620,7 +706,10 @@ impl AlertSender {
             if response.status().is_success() {
                 info!("✅ Security alert sent to webhook: {}", alert.alert_id);
             } else {
-                warn!("⚠️ Failed to send security alert to webhook: HTTP {}", response.status());
+                warn!(
+                    "⚠️ Failed to send security alert to webhook: HTTP {}",
+                    response.status()
+                );
             }
         }
 

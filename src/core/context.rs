@@ -38,7 +38,10 @@ pub struct GraphTraversalSettings {
 
 impl Default for GraphTraversalSettings {
     fn default() -> Self {
-        Self { enable_prefetch: true, prefetch_budget: 8 }
+        Self {
+            enable_prefetch: true,
+            prefetch_budget: 8,
+        }
     }
 }
 

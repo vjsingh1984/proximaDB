@@ -4,14 +4,14 @@
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
-use crate::storage::engines::impls::sst::SstableWriter;
-use crate::storage::engines::impls::sst::{SstConfig, BloomFilterConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::readers::{CollectionContext, UnifiedSstableReader};
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::storage::engines::impls::sst::{BloomFilterConfig, SstConfig};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -30,8 +30,12 @@ use tracing::{debug, error, info};
 fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) -> bool {
     match (&sql_value.value, json_value) {
         (Some(sql_value::Value::StringValue(s)), serde_json::Value::String(json_s)) => s == json_s,
-        (Some(sql_value::Value::Int64Value(i)), serde_json::Value::Number(n)) => *i == n.as_i64().unwrap_or(0),
-        (Some(sql_value::Value::NumberValue(f)), serde_json::Value::Number(n)) => (*f - n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON,
+        (Some(sql_value::Value::Int64Value(i)), serde_json::Value::Number(n)) => {
+            *i == n.as_i64().unwrap_or(0)
+        }
+        (Some(sql_value::Value::NumberValue(f)), serde_json::Value::Number(n)) => {
+            (*f - n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON
+        }
         (Some(sql_value::Value::BoolValue(b)), serde_json::Value::Bool(json_b)) => b == json_b,
         _ => false,
     }
@@ -65,15 +69,24 @@ async fn test_metadata_filtering_basic() {
     // Category A records
     for i in 0..5 {
         let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue("A".to_string())),
-        });
-        metadata.insert("score".to_string(), SqlValue {
-            value: Some(sql_value::Value::NumberValue((i * 10) as f64)),
-        });
-        metadata.insert("type".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue("document".to_string())),
-        });
+        metadata.insert(
+            "category".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue("A".to_string())),
+            },
+        );
+        metadata.insert(
+            "score".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::NumberValue((i * 10) as f64)),
+            },
+        );
+        metadata.insert(
+            "type".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue("document".to_string())),
+            },
+        );
 
         let record = VectorRecord {
             id: format!("vec_a_{}", i),
@@ -91,15 +104,24 @@ async fn test_metadata_filtering_basic() {
     // Category B records
     for i in 0..5 {
         let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue("B".to_string())),
-        });
-        metadata.insert("score".to_string(), SqlValue {
-            value: Some(sql_value::Value::NumberValue((i * 10 + 5) as f64)),
-        });
-        metadata.insert("type".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue("image".to_string())),
-        });
+        metadata.insert(
+            "category".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue("B".to_string())),
+            },
+        );
+        metadata.insert(
+            "score".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::NumberValue((i * 10 + 5) as f64)),
+            },
+        );
+        metadata.insert(
+            "type".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue("image".to_string())),
+            },
+        );
 
         let record = VectorRecord {
             id: format!("vec_b_{}", i),
@@ -180,7 +202,10 @@ async fn test_metadata_filtering_basic() {
             "All results should be category A"
         );
         let category = result.metadata.get("category").unwrap();
-        assert!(sql_value_matches_json(category, &json!("A")), "Category should be A");
+        assert!(
+            sql_value_matches_json(category, &json!("A")),
+            "Category should be A"
+        );
     }
 
     // Test 2: Filter by type = image
@@ -208,7 +233,10 @@ async fn test_metadata_filtering_basic() {
             "All image results should be category B"
         );
         let type_val = result.metadata.get("type").unwrap();
-        assert!(sql_value_matches_json(type_val, &json!("image")), "Type should be image");
+        assert!(
+            sql_value_matches_json(type_val, &json!("image")),
+            "Type should be image"
+        );
     }
 
     // Test 3: Filter by score > 25 (numeric filter)
@@ -260,8 +288,14 @@ async fn test_metadata_filtering_basic() {
     for result in &results {
         let category = result.metadata.get("category").unwrap();
         let type_val = result.metadata.get("type").unwrap();
-        assert!(sql_value_matches_json(category, &json!("B")), "Category should be B");
-        assert!(sql_value_matches_json(type_val, &json!("image")), "Type should be image");
+        assert!(
+            sql_value_matches_json(category, &json!("B")),
+            "Category should be B"
+        );
+        assert!(
+            sql_value_matches_json(type_val, &json!("image")),
+            "Type should be image"
+        );
     }
 
     // Test 5: No results filter

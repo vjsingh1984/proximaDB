@@ -121,7 +121,8 @@ impl StreamingParquetWriterStats {
     /// - 0.9 = 90% space savings
     pub fn update_compression_ratio(&mut self) {
         if self.uncompressed_size > 0 {
-            self.compression_ratio = 1.0 - (self.compressed_size as f64 / self.uncompressed_size as f64);
+            self.compression_ratio =
+                1.0 - (self.compressed_size as f64 / self.uncompressed_size as f64);
         }
     }
 

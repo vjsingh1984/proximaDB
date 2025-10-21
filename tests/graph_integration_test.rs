@@ -23,7 +23,10 @@
 // use helpers::graph_test_utils::*;
 use proximadb::{
     graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{property_value::Value, NodeQuery, TraversalRequest, TraversalAlgorithm, PropertyFilter, GraphStorageConfig, CompressionAlgorithm},
+    proto::proximadb_v1::{
+        CompressionAlgorithm, GraphStorageConfig, NodeQuery, PropertyFilter, TraversalAlgorithm,
+        TraversalRequest, property_value::Value,
+    },
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -94,14 +97,21 @@ async fn test_node_crud_operations() {
     };
 
     // Test create
-    let created_node = service.create_node(TEST_GRAPH_ID, node.clone()).await.unwrap();
+    let created_node = service
+        .create_node(TEST_GRAPH_ID, node.clone())
+        .await
+        .unwrap();
     assert_eq!(created_node.id, "user_123".to_string());
     assert_eq!(created_node.labels.len(), 2);
     assert!(created_node.labels.contains(&"User".to_string()));
     assert!(created_node.labels.contains(&"Person".to_string()));
 
     // Test read
-    let retrieved_node = service.get_node(TEST_GRAPH_ID, &"user_123".to_string()).await.unwrap().unwrap();
+    let retrieved_node = service
+        .get_node(TEST_GRAPH_ID, &"user_123".to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(retrieved_node.id, "user_123".to_string());
     assert_eq!(retrieved_node.properties.len(), 3);
 
@@ -114,15 +124,25 @@ async fn test_node_crud_operations() {
         },
     );
 
-    let updated = service.update_node(TEST_GRAPH_ID, updated_node).await.unwrap();
+    let updated = service
+        .update_node(TEST_GRAPH_ID, updated_node)
+        .await
+        .unwrap();
     assert_eq!(updated.properties.len(), 4);
 
     // Test delete
-    let deleted = service.delete_node(TEST_GRAPH_ID, &"user_123".to_string()).await.unwrap().unwrap();
+    let deleted = service
+        .delete_node(TEST_GRAPH_ID, &"user_123".to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(deleted.id, "user_123".to_string());
 
     // Verify deletion
-    let missing = service.get_node(TEST_GRAPH_ID, &"user_123".to_string()).await.unwrap();
+    let missing = service
+        .get_node(TEST_GRAPH_ID, &"user_123".to_string())
+        .await
+        .unwrap();
     assert!(missing.is_none());
 }
 
@@ -160,26 +180,31 @@ async fn test_edge_crud_operations() {
         from_node_id: "user_1".to_string(),
         to_node_id: "user_2".to_string(),
         edge_type: "FRIENDS_WITH".to_string(),
-        properties: HashMap::from([
-            (
-                "since".to_string(),
-                PropertyValue {
-                    value: Some(Value::StringValue("2020-01-01".to_string())),
-                },
-            ),
-        ]),
+        properties: HashMap::from([(
+            "since".to_string(),
+            PropertyValue {
+                value: Some(Value::StringValue("2020-01-01".to_string())),
+            },
+        )]),
         weight: Some(1.0),
         created_at_ms: 0,
         updated_at_ms: 0,
     };
 
     // Test create
-    let created_edge = service.create_edge(TEST_GRAPH_ID, edge.clone()).await.unwrap();
+    let created_edge = service
+        .create_edge(TEST_GRAPH_ID, edge.clone())
+        .await
+        .unwrap();
     assert_eq!(created_edge.id, "friendship_1".to_string());
     assert_eq!(created_edge.edge_type, "FRIENDS_WITH".to_string());
 
     // Test read
-    let retrieved_edge = service.get_edge(TEST_GRAPH_ID, &"friendship_1".to_string()).await.unwrap().unwrap();
+    let retrieved_edge = service
+        .get_edge(TEST_GRAPH_ID, &"friendship_1".to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(retrieved_edge.from_node_id, "user_1".to_string());
     assert_eq!(retrieved_edge.to_node_id, "user_2".to_string());
 
@@ -187,15 +212,25 @@ async fn test_edge_crud_operations() {
     let mut updated_edge = (*retrieved_edge).clone();
     updated_edge.weight = Some(2.0);
 
-    let updated = service.update_edge(TEST_GRAPH_ID, updated_edge).await.unwrap();
+    let updated = service
+        .update_edge(TEST_GRAPH_ID, updated_edge)
+        .await
+        .unwrap();
     assert_eq!(updated.weight, Some(2.0));
 
     // Test delete
-    let deleted = service.delete_edge(TEST_GRAPH_ID, &"friendship_1".to_string()).await.unwrap().unwrap();
+    let deleted = service
+        .delete_edge(TEST_GRAPH_ID, &"friendship_1".to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(deleted.id, "friendship_1".to_string());
 
     // Verify deletion
-    let missing = service.get_edge(TEST_GRAPH_ID, &"friendship_1".to_string()).await.unwrap();
+    let missing = service
+        .get_edge(TEST_GRAPH_ID, &"friendship_1".to_string())
+        .await
+        .unwrap();
     assert!(missing.is_none());
 }
 
@@ -242,13 +277,23 @@ async fn test_graph_traversal() {
             updated_at_ms: 0,
         };
         let created = service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
-        println!("  ✅ Created edge: {} ({} -> {})", created.id, created.from_node_id, created.to_node_id);
+        println!(
+            "  ✅ Created edge: {} ({} -> {})",
+            created.id, created.from_node_id, created.to_node_id
+        );
     }
 
     // Test get neighbors
     println!("🔍 DEBUG: Getting neighbors of A...");
-    let neighbors = service.get_neighbors(TEST_GRAPH_ID, &"A".to_string()).await.unwrap();
-    println!("  Found {} neighbors: {:?}", neighbors.len(), neighbors.iter().map(|n| &n.id).collect::<Vec<_>>());
+    let neighbors = service
+        .get_neighbors(TEST_GRAPH_ID, &"A".to_string())
+        .await
+        .unwrap();
+    println!(
+        "  Found {} neighbors: {:?}",
+        neighbors.len(),
+        neighbors.iter().map(|n| &n.id).collect::<Vec<_>>()
+    );
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id, "B".to_string());
 
@@ -267,7 +312,10 @@ async fn test_graph_traversal() {
         max_frontier: None,
     };
 
-    let result = service.traverse(TEST_GRAPH_ID, traversal_request).await.unwrap();
+    let result = service
+        .traverse(TEST_GRAPH_ID, traversal_request)
+        .await
+        .unwrap();
 
     println!("🔍 DEBUG: Traversal result:");
     println!("  Nodes found: {}", result.nodes.len());
@@ -279,13 +327,19 @@ async fn test_graph_traversal() {
         println!("    - Edge: {} -> {}", edge.from_node_id, edge.to_node_id);
     }
     if let Some(stats) = &result.stats {
-        println!("  Stats: nodes_visited={}, edges_traversed={}, max_depth={}",
-                 stats.nodes_visited, stats.edges_traversed, stats.max_depth_reached);
+        println!(
+            "  Stats: nodes_visited={}, edges_traversed={}, max_depth={}",
+            stats.nodes_visited, stats.edges_traversed, stats.max_depth_reached
+        );
     }
 
     // Should find A, B, C, E (depth 0, 1, 2)
     println!("🔍 DEBUG: Checking assertion (expecting >= 3 nodes)...");
-    assert!(result.nodes.len() >= 3, "Expected at least 3 nodes, got {}", result.nodes.len());
+    assert!(
+        result.nodes.len() >= 3,
+        "Expected at least 3 nodes, got {}",
+        result.nodes.len()
+    );
 
     // Verify nodes are found
     let node_ids: Vec<String> = result.nodes.iter().map(|n| n.id.clone()).collect();
@@ -315,13 +369,11 @@ async fn test_node_query() {
                 (
                     "city".to_string(),
                     PropertyValue {
-                        value: Some(Value::StringValue(
-                            if i % 2 == 0 {
-                                "New York".to_string()
-                            } else {
-                                "San Francisco".to_string()
-                            },
-                        )),
+                        value: Some(Value::StringValue(if i % 2 == 0 {
+                            "New York".to_string()
+                        } else {
+                            "San Francisco".to_string()
+                        })),
                     },
                 ),
             ]),
@@ -361,7 +413,10 @@ async fn test_node_query() {
         continuation_token: None,
     };
 
-    let person_results = service.query_nodes(TEST_GRAPH_ID, person_query).await.unwrap();
+    let person_results = service
+        .query_nodes(TEST_GRAPH_ID, person_query)
+        .await
+        .unwrap();
     assert!(person_results.len() >= 2); // nodes 0, 2, 4
 }
 
@@ -384,7 +439,10 @@ async fn test_batch_operations() {
         });
     }
 
-    let created_nodes = service.batch_create_nodes(TEST_GRAPH_ID, nodes).await.unwrap();
+    let created_nodes = service
+        .batch_create_nodes(TEST_GRAPH_ID, nodes)
+        .await
+        .unwrap();
     assert_eq!(created_nodes.len(), 5);
 
     // Batch create edges
@@ -402,11 +460,17 @@ async fn test_batch_operations() {
         });
     }
 
-    let created_edges = service.batch_create_edges(TEST_GRAPH_ID, edges).await.unwrap();
+    let created_edges = service
+        .batch_create_edges(TEST_GRAPH_ID, edges)
+        .await
+        .unwrap();
     assert_eq!(created_edges.len(), 4);
 
     // Verify the chain
-    let neighbors = service.get_neighbors(TEST_GRAPH_ID, &"batch_node_0".to_string()).await.unwrap();
+    let neighbors = service
+        .get_neighbors(TEST_GRAPH_ID, &"batch_node_0".to_string())
+        .await
+        .unwrap();
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id, "batch_node_1".to_string());
 }
@@ -429,7 +493,10 @@ async fn test_graph_stats() {
             updated_at_ms: 0,
         };
         let created = service.create_node(TEST_GRAPH_ID, node).await.unwrap();
-        println!("  ✅ Created node: {} with labels: {:?}", created.id, created.labels);
+        println!(
+            "  ✅ Created node: {} with labels: {:?}",
+            created.id, created.labels
+        );
     }
 
     println!("🔍 DEBUG: Creating edges for stats test...");
@@ -445,7 +512,10 @@ async fn test_graph_stats() {
             updated_at_ms: 0,
         };
         let created = service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
-        println!("  ✅ Created edge: {} ({} -> {}) type: {}", created.id, created.from_node_id, created.to_node_id, created.edge_type);
+        println!(
+            "  ✅ Created edge: {} ({} -> {}) type: {}",
+            created.id, created.from_node_id, created.to_node_id, created.edge_type
+        );
     }
 
     // Get statistics
@@ -462,10 +532,26 @@ async fn test_graph_stats() {
         println!("    - {}: {} edges", edge_stat.edge_type, edge_stat.count);
     }
 
-    assert_eq!(stats.total_nodes, 10, "Expected 10 nodes, got {}", stats.total_nodes);
-    assert_eq!(stats.total_edges, 5, "Expected 5 edges, got {}", stats.total_edges);
-    assert!(stats.label_stats.len() > 0, "Expected label stats, got {}", stats.label_stats.len());
-    assert!(stats.edge_type_stats.len() > 0, "Expected edge type stats, got {}", stats.edge_type_stats.len());
+    assert_eq!(
+        stats.total_nodes, 10,
+        "Expected 10 nodes, got {}",
+        stats.total_nodes
+    );
+    assert_eq!(
+        stats.total_edges, 5,
+        "Expected 5 edges, got {}",
+        stats.total_edges
+    );
+    assert!(
+        stats.label_stats.len() > 0,
+        "Expected label stats, got {}",
+        stats.label_stats.len()
+    );
+    assert!(
+        stats.edge_type_stats.len() > 0,
+        "Expected edge type stats, got {}",
+        stats.edge_type_stats.len()
+    );
 }
 
 /// Test unique constraints
@@ -476,7 +562,10 @@ async fn test_unique_constraints() {
 
     println!("🔍 DEBUG: Adding unique constraint on User.email...");
     // Add unique constraint on email property for User label
-    service.add_unique_constraint(TEST_GRAPH_ID, "User", "email").await.unwrap();
+    service
+        .add_unique_constraint(TEST_GRAPH_ID, "User", "email")
+        .await
+        .unwrap();
     println!("  ✅ Unique constraint added");
 
     println!("🔍 DEBUG: Creating first user with email test@example.com...");
@@ -484,14 +573,12 @@ async fn test_unique_constraints() {
     let node1 = Node {
         id: "user_with_email_1".to_string(),
         labels: vec!["User".to_string()],
-        properties: HashMap::from([
-            (
-                "email".to_string(),
-                PropertyValue {
-                    value: Some(Value::StringValue("test@example.com".to_string())),
-                },
-            ),
-        ]),
+        properties: HashMap::from([(
+            "email".to_string(),
+            PropertyValue {
+                value: Some(Value::StringValue("test@example.com".to_string())),
+            },
+        )]),
         embedding: None,
         created_at_ms: 0,
         updated_at_ms: 0,
@@ -506,14 +593,12 @@ async fn test_unique_constraints() {
     let node2 = Node {
         id: "user_with_email_2".to_string(),
         labels: vec!["User".to_string()],
-        properties: HashMap::from([
-            (
-                "email".to_string(),
-                PropertyValue {
-                    value: Some(Value::StringValue("test@example.com".to_string())),
-                },
-            ),
-        ]),
+        properties: HashMap::from([(
+            "email".to_string(),
+            PropertyValue {
+                value: Some(Value::StringValue("test@example.com".to_string())),
+            },
+        )]),
         embedding: None,
         created_at_ms: 0,
         updated_at_ms: 0,
@@ -523,21 +608,30 @@ async fn test_unique_constraints() {
 
     match &result {
         Ok(node) => {
-            println!("  ❌ UNEXPECTED: Second user was created: {} (should have failed!)", node.id);
+            println!(
+                "  ❌ UNEXPECTED: Second user was created: {} (should have failed!)",
+                node.id
+            );
         }
         Err(e) => {
             println!("  ✅ Creation correctly failed with error: {}", e);
         }
     }
 
-    assert!(result.is_err(), "Expected error due to unique constraint violation, but creation succeeded");
+    assert!(
+        result.is_err(),
+        "Expected error due to unique constraint violation, but creation succeeded"
+    );
 
     // Verify error message contains constraint violation
     if let Err(e) = result {
         let error_msg = e.to_string();
         println!("  Error message: {}", error_msg);
-        assert!(error_msg.contains("unique constraint") || error_msg.contains("Unique constraint"),
-                "Error message doesn't mention unique constraint: {}", error_msg);
+        assert!(
+            error_msg.contains("unique constraint") || error_msg.contains("Unique constraint"),
+            "Error message doesn't mention unique constraint: {}",
+            error_msg
+        );
     }
 }
 
@@ -556,19 +650,20 @@ async fn test_concurrent_operations() {
             let node = Node {
                 id: format!("concurrent_node_{}", i),
                 labels: vec!["ConcurrentNode".to_string()],
-                properties: HashMap::from([
-                    (
-                        "thread_id".to_string(),
-                        PropertyValue {
-                            value: Some(Value::IntValue(i as i64)),
-                        },
-                    ),
-                ]),
+                properties: HashMap::from([(
+                    "thread_id".to_string(),
+                    PropertyValue {
+                        value: Some(Value::IntValue(i as i64)),
+                    },
+                )]),
                 embedding: None,
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            service_clone.create_node(TEST_GRAPH_ID, node).await.unwrap();
+            service_clone
+                .create_node(TEST_GRAPH_ID, node)
+                .await
+                .unwrap();
 
             // Also create edges
             if i > 0 {
@@ -582,7 +677,10 @@ async fn test_concurrent_operations() {
                     created_at_ms: 0,
                     updated_at_ms: 0,
                 };
-                service_clone.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
+                service_clone
+                    .create_edge(TEST_GRAPH_ID, edge)
+                    .await
+                    .unwrap();
             }
         });
         handles.push(handle);

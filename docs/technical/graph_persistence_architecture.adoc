@@ -239,27 +239,24 @@ flowchart TD
 
 == FilesystemFactory Integration
 
-The FilesystemFactory automatically selects the appropriate storage backend based on URL schemes:
+The FilesystemFactory automatically selects the appropriate storage backend based on URL schemes. Pass a STORAGE ROOT URL (e.g., `file:///data` or `s3://bucket`) — the persistence layer derives graph-specific paths under it:
 
 [source,rust]
 ----
 // Example: Creating a graph with automatic backend selection
 pub async fn create_graph_with_persistence(
     graph_id: String,
-    storage_url: String,  // e.g., "s3://bucket/graphs" or "file:///data"
+    storage_root: String,  // e.g., "s3://bucket" or "file:///data"
 ) -> Result<GraphEngine> {
     // FilesystemFactory automatically detects and creates the right backend
-    let filesystem = FilesystemFactory::get_filesystem(&storage_url)?;
+    use std::sync::Arc;
+    let factory = Arc::new(FilesystemFactory::create_default().await?);
+    let filesystem = factory.get_filesystem(&storage_root)?;
 
-    // Build graph-specific path
-    let graph_path = format!("{}/graphs/{}/data",
-                            storage_url.trim_end_matches('/'),
-                            graph_id);
-
-    // Initialize persistence layer
+    // Initialize persistence layer (derives /graphs/{id}/data internally)
     let persistence = OrionPersistence::new(
         graph_id,
-        graph_path,
+        storage_root,
         true  // Enable WAL
     ).await?;
 
@@ -436,6 +433,8 @@ pub enum GraphOperation {
     BatchOperation(Vec<GraphOperation>),
 }
 ----
+
+TIP: To avoid malformed URLs, the WAL writer detects already-qualified URLs and will not re-prefix `file://`. Always pass a storage ROOT (e.g., `file:///data`) rather than a graph-specific subpath; OrionPersistence appends `/graphs/{graph_id}/data` internally.
 
 == Recovery and Consistency
 

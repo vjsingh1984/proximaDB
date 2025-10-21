@@ -1,8 +1,8 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
-};
 use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
+};
 use std::collections::HashMap;
 
 // Generate different data patterns for testing
@@ -122,8 +122,14 @@ fn test_pattern(pattern_name: &str, vectors: Vec<VectorRecord>) {
 
     let strategies = vec![
         ("FullVector", VectorEncodingLayout::FullVector),
-        ("TransposeField", VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
-        ("GroupedField", VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector),
+        (
+            "TransposeField",
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
+        ),
+        (
+            "GroupedField",
+            VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
+        ),
     ];
 
     for (strategy_name, strategy) in strategies {
@@ -144,12 +150,20 @@ fn test_pattern(pattern_name: &str, vectors: Vec<VectorRecord>) {
         let block = ProximaDataBlock::new(vectors.clone(), config.clone());
         match block.serialize_with_config(&config) {
             Ok(serialized) => {
-                let original_size = vectors.len() *
-                    (if !vectors.is_empty() { vectors[0].vector.len() } else { 0 }) *
-                    std::mem::size_of::<f32>();
+                let original_size = vectors.len()
+                    * (if !vectors.is_empty() {
+                        vectors[0].vector.len()
+                    } else {
+                        0
+                    })
+                    * std::mem::size_of::<f32>();
                 let compression_ratio = original_size as f64 / serialized.len() as f64;
 
-                println!("     → {} bytes ({:.1}x compression)", serialized.len(), compression_ratio);
+                println!(
+                    "     → {} bytes ({:.1}x compression)",
+                    serialized.len(),
+                    compression_ratio
+                );
 
                 // Test deserialization
                 match ProximaDataBlock::deserialize(&serialized, None) {

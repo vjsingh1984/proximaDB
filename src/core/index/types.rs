@@ -1,6 +1,5 @@
 //! Index type definitions
 
-
 /// General index type categories
 #[derive(Debug, Clone)]
 pub enum Index {

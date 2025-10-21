@@ -668,7 +668,8 @@ impl AccessPatternTracker {
                 let diff = d.as_secs() as f64 - mean;
                 diff * diff
             })
-            .sum::<f64>() / intervals.len() as f64;
+            .sum::<f64>()
+            / intervals.len() as f64;
 
         let std_dev = variance.sqrt();
 

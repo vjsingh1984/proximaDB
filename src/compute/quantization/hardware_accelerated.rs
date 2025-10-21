@@ -630,7 +630,13 @@ mod tests {
             // For small test datasets, rounding errors can be significant
             // Use generous tolerance: max(50% of step size, 2.5 absolute)
             let tolerance = (range / 255.0 * 50.0).max(2.5);
-            assert!(error < tolerance, "Error {} exceeds tolerance {} at index {}", error, tolerance, i);
+            assert!(
+                error < tolerance,
+                "Error {} exceeds tolerance {} at index {}",
+                error,
+                tolerance,
+                i
+            );
         }
     }
 }

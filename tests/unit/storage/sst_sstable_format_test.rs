@@ -4,14 +4,12 @@
 use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use tracing::{debug, error, info, warn};
 
-use proximadb::storage::engines::impls::sst::{
-    SstEntry, SstMetadata, SstableWriter,
-};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use proximadb::storage::engines::impls::sst::readers::sst_query_engine::SstDirectReader;
-use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
-use std::collections::HashMap;
+use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata, SstableWriter};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -104,7 +102,12 @@ async fn test_sstable_format_inspection() {
         metadata_map.insert(
             "category".to_string(),
             SqlValue {
-                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 2))),
+                value: Some(
+                    proximadb::proto::proximadb_v1::sql_value::Value::StringValue(format!(
+                        "cat_{}",
+                        i % 2
+                    )),
+                ),
             },
         );
 
@@ -192,19 +195,32 @@ async fn test_sstable_format_inspection() {
         .expect("Failed to open SSTable reader");
 
     // Read and verify vectors
-    let read_vectors = reader.read_all_for_compaction()
+    let read_vectors = reader
+        .read_all_for_compaction()
         .await
         .expect("Failed to read vectors");
 
     // Should have at least the vectors we wrote
-    assert!(read_vectors.len() >= 1, "Should have read at least 1 vector, got {}", read_vectors.len());
+    assert!(
+        read_vectors.len() >= 1,
+        "Should have read at least 1 vector, got {}",
+        read_vectors.len()
+    );
 
     // Verify first vector content
     let first_vector = read_vectors.iter().find(|v| v.id == "vec_0");
-    assert!(first_vector.is_some(), "Should find vec_0 in {} vectors", read_vectors.len());
+    assert!(
+        first_vector.is_some(),
+        "Should find vec_0 in {} vectors",
+        read_vectors.len()
+    );
     if let Some(vec) = first_vector {
         assert_eq!(vec.vector.len(), 3, "Vector should have 3 dimensions");
         // Note: the expected values are [0.0, 0.0, 0.0] because i=0, so all values are 0
-        assert_eq!(vec.vector, vec![0.0, 0.0, 0.0], "Vector values should match");
+        assert_eq!(
+            vec.vector,
+            vec![0.0, 0.0, 0.0],
+            "Vector values should match"
+        );
     }
 }

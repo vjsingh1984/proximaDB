@@ -47,11 +47,7 @@ fn encode_delta_i32_base_i64_deltas(wire_values: &[i32], base: i32) -> Result<Ve
         .collect();
 
     // Find optimal bit width for deltas
-    let max_delta_abs = deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .max()
-        .unwrap_or(0);
+    let max_delta_abs = deltas.iter().map(|&d| d.unsigned_abs()).max().unwrap_or(0);
 
     let bits = if max_delta_abs == 0 {
         1
@@ -81,17 +77,10 @@ fn encode_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<Vec<u8>> {
     result.extend_from_slice(&base.to_le_bytes());
 
     // Compute deltas
-    let deltas: Vec<i64> = wire_values
-        .iter()
-        .map(|&v| v.wrapping_sub(base))
-        .collect();
+    let deltas: Vec<i64> = wire_values.iter().map(|&v| v.wrapping_sub(base)).collect();
 
     // Find optimal bit width
-    let max_delta_abs = deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .max()
-        .unwrap_or(0);
+    let max_delta_abs = deltas.iter().map(|&d| d.unsigned_abs()).max().unwrap_or(0);
 
     let bits = if max_delta_abs == 0 {
         1
@@ -187,8 +176,7 @@ fn decode_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
 
     // Read base (8 bytes)
     let base = i64::from_le_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 
     // Read bits (1 byte)
@@ -256,7 +244,10 @@ mod tests {
 
         // Verify compression
         let original_bytes = values.len() * 8;
-        assert!(encoded.len() < original_bytes, "Should compress sequential data");
+        assert!(
+            encoded.len() < original_bytes,
+            "Should compress sequential data"
+        );
     }
 
     // ===== OVERFLOW EDGE CASE TESTS =====
@@ -290,9 +281,13 @@ mod tests {
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
-            assert_eq!(orig.to_bits(), dec.to_bits(),
+            assert_eq!(
+                orig.to_bits(),
+                dec.to_bits(),
                 "Failed to roundtrip extreme f32 bit pattern: orig={:08x}, dec={:08x}",
-                orig.to_bits(), dec.to_bits());
+                orig.to_bits(),
+                dec.to_bits()
+            );
         }
     }
 
@@ -339,9 +334,13 @@ mod tests {
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
             // Compare bit patterns since NAN != NAN
-            assert_eq!(orig.to_bits(), dec.to_bits(),
+            assert_eq!(
+                orig.to_bits(),
+                dec.to_bits(),
                 "Failed to roundtrip special f32 value: orig={:08x}, dec={:08x}",
-                orig.to_bits(), dec.to_bits());
+                orig.to_bits(),
+                dec.to_bits()
+            );
         }
     }
 }

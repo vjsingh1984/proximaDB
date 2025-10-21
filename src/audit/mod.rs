@@ -28,10 +28,10 @@ pub type EventChain = String;
 pub struct EnterpriseAuditCoordinator {
     /// Audit correlation engine
     correlation_engine: correlation::AuditCorrelationEngine,
-    
+
     /// Compliance reporting engine  
     compliance_reporter: ComplianceReportingEngine,
-    
+
     /// Audit analytics engine
     audit_analytics: AuditAnalyticsEngine,
 }
@@ -128,7 +128,7 @@ impl EnterpriseAuditCoordinator {
             audit_analytics: AuditAnalyticsEngine::new().await?,
         })
     }
-    
+
     /// Generate comprehensive enterprise audit report
     pub async fn generate_enterprise_audit_report(
         &self,
@@ -138,24 +138,23 @@ impl EnterpriseAuditCoordinator {
         executive_context: &crate::auth::sso::EnterpriseUserContext,
     ) -> Result<EnterpriseAuditReport> {
         // Collect comprehensive audit data
-        let audit_data = self.correlation_engine.collect_comprehensive_audit_data(
-            tenant_id,
-            &reporting_period,
-        ).await?;
-        
+        let audit_data = self
+            .correlation_engine
+            .collect_comprehensive_audit_data(tenant_id, &reporting_period)
+            .await?;
+
         // Generate compliance reports
-        let compliance_reports = self.compliance_reporter.generate_compliance_reports(
-            &audit_data,
-            compliance_frameworks,
-            executive_context,
-        ).await?;
-        
+        let compliance_reports = self
+            .compliance_reporter
+            .generate_compliance_reports(&audit_data, compliance_frameworks, executive_context)
+            .await?;
+
         // Generate audit analytics
-        let audit_analytics = self.audit_analytics.analyze_audit_patterns(
-            &audit_data,
-            &reporting_period,
-        ).await?;
-        
+        let audit_analytics = self
+            .audit_analytics
+            .analyze_audit_patterns(&audit_data, &reporting_period)
+            .await?;
+
         Ok(EnterpriseAuditReport {
             tenant_id: tenant_id.to_string(),
             reporting_period,

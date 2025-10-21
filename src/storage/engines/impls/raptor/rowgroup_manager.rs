@@ -6,17 +6,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::common::{
-    ColumnarBlock, ProximaEncodedData, MetadataColumns, QuantizationParams,
-    QuantizedColumnarData, RowGroup, TransposedVectors,
+    ColumnarBlock, MetadataColumns, ProximaEncodedData, QuantizationParams, QuantizedColumnarData,
+    RowGroup, TransposedVectors,
 };
 use super::config::RaptorConfig;
 use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
 // ProximaCodec system for encoding/decoding
-use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, types::ProximaScheme};
-use crate::storage::engines::core::formats::proximablocks::{BlockCompressionConfig, VectorEncodingLayout};
 use crate::core::compression::CompressionAlgorithm;
+use crate::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, VectorEncodingLayout,
+};
+use crate::storage::engines::core::ops::proximacodec::{
+    ProximaCodec, analysis, types::ProximaScheme,
+};
 
 // RowGroup removed - consolidated into common::RowGroup
 // The unified RowGroup now includes columnar_data field
@@ -263,31 +267,37 @@ impl RowGroups {
                         (
                             key.clone(),
                             match &value.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                                    serde_json::Value::String(s.clone())
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                                    serde_json::Value::Number(
-                                        serde_json::Number::from_f64(*n)
-                                            .unwrap_or_else(|| serde_json::Number::from(0)),
-                                    )
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                                    serde_json::Value::Number(serde_json::Number::from(*i))
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                                    serde_json::Value::Bool(*b)
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                ) => serde_json::Value::String(s.clone()),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
+                                ) => serde_json::Value::Number(
+                                    serde_json::Number::from_f64(*n)
+                                        .unwrap_or_else(|| serde_json::Number::from(0)),
+                                ),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                                    i,
+                                )) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
+                                    b,
+                                )) => serde_json::Value::Bool(*b),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(
+                                    _,
+                                )) => {
                                     serde_json::Value::Null // TODO: handle bytes properly
                                 }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
-                                    serde_json::Value::Null
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(
+                                    _,
+                                )) => serde_json::Value::Null,
+                                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
+                                    _,
+                                )) => {
                                     serde_json::Value::Null // TODO: handle arrays properly
                                 }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_),
+                                ) => {
                                     serde_json::Value::Null // TODO: handle objects properly
                                 }
                                 None => serde_json::Value::Null,
@@ -526,7 +536,8 @@ impl RowGroups {
 
         // Transpose vectors manually (ProximaCodec operates on Vec<f32> per dimension)
         let dimension = transposed.dimension;
-        let mut transposed_dimensions: Vec<Vec<f32>> = vec![Vec::with_capacity(vectors.len()); dimension];
+        let mut transposed_dimensions: Vec<Vec<f32>> =
+            vec![Vec::with_capacity(vectors.len()); dimension];
         for vector in &vectors {
             for (dim_idx, &value) in vector.iter().enumerate() {
                 if dim_idx < dimension {
@@ -547,11 +558,11 @@ impl RowGroups {
 
             // Override lossy schemes with lossless alternatives
             let scheme = match &detected_scheme {
-                ProximaScheme::Simple8b | ProximaScheme::RunLength |
-                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
-                ProximaScheme::PForDelta { .. } => {
-                    ProximaScheme::Delta { base: 0 }
-                },
+                ProximaScheme::Simple8b
+                | ProximaScheme::RunLength
+                | ProximaScheme::VByte
+                | ProximaScheme::Zigzag { .. }
+                | ProximaScheme::PForDelta { .. } => ProximaScheme::Delta { base: 0 },
                 _ => detected_scheme.clone(),
             };
 
@@ -560,7 +571,7 @@ impl RowGroups {
 
             // Store the scheme directly (no conversion needed)
             encoding_schemes.push(scheme);
-        };
+        }
 
         // Calculate compression ratio
         let original_size = vectors.len() * dimension * 4; // 4 bytes per f32
@@ -676,4 +687,3 @@ impl RowGroups {
         Ok(())
     }
 }
-

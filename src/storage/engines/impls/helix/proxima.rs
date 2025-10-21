@@ -17,14 +17,14 @@ use crate::storage::engines::core::formats::proximablocks::block_structures::{
 };
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
-use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::engines::constants::HELIX_MAGIC;
+use crate::storage::persistence::filesystem::FileSystem;
 
 // ProximaDataBlock now uses ProximaCodec internally
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
 
 // Re-export for convenience
-pub use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaMetadata as ProximaMetadata;
+pub use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaMetadata;
 
 /// HELIX Spatial Block Writer
 /// Uses ProximaDataBlock's internal SIMD encoding with spatial clustering
@@ -53,8 +53,11 @@ impl HelixSIMDWriter {
         hilbert_keys: Option<&[u64]>,
         block_id: u32,
     ) -> Result<(ProximaDataBlock, HelixBlockMetadata)> {
-        debug!("🧬 HELIX: Creating spatial-optimized block {} with {} vectors",
-               block_id, records.len());
+        debug!(
+            "🧬 HELIX: Creating spatial-optimized block {} with {} vectors",
+            block_id,
+            records.len()
+        );
 
         if records.is_empty() {
             return Err(anyhow::anyhow!("Cannot create block from empty vector set"));
@@ -71,7 +74,8 @@ impl HelixSIMDWriter {
             compression_threshold_bytes: 256,
             dictionary_compression: records.len() > 1000,
             // Use Auto layout - defaults to GroupedFieldEncoded for optimal performance
-            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             metadata_algorithm: None,
         };
 
@@ -80,7 +84,7 @@ impl HelixSIMDWriter {
         let mut block = ProximaDataBlock::new_with_engine_profile(
             records.to_vec(),
             compression_config,
-            EngineProfile::Helix
+            EngineProfile::Helix,
         );
         block.block_id = block_id;
 
@@ -101,7 +105,8 @@ impl HelixSIMDWriter {
 
         // Generate spatial clustering hints
         // Extract vectors for spatial analysis
-        let vectors: Vec<Vec<f32>> = records.iter()
+        let vectors: Vec<Vec<f32>> = records
+            .iter()
             .filter(|r| !r.vector.is_empty())
             .map(|r| r.vector.clone())
             .collect();
@@ -123,7 +128,8 @@ impl HelixSIMDWriter {
 
         // Get compression ratio from the block's encoded data
         let compression_ratio = if let Some(ref encoded) = block.encoded_vectors {
-            let original_size = records.len() * records.first().map(|r| r.vector.len()).unwrap_or(0) * 4;
+            let original_size =
+                records.len() * records.first().map(|r| r.vector.len()).unwrap_or(0) * 4;
             let encoded_size: usize = encoded.iter().map(|d| d.len()).sum();
             if original_size > 0 {
                 (encoded_size * 100) / original_size
@@ -134,8 +140,12 @@ impl HelixSIMDWriter {
             100 // No encoding applied
         };
 
-        info!("✅ HELIX block {} ready: {}% compression, {:.2}ms encoding time",
-              block_id, compression_ratio, encoding_time.as_millis());
+        info!(
+            "✅ HELIX block {} ready: {}% compression, {:.2}ms encoding time",
+            block_id,
+            compression_ratio,
+            encoding_time.as_millis()
+        );
 
         Ok((block, helix_metadata))
     }
@@ -150,15 +160,16 @@ impl HelixSIMDWriter {
         let mut total_variance = 0.0;
 
         // Calculate variance per dimension and average
-        for dim in 0..dimension.min(16) { // Sample first 16 dimensions for performance
-            let values: Vec<f32> = vectors.iter()
+        for dim in 0..dimension.min(16) {
+            // Sample first 16 dimensions for performance
+            let values: Vec<f32> = vectors
+                .iter()
                 .map(|v| if dim < v.len() { v[dim] } else { 0.0 })
                 .collect();
 
             let mean = values.iter().sum::<f32>() / values.len() as f32;
-            let variance = values.iter()
-                .map(|&v| (v - mean).powi(2))
-                .sum::<f32>() / values.len() as f32;
+            let variance =
+                values.iter().map(|&v| (v - mean).powi(2)).sum::<f32>() / values.len() as f32;
 
             total_variance += variance;
         }
@@ -263,7 +274,10 @@ pub async fn write_helix_sstable(
         return Ok(0);
     }
 
-    info!("🧬 HELIX: Writing {} vectors with SIMD spatial compression", records.len());
+    info!(
+        "🧬 HELIX: Writing {} vectors with SIMD spatial compression",
+        records.len()
+    );
 
     // Initialize SIMD writer with spatial optimization
     let dimension = records[0].vector.len();
@@ -325,11 +339,9 @@ pub async fn write_helix_sstable(
 
         // Create SIMD-optimized block
         let block_start_time = std::time::Instant::now();
-        let (mut simd_block, simd_metadata) = simd_writer.create_simd_block(
-            chunk,
-            block_hilbert_keys,
-            block_idx as u32,
-        ).await?;
+        let (mut simd_block, simd_metadata) = simd_writer
+            .create_simd_block(chunk, block_hilbert_keys, block_idx as u32)
+            .await?;
 
         let block_simd_time = block_start_time.elapsed();
         total_simd_time += block_simd_time;
@@ -358,8 +370,13 @@ pub async fn write_helix_sstable(
         // Store enhanced metadata
         block_metadata.push(simd_metadata);
 
-        debug!("Block {}: SIMD optimization in {:.2}ms, {} → {} bytes",
-               block_idx, block_simd_time.as_millis(), original_block_size, block_size_bytes);
+        debug!(
+            "Block {}: SIMD optimization in {:.2}ms, {} → {} bytes",
+            block_idx,
+            block_simd_time.as_millis(),
+            original_block_size,
+            block_size_bytes
+        );
     }
 
     // Calculate overall compression performance
@@ -369,9 +386,13 @@ pub async fn write_helix_sstable(
         100
     };
 
-    info!("🎯 HELIX total compression: {} → {} bytes ({}% ratio) in {:.2}ms",
-          total_original_size, total_compressed_size, overall_compression_ratio,
-          total_simd_time.as_millis());
+    info!(
+        "🎯 HELIX total compression: {} → {} bytes ({}% ratio) in {:.2}ms",
+        total_original_size,
+        total_compressed_size,
+        overall_compression_ratio,
+        total_simd_time.as_millis()
+    );
 
     // Write bloom filter
     let bloom_bytes = global_bloom.serialize()?;
@@ -383,7 +404,7 @@ pub async fn write_helix_sstable(
     // This allows single-call reading of all metadata for queries
     let file_header = HelixFileHeader {
         magic: HELIX_MAGIC,
-        version: 1, // HELIX v1 (active development)
+        version: 1,   // HELIX v1 (active development)
         file_size: 0, // Will be updated by reader
         block_metadata: block_metadata.clone(),
         block_offsets: block_offsets.clone(),
@@ -469,7 +490,9 @@ pub(crate) async fn read_helix_header_optimized(
     // Footer layout: [header_size: 4][header_offset: 8][num_blocks: 4]
     const FOOTER_SIZE: u64 = 16;
     let footer_offset = (file_len as u64) - FOOTER_SIZE;
-    let footer_data = filesystem.read_range(path_str, footer_offset, FOOTER_SIZE).await?;
+    let footer_data = filesystem
+        .read_range(path_str, footer_offset, FOOTER_SIZE)
+        .await?;
 
     let header_size = u32::from_le_bytes([
         footer_data[0],
@@ -490,18 +513,36 @@ pub(crate) async fn read_helix_header_optimized(
     ]);
 
     // Step 3: Read unified header in SINGLE API call!
-    tracing::debug!("Reading unified HELIX header: offset={}, size={}, file_len={}", header_offset, header_size, file_len);
+    tracing::debug!(
+        "Reading unified HELIX header: offset={}, size={}, file_len={}",
+        header_offset,
+        header_size,
+        file_len
+    );
 
     // Sanity check: header_offset + header_size should be <= file_len - footer_size
     if header_offset + header_size > (file_len as u64 - FOOTER_SIZE) {
         return Err(anyhow::anyhow!(
             "Invalid header location: offset={} + size={} = {} > file_len={} - footer={}",
-            header_offset, header_size, header_offset + header_size, file_len, FOOTER_SIZE
+            header_offset,
+            header_size,
+            header_offset + header_size,
+            file_len,
+            FOOTER_SIZE
         ));
     }
 
-    let header_data = filesystem.read_range(path_str, header_offset, header_size).await
-        .map_err(|e| anyhow::anyhow!("Failed to read header at offset {} size {}: {}", header_offset, header_size, e))?;
+    let header_data = filesystem
+        .read_range(path_str, header_offset, header_size)
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to read header at offset {} size {}: {}",
+                header_offset,
+                header_size,
+                e
+            )
+        })?;
 
     // MANUAL DESERIALIZATION: Read header fields in fixed order matching writer
     // Format: magic(4) + version(4) + file_size(8) + num_blocks(4) + [block_metadata] + [block_offsets] + [block_sizes]
@@ -512,7 +553,11 @@ pub(crate) async fn read_helix_header_optimized(
     std::io::Read::read_exact(&mut cursor, &mut magic)?;
 
     if magic != HELIX_MAGIC {
-        return Err(anyhow::anyhow!("Invalid HELIX magic bytes: got {:?}, expected {:?}", magic, HELIX_MAGIC));
+        return Err(anyhow::anyhow!(
+            "Invalid HELIX magic bytes: got {:?}, expected {:?}",
+            magic,
+            HELIX_MAGIC
+        ));
     }
 
     // 2. Read version
@@ -593,7 +638,13 @@ pub async fn search_helix_sstable(
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     collection: Option<&crate::proto::proximadb_v1::Collection>,
     filter_expression: Option<&crate::core::search::FilterExpression>,
-) -> Result<Vec<(String, f32, std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>)>> {
+) -> Result<
+    Vec<(
+        String,
+        f32,
+        std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    )>,
+> {
     // CLOUD-OPTIMIZED: Read unified file header in 2 API calls (metadata + header)
     // UnifiedCachingFilesystem will cache this, so subsequent queries = 0 API calls!
     let header = read_helix_header_optimized(filesystem, path).await?;
@@ -605,7 +656,11 @@ pub async fn search_helix_sstable(
     let mut blocks_searched = 0;
 
     // Process only relevant blocks with Hilbert pruning
-    tracing::debug!("HELIX search: query_hilbert_key = {:?}, num_blocks = {}", query_hilbert_key, num_blocks);
+    tracing::debug!(
+        "HELIX search: query_hilbert_key = {:?}, num_blocks = {}",
+        query_hilbert_key,
+        num_blocks
+    );
 
     for block_idx in 0..num_blocks {
         let meta = &header.block_metadata[block_idx];
@@ -614,8 +669,13 @@ pub async fn search_helix_sstable(
         // Enhanced Hilbert-based pruning using metadata
         let should_prune = if let Some(query_key) = query_hilbert_key {
             if let Some((min_key, max_key)) = meta.hilbert_range {
-                tracing::debug!("Block {}: query_key={}, hilbert_range=({}, {})",
-                    block_idx, query_key, min_key, max_key);
+                tracing::debug!(
+                    "Block {}: query_key={}, hilbert_range=({}, {})",
+                    block_idx,
+                    query_key,
+                    min_key,
+                    max_key
+                );
                 // Calculate tolerance based on Hilbert space resolution
                 let range_size = max_key.saturating_sub(min_key);
                 let tolerance = if range_size > 0 {
@@ -649,29 +709,32 @@ pub async fn search_helix_sstable(
         let exact_size = header.block_sizes[block_idx];
         tracing::trace!(
             "Block {}: Reading exact {}KB at offset {} (hilbert_range: {:?})",
-            block_idx, exact_size / 1024, block_offset, meta.hilbert_range
+            block_idx,
+            exact_size / 1024,
+            block_offset,
+            meta.hilbert_range
         );
 
         // Read exact size: 4 bytes (size prefix) + block data
-        let chunk_data = filesystem.read_range(path_str, block_offset, (4 + exact_size) as u64).await?;
+        let chunk_data = filesystem
+            .read_range(path_str, block_offset, (4 + exact_size) as u64)
+            .await?;
 
         // Verify size prefix matches header (integrity check)
-        let size_prefix = u32::from_le_bytes([
-            chunk_data[0],
-            chunk_data[1],
-            chunk_data[2],
-            chunk_data[3],
-        ]);
+        let size_prefix =
+            u32::from_le_bytes([chunk_data[0], chunk_data[1], chunk_data[2], chunk_data[3]]);
 
         if size_prefix != exact_size {
             return Err(anyhow::anyhow!(
                 "Block {} size mismatch: header says {}, file has {}",
-                block_idx, exact_size, size_prefix
+                block_idx,
+                exact_size,
+                size_prefix
             ));
         }
 
         // Extract block data after 4-byte size prefix
-        let block_data = &chunk_data[4..4+exact_size as usize];
+        let block_data = &chunk_data[4..4 + exact_size as usize];
 
         // Deserialize block with collection config for type-safe metadata
         let block = ProximaDataBlock::deserialize(&block_data, collection)?;
@@ -680,7 +743,10 @@ pub async fn search_helix_sstable(
         for record in block.records.iter() {
             // Apply type-safe filter if present
             if let Some(filter_expr) = filter_expression {
-                let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
+                let matches = crate::core::search::sql_value_filter::evaluate_filter(
+                    filter_expr,
+                    &record.metadata,
+                );
                 if !matches {
                     continue; // Skip records that don't match filter
                 }
@@ -727,7 +793,11 @@ pub fn extract_helix_metadata(
                 record_count: chunk.len() as u32,
                 size_bytes: (chunk.len() * std::mem::size_of::<VectorRecord>()) as u64,
                 compressed_size: 0, // Will be set during compression
-                timestamp: chunk.iter().map(|r| r.timestamp.unwrap_or(0) as i64).max().unwrap_or(0),
+                timestamp: chunk
+                    .iter()
+                    .map(|r| r.timestamp.unwrap_or(0) as i64)
+                    .max()
+                    .unwrap_or(0),
                 compaction_level: 0,
                 has_deletes: false,
                 has_updates: false,

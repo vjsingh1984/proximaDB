@@ -127,7 +127,9 @@ impl QueryLowering {
             selection,
             group_by: match &select.group_by {
                 sqlparser::ast::GroupByExpr::All => vec![],
-                sqlparser::ast::GroupByExpr::Expressions(exprs) => self.lower_group_by(exprs).await?,
+                sqlparser::ast::GroupByExpr::Expressions(exprs) => {
+                    self.lower_group_by(exprs).await?
+                }
             },
             having: if let Some(having_expr) = &select.having {
                 Some(self.lower_expr(having_expr).await?)
@@ -141,7 +143,10 @@ impl QueryLowering {
     }
 
     /// Lower projection list with column validation and vector function recognition
-    async fn lower_projection(&self, projection: &[SelectItem]) -> Result<Vec<crate::query::ast::ProjectionItem>> {
+    async fn lower_projection(
+        &self,
+        projection: &[SelectItem],
+    ) -> Result<Vec<crate::query::ast::ProjectionItem>> {
         let mut items = Vec::new();
 
         for item in projection {
@@ -160,7 +165,10 @@ impl QueryLowering {
     }
 
     /// Lower FROM clause with collection name resolution and validation
-    async fn lower_from_clause(&self, from: &[TableWithJoins]) -> Result<(Vec<TableRef>, Vec<Join>)> {
+    async fn lower_from_clause(
+        &self,
+        from: &[TableWithJoins],
+    ) -> Result<(Vec<TableRef>, Vec<Join>)> {
         let mut tables = Vec::new();
         let mut joins = Vec::new();
 
@@ -291,7 +299,11 @@ impl QueryLowering {
                 }
 
                 // Chain with OR (for IN) or AND (for NOT IN)
-                let op = if *negated { BinaryOp::And } else { BinaryOp::Or };
+                let op = if *negated {
+                    BinaryOp::And
+                } else {
+                    BinaryOp::Or
+                };
                 let mut result = comparisons[0].clone();
                 for comparison in comparisons.into_iter().skip(1) {
                     result = Expr::Binary {
@@ -378,8 +390,7 @@ impl QueryLowering {
         else if self.is_aggregate_function(&name) {
             // Handle aggregate functions
             Ok(Expr::FuncCall { name, args })
-        }
-        else {
+        } else {
             Ok(Expr::FuncCall { name, args })
         }
     }
@@ -403,175 +414,182 @@ impl QueryLowering {
     }
 
     /// Lower expressions recursively with type preservation
-    fn lower_expr<'a>(&'a self, expr: &'a SqlExpr) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Expr>> + Send + 'a>> {
+    fn lower_expr<'a>(
+        &'a self,
+        expr: &'a SqlExpr,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Expr>> + Send + 'a>> {
         Box::pin(async move {
-        match expr {
-            SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
-            SqlExpr::Value(value) => {
-                // Handle parameter placeholders separately
-                match value {
-                    Value::Placeholder(placeholder) => Ok(Expr::Param(placeholder.clone())),
-                    _ => Ok(Expr::Literal(self.convert_value(value)?)),
+            match expr {
+                SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
+                SqlExpr::Value(value) => {
+                    // Handle parameter placeholders separately
+                    match value {
+                        Value::Placeholder(placeholder) => Ok(Expr::Param(placeholder.clone())),
+                        _ => Ok(Expr::Literal(self.convert_value(value)?)),
+                    }
                 }
-            }
-            SqlExpr::BinaryOp { left, op, right } => {
-                let left_expr = Box::new(self.lower_expr(left).await?);
-                let right_expr = Box::new(self.lower_expr(right).await?);
-                let binary_op = self.convert_binary_op(op)?;
+                SqlExpr::BinaryOp { left, op, right } => {
+                    let left_expr = Box::new(self.lower_expr(left).await?);
+                    let right_expr = Box::new(self.lower_expr(right).await?);
+                    let binary_op = self.convert_binary_op(op)?;
 
-                Ok(Expr::Binary {
-                    left: left_expr,
-                    op: binary_op,
-                    right: right_expr,
-                })
-            }
-            SqlExpr::Function(func) => self.lower_function_call(func).await,
-            SqlExpr::Case {
-                operand,
-                conditions,
-                results,
-                else_result,
-            } => {
-                let lowered_operand = if let Some(op) = operand {
-                    Some(Box::new(self.lower_expr(op).await?))
-                } else {
-                    None
-                };
-                let mut lowered_conditions = Vec::new();
-                for (condition, result) in conditions.iter().zip(results.iter()) {
-                    let when_expr = self.lower_expr(condition).await?;
-                    let then_expr = self.lower_expr(result).await?;
-                    lowered_conditions.push((when_expr, then_expr));
-                }
-                let lowered_else_expr = if let Some(el) = else_result {
-                    Some(Box::new(self.lower_expr(el).await?))
-                } else {
-                    None
-                };
-                Ok(Expr::Case {
-                    operand: lowered_operand,
-                    conditions: lowered_conditions,
-                    else_expr: lowered_else_expr,
-                })
-            },
-            SqlExpr::Subquery(subquery) => {
-                let lowered_subquery = self.lower_query(subquery).await?;
-                Ok(Expr::Subquery(Box::new(lowered_subquery)))
-            },
-            SqlExpr::CompoundIdentifier(idents) => {
-                // Handle metadata.field access patterns for HashMap optimization
-                let combined = idents
-                    .iter()
-                    .map(|i| i.value.as_str())
-                    .collect::<Vec<_>>()
-                    .join(".");
-                Ok(Expr::Identifier(combined))
-            },
-            SqlExpr::Nested(inner_expr) => {
-                // Handle parenthesized expressions - just lower the inner expression
-                self.lower_expr(inner_expr).await
-            },
-            SqlExpr::Array(array_expr) => {
-                // Handle array literals for vector queries
-                let mut elements = Vec::new();
-                for elem_expr in &array_expr.elem {
-                    let lowered = self.lower_expr(elem_expr).await?;
-                    elements.push(lowered);
-                }
-                Ok(Expr::Array {
-                    elem: elements,
-                    named: array_expr.named,
-                })
-            },
-            SqlExpr::Between {
-                expr,
-                negated,
-                low,
-                high,
-            } => {
-                // Convert BETWEEN to: expr >= low AND expr <= high
-                // Or NOT BETWEEN to: expr < low OR expr > high
-                let expr_ast = Box::new(self.lower_expr(expr).await?);
-                let low_ast = Box::new(self.lower_expr(low).await?);
-                let high_ast = Box::new(self.lower_expr(high).await?);
-
-                if *negated {
-                    // expr NOT BETWEEN low AND high → expr < low OR expr > high
-                    let lt_expr = Expr::Binary {
-                        left: expr_ast.clone(),
-                        op: BinaryOp::Lt,
-                        right: low_ast,
-                    };
-                    let gt_expr = Expr::Binary {
-                        left: expr_ast,
-                        op: BinaryOp::Gt,
-                        right: high_ast,
-                    };
                     Ok(Expr::Binary {
-                        left: Box::new(lt_expr),
-                        op: BinaryOp::Or,
-                        right: Box::new(gt_expr),
-                    })
-                } else {
-                    // expr BETWEEN low AND high → expr >= low AND expr <= high
-                    let ge_expr = Expr::Binary {
-                        left: expr_ast.clone(),
-                        op: BinaryOp::Ge,
-                        right: low_ast,
-                    };
-                    let le_expr = Expr::Binary {
-                        left: expr_ast,
-                        op: BinaryOp::Le,
-                        right: high_ast,
-                    };
-                    Ok(Expr::Binary {
-                        left: Box::new(ge_expr),
-                        op: BinaryOp::And,
-                        right: Box::new(le_expr),
+                        left: left_expr,
+                        op: binary_op,
+                        right: right_expr,
                     })
                 }
-            }
-            SqlExpr::InList {
-                expr,
-                list,
-                negated,
-            } => {
-                // Convert IN to: expr = val1 OR expr = val2 OR ...
-                // Or NOT IN to: expr != val1 AND expr != val2 AND ...
-                let expr_ast = Box::new(self.lower_expr(expr).await?);
-
-                if list.is_empty() {
-                    // Empty IN list should return FALSE (no matches)
-                    // Empty NOT IN list should return TRUE (matches everything)
-                    return Ok(Expr::Literal(Literal::Bool(!negated)));
-                }
-
-                let mut comparisons: Vec<Expr> = Vec::new();
-                for val in list {
-                    let val_ast = Box::new(self.lower_expr(val).await?);
-                    let comparison = Expr::Binary {
-                        left: expr_ast.clone(),
-                        op: if *negated { BinaryOp::Ne } else { BinaryOp::Eq },
-                        right: val_ast,
+                SqlExpr::Function(func) => self.lower_function_call(func).await,
+                SqlExpr::Case {
+                    operand,
+                    conditions,
+                    results,
+                    else_result,
+                } => {
+                    let lowered_operand = if let Some(op) = operand {
+                        Some(Box::new(self.lower_expr(op).await?))
+                    } else {
+                        None
                     };
-                    comparisons.push(comparison);
-                }
-
-                // Chain with OR (for IN) or AND (for NOT IN)
-                let op = if *negated { BinaryOp::And } else { BinaryOp::Or };
-                let mut result = comparisons[0].clone();
-                for comparison in comparisons.into_iter().skip(1) {
-                    result = Expr::Binary {
-                        left: Box::new(result),
-                        op: op.clone(),
-                        right: Box::new(comparison),
+                    let mut lowered_conditions = Vec::new();
+                    for (condition, result) in conditions.iter().zip(results.iter()) {
+                        let when_expr = self.lower_expr(condition).await?;
+                        let then_expr = self.lower_expr(result).await?;
+                        lowered_conditions.push((when_expr, then_expr));
+                    }
+                    let lowered_else_expr = if let Some(el) = else_result {
+                        Some(Box::new(self.lower_expr(el).await?))
+                    } else {
+                        None
                     };
+                    Ok(Expr::Case {
+                        operand: lowered_operand,
+                        conditions: lowered_conditions,
+                        else_expr: lowered_else_expr,
+                    })
                 }
+                SqlExpr::Subquery(subquery) => {
+                    let lowered_subquery = self.lower_query(subquery).await?;
+                    Ok(Expr::Subquery(Box::new(lowered_subquery)))
+                }
+                SqlExpr::CompoundIdentifier(idents) => {
+                    // Handle metadata.field access patterns for HashMap optimization
+                    let combined = idents
+                        .iter()
+                        .map(|i| i.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    Ok(Expr::Identifier(combined))
+                }
+                SqlExpr::Nested(inner_expr) => {
+                    // Handle parenthesized expressions - just lower the inner expression
+                    self.lower_expr(inner_expr).await
+                }
+                SqlExpr::Array(array_expr) => {
+                    // Handle array literals for vector queries
+                    let mut elements = Vec::new();
+                    for elem_expr in &array_expr.elem {
+                        let lowered = self.lower_expr(elem_expr).await?;
+                        elements.push(lowered);
+                    }
+                    Ok(Expr::Array {
+                        elem: elements,
+                        named: array_expr.named,
+                    })
+                }
+                SqlExpr::Between {
+                    expr,
+                    negated,
+                    low,
+                    high,
+                } => {
+                    // Convert BETWEEN to: expr >= low AND expr <= high
+                    // Or NOT BETWEEN to: expr < low OR expr > high
+                    let expr_ast = Box::new(self.lower_expr(expr).await?);
+                    let low_ast = Box::new(self.lower_expr(low).await?);
+                    let high_ast = Box::new(self.lower_expr(high).await?);
 
-                Ok(result)
+                    if *negated {
+                        // expr NOT BETWEEN low AND high → expr < low OR expr > high
+                        let lt_expr = Expr::Binary {
+                            left: expr_ast.clone(),
+                            op: BinaryOp::Lt,
+                            right: low_ast,
+                        };
+                        let gt_expr = Expr::Binary {
+                            left: expr_ast,
+                            op: BinaryOp::Gt,
+                            right: high_ast,
+                        };
+                        Ok(Expr::Binary {
+                            left: Box::new(lt_expr),
+                            op: BinaryOp::Or,
+                            right: Box::new(gt_expr),
+                        })
+                    } else {
+                        // expr BETWEEN low AND high → expr >= low AND expr <= high
+                        let ge_expr = Expr::Binary {
+                            left: expr_ast.clone(),
+                            op: BinaryOp::Ge,
+                            right: low_ast,
+                        };
+                        let le_expr = Expr::Binary {
+                            left: expr_ast,
+                            op: BinaryOp::Le,
+                            right: high_ast,
+                        };
+                        Ok(Expr::Binary {
+                            left: Box::new(ge_expr),
+                            op: BinaryOp::And,
+                            right: Box::new(le_expr),
+                        })
+                    }
+                }
+                SqlExpr::InList {
+                    expr,
+                    list,
+                    negated,
+                } => {
+                    // Convert IN to: expr = val1 OR expr = val2 OR ...
+                    // Or NOT IN to: expr != val1 AND expr != val2 AND ...
+                    let expr_ast = Box::new(self.lower_expr(expr).await?);
+
+                    if list.is_empty() {
+                        // Empty IN list should return FALSE (no matches)
+                        // Empty NOT IN list should return TRUE (matches everything)
+                        return Ok(Expr::Literal(Literal::Bool(!negated)));
+                    }
+
+                    let mut comparisons: Vec<Expr> = Vec::new();
+                    for val in list {
+                        let val_ast = Box::new(self.lower_expr(val).await?);
+                        let comparison = Expr::Binary {
+                            left: expr_ast.clone(),
+                            op: if *negated { BinaryOp::Ne } else { BinaryOp::Eq },
+                            right: val_ast,
+                        };
+                        comparisons.push(comparison);
+                    }
+
+                    // Chain with OR (for IN) or AND (for NOT IN)
+                    let op = if *negated {
+                        BinaryOp::And
+                    } else {
+                        BinaryOp::Or
+                    };
+                    let mut result = comparisons[0].clone();
+                    for comparison in comparisons.into_iter().skip(1) {
+                        result = Expr::Binary {
+                            left: Box::new(result),
+                            op: op.clone(),
+                            right: Box::new(comparison),
+                        };
+                    }
+
+                    Ok(result)
+                }
+                _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
             }
-            _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
-        }
         })
     }
 
@@ -669,7 +687,10 @@ impl QueryLowering {
     }
 
     /// Lower JOIN clauses from SQL AST to query AST
-    async fn lower_joins(&self, joins: &[sqlparser::ast::Join]) -> Result<Vec<crate::query::ast::Join>> {
+    async fn lower_joins(
+        &self,
+        joins: &[sqlparser::ast::Join],
+    ) -> Result<Vec<crate::query::ast::Join>> {
         let mut result = Vec::new();
         for join in joins {
             result.push(self.lower_join(join).await?);
@@ -679,8 +700,8 @@ impl QueryLowering {
 
     /// Lower individual JOIN clause
     async fn lower_join(&self, join: &sqlparser::ast::Join) -> Result<crate::query::ast::Join> {
-        use sqlparser::ast::JoinOperator;
         use crate::query::ast::{Join, JoinType};
+        use sqlparser::ast::JoinOperator;
 
         let join_type = match join.join_operator {
             JoinOperator::Inner(_) => JoinType::Inner,
@@ -694,22 +715,18 @@ impl QueryLowering {
         let right_table = self.lower_table_factor(&join.relation).await?;
 
         let on_condition = match &join.join_operator {
-            JoinOperator::Inner(constraint) |
-            JoinOperator::LeftOuter(constraint) |
-            JoinOperator::RightOuter(constraint) |
-            JoinOperator::FullOuter(constraint) => {
-                match constraint {
-                    sqlparser::ast::JoinConstraint::On(expr) => {
-                        Some(self.lower_expr(expr).await?)
-                    },
-                    sqlparser::ast::JoinConstraint::Using(_) => {
-                        return Err(anyhow!("USING constraint not yet implemented"));
-                    },
-                    sqlparser::ast::JoinConstraint::Natural => {
-                        return Err(anyhow!("NATURAL JOIN not yet implemented"));
-                    },
-                    sqlparser::ast::JoinConstraint::None => None,
+            JoinOperator::Inner(constraint)
+            | JoinOperator::LeftOuter(constraint)
+            | JoinOperator::RightOuter(constraint)
+            | JoinOperator::FullOuter(constraint) => match constraint {
+                sqlparser::ast::JoinConstraint::On(expr) => Some(self.lower_expr(expr).await?),
+                sqlparser::ast::JoinConstraint::Using(_) => {
+                    return Err(anyhow!("USING constraint not yet implemented"));
                 }
+                sqlparser::ast::JoinConstraint::Natural => {
+                    return Err(anyhow!("NATURAL JOIN not yet implemented"));
+                }
+                sqlparser::ast::JoinConstraint::None => None,
             },
             JoinOperator::CrossJoin => None,
             _ => return Err(anyhow!("Unsupported JOIN constraint")),
@@ -724,7 +741,10 @@ impl QueryLowering {
 
     /// Check if a function is an aggregate function
     fn is_aggregate_function(&self, name: &str) -> bool {
-        matches!(name.to_uppercase().as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "GROUP_CONCAT")
+        matches!(
+            name.to_uppercase().as_str(),
+            "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "GROUP_CONCAT"
+        )
     }
 
     /// Lower SKS functions (SIMILAR, FOLLOW, ASSEMBLE) to structured AST nodes
@@ -733,12 +753,14 @@ impl QueryLowering {
     /// can be optimized by the query planner and executed efficiently.
     async fn lower_sks_function(&self, name: &str, args: &[FunctionArg]) -> Result<Expr> {
         let lowered_args = self.lower_function_args(args).await?;
-        
+
         match name.to_uppercase().as_str() {
             "SIMILAR" => {
                 // SIMILAR(field, query, [options])
                 if lowered_args.len() < 2 {
-                    return Err(anyhow!("SIMILAR function requires at least 2 arguments: field, query"));
+                    return Err(anyhow!(
+                        "SIMILAR function requires at least 2 arguments: field, query"
+                    ));
                 }
 
                 // Extract field name (first argument)
@@ -747,7 +769,7 @@ impl QueryLowering {
                     _ => return Err(anyhow!("First argument to SIMILAR must be a field name")),
                 };
 
-                // Extract query (second argument)  
+                // Extract query (second argument)
                 let query = Box::new(lowered_args[1].clone());
 
                 // Parse optional parameters from remaining arguments
@@ -762,11 +784,13 @@ impl QueryLowering {
                     threshold,
                 })
             }
-            
+
             "FOLLOW" => {
                 // FOLLOW(start_node, edge_type, [options])
                 if lowered_args.len() < 2 {
-                    return Err(anyhow!("FOLLOW function requires at least 2 arguments: start_node, edge_type"));
+                    return Err(anyhow!(
+                        "FOLLOW function requires at least 2 arguments: start_node, edge_type"
+                    ));
                 }
 
                 let start = Box::new(lowered_args[0].clone());
@@ -775,7 +799,11 @@ impl QueryLowering {
                 let edge = match &lowered_args[1] {
                     Expr::Literal(Literal::String(edge_name)) => edge_name.clone(),
                     Expr::Identifier(edge_name) => edge_name.clone(),
-                    _ => return Err(anyhow!("Second argument to FOLLOW must be an edge type string")),
+                    _ => {
+                        return Err(anyhow!(
+                            "Second argument to FOLLOW must be an edge type string"
+                        ));
+                    }
                 };
 
                 // Parse optional max_depth (default to 3)
@@ -803,7 +831,7 @@ impl QueryLowering {
 
                 // All arguments are context items for now
                 let context_items = lowered_args;
-                
+
                 // TODO: Parse optional strategy and max_size from named parameters
                 let strategy = None; // Could be "temporal", "semantic", "relevance"
                 let max_size = None; // Maximum context size
@@ -836,17 +864,28 @@ mod lowering_tests {
 
     /// Create mock collection service for testing
     async fn setup_test_collection_service() -> Arc<CollectionService> {
-        use crate::storage::persistence::filesystem::FilesystemFactory;
         use crate::core::config::StorageConfig;
-        use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
         use crate::proto::proximadb_v1::CollectionConfig;
+        use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
 
         let config = UniversalMetadataConfig::default();
         let filesystem_config = Default::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
-        let backend = crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(config, filesystem_factory).await.unwrap();
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let backend =
+            crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(
+                config,
+                filesystem_factory,
+            )
+            .await
+            .unwrap();
         let storage_config = StorageConfig::default();
-        let service = Arc::new(CollectionService::new(Arc::new(backend), storage_config).await.unwrap());
+        let service = Arc::new(
+            CollectionService::new(Arc::new(backend), storage_config)
+                .await
+                .unwrap(),
+        );
 
         // Create test collection "products"
         let collection_config = CollectionConfig {
@@ -902,7 +941,12 @@ mod lowering_tests {
 
                 // Verify WHERE clause generates efficient FilterExpression
                 // This will use HashMap.get("category") instead of linear scan
-                if let Some(Expr::Binary { left: _, op, right: _ }) = &select.selection {
+                if let Some(Expr::Binary {
+                    left: _,
+                    op,
+                    right: _,
+                }) = &select.selection
+                {
                     assert!(matches!(op, BinaryOp::Eq));
                     // TODO: Validate field access pattern optimizes to HashMap.get()
                 }
@@ -951,14 +995,28 @@ mod lowering_tests {
                 // Verify parameter placeholders are preserved in the AST
                 if let Some(Expr::Binary { left, op: _, right }) = &select.selection {
                     // Left side: category = $1
-                    if let Expr::Binary { left: _, op: _, right: param1 } = left.as_ref() {
-                        assert!(matches!(param1.as_ref(), Expr::Param(_)),
-                            "First parameter should be Expr::Param");
+                    if let Expr::Binary {
+                        left: _,
+                        op: _,
+                        right: param1,
+                    } = left.as_ref()
+                    {
+                        assert!(
+                            matches!(param1.as_ref(), Expr::Param(_)),
+                            "First parameter should be Expr::Param"
+                        );
                     }
                     // Right side: price > $2
-                    if let Expr::Binary { left: _, op: _, right: param2 } = right.as_ref() {
-                        assert!(matches!(param2.as_ref(), Expr::Param(_)),
-                            "Second parameter should be Expr::Param");
+                    if let Expr::Binary {
+                        left: _,
+                        op: _,
+                        right: param2,
+                    } = right.as_ref()
+                    {
+                        assert!(
+                            matches!(param2.as_ref(), Expr::Param(_)),
+                            "Second parameter should be Expr::Param"
+                        );
                     }
                 }
             }

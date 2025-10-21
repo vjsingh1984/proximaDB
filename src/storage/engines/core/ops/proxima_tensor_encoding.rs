@@ -4,8 +4,8 @@
 // functionality that is reused across all storage engines (SST, SWIFT, RAPTOR, PRISM)
 // to eliminate code duplication and ensure consistency.
 
-use super::proximacodec::{ProximaCodec, analysis};
 use super::proximacodec::types::ProximaScheme;
+use super::proximacodec::{ProximaCodec, analysis};
 use anyhow::Result;
 use std::io::{Read, Write};
 
@@ -638,8 +638,13 @@ mod tests {
         // INT8 quantization of range 0.0-9.9 has limited precision
         // Scale = 9.9/255 ≈ 0.0388 per level, so max error can be up to ~0.8 due to rounding
         for (orig, dec) in vectors.iter().zip(decoded.iter()) {
-            assert!((orig - dec).abs() < 1.0,
-                "Original: {}, Decoded: {}, Diff: {}", orig, dec, (orig - dec).abs());
+            assert!(
+                (orig - dec).abs() < 1.0,
+                "Original: {}, Decoded: {}, Diff: {}",
+                orig,
+                dec,
+                (orig - dec).abs()
+            );
         }
 
         // Test Binary

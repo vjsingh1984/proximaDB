@@ -8,12 +8,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tracing::{debug, trace};
 
+use crate::storage::cache::backend::CacheTier;
 use crate::storage::cache::orchestrator::{
     CacheType as OrchestratorCacheType, CrossCacheOrchestrator,
 };
-use crate::storage::cache::backend::CacheTier;
 use crate::storage::persistence::filesystem::unified::{
-    UnifiedCachingFilesystem, CacheType as FilesystemCacheType,
+    CacheType as FilesystemCacheType, UnifiedCachingFilesystem,
 };
 
 /// Extension trait for UnifiedCachingFilesystem to integrate with CrossCacheOrchestrator
@@ -63,21 +63,21 @@ impl OrchestratorIntegration for UnifiedCachingFilesystem {
         if hit {
             // Map orchestrator cache type to cache tier
             let tier = match orchestrator_type {
-                OrchestratorCacheType::Metadata => CacheTier::L1,  // Metadata is hot, L1
-                OrchestratorCacheType::QueryResult => CacheTier::L1,  // Query results are hot
-                OrchestratorCacheType::VectorData => CacheTier::L2,  // Vector data in L2
-                OrchestratorCacheType::FilterBitmap => CacheTier::L1,  // Filter bitmaps are frequently accessed
-                OrchestratorCacheType::IndexStructure => CacheTier::L2,  // Index structures in L2
-                OrchestratorCacheType::QueryPlan => CacheTier::L1,  // Query plans are hot
-                OrchestratorCacheType::EntityHeader => CacheTier::L2,  // Entity headers in L2
-                OrchestratorCacheType::EmbeddingCatalog => CacheTier::L2,  // Embedding catalog in L2
-                OrchestratorCacheType::GraphNode => CacheTier::L2,  // Graph nodes in L2
-                OrchestratorCacheType::GraphEdge => CacheTier::L2,  // Graph edges in L2
-                OrchestratorCacheType::GraphAdjacency => CacheTier::L3,  // Adjacency lists in L3
-                OrchestratorCacheType::GraphPropertyIndex => CacheTier::L3,  // Property indexes in L3
-                OrchestratorCacheType::DistanceTable => CacheTier::L2,  // Distance tables in L2
-                OrchestratorCacheType::MetricsSnapshot => CacheTier::L3,  // Metrics snapshots in L3
-                OrchestratorCacheType::Quantization => CacheTier::L2,  // Quantization codebooks in L2
+                OrchestratorCacheType::Metadata => CacheTier::L1, // Metadata is hot, L1
+                OrchestratorCacheType::QueryResult => CacheTier::L1, // Query results are hot
+                OrchestratorCacheType::VectorData => CacheTier::L2, // Vector data in L2
+                OrchestratorCacheType::FilterBitmap => CacheTier::L1, // Filter bitmaps are frequently accessed
+                OrchestratorCacheType::IndexStructure => CacheTier::L2, // Index structures in L2
+                OrchestratorCacheType::QueryPlan => CacheTier::L1,    // Query plans are hot
+                OrchestratorCacheType::EntityHeader => CacheTier::L2, // Entity headers in L2
+                OrchestratorCacheType::EmbeddingCatalog => CacheTier::L2, // Embedding catalog in L2
+                OrchestratorCacheType::GraphNode => CacheTier::L2,    // Graph nodes in L2
+                OrchestratorCacheType::GraphEdge => CacheTier::L2,    // Graph edges in L2
+                OrchestratorCacheType::GraphAdjacency => CacheTier::L3, // Adjacency lists in L3
+                OrchestratorCacheType::GraphPropertyIndex => CacheTier::L3, // Property indexes in L3
+                OrchestratorCacheType::DistanceTable => CacheTier::L2,      // Distance tables in L2
+                OrchestratorCacheType::MetricsSnapshot => CacheTier::L3, // Metrics snapshots in L3
+                OrchestratorCacheType::Quantization => CacheTier::L2, // Quantization codebooks in L2
             };
             metrics.record_hit(tier);
         } else {
@@ -121,7 +121,7 @@ impl OrchestratorIntegration for UnifiedCachingFilesystem {
 
         // Report current cache sizes and hit rates
         for _ in 0..fs_metrics.total_hits {
-            metrics.record_hit(CacheTier::L1);  // Use L1 for metadata cache hits
+            metrics.record_hit(CacheTier::L1); // Use L1 for metadata cache hits
         }
         for _ in 0..fs_metrics.total_misses {
             metrics.record_miss();
@@ -138,9 +138,7 @@ pub struct OrchestratorAwareFilesystemBuilder {
 
 impl OrchestratorAwareFilesystemBuilder {
     pub fn new() -> Self {
-        Self {
-            orchestrator: None,
-        }
+        Self { orchestrator: None }
     }
 
     pub fn with_orchestrator(mut self, orchestrator: Arc<CrossCacheOrchestrator>) -> Self {

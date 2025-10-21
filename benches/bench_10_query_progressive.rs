@@ -4,35 +4,39 @@
 //! with realistic BERT and OpenAI embeddings for accurate performance measurements.
 
 mod common;
-use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+use common::benchmark_utils::{STANDARD_BATCH_SIZES, STANDARD_DIMENSIONS, print_system_info};
 
+use common::{EmbeddingGenerator, EmbeddingModel};
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::{
     compute::{
         distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute},
         quantization::unified::UnifiedQuantizationEngine,
     },
-    core::search::progressive_quantization::{
-        ProgressiveSearchConfig, SearchScenario, StageSizes,
-    },
-    storage::engines::core::search::progressive_search::ProgressiveSearchExecutor,
+    core::search::progressive_quantization::{ProgressiveSearchConfig, SearchScenario, StageSizes},
     proto::proximadb_v1::VectorRecord,
+    storage::engines::core::search::progressive_search::ProgressiveSearchExecutor,
     storage::traits::{StorageQueryContext, StorageQueryMetadata},
 };
-use common::{EmbeddingGenerator, EmbeddingModel};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 /// Generate realistic embedding vectors for benchmarking
-fn generate_embedding_vectors(count: usize, dimension: usize, model: EmbeddingModel) -> Vec<Vec<f32>> {
+fn generate_embedding_vectors(
+    count: usize,
+    dimension: usize,
+    model: EmbeddingModel,
+) -> Vec<Vec<f32>> {
     let mut generator = EmbeddingGenerator::new(model);
     generator.generate_batch(count, dimension)
 }
 
 /// Convert vectors to VectorRecords for real engine use
 fn vectors_to_records(vectors: &[Vec<f32>]) -> Vec<VectorRecord> {
-    vectors.iter().enumerate().map(|(i, v)| {
-        VectorRecord {
+    vectors
+        .iter()
+        .enumerate()
+        .map(|(i, v)| VectorRecord {
             id: format!("vec_{}", i),
             vector: v.clone(),
             metadata: std::collections::HashMap::new(),
@@ -41,8 +45,8 @@ fn vectors_to_records(vectors: &[Vec<f32>]) -> Vec<VectorRecord> {
             expires_at: None,
             version: Some(1),
             source: None,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Real brute force search using UnifiedDistanceCompute
@@ -52,7 +56,8 @@ fn brute_force_search(query: &[f32], database: &[Vec<f32>], k: usize) -> Vec<(us
         .iter()
         .enumerate()
         .map(|(idx, vector)| {
-            let result = distance_compute.calculate_distance(query, vector, &DistanceMetric::Cosine);
+            let result =
+                distance_compute.calculate_distance(query, vector, &DistanceMetric::Cosine);
             (idx, result.distance)
         })
         .collect();
@@ -73,21 +78,19 @@ async fn progressive_search_real(
     use proximadb::compute::quantization::InMemoryCodebookStore;
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-    let codebook_store: Arc<dyn proximadb::compute::quantization::CodebookStore> = Arc::new(InMemoryCodebookStore::new());
+    let codebook_store: Arc<dyn proximadb::compute::quantization::CodebookStore> =
+        Arc::new(InMemoryCodebookStore::new());
     let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
         distance_compute.clone(),
         codebook_store,
     ));
 
-    let executor = ProgressiveSearchExecutor::new(
-        quantization_engine.clone(),
-        distance_compute.clone(),
-    );
+    let executor =
+        ProgressiveSearchExecutor::new(quantization_engine.clone(), distance_compute.clone());
 
     // Create search context with proper structure
     use proximadb::core::search::SearchParams;
     use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats};
-    
 
     let search_params = Arc::new(SearchParams {
         vector: Some(query.to_vec()),
@@ -123,16 +126,14 @@ async fn progressive_search_real(
     };
 
     // Execute real progressive search
-    match executor.execute_progressive_search(
-        &context,
-        database.to_vec(),
-        query,
-    ).await {
-        Ok(results) => {
-            results.into_iter()
-                .map(|r| (r.id.clone(), r.score))
-                .collect()
-        }
+    match executor
+        .execute_progressive_search(&context, database.to_vec(), query)
+        .await
+    {
+        Ok(results) => results
+            .into_iter()
+            .map(|r| (r.id.clone(), r.score))
+            .collect(),
         Err(_) => {
             // Fallback to brute force if progressive search fails
             let vectors: Vec<Vec<f32>> = database.iter().map(|r| r.vector.clone()).collect();
@@ -164,35 +165,23 @@ fn bench_progressive_vs_brute_force(c: &mut Criterion) {
         let records = vectors_to_records(&database);
 
         // Benchmark brute force search
-        group.bench_with_input(
-            BenchmarkId::new("brute_force", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    let results = brute_force_search(&query, &database, k);
-                    black_box(results)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("brute_force", size), &size, |b, _| {
+            b.iter(|| {
+                let results = brute_force_search(&query, &database, k);
+                black_box(results)
+            });
+        });
 
         // Benchmark real progressive search
         let config = ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall);
 
-        group.bench_with_input(
-            BenchmarkId::new("progressive_real", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    let results = runtime.block_on(progressive_search_real(
-                        &query,
-                        &records,
-                        k,
-                        &config,
-                    ));
-                    black_box(results)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("progressive_real", size), &size, |b, _| {
+            b.iter(|| {
+                let results =
+                    runtime.block_on(progressive_search_real(&query, &records, k, &config));
+                black_box(results)
+            });
+        });
     }
 
     group.finish();
@@ -220,12 +209,8 @@ fn bench_search_scenarios(c: &mut Criterion) {
 
         group.bench_function(name, |b| {
             b.iter(|| {
-                let results = runtime.block_on(progressive_search_real(
-                    &query,
-                    &records,
-                    10,
-                    &config,
-                ));
+                let results =
+                    runtime.block_on(progressive_search_real(&query, &records, 10, &config));
                 black_box(results)
             });
         });
@@ -259,12 +244,8 @@ fn bench_dimension_scaling(c: &mut Criterion) {
             &dimension,
             |b, _| {
                 b.iter(|| {
-                    let results = runtime.block_on(progressive_search_real(
-                        &query,
-                        &records,
-                        10,
-                        &config,
-                    ));
+                    let results =
+                        runtime.block_on(progressive_search_real(&query, &records, 10, &config));
                     black_box(results)
                 });
             },
@@ -288,30 +269,39 @@ fn bench_stage_performance(c: &mut Criterion) {
 
     // Test with different stage size configurations
     let configurations = vec![
-        ("aggressive", StageSizes {
-            binary_candidates: 512,
-            int8_candidates: 128,
-            pq_candidates: 64,
-            fp32_candidates: 10,
-            total_computations: 714,  // Sum of all candidate stages
-            effective_expansion: 51.2,  // binary_candidates / fp32_candidates
-        }),
-        ("balanced", StageSizes {
-            binary_candidates: 1024,
-            int8_candidates: 256,
-            pq_candidates: 128,
-            fp32_candidates: 10,
-            total_computations: 1418,  // Sum of all candidate stages
-            effective_expansion: 102.4,  // binary_candidates / fp32_candidates
-        }),
-        ("conservative", StageSizes {
-            binary_candidates: 2048,
-            int8_candidates: 512,
-            pq_candidates: 256,
-            fp32_candidates: 10,
-            total_computations: 2826,  // Sum of all candidate stages
-            effective_expansion: 204.8,  // binary_candidates / fp32_candidates
-        }),
+        (
+            "aggressive",
+            StageSizes {
+                binary_candidates: 512,
+                int8_candidates: 128,
+                pq_candidates: 64,
+                fp32_candidates: 10,
+                total_computations: 714,   // Sum of all candidate stages
+                effective_expansion: 51.2, // binary_candidates / fp32_candidates
+            },
+        ),
+        (
+            "balanced",
+            StageSizes {
+                binary_candidates: 1024,
+                int8_candidates: 256,
+                pq_candidates: 128,
+                fp32_candidates: 10,
+                total_computations: 1418,   // Sum of all candidate stages
+                effective_expansion: 102.4, // binary_candidates / fp32_candidates
+            },
+        ),
+        (
+            "conservative",
+            StageSizes {
+                binary_candidates: 2048,
+                int8_candidates: 512,
+                pq_candidates: 256,
+                fp32_candidates: 10,
+                total_computations: 2826,   // Sum of all candidate stages
+                effective_expansion: 204.8, // binary_candidates / fp32_candidates
+            },
+        ),
     ];
 
     for (name, _sizes) in configurations {
@@ -321,12 +311,8 @@ fn bench_stage_performance(c: &mut Criterion) {
 
         group.bench_function(name, |b| {
             b.iter(|| {
-                let results = runtime.block_on(progressive_search_real(
-                    &query,
-                    &records,
-                    10,
-                    &config,
-                ));
+                let results =
+                    runtime.block_on(progressive_search_real(&query, &records, 10, &config));
                 black_box(results)
             });
         });

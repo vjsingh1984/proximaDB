@@ -2,9 +2,9 @@
 //!
 //! Defines the fundamental types used across all LLM providers and integration logic.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 /// Configuration for LLM integration
@@ -157,13 +157,22 @@ pub enum LLMError {
     NetworkError(String),
 
     #[error("API error from {provider}: {message}")]
-    APIError { provider: LLMProvider, message: String },
+    APIError {
+        provider: LLMProvider,
+        message: String,
+    },
 
     #[error("Authentication failed for provider {provider}: {reason}")]
-    AuthenticationFailed { provider: LLMProvider, reason: String },
+    AuthenticationFailed {
+        provider: LLMProvider,
+        reason: String,
+    },
 
     #[error("Rate limit exceeded for provider {provider}. Retry after: {retry_after_seconds}s")]
-    RateLimitExceeded { provider: LLMProvider, retry_after_seconds: u64 },
+    RateLimitExceeded {
+        provider: LLMProvider,
+        retry_after_seconds: u64,
+    },
 
     #[error("Request timeout after {timeout_seconds}s")]
     Timeout { timeout_seconds: u64 },
@@ -172,7 +181,10 @@ pub enum LLMError {
     InvalidRequest(String),
 
     #[error("Invalid response from provider {provider}: {reason}")]
-    InvalidResponse { provider: LLMProvider, reason: String },
+    InvalidResponse {
+        provider: LLMProvider,
+        reason: String,
+    },
 
     #[error("Parse error: {0}")]
     ParseError(String),
@@ -277,12 +289,14 @@ impl LLMResponse {
             }
             LLMProvider::Cohere => {
                 // Cohere pricing estimate
-                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                let total_tokens =
+                    self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
                 total_tokens as f64 * 0.000015
             }
             LLMProvider::AWSBedrock => {
                 // AWS Bedrock pricing estimate
-                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                let total_tokens =
+                    self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
                 total_tokens as f64 * 0.00002
             }
             LLMProvider::AzureOpenAI => {
@@ -293,7 +307,8 @@ impl LLMResponse {
             }
             LLMProvider::GoogleVertexAI => {
                 // Google Vertex AI pricing estimate
-                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                let total_tokens =
+                    self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
                 total_tokens as f64 * 0.000025
             }
             LLMProvider::Ollama => {
@@ -306,7 +321,8 @@ impl LLMResponse {
             }
             LLMProvider::HuggingFace => {
                 // HuggingFace pricing estimate
-                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                let total_tokens =
+                    self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
                 total_tokens as f64 * 0.000005
             }
         }

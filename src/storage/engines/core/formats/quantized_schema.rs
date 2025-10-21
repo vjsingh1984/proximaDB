@@ -9,15 +9,15 @@
 //! - Optional fields for each quantization level avoid runtime overhead
 //! - Same logical schema maps to different physical storage formats
 
-use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
+use crate::storage::engines::core::formats::columnar::constants::*;
 use crate::storage::engines::core::formats::common_quantization::QuantizationLevel;
 use crate::storage::engines::core::formats::common_quantization::{
-    QuantizedVectorData, QuantizationFileConfig
+    QuantizationFileConfig, QuantizedVectorData,
 };
-use crate::storage::engines::core::formats::columnar::constants::*;
 
 /// Schema definition for quantized vector storage
 ///
@@ -89,7 +89,9 @@ pub enum RowGroupStrategy {
     /// All quantization levels in same row groups
     Unified { target_row_group_size: usize },
     /// Separate row groups for each quantization level
-    Separated { size_per_level: HashMap<String, usize> },
+    Separated {
+        size_per_level: HashMap<String, usize>,
+    },
 }
 
 /// Definition of a quantized field
@@ -322,7 +324,10 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Build field definition for quantization level using columnar constants
-    fn build_field_definition(&self, level: &QuantizationLevel) -> Result<QuantizedFieldDefinition> {
+    fn build_field_definition(
+        &self,
+        level: &QuantizationLevel,
+    ) -> Result<QuantizedFieldDefinition> {
         // Use constants from columnar module for consistent naming
         let field_name = match level {
             QuantizationLevel::Binary => FIELD_Q_BINARY.to_string(),
@@ -377,29 +382,37 @@ impl QuantizedVectorSchemaBuilder {
 
     /// Check if quantization level requires codebook
     fn requires_codebook(&self, level: &QuantizationLevel) -> bool {
-        matches!(level,
-            QuantizationLevel::PQ4 |
-            QuantizationLevel::PQ8 |
-            QuantizationLevel::PQ16 |
-            QuantizationLevel::PQ32
+        matches!(
+            level,
+            QuantizationLevel::PQ4
+                | QuantizationLevel::PQ8
+                | QuantizationLevel::PQ16
+                | QuantizationLevel::PQ32
         )
     }
 
     /// Build codebook field definition (NOT USED - codebooks are file-level metadata)
     /// This method is kept for backward compatibility but returns an error
-    fn build_codebook_definition(&self, level: &QuantizationLevel) -> Result<QuantizedFieldDefinition> {
+    fn build_codebook_definition(
+        &self,
+        level: &QuantizationLevel,
+    ) -> Result<QuantizedFieldDefinition> {
         // Codebooks are now stored as file-level metadata, not per-row columns
         // For ProximaBlock engines: stored in footer
         // For Parquet engines: stored as sidecar files
         Err(anyhow::anyhow!(
             "Codebooks are now stored as file-level metadata, not per-row columns. \
              Use CodebookSerializer from codebook_metadata module instead. \
-             Level: {:?}", level
+             Level: {:?}",
+            level
         ))
     }
 
     /// Build parameter field definitions using columnar constants
-    fn build_parameter_definitions(&self, level: &QuantizationLevel) -> Result<Vec<QuantizedFieldDefinition>> {
+    fn build_parameter_definitions(
+        &self,
+        level: &QuantizationLevel,
+    ) -> Result<Vec<QuantizedFieldDefinition>> {
         let mut param_defs = Vec::new();
 
         // Use constants for consistent parameter column naming
@@ -410,7 +423,7 @@ impl QuantizedVectorSchemaBuilder {
                     FIELD_QP_BINARY_THRESHOLD,
                     ParameterType::BinaryThreshold,
                 )?);
-            },
+            }
             QuantizationLevel::Int8 => {
                 param_defs.push(self.build_parameter_field(
                     level,
@@ -427,11 +440,11 @@ impl QuantizedVectorSchemaBuilder {
                     FIELD_QP_INT8_SCALE,
                     ParameterType::Int8ScaleFactor,
                 )?);
-            },
-            QuantizationLevel::PQ4 |
-            QuantizationLevel::PQ8 |
-            QuantizationLevel::PQ16 |
-            QuantizationLevel::PQ32 => {
+            }
+            QuantizationLevel::PQ4
+            | QuantizationLevel::PQ8
+            | QuantizationLevel::PQ16
+            | QuantizationLevel::PQ32 => {
                 param_defs.push(self.build_parameter_field(
                     level,
                     FIELD_QP_PQ_SUBQUANTIZERS,
@@ -480,10 +493,16 @@ impl QuantizedVectorSchemaBuilder {
             8 => 32,  // 8-bit: standard subquantizer size
             16 => 32, // 16-bit: can handle larger subquantizers
             32 => 64, // 32-bit: very large subquantizers
-            _ => return Err(anyhow::anyhow!("Unsupported bits per code: {}", bits_per_code)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported bits per code: {}",
+                    bits_per_code
+                ));
+            }
         };
 
-        let num_subquantizers = ((self.dimension + target_dims_per_subq - 1) / target_dims_per_subq).max(1);
+        let num_subquantizers =
+            ((self.dimension + target_dims_per_subq - 1) / target_dims_per_subq).max(1);
         Ok(num_subquantizers)
     }
 
@@ -506,7 +525,7 @@ impl QuantizedVectorSchemaBuilder {
                 expected_memory_per_vector: (self.dimension + 7) / 8, // Bit-packed
                 expected_search_speedup: 15.0,
                 sparsity_info: Some(SparsityInfo {
-                    zero_percentage: 50.0, // Binary typically has high sparsity
+                    zero_percentage: 50.0,      // Binary typically has high sparsity
                     use_sparse_encoding: false, // Bit-packing already efficient
                 }),
             },
@@ -568,7 +587,7 @@ impl QuantizedVectorSchemaBuilder {
                     quantized_section_fields: quantized_fields,
                     codebook_storage: CodebookStorageStrategy::SeparateFields, // Use separate columns
                 })
-            },
+            }
             SchemaStorageType::Parquet => {
                 // Parquet columns - use constants for identical names to ProximaBlock
                 let mut column_mapping = HashMap::new();
@@ -597,11 +616,15 @@ impl QuantizedVectorSchemaBuilder {
                 for level in &self.enabled_levels {
                     let param_columns = match level {
                         QuantizationLevel::Binary => vec![FIELD_QP_BINARY_THRESHOLD],
-                        QuantizationLevel::Int8 => vec![FIELD_QP_INT8_MIN, FIELD_QP_INT8_MAX, FIELD_QP_INT8_SCALE],
-                        QuantizationLevel::PQ4 |
-                        QuantizationLevel::PQ8 |
-                        QuantizationLevel::PQ16 |
-                        QuantizationLevel::PQ32 => vec![FIELD_QP_PQ_SUBQUANTIZERS, FIELD_QP_PQ_CENTROIDS],
+                        QuantizationLevel::Int8 => {
+                            vec![FIELD_QP_INT8_MIN, FIELD_QP_INT8_MAX, FIELD_QP_INT8_SCALE]
+                        }
+                        QuantizationLevel::PQ4
+                        | QuantizationLevel::PQ8
+                        | QuantizationLevel::PQ16
+                        | QuantizationLevel::PQ32 => {
+                            vec![FIELD_QP_PQ_SUBQUANTIZERS, FIELD_QP_PQ_CENTROIDS]
+                        }
                     };
 
                     for param_col in param_columns {
@@ -622,13 +645,15 @@ impl QuantizedVectorSchemaBuilder {
                 Ok(StorageMapping::Parquet {
                     column_mapping,
                     compression_mapping,
-                    row_group_strategy: RowGroupStrategy::Unified { target_row_group_size: 10000 },
+                    row_group_strategy: RowGroupStrategy::Unified {
+                        target_row_group_size: 10000,
+                    },
                 })
-            },
+            }
             SchemaStorageType::Both => {
                 // Return ProximaBlock mapping as default, but this ensures consistency
                 self.build_storage_mapping()
-            },
+            }
         }
     }
 }
@@ -640,25 +665,34 @@ impl QuantizedVectorSchema {
     }
 
     /// Get field definition for quantization level
-    pub fn get_field_definition(&self, level: &QuantizationLevel) -> Option<&QuantizedFieldDefinition> {
-        self.field_definitions.iter()
+    pub fn get_field_definition(
+        &self,
+        level: &QuantizationLevel,
+    ) -> Option<&QuantizedFieldDefinition> {
+        self.field_definitions
+            .iter()
             .find(|def| &def.level == level)
     }
 
     /// Get all vector field definitions (excluding codebooks and parameters)
     pub fn get_vector_field_definitions(&self) -> Vec<&QuantizedFieldDefinition> {
-        self.field_definitions.iter()
-            .filter(|def| matches!(def.physical_spec,
-                PhysicalFieldSpec::Binary { .. } |
-                PhysicalFieldSpec::Int8 { .. } |
-                PhysicalFieldSpec::ProductQuantization { .. }
-            ))
+        self.field_definitions
+            .iter()
+            .filter(|def| {
+                matches!(
+                    def.physical_spec,
+                    PhysicalFieldSpec::Binary { .. }
+                        | PhysicalFieldSpec::Int8 { .. }
+                        | PhysicalFieldSpec::ProductQuantization { .. }
+                )
+            })
             .collect()
     }
 
     /// Get estimated storage savings
     pub fn estimated_storage_savings(&self) -> f32 {
-        let total_compression: f32 = self.get_vector_field_definitions()
+        let total_compression: f32 = self
+            .get_vector_field_definitions()
             .iter()
             .map(|def| def.data_characteristics.expected_compression_ratio)
             .sum();
@@ -675,7 +709,10 @@ impl QuantizedVectorSchema {
         // Check that all enabled levels have field definitions
         for level in &self.enabled_levels {
             if self.get_field_definition(level).is_none() {
-                return Err(anyhow::anyhow!("Missing field definition for level: {:?}", level));
+                return Err(anyhow::anyhow!(
+                    "Missing field definition for level: {:?}",
+                    level
+                ));
             }
         }
 
@@ -686,11 +723,16 @@ impl QuantizedVectorSchema {
 
         // Validate PQ subquantizer calculations
         for def in self.get_vector_field_definitions() {
-            if let PhysicalFieldSpec::ProductQuantization { num_subquantizers, .. } = &def.physical_spec {
+            if let PhysicalFieldSpec::ProductQuantization {
+                num_subquantizers, ..
+            } = &def.physical_spec
+            {
                 if self.dimension % num_subquantizers != 0 {
                     tracing::warn!(
                         "Dimension {} not evenly divisible by subquantizers {} for {:?}",
-                        self.dimension, num_subquantizers, def.level
+                        self.dimension,
+                        num_subquantizers,
+                        def.level
                     );
                 }
             }
@@ -728,11 +770,8 @@ mod tests {
 
     #[test]
     fn test_pq_subquantizer_calculation() -> Result<()> {
-        let builder = QuantizedVectorSchemaBuilder::new(
-            "test".to_string(),
-            256,
-            SchemaStorageType::Parquet,
-        );
+        let builder =
+            QuantizedVectorSchemaBuilder::new("test".to_string(), 256, SchemaStorageType::Parquet);
 
         // 256 dimensions with 8-bit PQ should create 8 subquantizers (256/32 = 8)
         let subquantizers = builder.calculate_subquantizers(8)?;
@@ -743,19 +782,16 @@ mod tests {
 
     #[test]
     fn test_storage_mapping_parquet() -> Result<()> {
-        let schema = QuantizedVectorSchemaBuilder::new(
-            "test".to_string(),
-            128,
-            SchemaStorageType::Parquet,
-        )
-        .add_quantization_level(QuantizationLevel::Binary)
-        .build()?;
+        let schema =
+            QuantizedVectorSchemaBuilder::new("test".to_string(), 128, SchemaStorageType::Parquet)
+                .add_quantization_level(QuantizationLevel::Binary)
+                .build()?;
 
         match &schema.storage_mapping {
             StorageMapping::Parquet { column_mapping, .. } => {
                 assert!(column_mapping.contains_key(FIELD_VECTOR_FP32));
                 assert!(column_mapping.contains_key(FIELD_Q_BINARY));
-            },
+            }
             _ => panic!("Expected Parquet storage mapping"),
         }
 

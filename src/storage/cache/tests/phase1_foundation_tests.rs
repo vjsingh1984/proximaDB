@@ -131,7 +131,7 @@ async fn test_eviction_policies() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::storage::cache::eviction::{EvictionPolicy, AccessTracker};
+    use crate::storage::cache::eviction::{AccessTracker, EvictionPolicy};
 
     // Test LRU Policy
     let lru_policy = EvictionPolicy::LRU {
@@ -140,7 +140,10 @@ async fn test_eviction_policies() {
     };
 
     match lru_policy {
-        EvictionPolicy::LRU { max_items, batch_size } => {
+        EvictionPolicy::LRU {
+            max_items,
+            batch_size,
+        } => {
             assert_eq!(max_items, 1000);
             assert_eq!(batch_size, 10);
         }
@@ -155,7 +158,11 @@ async fn test_eviction_policies() {
     };
 
     match lfu_policy {
-        EvictionPolicy::LFU { max_items, min_access_count, frequency_window_hours } => {
+        EvictionPolicy::LFU {
+            max_items,
+            min_access_count,
+            frequency_window_hours,
+        } => {
             assert_eq!(max_items, 500);
             assert_eq!(min_access_count, 2);
             assert_eq!(frequency_window_hours, 24);
@@ -171,7 +178,11 @@ async fn test_eviction_policies() {
     };
 
     match arc_policy {
-        EvictionPolicy::ARC { target_size, recent_size, frequent_size } => {
+        EvictionPolicy::ARC {
+            target_size,
+            recent_size,
+            frequent_size,
+        } => {
             assert_eq!(target_size, 1000);
             assert_eq!(recent_size, 500);
             assert_eq!(frequent_size, 500);
@@ -235,7 +246,8 @@ async fn test_metrics_collection() {
     // Check hit rate
     let snapshot = metrics.get_snapshot().await;
     assert_eq!(snapshot.total_operations, 5);
-    let hit_rate = snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64;
+    let hit_rate =
+        snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64;
     assert!((hit_rate - 0.6).abs() < 0.01); // 3 hits, 2 misses
 
     // Check cache hits/misses
@@ -278,4 +290,3 @@ async fn test_cache_entry_metadata() {
     assert_eq!(entry.access_count, 2);
     assert!(entry.age() >= Duration::from_millis(10));
 }
-

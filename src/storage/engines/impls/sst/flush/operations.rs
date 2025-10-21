@@ -19,14 +19,16 @@
 //! Low-level flush operations and utilities for the SST engine.
 //! Provides atomic write operations and file management.
 
-use std::sync::Arc;
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::storage::engines::impls::sst::SstEngine;
-use crate::storage::transaction_coordinator::{TransactionalOperationMetadata, StagingConfig, TransactionStageType};
-use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::engines::impls::sst::SstEngine;
+use crate::storage::engines::impls::sst::writer::SstableWriter;
+use crate::storage::transaction_coordinator::{
+    StagingConfig, TransactionStageType, TransactionalOperationMetadata,
+};
 
 /// Low-level flush operations
 pub struct FlushOperations {
@@ -46,7 +48,11 @@ impl FlushOperations {
         staging_url: &str,
         filename: &str,
     ) -> Result<(u64, u64)> {
-        debug!("🔧 FlushOps: Writing {} vectors to {}", vectors.len(), staging_url);
+        debug!(
+            "🔧 FlushOps: Writing {} vectors to {}",
+            vectors.len(),
+            staging_url
+        );
 
         let block_size = (self.engine.config().block_size_kb * 1024) as usize;
         let full_path = format!("{}/{}", staging_url, filename);
@@ -65,7 +71,8 @@ impl FlushOperations {
         // Write vectors to SSTable
         for (key, vector_record) in vectors {
             // Serialize vector record
-            let record_bytes = self.serialize_vector_record(&vector_record)
+            let record_bytes = self
+                .serialize_vector_record(&vector_record)
                 .context("Failed to serialize vector record")?;
 
             // Write key-value pair to SSTable
@@ -82,7 +89,10 @@ impl FlushOperations {
             .await
             .context("Failed to finalize SSTable")?;
 
-        info!("✅ FlushOps: Wrote {} entries, {} bytes to SSTable", entries_written, bytes_written);
+        info!(
+            "✅ FlushOps: Wrote {} entries, {} bytes to SSTable",
+            entries_written, bytes_written
+        );
         Ok((entries_written, bytes_written))
     }
 
@@ -103,24 +113,33 @@ impl FlushOperations {
             ..Default::default()
         };
 
-        self.engine.atomic_coordinator()
+        self.engine
+            .atomic_coordinator()
             .begin_atomic_operation(&staging_config)
             .await
             .context("Failed to begin atomic flush operation")
     }
 
     /// Commit atomic flush operation
-    pub async fn commit_atomic_flush(&self, atomic_op: TransactionalOperationMetadata) -> Result<()> {
-        self.engine.atomic_coordinator()
+    pub async fn commit_atomic_flush(
+        &self,
+        atomic_op: TransactionalOperationMetadata,
+    ) -> Result<()> {
+        self.engine
+            .atomic_coordinator()
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
             .context("Failed to commit atomic flush operation")
     }
 
     /// Abort atomic flush operation
-    pub async fn abort_atomic_flush(&self, atomic_op: TransactionalOperationMetadata) -> Result<()> {
+    pub async fn abort_atomic_flush(
+        &self,
+        atomic_op: TransactionalOperationMetadata,
+    ) -> Result<()> {
         warn!("🚫 FlushOps: Aborting atomic flush operation");
-        self.engine.atomic_coordinator()
+        self.engine
+            .atomic_coordinator()
             .abort_atomic_operation(&atomic_op.operation_id, "Flush operation aborted")
             .await
             .context("Failed to abort atomic flush operation")
@@ -129,8 +148,7 @@ impl FlushOperations {
     /// Serialize vector record to bytes
     fn serialize_vector_record(&self, record: &VectorRecord) -> Result<Vec<u8>> {
         // Use efficient serialization format
-        serde_json::to_vec(record)
-            .context("Failed to serialize vector record")
+        serde_json::to_vec(record).context("Failed to serialize vector record")
     }
 
     /// Write record to SSTable (simplified implementation)
@@ -157,7 +175,11 @@ impl FlushOperations {
     }
 
     /// Calculate optimal block size for SSTable
-    pub fn calculate_optimal_block_size(&self, vector_count: usize, avg_vector_size: usize) -> usize {
+    pub fn calculate_optimal_block_size(
+        &self,
+        vector_count: usize,
+        avg_vector_size: usize,
+    ) -> usize {
         let base_block_size = (self.engine.config().block_size_kb * 1024) as usize;
 
         // Adjust block size based on data characteristics
@@ -208,10 +230,10 @@ impl FlushOperations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_validate_flush_preconditions() {
@@ -219,14 +241,21 @@ mod tests {
         let ops = FlushOperations::new(Arc::new(engine));
 
         // Test with valid data
-        let vectors = vec![
-            ("key1".to_string(), create_test_vector("id1", vec![1.0, 2.0])),
-        ];
-        assert!(ops.validate_flush_preconditions(&vectors, "file:///tmp/test").is_ok());
+        let vectors = vec![(
+            "key1".to_string(),
+            create_test_vector("id1", vec![1.0, 2.0]),
+        )];
+        assert!(
+            ops.validate_flush_preconditions(&vectors, "file:///tmp/test")
+                .is_ok()
+        );
 
         // Test with empty vectors
         let empty_vectors = vec![];
-        assert!(ops.validate_flush_preconditions(&empty_vectors, "file:///tmp/test").is_err());
+        assert!(
+            ops.validate_flush_preconditions(&empty_vectors, "file:///tmp/test")
+                .is_err()
+        );
 
         // Test with empty storage URL
         assert!(ops.validate_flush_preconditions(&vectors, "").is_err());
@@ -250,11 +279,14 @@ mod tests {
 
     async fn create_test_engine() -> SstEngine {
         let config = SstConfig::default();
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+        SstEngine::new_with_config(config, filesystem, distance_compute)
+            .await
+            .unwrap()
     }
 
     fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {

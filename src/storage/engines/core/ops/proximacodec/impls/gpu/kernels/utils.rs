@@ -41,7 +41,11 @@ impl GpuBatchConfig {
     ///
     /// # Returns
     /// Optimized batch configuration
-    pub fn for_backend(backend: &HardwareBackend, total_vectors: usize, vector_dimension: usize) -> Self {
+    pub fn for_backend(
+        backend: &HardwareBackend,
+        total_vectors: usize,
+        vector_dimension: usize,
+    ) -> Self {
         match backend {
             HardwareBackend::CUDA => Self::cuda_config(total_vectors, vector_dimension),
             HardwareBackend::ROCm => Self::rocm_config(total_vectors, vector_dimension),
@@ -66,11 +70,14 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 48 * 1024; // 48 KB per SM
 
-        let batch_size = ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size =
+            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        debug!("🔧 [CUDA] Config: batch_size={}, threads_per_block={}, num_blocks={}",
-               batch_size, THREADS_PER_BLOCK, num_blocks);
+        debug!(
+            "🔧 [CUDA] Config: batch_size={}, threads_per_block={}, num_blocks={}",
+            batch_size, THREADS_PER_BLOCK, num_blocks
+        );
 
         Self {
             batch_size,
@@ -87,11 +94,14 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 64 * 1024; // 64 KB LDS per CU
 
-        let batch_size = ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size =
+            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        debug!("🔧 [ROCm] Config: batch_size={}, threads_per_block={}, num_blocks={}",
-               batch_size, THREADS_PER_BLOCK, num_blocks);
+        debug!(
+            "🔧 [ROCm] Config: batch_size={}, threads_per_block={}, num_blocks={}",
+            batch_size, THREADS_PER_BLOCK, num_blocks
+        );
 
         Self {
             batch_size,
@@ -108,11 +118,14 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 32 * 1024; // 32 KB threadgroup memory
 
-        let batch_size = ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size =
+            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        debug!("🔧 [MPS] Config: batch_size={}, threads_per_block={}, num_blocks={}",
-               batch_size, THREADS_PER_BLOCK, num_blocks);
+        debug!(
+            "🔧 [MPS] Config: batch_size={}, threads_per_block={}, num_blocks={}",
+            batch_size, THREADS_PER_BLOCK, num_blocks
+        );
 
         Self {
             batch_size,
@@ -128,11 +141,14 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 16 * 1024; // 16 KB local memory (conservative)
 
-        let batch_size = ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size =
+            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        debug!("🔧 [OpenCL] Config: batch_size={}, threads_per_block={}, num_blocks={}",
-               batch_size, THREADS_PER_BLOCK, num_blocks);
+        debug!(
+            "🔧 [OpenCL] Config: batch_size={}, threads_per_block={}, num_blocks={}",
+            batch_size, THREADS_PER_BLOCK, num_blocks
+        );
 
         Self {
             batch_size,
@@ -309,7 +325,10 @@ impl<T: Clone + Send + 'static> GpuBufferPool<T> {
 
     /// Acquire a GPU buffer from the pool
     pub fn acquire(&self) -> crate::core::memory::pool::PooledItem<GpuBuffer<T>> {
-        trace!("🎯 [GPU Pool] Acquiring buffer for backend {:?}", self.backend);
+        trace!(
+            "🎯 [GPU Pool] Acquiring buffer for backend {:?}",
+            self.backend
+        );
         self.pool.acquire()
     }
 
@@ -328,7 +347,10 @@ impl GpuBufferPoolFactory {
         backend: &HardwareBackend,
         capacity: usize,
     ) -> GpuBufferPool<T> {
-        debug!("🏭 [GPU Pool Factory] Creating buffer pool for {:?}, capacity={}", backend, capacity);
+        debug!(
+            "🏭 [GPU Pool Factory] Creating buffer pool for {:?}, capacity={}",
+            backend, capacity
+        );
         GpuBufferPool::new(backend.clone(), capacity)
     }
 

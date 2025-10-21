@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
-use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Simple tenant resource tracker
 pub struct TenantResourceTracker {
@@ -50,28 +50,37 @@ impl TenantResourceTracker {
             last_updated: AtomicU64::new(Utc::now().timestamp() as u64),
         }
     }
-    
+
     /// Check if operation is within resource limits
     pub fn check_operation_allowed(&self) -> Result<()> {
         let current_ops = self.usage.operations_current_minute.load(Ordering::Relaxed);
         if current_ops >= self.limits.max_operations_per_minute {
-            return Err(anyhow!("Tenant {} exceeded operations limit", self.tenant_id));
+            return Err(anyhow!(
+                "Tenant {} exceeded operations limit",
+                self.tenant_id
+            ));
         }
-        
+
         let current_users = self.usage.concurrent_users.load(Ordering::Relaxed);
         if current_users >= self.limits.max_concurrent_users {
-            return Err(anyhow!("Tenant {} exceeded concurrent user limit", self.tenant_id));
+            return Err(anyhow!(
+                "Tenant {} exceeded concurrent user limit",
+                self.tenant_id
+            ));
         }
-        
+
         Ok(())
     }
-    
+
     /// Record operation for tracking
     pub fn record_operation(&self) {
-        self.usage.operations_current_minute.fetch_add(1, Ordering::Relaxed);
-        self.last_updated.store(Utc::now().timestamp() as u64, Ordering::Relaxed);
+        self.usage
+            .operations_current_minute
+            .fetch_add(1, Ordering::Relaxed);
+        self.last_updated
+            .store(Utc::now().timestamp() as u64, Ordering::Relaxed);
     }
-    
+
     /// Add concurrent user
     pub fn add_concurrent_user(&self) -> Result<()> {
         let current = self.usage.concurrent_users.fetch_add(1, Ordering::Relaxed);
@@ -81,12 +90,12 @@ impl TenantResourceTracker {
         }
         Ok(())
     }
-    
+
     /// Remove concurrent user
     pub fn remove_concurrent_user(&self) {
         self.usage.concurrent_users.fetch_sub(1, Ordering::Relaxed);
     }
-    
+
     /// Add collection
     pub fn add_collection(&self) -> Result<()> {
         let current = self.usage.total_collections.fetch_add(1, Ordering::Relaxed);
@@ -96,7 +105,7 @@ impl TenantResourceTracker {
         }
         Ok(())
     }
-    
+
     /// Add domain
     pub fn add_domain(&self) -> Result<()> {
         let current = self.usage.total_domains.fetch_add(1, Ordering::Relaxed);
@@ -106,7 +115,7 @@ impl TenantResourceTracker {
         }
         Ok(())
     }
-    
+
     /// Get current usage snapshot
     pub fn get_current_usage(&self) -> TenantResourceUsageSnapshot {
         TenantResourceUsageSnapshot {
@@ -117,16 +126,20 @@ impl TenantResourceTracker {
             total_collections: self.usage.total_collections.load(Ordering::Relaxed),
             total_domains: self.usage.total_domains.load(Ordering::Relaxed),
             last_updated: DateTime::from_timestamp(
-                self.last_updated.load(Ordering::Relaxed) as i64, 
-                0
-            ).unwrap_or(Utc::now()),
+                self.last_updated.load(Ordering::Relaxed) as i64,
+                0,
+            )
+            .unwrap_or(Utc::now()),
         }
     }
-    
+
     /// Reset minute-based counters (called by background task)
     pub fn reset_minute_counters(&self) {
-        self.usage.operations_current_minute.store(0, Ordering::Relaxed);
-        self.last_updated.store(Utc::now().timestamp() as u64, Ordering::Relaxed);
+        self.usage
+            .operations_current_minute
+            .store(0, Ordering::Relaxed);
+        self.last_updated
+            .store(Utc::now().timestamp() as u64, Ordering::Relaxed);
     }
 }
 
@@ -162,7 +175,7 @@ mod tests {
     #[test]
     fn test_resource_limits_default() {
         let limits = ResourceLimits::default();
-        
+
         assert_eq!(limits.max_memory_mb, 4096);
         assert_eq!(limits.max_storage_mb, 102400);
         assert_eq!(limits.max_operations_per_minute, 10000);
@@ -177,16 +190,16 @@ mod tests {
             max_operations_per_minute: 2,
             ..Default::default()
         };
-        
+
         let tracker = TenantResourceTracker::new("test_tenant", &limits);
-        
+
         // First two operations should succeed
         assert!(tracker.check_operation_allowed().is_ok());
         tracker.record_operation();
-        
+
         assert!(tracker.check_operation_allowed().is_ok());
         tracker.record_operation();
-        
+
         // Third operation should be rate limited
         assert!(tracker.check_operation_allowed().is_err());
     }
@@ -197,16 +210,16 @@ mod tests {
             max_concurrent_users: 2,
             ..Default::default()
         };
-        
+
         let tracker = TenantResourceTracker::new("test_tenant", &limits);
-        
+
         // Add users up to limit
         assert!(tracker.add_concurrent_user().is_ok());
         assert!(tracker.add_concurrent_user().is_ok());
-        
+
         // Exceeding limit should fail
         assert!(tracker.add_concurrent_user().is_err());
-        
+
         // Removing user should allow new one
         tracker.remove_concurrent_user();
         assert!(tracker.add_concurrent_user().is_ok());

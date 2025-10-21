@@ -22,7 +22,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::{FlushParameters, UnifiedStorageEngine, StorageEngineStrategy};
+use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
 use crate::storage::transaction_coordinator::{
     TransactionCoordinator, ViperTransactionalOperations,
 };
@@ -196,10 +196,7 @@ async fn test_batch_insertion_and_flush() {
     }
 
     // Create collection with matching dimension
-    let mut collection = create_test_collection(
-        collection_id,
-        temp_dir.path().to_str().unwrap(),
-    );
+    let mut collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     if let Some(ref mut config) = collection.config {
         config.dimension = vector_dimension as u32;
     }

@@ -7,10 +7,10 @@
 //! - src/storage/engines/impls/swift/mod.rs
 
 use super::super::super::swift::*;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::core::hardware_capabilities;
 use crate::core::memory::pool::VectorMemoryPool;
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use std::sync::Arc;
 
 // =====================================================
@@ -126,8 +126,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_optimized_operations() {
-    use optimized_operations::OptimizedSwiftOperations;
     use crate::compute::distance_computation::DistanceMetric;
+    use optimized_operations::OptimizedSwiftOperations;
 
     // Initialize hardware capabilities for testing
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
@@ -173,9 +173,12 @@ fn test_memory_pool_integration() {
 
 #[test]
 fn test_swift_metadata_serialization() {
-    use unified_metadata_serializer::{SwiftCachedMetadata, SuperBlockMetadata, NavigationHints, TreePath, ProximaConfig, BloomConfig, SwiftUnifiedMetadataSerializer};
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
     use std::collections::HashMap;
+    use unified_metadata_serializer::{
+        BloomConfig, NavigationHints, ProximaConfig, SuperBlockMetadata, SwiftCachedMetadata,
+        SwiftUnifiedMetadataSerializer, TreePath,
+    };
 
     let metadata = SwiftCachedMetadata {
         file_size: 52428800, // 50MB
@@ -184,28 +187,24 @@ fn test_swift_metadata_serialization() {
         superblock_count: 10,
         datablock_count: 100,
         tree_depth: 3,
-        superblock_metadata: vec![
-            SuperBlockMetadata {
-                superblock_id: 0,
-                start_offset: 0,
-                end_offset: 5242880,
-                datablock_count: 10,
-                record_count: 5000,
-                centroid: vec![0.0; 768],
-                quantized_signature: vec![0xAB; 96], // 768/8 bytes for binary quantization
-                tree_node_count: 15,
-                leaf_node_count: 8,
-            },
-        ],
+        superblock_metadata: vec![SuperBlockMetadata {
+            superblock_id: 0,
+            start_offset: 0,
+            end_offset: 5242880,
+            datablock_count: 10,
+            record_count: 5000,
+            centroid: vec![0.0; 768],
+            quantized_signature: vec![0xAB; 96], // 768/8 bytes for binary quantization
+            tree_node_count: 15,
+            leaf_node_count: 8,
+        }],
         navigation_hints: NavigationHints {
-            hot_paths: vec![
-                TreePath {
-                    path_id: "path_001".to_string(),
-                    superblock_sequence: vec![0, 3, 7],
-                    avg_latency_us: 50,
-                    hit_rate: 0.95,
-                },
-            ],
+            hot_paths: vec![TreePath {
+                path_id: "path_001".to_string(),
+                superblock_sequence: vec![0, 3, 7],
+                avg_latency_us: 50,
+                hit_rate: 0.95,
+            }],
             prefetch_superblocks: vec![0, 1, 2],
             cache_priorities: HashMap::from([(0, 10), (1, 8), (2, 6)]),
             access_frequencies: HashMap::from([(0, 1000), (1, 800), (2, 600)]),
@@ -245,8 +244,8 @@ fn test_swift_metadata_serialization() {
 
 #[test]
 fn test_swift_index_extraction() {
-    use unified_metadata_serializer::SwiftUnifiedMetadataSerializer;
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+    use unified_metadata_serializer::SwiftUnifiedMetadataSerializer;
 
     let serializer = SwiftUnifiedMetadataSerializer::new();
 
@@ -283,8 +282,8 @@ fn test_swift_index_extraction() {
 
 #[test]
 fn test_should_cache_metadata() {
-    use unified_metadata_serializer::SwiftUnifiedMetadataSerializer;
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+    use unified_metadata_serializer::SwiftUnifiedMetadataSerializer;
 
     let serializer = SwiftUnifiedMetadataSerializer::new();
 

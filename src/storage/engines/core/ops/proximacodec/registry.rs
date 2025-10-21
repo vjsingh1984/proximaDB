@@ -38,9 +38,7 @@ impl ImplementationRegistry {
 
         trace!(
             "🔧 [REGISTRY] Initializing with HW capabilities: CPU={}, cores={}, GPU={}",
-            hw_caps.cpu.model_name,
-            hw_caps.cpu.physical_cores,
-            gpu_info
+            hw_caps.cpu.model_name, hw_caps.cpu.physical_cores, gpu_info
         );
 
         Self {
@@ -55,10 +53,7 @@ impl ImplementationRegistry {
     /// Encoders are tried in registration order (GPU → SIMD → Baseline).
     /// Register high-priority implementations first.
     pub fn register_encoder(&mut self, encoder: Box<dyn RawEncoder>) {
-        trace!(
-            "✅ [REGISTRY] Registered encoder: {}",
-            encoder.name()
-        );
+        trace!("✅ [REGISTRY] Registered encoder: {}", encoder.name());
         self.encoders.push(encoder);
     }
 
@@ -67,10 +62,7 @@ impl ImplementationRegistry {
     /// Decoders are tried in registration order (GPU → SIMD → Baseline).
     /// Register high-priority implementations first.
     pub fn register_decoder(&mut self, decoder: Box<dyn RawDecoder>) {
-        trace!(
-            "✅ [REGISTRY] Registered decoder: {}",
-            decoder.name()
-        );
+        trace!("✅ [REGISTRY] Registered decoder: {}", decoder.name());
         self.decoders.push(decoder);
     }
 
@@ -247,13 +239,28 @@ mod tests {
         fn supports(&self, _scheme: &ProximaScheme) -> bool {
             true
         }
-        fn decode_f32(&self, _data: &[u8], _scheme: &ProximaScheme, _count: usize) -> Result<Vec<f32>> {
+        fn decode_f32(
+            &self,
+            _data: &[u8],
+            _scheme: &ProximaScheme,
+            _count: usize,
+        ) -> Result<Vec<f32>> {
             Ok(Vec::new())
         }
-        fn decode_i64(&self, _data: &[u8], _scheme: &ProximaScheme, _count: usize) -> Result<Vec<i64>> {
+        fn decode_i64(
+            &self,
+            _data: &[u8],
+            _scheme: &ProximaScheme,
+            _count: usize,
+        ) -> Result<Vec<i64>> {
             Ok(Vec::new())
         }
-        fn decode_i32(&self, _data: &[u8], _scheme: &ProximaScheme, _count: usize) -> Result<Vec<i32>> {
+        fn decode_i32(
+            &self,
+            _data: &[u8],
+            _scheme: &ProximaScheme,
+            _count: usize,
+        ) -> Result<Vec<i32>> {
             Ok(Vec::new())
         }
     }
@@ -269,7 +276,9 @@ mod tests {
         registry.register_encoder(Box::new(MockBaselineEncoder));
 
         // Delta should use SIMD
-        let delta_encoder = registry.get_encoder(&ProximaScheme::Delta { base: 0 }).unwrap();
+        let delta_encoder = registry
+            .get_encoder(&ProximaScheme::Delta { base: 0 })
+            .unwrap();
         assert_eq!(delta_encoder.name(), "mock-simd");
 
         // SparseBitmap should fall back to Baseline (SIMD doesn't support)

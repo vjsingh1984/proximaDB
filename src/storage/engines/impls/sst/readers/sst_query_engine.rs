@@ -46,11 +46,11 @@ use std::ptr;
 
 use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::search::{FilterExpression, SearchParams, ComparisonOperator};
+use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
@@ -266,11 +266,7 @@ pub trait BlockReader {
     async fn read_header(&mut self) -> Result<SstableHeader>;
     async fn read_bloom_filter(&mut self, skip: bool) -> Result<Option<SstableBloomFilter>>;
     async fn read_index_block(&mut self, strategy: &ReadStrategy) -> Result<SstableIndex>;
-    async fn read_data_block(
-        &mut self,
-        block_id: u64,
-        mode: ReadMode,
-    ) -> Result<ProximaDataBlock>;
+    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<ProximaDataBlock>;
 }
 
 /// Implement BlockReader trait for ModularBlockReader
@@ -288,11 +284,7 @@ impl BlockReader for ModularBlockReader {
         self.read_index_block_async(search_strategy).await
     }
 
-    async fn read_data_block(
-        &mut self,
-        block_id: u64,
-        mode: ReadMode,
-    ) -> Result<ProximaDataBlock> {
+    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<ProximaDataBlock> {
         self.read_data_block_async(block_id, mode).await
     }
 }
@@ -554,14 +546,12 @@ impl ModularBlockReader {
         let mut results = Vec::new();
         if !loaded_vectors.is_empty() {
             let vector_refs: Vec<&[f32]> = loaded_vectors.iter().map(|v| v.as_slice()).collect();
-            let compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+            let compute =
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
 
             // Use optimized batch distance computation
-            let distances = compute.batch_distance_pooled_simd(
-                query_vector,
-                &vector_refs,
-                distance_metric,
-            );
+            let distances =
+                compute.batch_distance_pooled_simd(query_vector, &vector_refs, distance_metric);
 
             // Create results from batch distances
             for (i, distance) in distances.into_iter().enumerate() {
@@ -653,17 +643,21 @@ impl ModularBlockReader {
 
                 // Use normalized_score for both fields - consistency across all engines
                 // Higher similarity = better match, VOS sorts descending
-                let search_record = OptimizedSearchRecord::new(record.id.clone(), distance.normalized_score)
-                    .with_similarity(distance.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(HashMap::new());
+                let search_record =
+                    OptimizedSearchRecord::new(record.id.clone(), distance.normalized_score)
+                        .with_similarity(distance.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(HashMap::new());
 
                 // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_record);
             }
         }
 
-        debug!("Scanned {} records, returning top {}", total_records_scanned, k);
+        debug!(
+            "Scanned {} records, returning top {}",
+            total_records_scanned, k
+        );
 
         // Get sorted results from bounded queue
         Ok(priority_queue.into_sorted_vec())
@@ -1498,7 +1492,10 @@ impl UnifiedSstableReader {
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        trace!("SST Reader: search_with_filter called with file_path: {}", file_path);
+        trace!(
+            "SST Reader: search_with_filter called with file_path: {}",
+            file_path
+        );
         // REFACTORED: Use SharedSstFormatReader like SWIFT does
         // No more duplicate I/O logic!
 
@@ -1512,7 +1509,7 @@ impl UnifiedSstableReader {
             }
         } else {
             SstableReadingStrategy::FullScan {
-                use_block_cache: true
+                use_block_cache: true,
             }
         };
 
@@ -1538,25 +1535,34 @@ impl UnifiedSstableReader {
         // Step 3: Use apply_strategy to leverage SharedSstFormatReader
         // This delegates all I/O to the shared infrastructure
         let blocks = self.apply_strategy(&strategy, &params, &context).await?;
-        trace!("SST Reader: apply_strategy returned {} blocks", blocks.len());
+        trace!(
+            "SST Reader: apply_strategy returned {} blocks",
+            blocks.len()
+        );
         if let Some(first_block) = blocks.first() {
-            if let Some(first_rec) = first_block.records.first() {
-            }
+            if let Some(first_rec) = first_block.records.first() {}
         }
 
         // Step 4: Process blocks and compute distances
         let mut results = Vec::new();
-        let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-            distance_metric
-        );
+        let distance_compute =
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                distance_metric,
+            );
 
         for block in blocks {
             for record in block.records {
                 // Apply metadata filtering at record level (type-safe, no conversion)
                 // Uses centralized SqlValue filtering from core::search::sql_value_filter
                 if let Some(filter_expr) = &filter {
-                    let matches = crate::core::search::sql_value_filter::evaluate_filter(filter_expr, &record.metadata);
-                    trace!("Filter evaluation: record {} metadata={:?} matches={}", record.id, record.metadata, matches);
+                    let matches = crate::core::search::sql_value_filter::evaluate_filter(
+                        filter_expr,
+                        &record.metadata,
+                    );
+                    trace!(
+                        "Filter evaluation: record {} metadata={:?} matches={}",
+                        record.id, record.metadata, matches
+                    );
                     if !matches {
                         // Record doesn't match filter, skip it
                         continue;
@@ -1596,7 +1602,10 @@ impl UnifiedSstableReader {
         // Get sorted results from bounded queue
         let final_results = priority_queue.into_sorted_vec();
 
-        debug!("✅ SST: Search complete, found {} results", final_results.len());
+        debug!(
+            "✅ SST: Search complete, found {} results",
+            final_results.len()
+        );
         Ok(final_results)
     }
 
@@ -1842,7 +1851,7 @@ impl UnifiedSstableReader {
             let query_context = (
                 self.collection_id.clone(),
                 HashMap::<String, String>::new(), // metadata_filters
-                1.0, // selectivity_hint for full scan
+                1.0,                              // selectivity_hint for full scan
             );
 
             // Bandwidth optimization for compaction handled internally
@@ -2143,7 +2152,8 @@ impl UnifiedSstableReader {
 
             // Use cache lookup when enabled
             let blocks = if enable_cache_lookup {
-                self.read_file_with_cache(file_path, context.collection.as_deref()).await?
+                self.read_file_with_cache(file_path, context.collection.as_deref())
+                    .await?
             } else {
                 // Use modular reading for range-based optimization
                 if use_range_reads {
@@ -2154,7 +2164,8 @@ impl UnifiedSstableReader {
                     )
                     .await?
                 } else {
-                    self.read_file_direct(file_path, context.collection.as_deref()).await?
+                    self.read_file_direct(file_path, context.collection.as_deref())
+                        .await?
                 }
             };
 
@@ -2229,7 +2240,10 @@ impl UnifiedSstableReader {
             // Check disk cache first if enabled, otherwise direct read
             let blocks = if use_disk_cache_if_exists {
                 // Try cache first, fallback to direct read
-                match self.read_file_with_cache(file_path, context.collection.as_deref()).await {
+                match self
+                    .read_file_with_cache(file_path, context.collection.as_deref())
+                    .await
+                {
                     Ok(cached_blocks) => {
                         debug!("💾 COMPACTION: Using disk cache for {}", file_path);
                         cached_blocks
@@ -2368,7 +2382,10 @@ impl UnifiedSstableReader {
                 // Type-safe metadata filtering (zero-allocation, zero-conversion)
                 // Uses centralized SqlValue filtering from core::search::sql_value_filter
                 if let Some(filter) = filter_expr {
-                    if !crate::core::search::sql_value_filter::evaluate_filter(filter, &record.metadata) {
+                    if !crate::core::search::sql_value_filter::evaluate_filter(
+                        filter,
+                        &record.metadata,
+                    ) {
                         filtered_out += 1;
                         continue; // Skip to next record immediately
                     }
@@ -2386,14 +2403,19 @@ impl UnifiedSstableReader {
                 let mut metadata_map = std::collections::HashMap::new();
                 for (key, item) in &record.metadata {
                     if let Some(value) = &item.value {
-                        
                         let typed_value = match value {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                 MetadataValue::String(std::sync::Arc::from(s.as_str()))
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => MetadataValue::Number(*f),
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => MetadataValue::Bool(*b),
-                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => MetadataValue::Number(*i as f64),
+                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                                MetadataValue::Number(*f)
+                            }
+                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                                MetadataValue::Bool(*b)
+                            }
+                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                MetadataValue::Number(*i as f64)
+                            }
                             crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
                                 MetadataValue::String(std::sync::Arc::from("[binary]"))
                             }
@@ -2413,11 +2435,15 @@ impl UnifiedSstableReader {
 
                 // Use normalized_score for consistency across all engines
                 // Higher similarity = better match, VOS sorts descending
-                let search_record = OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
-                    .with_similarity(similarity.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(record.metadata.clone())
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0));
+                let search_record =
+                    OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
+                        .with_similarity(similarity.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(record.metadata.clone())
+                        .with_version_info(
+                            record.version.unwrap_or(0),
+                            record.timestamp.unwrap_or(0),
+                        );
 
                 // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_record);
@@ -2445,7 +2471,10 @@ impl UnifiedSstableReader {
         context: &CollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
-        trace!("SST Full Scan: Starting for {} files", context.sstable_files.len());
+        trace!(
+            "SST Full Scan: Starting for {} files",
+            context.sstable_files.len()
+        );
         debug!(
             "🔍 Full scan strategy for {} files (cache={})",
             context.sstable_files.len(),
@@ -2459,7 +2488,12 @@ impl UnifiedSstableReader {
         let mut all_blocks = Vec::new();
 
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
-            trace!("SST Full Scan: Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            trace!(
+                "SST Full Scan: Reading file {} of {}: {}",
+                idx + 1,
+                context.sstable_files.len(),
+                file_path
+            );
             debug!(
                 "📂 Reading file {} of {}: {}",
                 idx + 1,
@@ -2468,15 +2502,21 @@ impl UnifiedSstableReader {
             );
 
             // For remote files, check if already in disk cache
-            let is_remote = !file_path.starts_with("file://") &&
-                           !file_path.starts_with("/") &&
-                           file_path.contains("://");
+            let is_remote = !file_path.starts_with("file://")
+                && !file_path.starts_with("/")
+                && file_path.contains("://");
             if is_remote {
                 let cache_status = self.unified_filesystem.metadata(file_path).await;
                 if cache_status.is_ok() {
-                    debug!("💾 SST: File {} found in disk cache, using cached copy", file_path);
+                    debug!(
+                        "💾 SST: File {} found in disk cache, using cached copy",
+                        file_path
+                    );
                 } else {
-                    debug!("☁️ SST: File {} will be downloaded to disk cache", file_path);
+                    debug!(
+                        "☁️ SST: File {} will be downloaded to disk cache",
+                        file_path
+                    );
                 }
             }
 
@@ -2494,11 +2534,16 @@ impl UnifiedSstableReader {
                 }
             }
 
-            trace!("SST Full Scan: Reading blocks (use_block_cache={})", use_block_cache);
+            trace!(
+                "SST Full Scan: Reading blocks (use_block_cache={})",
+                use_block_cache
+            );
             let blocks = if use_block_cache {
-                self.read_file_with_cache(file_path, context.collection.as_deref()).await?
+                self.read_file_with_cache(file_path, context.collection.as_deref())
+                    .await?
             } else {
-                self.read_file_direct(file_path, context.collection.as_deref()).await?
+                self.read_file_direct(file_path, context.collection.as_deref())
+                    .await?
             };
             trace!("SST Full Scan: Loaded {} blocks from file", blocks.len());
             debug!("  📦 Loaded {} blocks from this file", blocks.len());
@@ -3089,9 +3134,15 @@ impl UnifiedSstableReader {
         let header_offset = 8u64; // Skip magic + header_len
 
         // Read header
-        trace!("SST Load Index: Reading header at offset {} length {}", header_offset, header_len);
+        trace!(
+            "SST Load Index: Reading header at offset {} length {}",
+            header_offset, header_len
+        );
         let header_data = fs.read_range(file_path, header_offset, header_len).await?;
-        trace!("SST Load Index: Read {} bytes of header data", header_data.len());
+        trace!(
+            "SST Load Index: Read {} bytes of header data",
+            header_data.len()
+        );
         if header_data.len() < header_len as usize {
             return Err(anyhow::anyhow!(
                 "Failed to read complete header: expected {} bytes, got {}",
@@ -3100,11 +3151,10 @@ impl UnifiedSstableReader {
             ));
         }
         trace!("SST Load Index: Deserializing header");
-        let header: SstableHeader = bincode::deserialize(&header_data)
-            .map_err(|e| {
-                debug!("SST Load Index: ERROR deserializing header: {}", e);
-                anyhow::anyhow!("Failed to deserialize header: {}", e)
-            })?;
+        let header: SstableHeader = bincode::deserialize(&header_data).map_err(|e| {
+            debug!("SST Load Index: ERROR deserializing header: {}", e);
+            anyhow::anyhow!("Failed to deserialize header: {}", e)
+        })?;
         trace!("SST Load Index: Header deserialized successfully");
 
         // Calculate bloom filter offset and read its length
@@ -3127,7 +3177,10 @@ impl UnifiedSstableReader {
         let index_offset = bloom_offset + 4 + bloom_len;
 
         // Read index length
-        trace!("SST Load Index: Reading index length at offset {}", index_offset);
+        trace!(
+            "SST Load Index: Reading index length at offset {}",
+            index_offset
+        );
         let index_len_data = fs.read_range(file_path, index_offset, 4).await?;
         let index_len = u32::from_le_bytes([
             index_len_data[0],
@@ -3139,8 +3192,13 @@ impl UnifiedSstableReader {
 
         // Read index data
         let index_data = if index_len > 0 {
-            trace!("SST Load Index: Reading index data at offset {} length {}", index_offset + 4, index_len);
-            fs.read_range(file_path, index_offset + 4, index_len).await?
+            trace!(
+                "SST Load Index: Reading index data at offset {} length {}",
+                index_offset + 4,
+                index_len
+            );
+            fs.read_range(file_path, index_offset + 4, index_len)
+                .await?
         } else {
             trace!("SST Load Index: No index data (index_len = 0)");
             vec![]
@@ -3317,7 +3375,7 @@ impl UnifiedSstableReader {
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
                         version: record.version,
-                            source: None,
+                        source: None,
                     }));
                 }
             }
@@ -3542,7 +3600,9 @@ impl UnifiedSstableReader {
                 };
 
             // Track bloom filter access via orchestrator (best-effort)
-            if let Some(orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            if let Some(orch) =
+                crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+            {
                 orch.pattern_tracker().track_access_async(
                     file_path.to_string(),
                     crate::storage::cache::orchestrator::CacheType::FilterBitmap,
@@ -3607,7 +3667,11 @@ impl UnifiedSstableReader {
         Ok(loaded_blocks)
     }
 
-    async fn read_file_with_cache(&self, path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_file_with_cache(
+        &self,
+        path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<Vec<ProximaDataBlock>> {
         trace!("SST Read with Cache: Starting for path: {}", path);
 
         // For Proxima format, we need to read the data blocks directly after the header
@@ -3616,16 +3680,26 @@ impl UnifiedSstableReader {
         // Read the file to find data blocks
         let blocks = self.read_proximablocks(path, collection).await?;
 
-        trace!("SST Read with Cache: Loaded {} Proxima blocks", blocks.len());
+        trace!(
+            "SST Read with Cache: Loaded {} Proxima blocks",
+            blocks.len()
+        );
         Ok(blocks)
     }
 
     /// Attempt to read data blocks without bloom filter or index
     /// This is a fallback for corrupted/truncated files
-    async fn read_blocks_without_index(&self, path: &str, start_offset: u64) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_blocks_without_index(
+        &self,
+        path: &str,
+        start_offset: u64,
+    ) -> Result<Vec<ProximaDataBlock>> {
         use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
-        eprintln!("⚠️ Attempting to read blocks without index from offset {}", start_offset);
+        eprintln!(
+            "⚠️ Attempting to read blocks without index from offset {}",
+            start_offset
+        );
 
         let scheme = if path.contains("://") {
             path.split("://").next().unwrap_or("file")
@@ -3643,11 +3717,18 @@ impl UnifiedSstableReader {
             match fs.read_range(path, offset, 4).await {
                 Ok(size_bytes) if size_bytes.len() == 4 => {
                     let block_size = u32::from_le_bytes([
-                        size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
+                        size_bytes[0],
+                        size_bytes[1],
+                        size_bytes[2],
+                        size_bytes[3],
                     ]);
 
-                    if block_size == 0 || block_size > 100_000_000 { // Sanity check: 100MB max block size
-                        eprintln!("Invalid block size {} at offset {}, stopping", block_size, offset);
+                    if block_size == 0 || block_size > 100_000_000 {
+                        // Sanity check: 100MB max block size
+                        eprintln!(
+                            "Invalid block size {} at offset {}, stopping",
+                            block_size, offset
+                        );
                         break;
                     }
 
@@ -3663,7 +3744,10 @@ impl UnifiedSstableReader {
                                     offset += block_size as u64;
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to deserialize block at offset {}: {}", offset, e);
+                                    eprintln!(
+                                        "Failed to deserialize block at offset {}: {}",
+                                        offset, e
+                                    );
                                     break;
                                 }
                             }
@@ -3687,7 +3771,11 @@ impl UnifiedSstableReader {
     }
 
     /// Read Proxima format data blocks from SST file
-    async fn read_proximablocks(&self, path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_proximablocks(
+        &self,
+        path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<Vec<ProximaDataBlock>> {
         use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
         trace!("SST Proxima: Reading blocks from: {}", path);
@@ -3708,7 +3796,10 @@ impl UnifiedSstableReader {
         }
 
         let header_len = u32::from_le_bytes([
-            first_8_bytes[4], first_8_bytes[5], first_8_bytes[6], first_8_bytes[7]
+            first_8_bytes[4],
+            first_8_bytes[5],
+            first_8_bytes[6],
+            first_8_bytes[7],
         ]) as u64;
 
         // Skip header
@@ -3719,13 +3810,19 @@ impl UnifiedSstableReader {
         if bloom_len_bytes.len() < 4 {
             // File is truncated or corrupted - log warning but try to continue
             // This could happen if bloom filter generation was interrupted
-            eprintln!("⚠️ WARNING: SST file {} appears truncated at bloom filter section (offset {}). Attempting to read without bloom filter.", path, offset);
+            eprintln!(
+                "⚠️ WARNING: SST file {} appears truncated at bloom filter section (offset {}). Attempting to read without bloom filter.",
+                path, offset
+            );
             // Try to read data blocks directly, assuming no bloom filter or index
             // This is a best-effort recovery attempt
             return self.read_blocks_without_index(path, offset).await;
         }
         let bloom_len = u32::from_le_bytes([
-            bloom_len_bytes[0], bloom_len_bytes[1], bloom_len_bytes[2], bloom_len_bytes[3]
+            bloom_len_bytes[0],
+            bloom_len_bytes[1],
+            bloom_len_bytes[2],
+            bloom_len_bytes[3],
         ]) as u64;
         offset += 4 + bloom_len;
 
@@ -3733,11 +3830,17 @@ impl UnifiedSstableReader {
         let index_len_bytes = fs.read_range(path, offset, 4).await?;
         if index_len_bytes.len() < 4 {
             // File is truncated at index section
-            eprintln!("⚠️ WARNING: SST file {} appears truncated at index section (offset {}). Attempting direct block read.", path, offset);
+            eprintln!(
+                "⚠️ WARNING: SST file {} appears truncated at index section (offset {}). Attempting direct block read.",
+                path, offset
+            );
             return self.read_blocks_without_index(path, offset).await;
         }
         let index_len = u32::from_le_bytes([
-            index_len_bytes[0], index_len_bytes[1], index_len_bytes[2], index_len_bytes[3]
+            index_len_bytes[0],
+            index_len_bytes[1],
+            index_len_bytes[2],
+            index_len_bytes[3],
         ]) as u64;
         offset += 4 + index_len;
 
@@ -3763,7 +3866,10 @@ impl UnifiedSstableReader {
             }
 
             let block_len = u32::from_le_bytes([
-                block_len_bytes[0], block_len_bytes[1], block_len_bytes[2], block_len_bytes[3]
+                block_len_bytes[0],
+                block_len_bytes[1],
+                block_len_bytes[2],
+                block_len_bytes[3],
             ]) as u64;
 
             if block_len == 0 || offset + 4 + block_len > file_size {
@@ -3774,12 +3880,18 @@ impl UnifiedSstableReader {
 
             // Read the block data
             let block_data = fs.read_range(path, offset, block_len).await?;
-            trace!("SST Proxima: Reading block at offset {} with {} bytes", offset, block_len);
+            trace!(
+                "SST Proxima: Reading block at offset {} with {} bytes",
+                offset, block_len
+            );
 
             // Deserialize using Proxima deserializer
             match ProximaDataBlock::deserialize(&block_data, collection) {
                 Ok(block) => {
-                    trace!("SST Proxima: Successfully deserialized block with {} records", block.records.len());
+                    trace!(
+                        "SST Proxima: Successfully deserialized block with {} records",
+                        block.records.len()
+                    );
                     blocks.push(block);
                 }
                 Err(e) => {
@@ -3795,7 +3907,11 @@ impl UnifiedSstableReader {
         Ok(blocks)
     }
 
-    async fn read_blocks_from_index(&self, path: &str, index: &SstableIndex) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_blocks_from_index(
+        &self,
+        path: &str,
+        index: &SstableIndex,
+    ) -> Result<Vec<ProximaDataBlock>> {
         // Helper method for when we have an index
         let mut blocks = Vec::new();
         let context = CollectionContext {
@@ -4042,7 +4158,11 @@ impl UnifiedSstableReader {
         Ok(blocks)
     }
 
-    async fn read_file_direct(&self, path: &str, collection: Option<&crate::proto::proximadb_v1::Collection>) -> Result<Vec<ProximaDataBlock>> {
+    async fn read_file_direct(
+        &self,
+        path: &str,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<Vec<ProximaDataBlock>> {
         // Use the same Proxima reader as read_file_with_cache
         trace!("SST Read Direct: Starting for path: {}", path);
         self.read_proximablocks(path, collection).await
@@ -4111,10 +4231,14 @@ impl UnifiedSstableReader {
 
         // Convert ReadStrategy to block_filter QueryType
         let block_query_type = match search_strategy {
-            ReadStrategy::FullScan | ReadStrategy::CompactionDirect | ReadStrategy::SearchOptimized =>
-                crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
-            ReadStrategy::FilteredScan(_) =>
-                crate::storage::engines::impls::sst::readers::block_filter::QueryType::PointQuery,
+            ReadStrategy::FullScan
+            | ReadStrategy::CompactionDirect
+            | ReadStrategy::SearchOptimized => {
+                crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan
+            }
+            ReadStrategy::FilteredScan(_) => {
+                crate::storage::engines::impls::sst::readers::block_filter::QueryType::PointQuery
+            }
         };
 
         // Create intelligent block filter based on strategy

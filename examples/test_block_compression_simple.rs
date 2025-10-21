@@ -1,15 +1,17 @@
-use proximadb::storage::engines::core::formats::proximablocks::{
-    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
-};
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
+use proximadb::storage::engines::core::formats::proximablocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
+};
 use std::collections::HashMap;
 
 fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| VectorRecord {
             id: format!("vec_{:06}", i),
-            vector: (0..dimension).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+            vector: (0..dimension)
+                .map(|d| (i as f32 + d as f32) * 0.1)
+                .collect(),
             metadata: HashMap::new(),
             expires_at: None,
             source: None,
@@ -32,7 +34,7 @@ fn main() {
         vector_layout: VectorEncodingLayout::FullVector,
         algorithm: CompressionAlgorithm::Lz4,
         compression_level: 1,
-        enable_vector_compression: false,  // DISABLED
+        enable_vector_compression: false, // DISABLED
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
@@ -44,7 +46,7 @@ fn main() {
         vector_layout: VectorEncodingLayout::FullVector,
         algorithm: CompressionAlgorithm::Lz4,
         compression_level: 1,
-        enable_vector_compression: true,  // ENABLED
+        enable_vector_compression: true, // ENABLED
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
@@ -57,10 +59,17 @@ fn main() {
     // Test without compression
     match block.serialize_with_config(&config_no_compression) {
         Ok(encoded_no_compression) => {
-            let ratio_no_compression = uncompressed_size as f64 / encoded_no_compression.len() as f64;
+            let ratio_no_compression =
+                uncompressed_size as f64 / encoded_no_compression.len() as f64;
             println!("❌ FullVector WITHOUT block compression:");
-            println!("   Original size: {:.2} MB", uncompressed_size as f64 / 1_000_000.0);
-            println!("   Encoded size:  {:.2} MB", encoded_no_compression.len() as f64 / 1_000_000.0);
+            println!(
+                "   Original size: {:.2} MB",
+                uncompressed_size as f64 / 1_000_000.0
+            );
+            println!(
+                "   Encoded size:  {:.2} MB",
+                encoded_no_compression.len() as f64 / 1_000_000.0
+            );
             println!("   Compression ratio: {:.2}x", ratio_no_compression);
         }
         Err(e) => println!("❌ Encoding without compression failed: {}", e),
@@ -69,10 +78,17 @@ fn main() {
     // Test with compression
     match block.serialize_with_config(&config_with_compression) {
         Ok(encoded_with_compression) => {
-            let ratio_with_compression = uncompressed_size as f64 / encoded_with_compression.len() as f64;
+            let ratio_with_compression =
+                uncompressed_size as f64 / encoded_with_compression.len() as f64;
             println!("\n✅ FullVector WITH block compression:");
-            println!("   Original size: {:.2} MB", uncompressed_size as f64 / 1_000_000.0);
-            println!("   Encoded size:  {:.2} MB", encoded_with_compression.len() as f64 / 1_000_000.0);
+            println!(
+                "   Original size: {:.2} MB",
+                uncompressed_size as f64 / 1_000_000.0
+            );
+            println!(
+                "   Encoded size:  {:.2} MB",
+                encoded_with_compression.len() as f64 / 1_000_000.0
+            );
             println!("   Compression ratio: {:.2}x", ratio_with_compression);
 
             if ratio_with_compression > 2.0 {
