@@ -52,6 +52,11 @@ async fn ensure_graph_with_engine(
 
 fn bench_engine_crud(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_engine_crud");
+    // Heavier inputs sometimes exceed 4s; increase measurement window and
+    // slightly reduce sample size for more stable CI runs.
+    use std::time::Duration;
+    group.measurement_time(Duration::from_secs(6));
+    group.sample_size(20);
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     for engine in ENGINES {
@@ -182,6 +187,9 @@ fn bench_engine_crud(c: &mut Criterion) {
 
 fn bench_engine_traversal(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_engine_traversal");
+    use std::time::Duration;
+    group.measurement_time(Duration::from_secs(6));
+    group.sample_size(20);
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     for engine in ENGINES {

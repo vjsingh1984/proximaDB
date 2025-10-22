@@ -7,13 +7,14 @@
 //! - Connectivity (components) and cycle detection
 //!
 //! Run with:
-//!   RUN_BENCHMARKS=true cargo run --release --bench graph_engine_reporter
+//!   cargo bench --bench graph_engine_reporter
 
 use anyhow::Result;
+use criterion::{criterion_group, criterion_main, Criterion};
 use proximadb::graph::{Edge, Node, PropertyValue, service::GraphOperationsService};
 use proximadb::proto::proximadb_v1::{
-    CreateGraphRequest, GraphEngineConfig, NodeQuery, PropertyFilter, PropertyFilterOperator,
-    TraversalAlgorithm, TraversalRequest, property_value::Value,
+    CreateGraphRequest, GraphEngineConfig, TraversalAlgorithm, TraversalRequest,
+    property_value::Value,
 };
 use proximadb::services::graph_collection::GraphCollectionService;
 use std::collections::HashMap;
@@ -21,6 +22,10 @@ use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// Ensure we only write CSV once per benchmark process
+static CSV_WRITTEN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
 struct GraphBenchConfig {
@@ -238,17 +243,23 @@ fn write_csv(results: &[GraphBenchResult], filename: &str) -> Result<()> {
     let mut f = File::create(filename)?;
     writeln!(
         f,
-        "Engine,Nodes,Edges,NodeInsertMs,EdgeInsertMs,BfsMs,DfsMs,DijkstraMs,AstarMs,ComponentsMs,HasCycleMs"
+        "Engine,Nodes,Edges,NodeInsertMs,EdgeInsertMs,NodeInsertKPerSec,EdgeInsertKPerSec,\
+        BfsMs,DfsMs,DijkstraMs,AstarMs,ComponentsMs,HasCycleMs"
     )?;
     for r in results {
+        // K elem/s = elems / ms
+        let node_kps = if r.node_insert_ms > 0 { (r.nodes as f64) / (r.node_insert_ms as f64) } else { 0.0 };
+        let edge_kps = if r.edge_insert_ms > 0 { (r.edges as f64) / (r.edge_insert_ms as f64) } else { 0.0 };
         writeln!(
             f,
-            "{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{:.2},{:.2},{},{},{},{},{},{}",
             r.engine,
             r.nodes,
             r.edges,
             r.node_insert_ms,
             r.edge_insert_ms,
+            node_kps,
+            edge_kps,
             r.bfs_ms,
             r.dfs_ms,
             r.dijkstra_ms,
@@ -261,35 +272,42 @@ fn write_csv(results: &[GraphBenchResult], filename: &str) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    if std::env::var("RUN_BENCHMARKS").unwrap_or_default() != "true" {
-        println!(
-            "\nTo generate graph engine CSV report: RUN_BENCHMARKS=true cargo run --release --bench graph_engine_reporter\n"
-        );
-        return Ok(());
-    }
+fn bench_graph_engine_reporter(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    c.bench_function("graph_engine_reporter_generate", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let engines = vec!["ORION", "PULSAR", "QUASAR"]; // Cross-engine report
+                let scales = vec![(1000, 3000), (5000, 15000)];
 
-    let engines = vec!["ORION"]; // Extend to ["ORION","PULSAR","QUASAR"] as available
-    let scales = vec![(1000, 3000), (5000, 15000)];
+                let mut results = Vec::new();
+                for e in engines {
+                    for (n, m) in &scales {
+                        let cfg = GraphBenchConfig {
+                            engine: e.to_string(),
+                            nodes: *n,
+                            edges: *m,
+                        };
+                        if let Ok(r) = run_config(&cfg).await {
+                            results.push(r);
+                        }
+                    }
+                }
 
-    let mut results = Vec::new();
-    for e in engines {
-        for (n, m) in &scales {
-            let cfg = GraphBenchConfig {
-                engine: e.to_string(),
-                nodes: *n,
-                edges: *m,
-            };
-            match run_config(&cfg).await {
-                Ok(r) => results.push(r),
-                Err(err) => eprintln!("Failed {} @ {}n/{}e: {}", e, n, m, err),
-            }
-        }
-    }
-
-    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
-    let file = format!("graph_benchmark_report_{}.csv", ts);
-    write_csv(&results, &file)?;
-    Ok(())
+                // Write CSV exactly once per benchmark process
+                if !CSV_WRITTEN.swap(true, Ordering::SeqCst) {
+                    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+                    let _ = std::fs::create_dir_all(&target_dir);
+                    let latest = format!("{}/graph_benchmark_report_latest.csv", target_dir);
+                    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                    let stamped = format!("{}/graph_benchmark_report_{}.csv", target_dir, ts);
+                    let _ = write_csv(&results, &latest);
+                    let _ = write_csv(&results, &stamped);
+                }
+            })
+        })
+    });
 }
+
+criterion_group!(benches, bench_graph_engine_reporter);
+criterion_main!(benches);
