@@ -2442,6 +2442,7 @@ class ProximaDBClient:
             "max_depth": max_depth,
             "edge_types": edge_types or [],
             "node_labels": node_labels or [],
+            "return_path": True,  # Required by Rust REST handler
             "algorithm": algorithm.upper()
         }
         if limit is not None:

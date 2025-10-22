@@ -79,9 +79,8 @@ async fn test_graph_collection_service_isolation_bug() {
         labels: vec!["Person".to_string()],
         properties,
         embedding: None,
-        embedding_version: None,
-        created_at_ms: None,
-        updated_at_ms: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     // This should FAIL because GraphOperationsService has a DIFFERENT GraphCollectionService instance
@@ -149,9 +148,8 @@ async fn test_graph_collection_service_shared_correctly() {
         labels: vec!["Person".to_string()],
         properties,
         embedding: None,
-        embedding_version: None,
-        created_at_ms: None,
-        updated_at_ms: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     let result = graph_operations_service
@@ -212,6 +210,7 @@ async fn test_end_to_end_graph_operations() {
 
     // 3. Query nodes
     let query = proximadb::proto::proximadb_v1::NodeQuery {
+        graph_id: "social_network".to_string(),
         labels: vec!["Person".to_string()],
         filters: vec![],
         limit: Some(10),
@@ -254,8 +253,7 @@ fn create_person_node(id: &str, name: &str) -> Node {
         labels: vec!["Person".to_string()],
         properties,
         embedding: None,
-        embedding_version: None,
-        created_at_ms: None,
-        updated_at_ms: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     }
 }
