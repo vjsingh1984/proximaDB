@@ -68,7 +68,7 @@ async fn test_graph_collection_service_isolation_bug() {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(
+            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
                 "Alice".to_string(),
             )),
         },
@@ -80,8 +80,8 @@ async fn test_graph_collection_service_isolation_bug() {
         properties,
         embedding: None,
         embedding_version: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: None,
+        updated_at_ms: None,
     };
 
     // This should FAIL because GraphOperationsService has a DIFFERENT GraphCollectionService instance
@@ -138,7 +138,7 @@ async fn test_graph_collection_service_shared_correctly() {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(
+            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
                 "Alice".to_string(),
             )),
         },
@@ -150,8 +150,8 @@ async fn test_graph_collection_service_shared_correctly() {
         properties,
         embedding: None,
         embedding_version: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: None,
+        updated_at_ms: None,
     };
 
     let result = graph_operations_service
@@ -243,7 +243,7 @@ fn create_person_node(id: &str, name: &str) -> Node {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(
+            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
                 name.to_string(),
             )),
         },
@@ -255,7 +255,7 @@ fn create_person_node(id: &str, name: &str) -> Node {
         properties,
         embedding: None,
         embedding_version: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: None,
+        updated_at_ms: None,
     }
 }

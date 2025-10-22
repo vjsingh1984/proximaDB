@@ -87,32 +87,30 @@ pub struct UnifiedHandlers {
 impl UnifiedHandlers {
     /// Create new unified handlers with optimized VectorOperationsService
     ///
+    /// **CRITICAL: Graph Services Must Be Provided**
+    ///
+    /// This constructor now requires pre-created GraphCollectionService and GraphOperationsService
+    /// to ensure SINGLE SHARED INSTANCE across all API endpoints (REST, gRPC).
+    ///
     /// **Performance Benefits:**
     /// - 40-60% faster vector insert operations
     /// - Eliminates WAL Manager Registry overhead
     /// - Direct access to global memtable
+    ///
+    /// **Graph API Bug Fix:**
+    /// - Ensures graph collections are visible to all operations
+    /// - Single source of truth for graph metadata
     pub fn new(
         collection_service: Arc<CollectionService>,
         vector_operations_service: Arc<VectorOperationsService>,
+        graph_collection_service: Arc<crate::services::GraphCollectionService>,
+        graph_operations_service: Arc<crate::graph::GraphOperationsService>,
     ) -> Self {
-        // Create a SINGLE GraphCollectionService instance that will be shared
-        // by both the external API and the GraphOperationsService
-        let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
-
-        // Pass the SAME instance to GraphOperationsService so both use the same registry
-        // This fixes the bug where graph collections created via the REST API
-        // were not visible to node/edge creation operations
-        let graph_operations_service = Arc::new(
-            crate::graph::GraphOperationsService::new_with_collection_service(
-                graph_collection_service.clone(), // Share the same instance
-            ),
-        );
-
         Self {
             collection_service,
             vector_operations_service,
-            graph_collection_service, // External API uses this
-            graph_operations_service,  // Internal uses graph_operations_service.collection_service (same instance)
+            graph_collection_service,
+            graph_operations_service,
             metrics_query_service: None,
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
         }
@@ -122,18 +120,10 @@ impl UnifiedHandlers {
     pub fn with_metrics(
         collection_service: Arc<CollectionService>,
         vector_operations_service: Arc<VectorOperationsService>,
+        graph_collection_service: Arc<crate::services::GraphCollectionService>,
+        graph_operations_service: Arc<crate::graph::GraphOperationsService>,
         metrics_query_service: Arc<MetricsQueryService>,
     ) -> Self {
-        // Create a SINGLE GraphCollectionService instance (same pattern as new())
-        let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
-
-        // Share the same instance with GraphOperationsService
-        let graph_operations_service = Arc::new(
-            crate::graph::GraphOperationsService::new_with_collection_service(
-                graph_collection_service.clone(), // Share the same instance
-            ),
-        );
-
         Self {
             collection_service,
             vector_operations_service,
@@ -142,21 +132,6 @@ impl UnifiedHandlers {
             metrics_query_service: Some(metrics_query_service),
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
         }
-    }
-
-    /// Create unified handlers with configuration overrides (graph engine, hybrid runtime)
-    pub fn with_config(
-        collection_service: Arc<CollectionService>,
-        vector_operations_service: Arc<VectorOperationsService>,
-        config: &crate::core::config::Config,
-    ) -> Self {
-        let mut s = Self::new(collection_service, vector_operations_service);
-        s.graph_operations_service =
-            Arc::new(crate::graph::GraphOperationsService::from_config(config));
-        if let Some(h) = &config.hybrid {
-            s.set_hybrid_runtime(h.clone());
-        }
-        s
     }
 
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)

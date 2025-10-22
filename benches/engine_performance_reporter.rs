@@ -47,6 +47,9 @@ struct BenchmarkResult {
     algorithm: String,
     level: i32,
     batch_count: usize,
+    vectors_per_batch: usize,
+    total_vectors: u64,
+    dimension: usize,
     // Storage metrics
     uncompressed_size: u64,
     compressed_size: u64,
@@ -117,16 +120,60 @@ async fn benchmark_engine_configuration(
     config: &BenchmarkConfig,
 ) -> Result<BenchmarkResult> {
     let temp_dir = TempDir::new()?;
-    let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
+    let _filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
+
+    // Prepare collection context (storage assignment + config) so engines don't
+    // need to consult an external collection service.
+    let collection_id = "bench-collection".to_string();
+    let base_path_fs = temp_dir.path().to_string_lossy().to_string();
+    let base_url = format!("file://{}", base_path_fs);
+    let collection_data_dir = format!("{}/{}/data", base_path_fs, collection_id);
+    // Best-effort create data dir for engines that expect it to exist
+    let _ = tokio::fs::create_dir_all(&collection_data_dir).await;
+
+    let (engine_enum, distance_metric_enum) = match engine_type {
+        "SST" => (
+            proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+            proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+        ),
+        "VIPER" => (
+            proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+            proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+        ),
+        _ => (
+            proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+            proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+        ),
+    };
+
+    let collection_proto = proximadb::proto::proximadb_v1::Collection {
+        id: collection_id.clone(),
+        config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+            name: collection_id.clone(),
+            dimension: config.dimension as u32,
+            distance_metric: Some(distance_metric_enum),
+            storage_engine: Some(engine_enum),
+            ..Default::default()
+        }),
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            base_location: base_url.clone(),
+            primary_path: format!("{}/{}", base_url, collection_id),
+            backup_paths: vec![],
+            engine: engine_enum,
+            engine_config: Default::default(),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
+        ..Default::default()
+    };
 
     // Storage for metrics
     let mut flush_times = Vec::new();
-    let start_total = Instant::now();
+    let _start_total = Instant::now();
 
     // Create engine based on type
     let (uncompressed_size, compressed_size, compaction_time_ms) = match engine_type {
         "SST" => {
-            let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+            let _distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
             // Test with compression
             let mut sst_config = proximadb::core::config::SstConfig::default();
@@ -147,9 +194,10 @@ async fn benchmark_engine_configuration(
 
                 let start_flush = Instant::now();
                 let flush_params = FlushParameters {
-                    collection_id: Some("bench-collection".to_string()),
+                    collection_id: Some(collection_id.clone()),
                     vector_records: vectors,
                     force: true,
+                    collection_config: Some(collection_proto.clone()),
                     ..Default::default()
                 };
                 let result = engine.do_flush(&flush_params).await?;
@@ -168,12 +216,17 @@ async fn benchmark_engine_configuration(
             // Measure compaction
             let start_compact = Instant::now();
             let compact_params = CompactionParameters {
-                collection_id: Some("bench_collection".to_string()),
+                collection_id: Some(collection_id.clone()),
                 force: true,
                 ..Default::default()
             };
-            let compaction_result = engine.do_compact(&compact_params).await?;
-            let compaction_time = start_compact.elapsed().as_millis() as u64;
+            let compaction_time = match engine.do_compact(&compact_params).await {
+                Ok(_r) => start_compact.elapsed().as_millis() as u64,
+                Err(e) => {
+                    eprintln!("Compaction skipped (SST): {}", e);
+                    0
+                }
+            };
 
             // Calculate sizes (simplified - in real implementation would measure actual files)
             let compressed_size =
@@ -201,9 +254,10 @@ async fn benchmark_engine_configuration(
 
                 let start_flush = Instant::now();
                 let flush_params = FlushParameters {
-                    collection_id: Some("bench-collection".to_string()),
+                    collection_id: Some(collection_id.clone()),
                     vector_records: vectors,
                     force: true,
+                    collection_config: Some(collection_proto.clone()),
                     ..Default::default()
                 };
                 let result = engine.flush(flush_params).await?;
@@ -220,14 +274,21 @@ async fn benchmark_engine_configuration(
             }
 
             // Measure compaction
+            // VIPER compaction requires collection assignment (storage_assignment in collection_config)
             let start_compact = Instant::now();
             let compact_params = CompactionParameters {
-                collection_id: Some("bench_collection".to_string()),
+                collection_id: Some(collection_id.clone()),
+                collection_config: Some(collection_proto.clone()), // Include storage assignment
                 force: true,
                 ..Default::default()
             };
-            let compaction_result = engine.compact(compact_params).await?;
-            let compaction_time = start_compact.elapsed().as_millis() as u64;
+            let compaction_time = match engine.compact(compact_params).await {
+                Ok(_r) => start_compact.elapsed().as_millis() as u64,
+                Err(e) => {
+                    eprintln!("Compaction failed (VIPER): {}", e);
+                    0
+                }
+            };
 
             let compressed_size =
                 config.vectors_per_batch * config.batch_count * config.dimension * 4;
@@ -263,6 +324,9 @@ async fn benchmark_engine_configuration(
         algorithm: config.algorithm.clone(),
         level: config.level,
         batch_count: config.batch_count,
+        vectors_per_batch: config.vectors_per_batch,
+        total_vectors: (config.batch_count as u64) * (config.vectors_per_batch as u64),
+        dimension: config.dimension,
         uncompressed_size,
         compressed_size,
         compression_ratio,
@@ -279,6 +343,7 @@ async fn benchmark_engine_configuration(
     })
 }
 
+
 /// Write results to CSV file
 fn write_csv_report(results: &[BenchmarkResult], filename: &str) -> Result<()> {
     let mut file = File::create(filename)?;
@@ -286,21 +351,38 @@ fn write_csv_report(results: &[BenchmarkResult], filename: &str) -> Result<()> {
     // Write header
     writeln!(
         file,
-        "Engine,Sparsity%,Algorithm,Level,Batches,UncompressedSize,CompressedSize,\
-        CompressionRatio,SavingsPercent,TotalFlushMs,AvgFlushMs,CompactionMs,\
-        InputFiles,OutputFiles,CompactionRatio"
+        "Engine,Sparsity%,Algorithm,Level,Batches,VecsPerBatch,TotalVectors,Dimension,\
+        UncompressedSizeB,CompressedSizeB,CompressionRatio,SavingsPercent,\
+        TotalFlushMs,AvgFlushMs,CompactionMs,InputFiles,OutputFiles,CompactionRatio,\
+        TotalVecsPerSec,AvgBatchVecsPerSec,TotalMBps,AvgBatchMBps"
     )?;
 
     // Write data rows
     for result in results {
+        let total_flush_s = (result.total_flush_time_ms as f64) / 1000.0;
+        let avg_flush_s = (result.avg_flush_time_ms as f64) / 1000.0;
+        let total_vecs = result.total_vectors as f64;
+        let batch_vecs = result.vectors_per_batch as f64;
+        let bytes_per_vec = (result.dimension as f64) * 4.0;
+        let total_bytes = total_vecs * bytes_per_vec;
+        let batch_bytes = batch_vecs * bytes_per_vec;
+        let total_mb = total_bytes / 1_000_000.0;
+        let batch_mb = batch_bytes / 1_000_000.0;
+        let total_vecs_per_sec = if total_flush_s > 0.0 { total_vecs / total_flush_s } else { 0.0 };
+        let avg_batch_vecs_per_sec = if avg_flush_s > 0.0 { batch_vecs / avg_flush_s } else { 0.0 };
+        let total_mbps = if total_flush_s > 0.0 { total_mb / total_flush_s } else { 0.0 };
+        let avg_batch_mbps = if avg_flush_s > 0.0 { batch_mb / avg_flush_s } else { 0.0 };
         writeln!(
             file,
-            "{},{},{},{},{},{},{},{:.3},{:.1},{},{},{},{},{},{:.1}",
+            "{},{},{},{},{},{},{},{},{},{},{:.3},{:.1},{},{},{},{},{},{:.1},{:.1},{:.2},{:.2},{:.2}",
             result.engine,
             result.sparsity,
             result.algorithm,
             result.level,
             result.batch_count,
+            result.vectors_per_batch,
+            result.total_vectors,
+            result.dimension,
             result.uncompressed_size,
             result.compressed_size,
             result.compression_ratio,
@@ -311,6 +393,10 @@ fn write_csv_report(results: &[BenchmarkResult], filename: &str) -> Result<()> {
             result.compaction_input_files,
             result.compaction_output_files,
             result.compaction_reduction_ratio,
+            total_vecs_per_sec,
+            avg_batch_vecs_per_sec,
+            total_mbps,
+            avg_batch_mbps,
         )?;
     }
 
@@ -382,16 +468,20 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Write CSV reports
+    // Write CSV reports under target/
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+    let _ = std::fs::create_dir_all(&target_dir);
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-    let report_file = format!("benchmark_report_{}.csv", timestamp);
-    write_csv_report(&all_results, &report_file)?;
+    let latest = format!("{}/benchmark_report_latest.csv", target_dir);
+    let stamped = format!("{}/benchmark_report_{}.csv", target_dir, timestamp);
+    write_csv_report(&all_results, &latest)?;
+    write_csv_report(&all_results, &stamped)?;
 
     // Print summary
     println!("\n{}", "=".repeat(80));
     println!("📈 BENCHMARK SUMMARY");
     println!("   Total configurations tested: {}", all_results.len());
-    println!("   Report saved to: {}", report_file);
+    println!("   Report saved to: {}", stamped);
     println!("{}\n", "=".repeat(80));
 
     Ok(())

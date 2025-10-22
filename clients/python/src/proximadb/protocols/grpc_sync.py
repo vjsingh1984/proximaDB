@@ -913,16 +913,18 @@ class ProximaDBSyncGrpcClient:
 
     def _convert_node_from_proto(self, node) -> Dict[str, Any]:
         """Convert Node proto to dictionary"""
+        from datetime import datetime, timezone
         return {
             "id": node.id,
             "labels": list(node.labels),
             "properties": {k: self._convert_from_property_value(v) for k, v in node.properties.items()},
-            "created_at": node.created_at.ToDatetime().isoformat() if node.HasField('created_at') else None,
-            "updated_at": node.updated_at.ToDatetime().isoformat() if node.HasField('updated_at') else None
+            "created_at": datetime.fromtimestamp(node.created_at_ms / 1000, tz=timezone.utc).isoformat() if node.created_at_ms else None,
+            "updated_at": datetime.fromtimestamp(node.updated_at_ms / 1000, tz=timezone.utc).isoformat() if node.updated_at_ms else None
         }
 
     def _convert_edge_from_proto(self, edge) -> Dict[str, Any]:
         """Convert Edge proto to dictionary"""
+        from datetime import datetime, timezone
         return {
             "id": edge.id,
             "from_node_id": edge.from_node_id,
@@ -930,8 +932,8 @@ class ProximaDBSyncGrpcClient:
             "edge_type": edge.edge_type,
             "properties": {k: self._convert_from_property_value(v) for k, v in edge.properties.items()},
             "weight": edge.weight if edge.HasField('weight') else None,
-            "created_at": edge.created_at.ToDatetime().isoformat() if edge.HasField('created_at') else None,
-            "updated_at": edge.updated_at.ToDatetime().isoformat() if edge.HasField('updated_at') else None
+            "created_at": datetime.fromtimestamp(edge.created_at_ms / 1000, tz=timezone.utc).isoformat() if edge.created_at_ms else None,
+            "updated_at": datetime.fromtimestamp(edge.updated_at_ms / 1000, tz=timezone.utc).isoformat() if edge.updated_at_ms else None
         }
 
     def _convert_path_from_proto(self, path) -> List[str]:

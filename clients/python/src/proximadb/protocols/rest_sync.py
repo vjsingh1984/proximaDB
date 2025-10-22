@@ -2452,7 +2452,25 @@ class ProximaDBClient:
             json=payload
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+
+        # Transform REST response to match gRPC format
+        # REST may return: {"success": true, "data": {...}, ...}
+        # gRPC returns: {"nodes": [...], "edges": [...], "paths": [...], "stats": {...}}
+        # If data is nested, extract it; otherwise use result directly
+        data = result.get("data", result)
+
+        return {
+            "nodes": data.get("nodes", []),
+            "edges": data.get("edges", []),
+            "paths": data.get("paths", []),
+            "stats": data.get("stats", {
+                "nodes_visited": 0,
+                "edges_traversed": 0,
+                "max_depth_reached": 0,
+                "execution_time_microseconds": 0
+            })
+        }
 
     def query_nodes(
         self,
@@ -2488,7 +2506,17 @@ class ProximaDBClient:
             json=payload
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+
+        # Transform REST response to match gRPC format
+        # REST returns: {"success": true, "data": [...], "next_token": "..."}
+        # gRPC returns: {"success": true, "nodes": [...], "total_count": N}
+        return {
+            "success": result.get("success", True),
+            "nodes": result.get("data", []),
+            "total_count": len(result.get("data", [])),
+            "next_token": result.get("next_token")
+        }
 
     def __enter__(self):
         """Context manager entry"""

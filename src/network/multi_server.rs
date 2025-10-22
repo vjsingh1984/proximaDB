@@ -666,15 +666,44 @@ impl SharedServices {
             info!("📋 SharedServices: No collections found in WAL to restore");
         }
 
+        // ==================================================================================
+        // CRITICAL FIX FOR GRAPH API BUG - Ensure Single Shared GraphCollectionService
+        // ==================================================================================
+        //
+        // ROOT CAUSE ANALYSIS:
+        //
+        // The previous implementation had TWO SEPARATE GraphCollectionService instances:
+        // 1. One created by UnifiedHandlers::new() for REST/gRPC graph collection endpoints
+        // 2. One created by GraphOperationsService::new() for node/edge operations
+        //
+        // This caused graph collections created via REST API to be INVISIBLE to graph
+        // operations because they were stored in different instances.
+        //
+        // SOLUTION:
+        //
+        // Create a SINGLE GraphCollectionService instance here and pass it to BOTH:
+        // - GraphOperationsService (via new_with_collection_service)
+        // - UnifiedHandlers (via with_shared_graph_services)
+        //
+        // This ensures ALL graph endpoints and operations share the same state.
+        // ==================================================================================
+
+        debug!("🔧 SharedServices::new - Creating SHARED GraphCollectionService instance...");
+        let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
+        debug!("✅ SharedServices::new - Shared GraphCollectionService created");
+
         // Create GraphOperationsService for native graph database operations
+        // IMPORTANT: Pass the shared GraphCollectionService instance
         debug!(
-            "🔧 SharedServices::new - Creating GraphOperationsService for graph database operations..."
+            "🔧 SharedServices::new - Creating GraphOperationsService with SHARED collection service..."
         );
-        let mut graph_service_inst = if let Some(cfg) = opt_config {
-            crate::graph::GraphOperationsService::from_config(cfg)
-        } else {
-            crate::graph::GraphOperationsService::new()
-        };
+        // ALWAYS use new_with_collection_service to ensure shared GraphCollectionService
+        // Even if config is provided, we must share the collection service
+        // (Config-specific settings can be applied later if needed)
+        let mut graph_service_inst = crate::graph::GraphOperationsService::new_with_collection_service(
+            graph_collection_service.clone()
+        );
+
         // Create a simple file-backed metrics updater under data_root/metrics
         let filesystem_factory =
             Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
@@ -703,23 +732,21 @@ impl SharedServices {
         graph_service_inst.set_metrics_updater(metrics_updater.clone());
         debug!("📈 GraphOperationsService metrics updater wired");
         let graph_service = Arc::new(graph_service_inst);
-        debug!("✅ SharedServices::new - GraphOperationsService created successfully");
+        debug!("✅ SharedServices::new - GraphOperationsService created with shared collection service");
 
-        // Create unified handlers with VectorOperationsService and GraphService
-        let mut unified_handlers_instance = if let Some(cfg) = opt_config {
-            UnifiedHandlers::with_config(
-                collection_service.clone(),
-                vector_operations_service.clone(),
-                cfg,
-            )
-        } else {
-            UnifiedHandlers::new(
-                collection_service.clone(),
-                vector_operations_service.clone(),
-            )
-        };
-        // Replace the auto-created GraphOperationsService with our shared one
-        unified_handlers_instance.graph_operations_service = graph_service.clone();
+        // Create unified handlers with SHARED graph services
+        // IMPORTANT: Pass the pre-created GraphCollectionService and GraphOperationsService
+        // to ensure ALL graph endpoints and operations share the same state
+        debug!(
+            "🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services..."
+        );
+        let mut unified_handlers_instance = UnifiedHandlers::new(
+            collection_service.clone(),
+            vector_operations_service.clone(),
+            graph_collection_service.clone(), // SHARED instance
+            graph_service.clone(),             // Uses the SHARED collection service
+        );
+
         // Apply hybrid runtime config if provided
         if let Some(cfg) = opt_config {
             if let Some(ref hybrid) = cfg.hybrid {
@@ -727,6 +754,7 @@ impl SharedServices {
             }
         }
         let unified_handlers = Arc::new(unified_handlers_instance);
+        debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
 
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
