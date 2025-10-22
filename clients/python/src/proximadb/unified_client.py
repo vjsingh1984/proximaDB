@@ -2033,6 +2033,104 @@ class ProximaDBClient:
             offset=offset
         )
 
+    # ==================== Graph Collection Management ====================
+
+    def create_graph(
+        self,
+        graph_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        schema: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new graph collection.
+
+        Args:
+            graph_id: Unique identifier for the graph collection
+            name: Optional human-readable name (defaults to graph_id)
+            description: Optional description of the graph
+            schema: Optional schema definition for the graph
+
+        Returns:
+            Dictionary containing the created graph collection metadata
+
+        Example:
+            >>> graph = client.create_graph(
+            ...     graph_id="social_network",
+            ...     name="Social Network Graph",
+            ...     description="User relationships and interactions"
+            ... )
+        """
+        return self._client.create_graph(
+            graph_id=graph_id,
+            name=name,
+            description=description,
+            schema=schema
+        )
+
+    def delete_graph(self, graph_id: str) -> Dict[str, Any]:
+        """
+        Delete a graph collection.
+
+        Args:
+            graph_id: ID of the graph collection to delete
+
+        Returns:
+            Dictionary confirming deletion
+
+        Example:
+            >>> result = client.delete_graph("social_network")
+        """
+        return self._client.delete_graph(graph_id)
+
+    def get_graph(self, graph_id: str) -> Dict[str, Any]:
+        """
+        Get graph collection metadata.
+
+        Args:
+            graph_id: ID of the graph collection
+
+        Returns:
+            Dictionary containing graph collection metadata
+
+        Example:
+            >>> graph = client.get_graph("social_network")
+            >>> print(graph["name"])
+        """
+        return self._client.get_graph(graph_id)
+
+    def list_graphs(self) -> Dict[str, Any]:
+        """
+        List all graph collections.
+
+        Returns:
+            Dictionary containing list of all graph collections
+
+        Example:
+            >>> graphs = client.list_graphs()
+            >>> for graph in graphs.get("graphs", []):
+            ...     print(graph["graph_id"])
+        """
+        return self._client.list_graphs()
+
+    def get_graph_stats(self, graph_id: str) -> Dict[str, Any]:
+        """
+        Get statistics for a graph collection.
+
+        Args:
+            graph_id: ID of the graph collection
+
+        Returns:
+            Dictionary containing graph statistics (node count, edge count, etc.)
+
+        Example:
+            >>> stats = client.get_graph_stats("social_network")
+            >>> print(f"Nodes: {stats['node_count']}, Edges: {stats['edge_count']}")
+        """
+        return self._client.get_graph_stats(graph_id)
+
+    # ==================== End Graph Collection Management ====================
+
     def get_collection_stats(self, collection_id: str) -> Dict[str, Any]:
         """Get collection statistics (legacy compatibility)"""
         collection = self.get_collection(collection_id)

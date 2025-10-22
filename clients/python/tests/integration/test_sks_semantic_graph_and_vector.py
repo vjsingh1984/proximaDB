@@ -78,11 +78,17 @@ def test_semantic_knowledge_store_graph_and_vector():
         assert ins_res.success >= 3  # success field contains successful count, not boolean
         assert ins_res.metrics.successful_count >= 3
 
-        # 3) Graph collection management not yet available in Python SDK
-        # For now, we rely on "default" graph existing or created manually via:
-        # curl -X POST http://localhost:5678/api/v1/graph/graphs \
-        #   -H "Content-Type: application/json" \
-        #   -d '{"graph_id":"default","name":"Default Graph Collection"}'
+        # 3) Create graph collection for storing nodes and edges
+        # Try to create "default" graph - ignore error if it already exists
+        try:
+            graph = client.create_graph(
+                graph_id="default",
+                name="Default Graph Collection",
+                description="Default graph for semantic knowledge store"
+            )
+        except Exception:
+            # Graph may already exist from previous test runs - this is fine
+            pass
 
         # 4) Create graph nodes and edges (Graph API)
         # Nodes mirror the vector records so we can hop from semantics to relations
