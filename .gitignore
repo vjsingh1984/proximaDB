@@ -276,6 +276,11 @@ segment_*/
 *.bcwal
 *.oplog
 
+# Runtime directories (should not be in docs/)
+docs/data/
+docs/metadata/
+docs/log/
+
 # Generated test and benchmark data
 *.json
 !package.json
