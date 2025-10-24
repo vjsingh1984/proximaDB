@@ -66,6 +66,95 @@ from ..exceptions import (
 logger = logging.getLogger(__name__)
 
 
+def _convert_quantization_config_to_proto(quant_config) -> Dict[str, Any]:
+    """Convert SDK's flat QuantizationConfig to proto's nested structure
+
+    The SDK uses flat fields like bits_per_subvector, num_subvectors, bits_per_vector,
+    but the proto expects these nested in a custom_levels array of QuantizationLevel messages.
+
+    Args:
+        quant_config: SDK QuantizationConfig object
+
+    Returns:
+        Dict with proto-compatible nested structure
+    """
+    from ..models import QuantizationType
+
+    # Start with dict conversion
+    try:
+        # Pydantic v2
+        quant_dict = quant_config.model_dump(exclude_none=True)
+    except Exception:
+        try:
+            # Pydantic v1
+            quant_dict = quant_config.dict(exclude_none=True)
+        except Exception:
+            quant_dict = {}
+
+    # Build proto structure
+    proto_dict = {
+        "enabled": quant_dict.get("enabled", False)
+    }
+
+    # Determine strategy based on type
+    quant_type = quant_dict.get("type", "NONE")
+    if isinstance(quant_type, str):
+        quant_type_str = quant_type
+    else:
+        quant_type_str = getattr(quant_type, 'value', 'NONE')
+
+    if quant_type_str == "NONE" or not quant_dict.get("enabled"):
+        proto_dict["strategy"] = 0  # SMART_DEFAULTS
+        proto_dict["custom_levels"] = []
+        return proto_dict
+
+    proto_dict["strategy"] = 1  # CUSTOM_LEVELS
+
+    # Map quantization type to proto enum
+    QUANT_TYPE_MAP = {
+        "BINARY": 0,
+        "SCALAR": 1,
+        "PRODUCT": 2,
+        "UNIFORM": 3,
+        "NONE": 4
+    }
+
+    # Build custom_levels array from flat SDK fields
+    # QuantizationLevel has many fields - provide sensible defaults for all
+    level = {
+        "level_id": "sdk_level_0",
+        "type": QUANT_TYPE_MAP.get(quant_type_str.upper(), 4),  # Default to NONE
+        "bits": quant_dict.get("bits_per_subvector") or quant_dict.get("bits_per_vector") or 8,
+        "num_subvectors": quant_dict.get("num_subvectors", 8),
+        "adaptive_subvectors": quant_dict.get("adaptive_subvectors", True),
+        "scale": quant_dict.get("scale", 1.0),
+        "offset": quant_dict.get("offset", 0.0),
+        "clamp_values": quant_dict.get("clamp_values", True),
+        "threshold": quant_dict.get("threshold", 0.0),
+        "sign_based": quant_dict.get("sign_based", True),
+        "enable_in_storage": quant_dict.get("enable_in_storage", True),
+        "enable_in_index": quant_dict.get("enable_in_index", True),
+        "search_priority": quant_dict.get("search_priority", 1),
+        "min_recall": quant_dict.get("min_recall", 0.95),
+        "enable_validation": quant_dict.get("enable_validation", True),
+    }
+
+    # Add other optional top-level fields if present
+    if quant_dict.get("accuracy_threshold"):
+        proto_dict["binary_filter_selectivity"] = quant_dict["accuracy_threshold"]
+
+    if quant_dict.get("progressive_quantization"):
+        proto_dict["enable_progressive_search"] = quant_dict["progressive_quantization"]
+
+    # Set custom_levels as array (proto3 repeated field)
+    # Always include the level since we're providing all required fields
+    proto_dict["custom_levels"] = [level]
+
+    logger.debug(f"Converted quantization config from SDK flat structure to proto nested structure: {proto_dict}")
+
+    return proto_dict
+
+
 class ProximaDBClient:
     """Synchronous ProximaDB client"""
     
@@ -550,15 +639,8 @@ class ProximaDBClient:
         # Quantization (check both quantization and quantization_config for compatibility)
         quant = getattr(config, 'quantization_config', None) or getattr(config, 'quantization', None)
         if quant:
-            try:
-                # Pydantic v2
-                q = quant.model_dump(exclude_none=True)
-            except Exception:
-                try:
-                    q = quant.dict(exclude_none=True)
-                except Exception:
-                    q = {}
-            config_data["quantization"] = q
+            # Convert SDK's flat structure to proto's nested custom_levels structure
+            config_data["quantization"] = _convert_quantization_config_to_proto(quant)
         
         request_data = {
             "operation": 1,  # COLLECTION_CREATE enum value
@@ -742,13 +824,12 @@ class ProximaDBClient:
         # Debug: Check if required fields are present
         collection_id_from_response = collection_data.get("id", collection_id)
 
-        if "dimension" not in collection_data:
-            logger.warning(f"Response missing 'dimension' field. Available keys: {list(collection_data.keys())}")
-            # Try to extract from config if it exists
-            if "config" in collection_data and isinstance(collection_data["config"], dict):
-                # Save the id before overwriting collection_data
+        # Handle nested config structure (server returns dimension in config.dimension)
+        if "dimension" not in collection_data and "config" in collection_data:
+            if isinstance(collection_data["config"], dict):
+                # Server returns nested config structure - extract dimension from config
+                logger.debug(f"Extracting dimension from nested config structure")
                 collection_data = collection_data["config"]
-                logger.debug(f"Using nested config. Keys: {list(collection_data.keys())}")
 
         # Convert proto enum values to string names if needed
         distance_metric_value = collection_data.get("metric", collection_data.get("distance_metric", "cosine"))

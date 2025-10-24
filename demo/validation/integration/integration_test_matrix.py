@@ -33,9 +33,28 @@ from typing import Dict, List, Optional, Tuple, Any
 import httpx
 import numpy as np
 
-# Add parent directory for utils
-sys.path.append(str(Path(__file__).parent))
-from utils.demo_logger import DemoLogger
+# Add demo root to path for utils import
+demo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, demo_root)
+
+# Try to import demo logger (optional)
+try:
+    from utils.demo_logger import DemoLogger
+    HAS_DEMO_LOGGER = True
+except (ImportError, ModuleNotFoundError):
+    HAS_DEMO_LOGGER = False
+    # Provide basic logger fallback
+    class DemoLogger:
+        def __init__(self, name):
+            self.logger = logging.getLogger(name)
+        def info(self, msg):
+            print(f"ℹ️  {msg}")
+        def success(self, msg):
+            print(f"✅ {msg}")
+        def error(self, msg):
+            print(f"❌ {msg}")
+        def warning(self, msg):
+            print(f"⚠️  {msg}")
 
 # To run this script, set PYTHONPATH to include the src directory:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python demo/integration_test_matrix.py

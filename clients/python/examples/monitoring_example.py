@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+
+
+STATUS: ⚠️  Requires Future Feature
+SDK Version: v1.1+ (requires proximadb.telemetry module)
+Server Version: v0.1.4+
+Test Result: SKIP - Telemetry infrastructure not yet implemented
+
 Monitoring and Telemetry Example for ProximaDB Python SDK v1.0
 
 This example demonstrates comprehensive monitoring:
@@ -9,6 +16,7 @@ This example demonstrates comprehensive monitoring:
 - Performance monitoring
 - Error tracking
 - Dashboard integration
+
 """
 
 # import asyncio
@@ -22,23 +30,38 @@ import numpy as np
 
 from proximadb import ProximaDBClient, ClientConfig
 from proximadb.models import CollectionConfig, VectorRecord, DistanceMetric
-from proximadb.telemetry import (
-    init_telemetry,
-    get_telemetry_manager,
-    MetricType,
-    MetricUnit,
-    Metric,
-    ConsoleExporter,
-    HTTPExporter,
-    PrometheusExporter
-)
-from proximadb.telemetry_decorators import (
-    trace_operation,
-    record_metrics,
-    SpanContext,
-    MetricsContext,
-    instrument_client
-)
+
+# Future feature imports - will trigger helpful error message when executed
+try:
+    from proximadb.telemetry import (
+        init_telemetry,
+        get_telemetry_manager,
+        MetricType,
+        MetricUnit,
+        Metric,
+        ConsoleExporter,
+        HTTPExporter,
+        PrometheusExporter
+    )
+    from proximadb.telemetry_decorators import (
+        trace_operation,
+        record_metrics,
+        SpanContext,
+        MetricsContext,
+        instrument_client
+    )
+except (ImportError, ModuleNotFoundError) as e:
+    print("=" * 70)
+    print("🚧 FUTURE FEATURE - Not Yet Implemented")
+    print("=" * 70)
+    print(f"\n❌ Error: {e}\n")
+    print(f"📋 This example requires: proximadb.telemetry")
+    print(f"   Expected in SDK v1.1+\n")
+    print(f"💡 Workaround:")
+    print(f"   Use dashboard_metrics_demo.py for current monitoring capabilities\n")
+    print("=" * 70)
+    exit(1)
+
 from proximadb.exceptions import ProximaDBError
 
 
@@ -534,4 +557,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ImportError, ModuleNotFoundError) as e:
+        print("=" * 70)
+        print("🚧 FUTURE FEATURE - Not Yet Implemented")
+        print("=" * 70)
+        print(f"\n❌ Error: {e}\n")
+        print(f"📋 This example requires: proximadb.telemetry")
+        print(f"   Expected in SDK v1.1+\n")
+        print(f"💡 Workaround:")
+        print(f"   Use dashboard_metrics_demo.py for current monitoring capabilities\n")
+        print("=" * 70)
+        exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)

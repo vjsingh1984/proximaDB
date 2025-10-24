@@ -718,7 +718,7 @@ impl IndexEntry {
         buffer.write_all(&[if self.compressed { 1u8 } else { 0u8 }])?;
 
         // Write metadata_min_values
-        buffer.write_all(&(self.metadata_min_values.len()).to_le_bytes())?;
+        buffer.write_all(&(self.metadata_min_values.len() as u32).to_le_bytes())?;
         for (key, value) in &self.metadata_min_values {
             let key_bytes = key.as_bytes();
             buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
@@ -727,7 +727,7 @@ impl IndexEntry {
         }
 
         // Write metadata_max_values
-        buffer.write_all(&(self.metadata_max_values.len()).to_le_bytes())?;
+        buffer.write_all(&(self.metadata_max_values.len() as u32).to_le_bytes())?;
         for (key, value) in &self.metadata_max_values {
             let key_bytes = key.as_bytes();
             buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
@@ -748,7 +748,7 @@ impl IndexEntry {
         match &self.block_key_bloom {
             Some(bloom_data) => {
                 buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
-                buffer.write_all(&(bloom_data.len()).to_le_bytes())?;
+                buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
                 buffer.write_all(bloom_data)?;
             }
             None => {
@@ -759,7 +759,7 @@ impl IndexEntry {
         match &self.block_metadata_bloom {
             Some(bloom_data) => {
                 buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
-                buffer.write_all(&(bloom_data.len()).to_le_bytes())?;
+                buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
                 buffer.write_all(bloom_data)?;
             }
             None => {

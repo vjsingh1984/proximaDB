@@ -49,7 +49,7 @@ def main():
             "distance_metric": "cosine"
         }
         response = requests.post(
-            f"{BASE_URL}/v1/collections",
+            f"{BASE_URL}/api/v1/collections",
             json=payload,
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -85,7 +85,7 @@ def main():
 
             payload = {"vectors": vectors}
             response = requests.post(
-                f"{BASE_URL}/v1/collections/{collection_name}/vectors",
+                f"{BASE_URL}/api/v1/collections/{collection_name}/vectors",
                 json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=30
@@ -112,7 +112,7 @@ def main():
             "top_k": top_k
         }
         response = requests.post(
-            f"{BASE_URL}/v1/collections/{collection_name}/search",
+            f"{BASE_URL}/api/v1/collections/{collection_name}/search",
             json=payload,
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -142,7 +142,7 @@ def main():
     print(f"\n📋 Step 5: Getting collection info")
     try:
         response = requests.get(
-            f"{BASE_URL}/v1/collections/{collection_name}",
+            f"{BASE_URL}/api/v1/collections/{collection_name}",
             timeout=5
         )
         if response.status_code == 200:
@@ -212,7 +212,7 @@ def main():
 
     print(f"\n🧹 Cleanup:")
     print(f"   Collection '{collection_name}' left for inspection")
-    print(f"   To delete: DELETE {BASE_URL}/v1/collections/{collection_name}")
+    print(f"   To delete: DELETE {BASE_URL}/api/v1/collections/{collection_name}")
     print("="*70 + "\n")
 
     return 0

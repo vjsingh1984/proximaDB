@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class StorageEnginesDemo:
     """Demonstrates LSM vs VIPER storage engine capabilities"""
     
-    def __init__(self, server_url="http://localhost:5678", grpc_url="localhost:5679"):
+    def __init__(self, server_url="http://localhost:5678", grpc_url="grpc://localhost:5679"):
         self.server_url = server_url
         self.grpc_url = grpc_url
         self.rest_client = None

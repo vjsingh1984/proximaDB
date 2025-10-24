@@ -4,15 +4,19 @@ Test Server-Side Metadata Filtering with VIPER Parquet Column Pushdown
 Demonstrates performance improvements with 1MB flush size
 """
 
-# To run this script, set PYTHONPATH to include the src directory:
-# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/test_server_side_metadata_filtering.py
+import sys
+import os
+from pathlib import Path
+
+# Add demo root to path for utils import
+demo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, demo_root)
 
 import json
 import time
 import asyncio
 import numpy as np
 import uuid
-from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
 
@@ -35,7 +39,7 @@ class ServerSideFilteringTest:
     
     def __init__(self):
         # Use gRPC protocol for 2-3x better performance than REST
-        self.client = ProximaDBClient(protocol=Protocol.GRPC)
+        self.client = ProximaDBClient(url="grpc://localhost:5679", protocol=Protocol.GRPC)
         self.embedding_service = BERTEmbeddingService("all-mpnet-base-v2")
         self.collection_name = f"server_filter_test_{uuid.uuid4().hex[:8]}"
         self.test_documents = []

@@ -7,18 +7,17 @@
 :imagesdir: ../assets
 
 [.lead]
-**Transform AI infrastructure from fragmented tools to unified intelligence** +
-_The only enterprise platform that unifies vector search, graph analytics, and AI-powered business intelligence in a single solution_
+Unify vector search, metadata filtering, and optional graph traversal in one system designed for practical AI products.
 
 == Executive Summary
 
-=== **The Fragmented AI Infrastructure Problem**
+=== The Integration Problem (and a Practical Alternative)
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
-    subgraph "TRADITIONAL FRAGMENTED APPROACH"
+    subgraph "TRADITIONAL APPROACH"
         A[Vector Database<br/>$50K/year<br/>Complex setup]
         B[Graph Database<br/>$75K/year<br/>Separate system]
         C[AI/LLM Services<br/>$100K/year<br/>Custom integration]
@@ -27,11 +26,11 @@ graph TB
     end
 
     subgraph "BUSINESS IMPACT"
-        F[Total Cost: $525K/year<br/>6-18 month deployment<br/>Complex operations<br/>Multiple vendor risk]
+        F[Multiple systems to stand up<br/>Longer integration timelines<br/>Complex operations]
     end
 
-    subgraph "PROXIMADB UNIFIED SOLUTION"
-        G[All-in-One Platform<br/>$25K/year total<br/>1-week deployment<br/>Single integration<br/>Complete intelligence]
+    subgraph "PROXIMADB"
+        G[Single system for vectors + graph<br/>One deployment + one API<br/>Benchmarks and CSV reporters included]
     end
 
     A --> F
@@ -50,49 +49,23 @@ graph TB
     style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
-=== **ProximaDB Enterprise Value Proposition**
+=== Executive Summary
 
-**95% Cost Reduction • 18x Faster Deployment • 5.1M Operations/Second on 768D BERT**
+ProximaDB consolidates vector and (optional) graph capabilities so teams can:
+
+- Launch semantic search and RAG systems with filters using a single API
+- Run analytics on columnar storage without moving data to a separate warehouse
+- Add traversal when relationships matter (BFS/DFS/shortest path, components)
 
 [NOTE]
 ====
 **Performance Context**: Benchmarks conducted on Apple M4 Pro (14 cores, 48 GB RAM) with production-scale datasets (1K-10K vectors, 768D BERT/1536D OpenAI embeddings, 10-90% sparsity levels). Results independently verifiable using included benchmark suite.
 ====
 
-[cols="3,2,2,2", options="header"]
-|===
-| Business Impact | Traditional Approach | Market Solutions | ProximaDB Advantage
-
-| **Annual Platform Costs**
-| $525K (multiple vendors)
-| $100-200K (single vendor)
-| **$25K (unified platform)**
-
-| **Deployment Timeline**
-| 6-18 months
-| 2-6 months
-| **1 week**
-
-| **Performance Operations**
-| Limited by integration
-| 1-3M ops/sec (768D)
-| **5.1M ops/sec (768D BERT)**
-
-| **Integration Complexity**
-| Multiple APIs, vendors
-| Single platform
-| **Unified intelligence**
-
-| **AI Capabilities**
-| Custom development
-| Basic AI features
-| **8 LLM providers native**
-
-| **Operational Risk**
-| Multi-vendor dependencies
-| Single vendor lock-in
-| **Open architecture**
-|===
+[NOTE]
+====
+Performance guidance is grounded in this repository’s benches and CSV reporters. See docs/performance/README.adoc for charts, CSV snapshots, and how to run them on your hardware.
+====
 
 == Enterprise Platform Architecture
 
@@ -100,7 +73,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "AI-POWERED INTELLIGENCE PLATFORM"
         A[Natural Language Business Intelligence<br/>Query data in plain English<br/>Automated executive insights]
@@ -183,7 +156,7 @@ Transform how executives and business users access enterprise data:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[Business Question<br/>What drove Q3 growth?] --> B[AI Processing<br/>Natural language understanding<br/>Context analysis]
     B --> C[Vector Intelligence<br/>Semantic similarity search<br/>Pattern recognition]
@@ -272,7 +245,7 @@ Complete enterprise-grade tenant isolation ensuring data security and compliance
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "Performance Leadership Across Vector Dimensions"
     x-axis [128D, 256D, 512D, 1024D, 1536D]
@@ -325,7 +298,7 @@ Automated enterprise deployment across all major platforms:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 journey
     title Enterprise Deployment Journey
     section Day 1: Setup
@@ -357,7 +330,7 @@ Sophisticated revenue management for enterprise scaling:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 pie title "5-Year Total Cost of Ownership Analysis"
     "Traditional Multi-Vendor ($2.6M)" : 2600
     "Single Vendor Platform ($750K)" : 750
@@ -480,7 +453,7 @@ RECOMMENDATIONS:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "PROXIMADB COMPREHENSIVE PLATFORM"
         A[AI-Powered Intelligence<br/>Natural language business intelligence<br/>8 LLM provider ecosystem]

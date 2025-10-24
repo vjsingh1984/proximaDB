@@ -80,11 +80,12 @@ fn test_proximacodec_adaptive_scheme_selection() {
     match scheme {
         ProximaScheme::Delta { .. }
         | ProximaScheme::DoubleDelta { .. }
-        | ProximaScheme::PForDelta { .. } => {
+        | ProximaScheme::PForDelta { .. }
+        | ProximaScheme::PForDoubleDelta { .. } => {
             println!("✓ Sequential data correctly identified: {:?}", scheme);
         }
         other => panic!(
-            "Expected Delta/DoubleDelta/PForDelta for sequential, got {:?}",
+            "Expected Delta/DoubleDelta/PForDelta/PForDoubleDelta for sequential, got {:?}",
             other
         ),
     }

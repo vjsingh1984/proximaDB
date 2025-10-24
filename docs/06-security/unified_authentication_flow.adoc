@@ -25,7 +25,7 @@ ProximaDB implements a unified authentication system supporting multiple authent
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant Client
     participant Middleware
@@ -60,7 +60,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 stateDiagram-v2
     [*] --> RequestReceived
     RequestReceived --> CredentialExtraction

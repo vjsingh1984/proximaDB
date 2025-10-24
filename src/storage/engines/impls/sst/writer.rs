@@ -563,7 +563,7 @@ impl SstableWriter {
             index_offset: 0, // Will be set after bloom filter
             index_size: index_entries
                 .iter()
-                .map(|e| e.serialize().unwrap().len())
+                .map(|e| 4 + e.serialize().unwrap().len())  // Include 4-byte length prefix!
                 .sum::<usize>() as u32,
             total_records: processed_count as u64,
             min_timestamp: 0,        // TODO: extract from data
@@ -597,7 +597,7 @@ impl SstableWriter {
         output_data.extend_from_slice(b"SST1");
 
         // Create and write a proper SSTable header that the reader expects
-        let header = super::SstableHeader {
+        let mut header = super::SstableHeader {
             version: 1,
             level: 0,
             entry_count: processed_count as u64,
@@ -725,6 +725,28 @@ impl SstableWriter {
             }
         }
         debug!("✅ Wrote {} bytes of total SSTable data", output_data.len());
+
+        // FIX: Update header with actual offsets now that we know them
+        // Calculate actual offsets based on what we wrote
+        let actual_bloom_offset = 8 + header_len; // After SST1 magic + header_len + header_bytes
+        let actual_index_offset = actual_bloom_offset + 4 + bloom_bytes.len() as u32;
+        let actual_blocks_offset = actual_index_offset + 4 + index_data.len() as u32;
+
+        // Update header fields with correct values
+        header.block_index_offset = actual_index_offset as u64;
+        header.block_index_size = index_data.len() as u32;
+        header.data_blocks_offset = actual_blocks_offset as u64;
+        header.global_bloom_offset = actual_bloom_offset as u64;
+        header.global_bloom_size = bloom_bytes.len() as u32;
+        header.header_size = header_len;
+        header.data_size = (output_data.len() as u64 - actual_blocks_offset as u64) as u32;
+
+        // Re-serialize the updated header
+        let updated_header_bytes = bincode::serialize(&header)?;
+
+        // Replace the header in output_data (skip SST1 magic and header_len, replace header_bytes)
+        let header_start = 8; // After SST1 (4 bytes) + header_len (4 bytes)
+        output_data.splice(header_start..header_start + header_len as usize, updated_header_bytes.iter().cloned());
 
         // Write all data atomically
         let write_path = self.path.to_string_lossy();

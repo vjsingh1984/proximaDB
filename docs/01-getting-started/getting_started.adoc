@@ -42,7 +42,7 @@ The following sequence diagram shows the complete ProximaDB setup and first quer
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant User as Developer
     participant Docker as Docker Runtime
@@ -126,7 +126,7 @@ Navigate to: **http://localhost:5678/dashboard**
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 mindmap
   root((Enterprise Dashboard))
     System Overview
@@ -378,7 +378,7 @@ Performance Results:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "Storage Engine Performance by Workload Type"
     x-axis [SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX]
@@ -518,7 +518,7 @@ spec:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "LOAD BALANCER"
         A[HAProxy/NGINX<br/>Load balancing<br/>Health checks]
@@ -656,7 +656,7 @@ curl http://localhost:5678/metrics
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 journey
     title ProximaDB Learning Journey
     section Week 1: Foundations

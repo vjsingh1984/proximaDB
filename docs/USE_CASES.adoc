@@ -1,0 +1,97 @@
+= Practical Use Cases & Solution Patterns
+:toc: left
+:toclevels: 2
+:icons: font
+
+This guide maps common vector database problems to concrete ProximaDB patterns. It’s written for builders who want to ship reliable features without juggling multiple stores.
+
+== 1) Semantic Search with Metadata Filters
+
+Problem: “Find similar items, but only those in stock under $50.”
+
+Pattern:
+
+- Use SST engine for online writes and low‑latency queries.
+- Store vectors with type‑safe JSON metadata (price, in_stock, category).
+- Apply metadata filters first, then similarity ranking.
+
+Why it works:
+
+- Filtering reduces the candidate set before ranking, often improving end‑to‑end latency.
+
+Benchmarks to consult: docs/performance/README.adoc (Graph CSV reporter and bench_17 results).
+
+== 2) RAG Store (Retrieval‑Augmented Generation)
+
+Problem: “Chunk and index documents; answer questions with relevant passages.”
+
+Pattern:
+
+- Start with SST for steady ingest and filtered search (source, author, date ranges).
+- For analytical rebuilds or re‑chunking, export into VIPER (columnar) to batch process at speed.
+
+Why it works:
+
+- You get predictable online performance and a clear bulk‑processing path without switching systems.
+
+== 3) Personalization & Recommendations
+
+Problem: “Blend embeddings with profile attributes and constraints.”
+
+Pattern:
+
+- Use SST for low‑latency candidate generation with filters (plan, region, device).
+- Add graph traversal if relationships matter (who‑follows, bought‑together) via ORION/QUASAR.
+
+Why it works:
+
+- Most recommendations combine vector similarity with business rules; filters and optional traversal handle both.
+
+== 4) Quality Analytics & Compression (Backfills)
+
+Problem: “Compress a corpus and analyze metadata at scale.”
+
+Pattern:
+
+- VIPER (columnar Parquet) for batch work and compression.
+- Keep CSV outputs from engine_performance_reporter to compare algorithms consistently.
+
+Why it works:
+
+- Columnar formats simplify analytics; reporters make trade‑offs explicit.
+
+== 5) Operational Graph Queries
+
+Problem: “Find shortest paths or connected components on a working set.”
+
+Pattern:
+
+- ORION (single‑node) or QUASAR (hot‑tier) for interactive traversal.
+- Use PULSAR if sharding/replication are required later.
+
+Why it works:
+
+- You get fast traversal today and a roadmap to scale without switching query language.
+
+== Selecting the Right Engine
+
+[cols="1,2,2"]
+|===
+| Workload | Default | When to switch
+
+| Online search with filters | SST | Heavy analytics → add VIPER for backfills
+| Bulk analytics/compression | VIPER | Low‑latency writes → add SST for online path
+| Traversal‑aware retrieval | ORION/QUASAR | Distributed scale → PULSAR
+|===
+
+== Measuring What Matters
+
+- Use the included benches and CSV reporters; commit reports alongside changes.
+- Compare like‑for‑like (vec/s, MB/s, K/s) rather than wall‑clock of multi‑engine runs.
+- Keep data realistic: include metadata, vary sparsity, decide on batch sizes up front.
+
+== Next Steps
+
+- Quick Start: see the project README
+- Performance: docs/performance/README.adoc
+- Architecture: docs/architecture/storage-layer.adoc

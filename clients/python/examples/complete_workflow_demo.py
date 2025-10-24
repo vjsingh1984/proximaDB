@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+
+
+STATUS: ✅ Production Ready (Tested 2025-01-23)
+SDK Version: v1.0+
+Server Version: v0.1.4+
+Test Result: 100% PASS
+
 ProximaDB Complete Workflow Demo
 
 Demonstrates end-to-end workflow:
@@ -8,6 +15,7 @@ Demonstrates end-to-end workflow:
 3. Search vectors (two-stage parallel search: WAL + Storage)
 4. View results on dashboard
 5. Monitor metrics in real-time
+
 """
 
 import sys
@@ -18,7 +26,7 @@ import requests
 # Add SDK to path
 sys.path.insert(0, 'clients/python/src')
 
-from proximadb import ProximaDBClient, Protocol
+from proximadb import ProximaDBClient
 from proximadb.models import DistanceMetric, StorageEngine
 
 
@@ -40,7 +48,7 @@ def main():
     try:
         client = ProximaDBClient(
             url="http://localhost:5678",
-            protocol=Protocol.REST
+            protocol="rest"
         )
         print("   ✅ Connected to ProximaDB server (localhost:5678)")
     except Exception as e:

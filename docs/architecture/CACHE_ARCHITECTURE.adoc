@@ -27,7 +27,7 @@ All critical issues have been resolved as of Phase 5 completion. The cache syste
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "GLOBAL ORCHESTRATION"
         A[CrossCacheOrchestrator<br/>Global Singleton]
@@ -122,7 +122,7 @@ ProximaDB manages 11 distinct cache types, each optimized for specific data patt
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[Cache Request] --> B{Cache Type}
     B -->|Vectors| C[VectorCache<br/>40% Memory]
@@ -207,7 +207,7 @@ VectorCache was newly implemented in Phase 1 to resolve type mismatch issues whe
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 pie title Memory Budget Allocation
     "VectorData" : 40
     "QueryResult" : 30
@@ -264,7 +264,7 @@ if cache_stats.hit_rate > 0.8 && cache_stats.memory_usage > 0.9 {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Cache Full] --> B{Eviction Policy}
     B -->|LRU| C[Remove Least<br/>Recently Used]
@@ -362,7 +362,7 @@ All 6 storage engines properly integrate with the cache system:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant Client
     participant Engine as Storage Engine
@@ -655,7 +655,7 @@ Cache warming is **disabled by default** for resource efficiency. Only enable fo
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     subgraph "CURRENT"
         A1[Memory Cache]

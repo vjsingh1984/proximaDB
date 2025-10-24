@@ -2,6 +2,11 @@
 :toc:
 :toclevels: 3
 
+[NOTE]
+====
+This document describes the service architecture. For implemented REST endpoints and request/response formats, see link:../03-reference/graph_api_reference.adoc[Graph API Reference].
+====
+
 == Overview
 
 Following the vector services pattern, we need to split the current `GraphService` into two distinct services:
@@ -22,7 +27,7 @@ This is inconsistent with the vector services architecture and creates maintaina
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "API LAYER"
         A[REST API<br/>Graph Collections]
@@ -281,7 +286,7 @@ The SQLService acts as a query router and coordinator:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[SQL Query] --> B{Parse & Analyze}
     B -->|Vector Only| C[VectorOperationsService]

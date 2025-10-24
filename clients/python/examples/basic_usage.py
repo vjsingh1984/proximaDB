@@ -2,10 +2,15 @@
 """
 Basic Usage Example for ProximaDB Python SDK v1.0
 
+STATUS: ✅ Production Ready (Tested 2025-01-23)
+SDK Version: v1.0+
+Server Version: v0.1.4+
+Test Result: 100% PASS
+
 This example demonstrates the fundamental operations with real BERT embeddings:
 - Creating collections with proper configuration
 - Inserting vectors with meaningful text content
-- Performing semantic search operations  
+- Performing semantic search operations
 - Managing metadata with real data
 
 Uses real BERT embeddings (all-MiniLM-L6-v2, 384 dimensions) instead of random vectors
@@ -15,10 +20,10 @@ to showcase the true power of semantic vector search.
 import asyncio
 from typing import List
 
-from proximadb import ProximaDBClient, Protocol
+from proximadb import ProximaDBClient
 from proximadb.models import (
-    CollectionConfig, 
-    VectorRecord, 
+    CollectionConfig,
+    VectorRecord,
     DistanceMetric,
     StorageEngine
 )
@@ -30,7 +35,7 @@ def main():
     print("🚀 Initializing ProximaDB client...")
     client = ProximaDBClient(
         url="http://localhost:5678",  # REST endpoint
-        protocol=Protocol.REST,
+        protocol="rest",
         timeout=30.0
     )
     

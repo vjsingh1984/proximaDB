@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+
+
+STATUS: ⚠️  Requires Future Feature
+SDK Version: v1.1+ (requires BGEEmbeddingProvider)
+Server Version: v0.1.4+
+Test Result: SKIP - Advanced embedding providers not yet implemented
+
 Domain-Specific Embedding Examples for ProximaDB
 
 This script demonstrates best practices for embedding domain-specific documents:
@@ -9,6 +16,7 @@ This script demonstrates best practices for embedding domain-specific documents:
 - Scientific Research
 
 Each example shows recommended models and configuration for optimal results.
+
 """
 
 import numpy as np
@@ -442,4 +450,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ImportError, ModuleNotFoundError) as e:
+        print("=" * 70)
+        print("🚧 FUTURE FEATURE - Not Yet Implemented")
+        print("=" * 70)
+        print(f"\n❌ Error: {e}\n")
+        print(f"📋 This example requires: BGEEmbeddingProvider")
+        print(f"   Expected in SDK v1.1+\n")
+        print(f"💡 Workaround:")
+        print(f"   Use bert_utils.py for current embedding capabilities\n")
+        print("=" * 70)
+        exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)

@@ -112,6 +112,7 @@ class ChunkingDemo:
             
             # Create collection for storing chunks
             config = CollectionConfig(
+                name=self.collection_name,
                 dimension=384,  # Using sentence-transformers dimension
                 distance_metric=DistanceMetric.COSINE,
                 description="Text chunking strategies demonstration"
@@ -138,13 +139,13 @@ class ChunkingDemo:
         )
         
         print(f"✅ Created {len(chunks)} sentence-based chunks")
-        print(f"📊 Average chunk size: {np.mean([chunk.length for chunk in chunks]):.0f} chars")
-        print(f"📏 Chunk size range: {min(chunk.length for chunk in chunks)} - {max(chunk.length for chunk in chunks)} chars")
+        print(f"📊 Average chunk size: {np.mean([len(chunk.text) for chunk in chunks]):.0f} chars")
+        print(f"📏 Chunk size range: {min(len(chunk.text) for chunk in chunks)} - {max(len(chunk.text) for chunk in chunks)} chars")
         
         # Show first few chunks
         print("\n🔍 Sample chunks:")
         for i, chunk in enumerate(chunks[:3]):
-            print(f"\nChunk {i+1} ({chunk.length} chars):")
+            print(f"\nChunk {i+1} ({len(chunk.text)} chars):")
             print(f"Text: {chunk.text[:100]}...")
             print(f"Metadata: {chunk.metadata}")
         
@@ -164,8 +165,8 @@ class ChunkingDemo:
         )
         
         print(f"✅ Created {len(chunks)} paragraph-based chunks")
-        print(f"📊 Average chunk size: {np.mean([chunk.length for chunk in chunks]):.0f} chars")
-        print(f"📏 Chunk size range: {min(chunk.length for chunk in chunks)} - {max(chunk.length for chunk in chunks)} chars")
+        print(f"📊 Average chunk size: {np.mean([len(chunk.text) for chunk in chunks]):.0f} chars")
+        print(f"📏 Chunk size range: {min(len(chunk.text) for chunk in chunks)} - {max(len(chunk.text) for chunk in chunks)} chars")
         
         # Show structure
         print("\n🔍 Paragraph topics:")
@@ -217,7 +218,7 @@ class ChunkingDemo:
         
         chunks = chunker.chunk_text(
             SAMPLE_DOCUMENT,
-            document_id="doc_semantic",
+            source_id="doc_semantic",
             metadata={"source": "demo", "type": "documentation"}
         )
         
@@ -247,13 +248,13 @@ class ChunkingDemo:
         
         chunks = chunker.chunk_text(
             SAMPLE_DOCUMENT,
-            document_id="doc_fixed",
+            source_id="doc_fixed",
             metadata={"source": "demo", "type": "documentation"}
         )
         
         print(f"✅ Created {len(chunks)} fixed-size chunks")
         print(f"📊 Each chunk: exactly 300 chars (except last)")
-        print(f"📏 Chunk sizes: {[chunk.length for chunk in chunks[:5]]}...")
+        print(f"📏 Chunk sizes: {[len(chunk.text) for chunk in chunks[:5]]}...")
         
         self.chunks_data["fixed_size"] = chunks
         return chunks
@@ -272,7 +273,7 @@ class ChunkingDemo:
         
         chunks = chunker.chunk_text(
             SAMPLE_DOCUMENT,
-            document_id="doc_recursive",
+            source_id="doc_recursive",
             metadata={"source": "demo", "type": "documentation"}
         )
         
@@ -293,10 +294,10 @@ class ChunkingDemo:
             stats = {
                 "strategy": strategy,
                 "num_chunks": len(chunks),
-                "avg_size": np.mean([c.length for c in chunks]),
-                "min_size": min(c.length for c in chunks),
-                "max_size": max(c.length for c in chunks),
-                "total_chars": sum(c.length for c in chunks)
+                "avg_size": np.mean([len(c.text) for c in chunks]),
+                "min_size": min(len(c.text) for c in chunks),
+                "max_size": max(len(c.text) for c in chunks),
+                "total_chars": sum(len(c.text) for c in chunks)
             }
             comparison.append(stats)
         
@@ -339,7 +340,7 @@ class ChunkingDemo:
                 "chunk_id": chunk.chunk_id,
                 "chunk_type": chunk.metadata.get("chunk_type", "unknown"),
                 "position": f"{chunk.start_pos}-{chunk.end_pos}",
-                "length": chunk.length
+                "length": len(chunk.text)
             }
             metadata_list.append(chunk_metadata)
         

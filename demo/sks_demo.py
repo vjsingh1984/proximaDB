@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+STATUS: 🚧 Future Feature - Requires API Refactoring
+SDK Version: v1.1+ (requires updated SKS API)
+Server Version: v0.2.0+
+Test Result: SKIP - Needs conversion from old request-based API
+
 Semantic Knowledge Store (SKS) Demo for ProximaDB
 
 This demo showcases the SKS features including:
@@ -7,6 +12,10 @@ This demo showcases the SKS features including:
 - Graph relationships between entities
 - Provenance tracking
 - SQL extensions for semantic queries
+
+NOTE: This demo uses old request-based API (CreateCollectionRequest, UpsertRequest, SearchRequest)
+that has been replaced with direct method calls. Requires refactoring to work with current SDK.
+For working graph demos, see: clients/python/examples/ or demo/quickstart/basic_demo.py
 """
 
 import asyncio
@@ -19,13 +28,10 @@ import os
 # Add the Python client to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'clients', 'python', 'src'))
 
-from proximadb.unified_client import ProximaDBUnifiedClient
+from proximadb import ProximaDBClient
 from proximadb.models import (
-    CreateCollectionRequest,
-    UpsertRequest,
-    SearchRequest,
+    CollectionConfig,
     VectorRecord,
-    TypedMetadata,
     DistanceMetric,
 )
 
@@ -33,7 +39,7 @@ async def create_sample_embeddings(dimension: int = 384) -> np.ndarray:
     """Create sample embeddings for demo purposes"""
     return np.random.randn(dimension).astype(np.float32)
 
-async def setup_collections(client: ProximaDBUnifiedClient):
+async def setup_collections(client: ProximaDBClient):
     """Create collections for the demo"""
     print("📦 Creating collections...")
     

@@ -329,16 +329,21 @@ impl EntityStore for ProximaEntityStore {
             temporal: entity.temporal.clone(),
         };
 
-        // Store header in memory cache (without serialization for now)
-        // TODO: Implement protobuf serialization for EntityHeader
-        let header_bytes = b"placeholder".to_vec(); // Temporary placeholder
-        // In-memory cache
+        // Serialize header using serde_json (more compatible with proto types)
+        let header_bytes = serde_json::to_vec(&(
+            &header.typed_metadata,
+            &header.flexible_metadata,
+            &header.provenance,
+            &header.temporal,
+        ))?;
+
+        // Store in memory cache
         self.headers
             .write()
             .unwrap()
             .insert(header_key.clone(), header_bytes.clone());
 
-        // In test mode, also store the actual header
+        // In test mode, also store the actual header for easier debugging
         #[cfg(test)]
         {
             self.test_entity_headers
@@ -346,8 +351,9 @@ impl EntityStore for ProximaEntityStore {
                 .unwrap()
                 .insert(header_key.clone(), header);
         }
-        // Skip persistent storage for headers containing prost_types for now
-        // self.kv.put(&header_key, &header_bytes).await?;
+
+        // Persist to KV store
+        self.kv.put(&header_key, &header_bytes).await?;
         if let Some(orch) = CrossCacheOrchestrator::global() {
             orch.pattern_tracker()
                 .track_access_async(header_key.clone(), CacheType::EntityHeader);
@@ -391,32 +397,47 @@ impl EntityStore for ProximaEntityStore {
                     .track_access_async(header_key.clone(), CacheType::EntityHeader);
             }
         }
-        let header: EntityHeader = if opt.is_some() {
-            #[cfg(test)]
+        let header: EntityHeader = if let Some(bytes) = opt {
+            // Deserialize header using serde_json
+            match serde_json::from_slice::<(
+                Option<TypedMetadata>,
+                HashMap<String, SqlValue>,
+                Option<Provenance>,
+                Option<TemporalInfo>,
+            )>(&bytes)
             {
-                // In test mode, get the actual header
-                if let Some(test_header) = self.test_entity_headers.read().unwrap().get(&header_key)
-                {
-                    test_header.clone()
-                } else {
-                    // Fallback to empty header
+                Ok((typed_metadata, flexible_metadata, provenance, temporal)) => {
                     EntityHeader {
-                        typed_metadata: None,
-                        flexible_metadata: HashMap::new(),
-                        provenance: None,
-                        temporal: None,
+                        typed_metadata,
+                        flexible_metadata,
+                        provenance,
+                        temporal,
                     }
                 }
-            }
-            #[cfg(not(test))]
-            {
-                // TODO: Implement protobuf deserialization for EntityHeader
-                // For now, return empty header since we can't deserialize prost_types with serde_json
-                EntityHeader {
-                    typed_metadata: None,
-                    flexible_metadata: HashMap::new(),
-                    provenance: None,
-                    temporal: None,
+                Err(_e) => {
+                    // If deserialization fails, check test_entity_headers in test mode
+                    #[cfg(test)]
+                    {
+                        if let Some(test_header) = self.test_entity_headers.read().unwrap().get(&header_key) {
+                            test_header.clone()
+                        } else {
+                            EntityHeader {
+                                typed_metadata: None,
+                                flexible_metadata: HashMap::new(),
+                                provenance: None,
+                                temporal: None,
+                            }
+                        }
+                    }
+                    #[cfg(not(test))]
+                    {
+                        EntityHeader {
+                            typed_metadata: None,
+                            flexible_metadata: HashMap::new(),
+                            provenance: None,
+                            temporal: None,
+                        }
+                    }
                 }
             }
         } else {
@@ -460,12 +481,45 @@ impl EntityStore for ProximaEntityStore {
         let header_key = Self::entity_key(collection_id, entity_id);
 
         if hard_delete {
-            // Remove all data
-            // self.metadata_store.delete(&header_key).await?;
-            // self.vector_engine.delete_entity_vectors(collection_id, entity_id).await?;
+            // Remove header from in-memory caches
+            self.headers.write().unwrap().remove(&header_key);
+
+            #[cfg(test)]
+            {
+                self.test_entity_headers.write().unwrap().remove(&header_key);
+            }
+
+            // Remove from KV store
+            self.kv.delete(&header_key).await?;
+
+            // Remove embeddings from memory cache
+            // Get all embedding keys for this entity
+            if let Some(vector_keys) = self.entity_to_vectors.read().unwrap().get(entity_id) {
+                let mut embeddings = self.embeddings.write().unwrap();
+                for key in vector_keys {
+                    embeddings.remove(key);
+                }
+            }
+
+            // Remove from entity↔vector index
+            {
+                let mut e2v = self.entity_to_vectors.write().unwrap();
+                let mut v2e = self.vector_to_entity.write().unwrap();
+
+                // Get vector keys and remove from v2e
+                if let Some(vector_keys) = e2v.remove(entity_id) {
+                    for key in vector_keys {
+                        v2e.remove(&key);
+                    }
+                }
+            }
+
+            // Remove relations
             self.relations_store
                 .delete_all_relations(collection_id, entity_id)
                 .await?;
+
+            // Remove provenance
             self.provenance_registry
                 .remove_provenance(entity_id)
                 .await?;

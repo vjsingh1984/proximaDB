@@ -4,6 +4,13 @@
 :icons: font
 :source-highlighter: highlight.js
 
+[NOTE]
+====
+API shapes evolve; for authoritative endpoints and examples, consult:
+- link:../03-reference/rest-api-specification.adoc[REST API Specification]
+- link:../03-reference/graph_api_reference.adoc[Graph API Reference]
+====
+
 [.lead]
 **Complete production deployment guide** for ProximaDB's 6 storage engines with performance optimization and enterprise configuration.
 
@@ -15,7 +22,7 @@ ProximaDB offers **7 production-ready storage engines** optimized for different 
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "REAL-TIME ENGINES"
         A[SST Engine<br/>✓ Hybrid Columnar OLTP<br/>200K vec/sec writes<br/>365ps query, 724μs @ 90% sparse]
@@ -65,7 +72,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[What's your primary workload?] --> B{Real-time queries?}
     A --> C{Analytics workload?}

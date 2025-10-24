@@ -20,9 +20,22 @@ from typing import List, Dict, Optional, Any, Tuple
 import asyncio
 import logging
 
-# Add path utilities
-sys.path.insert(0, str(Path(__file__).parent))
-from utils.path_utils import setup_demo_environment, get_embedding_cache_dir
+# Add demo root to path for utils import
+demo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, demo_root)
+
+# Try to import path utilities (optional)
+try:
+    from utils.path_utils import setup_demo_environment, get_embedding_cache_dir
+    HAS_PATH_UTILS = True
+except (ImportError, ModuleNotFoundError):
+    HAS_PATH_UTILS = False
+    print("⚠️  Path utilities not available - using defaults")
+    # Provide fallback implementations
+    def setup_demo_environment():
+        return {"sdk_path": None, "cache_dir": "/tmp/proximadb_cache"}
+    def get_embedding_cache_dir():
+        return "/tmp/proximadb_cache"
 
 # Setup environment (adds SDK to path and sets up caches)
 env_info = setup_demo_environment()

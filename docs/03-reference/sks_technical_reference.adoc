@@ -6,6 +6,11 @@
 
 Technical implementation reference for ProximaDB's Semantic Knowledge Store (SKS). Designed for developers implementing knowledge-centric applications.
 
+[NOTE]
+====
+For SKS-related REST endpoints and payload shapes, prefer link:rest-api-specification.adoc[REST API Specification] as canonical.
+====
+
 toc::[]
 
 == SKS Architecture Overview
@@ -14,7 +19,7 @@ The Semantic Knowledge Store transforms ProximaDB from a pure vector database in
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "SKS Components"
         A[Entity Store<br/>Multi-version embeddings<br/>TypedMetadata]
@@ -56,7 +61,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 pie title SKS Implementation Completion
     "Entity Store (Complete)" : 100
     "Relations Store (Complete)" : 100
@@ -115,7 +120,7 @@ pie title SKS Implementation Completion
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 classDiagram
     class EntityStore {
         <<interface>>
@@ -155,7 +160,7 @@ classDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 stateDiagram-v2
     [*] --> EntityCreated
     EntityCreated --> EmbeddingV1: Initial embedding
@@ -205,7 +210,7 @@ impl EntityStore {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "Forward Index"
         A[Entity ID] --> B[Outgoing Relations]
@@ -250,7 +255,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant Client
     participant gRPC_Server
@@ -315,7 +320,7 @@ service EntityService {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[SQL Query with SIMILAR] --> B[Parse Query]
     B --> C[Extract Vector Component]
@@ -350,7 +355,7 @@ WITH THRESHOLD 0.75;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     A[Start Entity] --> B[Follow Relations]
     B --> C[Traverse Graph]
@@ -383,7 +388,7 @@ WITH MAX_DEPTH 2;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Vector Results] --> C[Fusion Engine]
     B[Graph Results] --> C
@@ -415,7 +420,7 @@ WITH MAX_DEPTH 2, THRESHOLD 0.8;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "SKS Operation Performance"
     x-axis ["Entity Upsert", "Entity Search", "Graph Traversal", "Hybrid Query", "Context Assembly"]
@@ -459,7 +464,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Raw Documents] --> B[Text Extraction]
     B --> C[Embedding Generation]
@@ -543,7 +548,7 @@ results = await sks_client.hybrid_search(
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "Source Documents"
         A[PDF Document] --> B[Text Extraction]
@@ -599,7 +604,7 @@ pub enum ExtractionMethod {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant QueryParser
     participant VectorEngine
@@ -655,7 +660,7 @@ LIMIT 10;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "Document Processing"
         A[Documents] --> B[Text Extraction]
@@ -696,7 +701,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     subgraph "Input Sources"
         A[Text Documents]

@@ -6,6 +6,11 @@
 
 Comprehensive technical documentation for ProximaDB's multi-graph persistence architecture, supporting distributed storage backends and production-grade durability.
 
+[NOTE]
+====
+This document focuses on persistence internals. For implemented REST endpoints and payloads, see link:../03-reference/graph_api_reference.adoc[Graph API Reference].
+====
+
 toc::[]
 
 == Overview
@@ -14,7 +19,7 @@ ProximaDB's graph persistence architecture provides enterprise-grade durability 
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "MULTI-GRAPH ARCHITECTURE"
         A[Graph Service Layer]
@@ -122,7 +127,7 @@ ORION uses an in-memory CSR (Compressed Sparse Row) format with configurable per
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 classDiagram
     class OrionPersistence {
         -graph_id: String
@@ -167,7 +172,7 @@ PULSAR implements distributed sharded persistence:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "PULSAR SHARDING"
         A[Graph Partitioner<br/>Hash-based sharding]
@@ -208,7 +213,7 @@ QUASAR implements hybrid hot/cold tiering:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Incoming Graph Data] --> B{Access Pattern Analysis}
 
@@ -273,7 +278,7 @@ All graph engines use the unified compression module with 13 available algorithm
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "COMPRESSION SELECTION"
         A[Graph Data] --> B{Data Characteristics}
@@ -390,7 +395,7 @@ pub struct SerializedGraph {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant Client
     participant GraphEngine
@@ -442,7 +447,7 @@ TIP: To avoid malformed URLs, the WAL writer detects already-qualified URLs and 
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[System Startup] --> B{Latest Snapshot Exists?}
 
@@ -504,7 +509,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "CACHE HIERARCHY"
         A[L1: CPU Cache<br/>Node/Edge hot data]
@@ -638,7 +643,7 @@ storage_class = "STANDARD"  # STANDARD, NEARLINE, COLDLINE, ARCHIVE
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "PERSISTENCE METRICS"
         A[Snapshot Metrics<br/>- Creation time<br/>- Size<br/>- Compression ratio]
@@ -677,7 +682,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[Source Graph<br/>Old Format/Location] --> B[Export Tool<br/>Create portable snapshot]
     B --> C[Migration Validator<br/>Verify integrity]

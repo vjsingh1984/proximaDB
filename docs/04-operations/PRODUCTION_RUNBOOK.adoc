@@ -40,7 +40,7 @@
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "Production Network"
         A[REST API<br/>Port 5678<br/>HTTPS Ready]
@@ -102,7 +102,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant Client
     participant Dashboard
@@ -147,7 +147,7 @@ curl http://localhost:5678/health
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Start Deployment] --> B{Health Check}
     B -->|Pass| C[Performance Test]
@@ -179,7 +179,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "Critical Metrics"
         A[CPU < 80%<br/>Current: 45.2%]
@@ -237,7 +237,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "Enterprise Dashboard Tabs"
         A[System Overview<br/>Health & Status]
@@ -290,7 +290,7 @@ export PROXIMADB_UNIFIED_CACHE=true
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TD
     A{Workload Type} --> B[OLTP Writes]
     A --> C[Analytics Queries]
@@ -320,7 +320,7 @@ graph TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "Authentication Layer"
         A[API Keys<br/>Production Ready]
@@ -404,7 +404,7 @@ export PROXIMADB_AUDIT_PATH="/var/log/proximadb/audit.log"
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[System Metrics<br/>CPU/Memory/Disk] --> D[MetricsCollector<br/>Unified Collection]
     B[Query Metrics<br/>Latency/Throughput] --> D
@@ -438,7 +438,7 @@ flowchart LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 stateDiagram-v2
     [*] --> Continuous_Backup
     Continuous_Backup --> Incremental_Backup : Every 6 hours
@@ -477,7 +477,7 @@ kubectl exec -it proximadb-0 -- proximadb-cli restore \
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Alert Triggered] --> B{Severity Level?}
 
@@ -532,7 +532,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     A[High Memory Alert] --> B{Check Cache Usage}
     B -->|> 85%| C[Cache Optimization]
@@ -621,7 +621,7 @@ curl -X POST http://localhost:5678/v1/explain \
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TD
     A[Security Validation] --> B[TLS 1.3 Enabled?]
     B -->|Yes| C[Authentication Configured?]
@@ -678,7 +678,7 @@ graph TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     A[Issue Detection] --> B{Severity Level}
 
@@ -723,7 +723,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "Compute Resources"
         A[CPU: 4 cores<br/>Current Usage: 45.2%]

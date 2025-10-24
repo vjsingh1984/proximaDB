@@ -5,6 +5,11 @@
 :source-highlighter: highlight.js
 :imagesdir: ../assets
 
+[NOTE]
+====
+Any example endpoints here are illustrative. For implemented REST endpoints, see link:../03-reference/rest-api-specification.adoc[REST API Specification].
+====
+
 [.lead]
 **ProximaDB AI Intelligence Platform** - Comprehensive natural language business intelligence with multi-provider LLM ecosystem.
 
@@ -39,7 +44,7 @@ mindmap
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[User Query] --> B{LLM Router}
 
@@ -76,7 +81,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant User
     participant API
@@ -112,7 +117,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "NATURAL LANGUAGE INTELLIGENCE"
         A[Natural Language Querying<br/>Plain English data access<br/>No SQL expertise required]
@@ -211,7 +216,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 stateDiagram-v2
     [*] --> QueryReceived
     QueryReceived --> AuthenticationCheck
@@ -246,7 +251,7 @@ stateDiagram-v2
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "LLM Provider Performance Metrics"
     x-axis ["OpenAI GPT-4", "Anthropic Claude", "Azure OpenAI", "AWS Bedrock", "Cohere", "vLLM Local", "Ollama", "HuggingFace"]
@@ -259,7 +264,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Query Analysis] --> B{Complexity Assessment}
 

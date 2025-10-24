@@ -31,8 +31,10 @@ from datetime import datetime
 from pathlib import Path
 
 # Add the Python client to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../clients/python/src')))
-sys.path.append(str(Path(__file__).parent))
+sdk_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../clients/python/src'))
+demo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, sdk_path)
+sys.path.insert(0, demo_root)
 
 from proximadb import ProximaDBClient, Protocol, connect_grpc, connect_rest
 from proximadb import (

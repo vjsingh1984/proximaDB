@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+
+
+STATUS: ⚠️  Requires External Dependency
+SDK Version: v1.0+ (requires aiofiles package)
+Server Version: v0.1.4+
+Test Result: SKIP - Install with: pip install aiofiles
+
 Streaming Upload Example for ProximaDB Python SDK v1.0
 
 This example demonstrates efficient handling of large datasets:
@@ -8,6 +15,7 @@ This example demonstrates efficient handling of large datasets:
 - Progress monitoring
 - Memory-efficient operations
 - Error recovery and retries
+
 """
 
 import asyncio
@@ -446,4 +454,25 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (ImportError, ModuleNotFoundError) as e:
+        print("=" * 70)
+        print("🚧 FUTURE FEATURE - Not Yet Implemented")
+        print("=" * 70)
+        print(f"
+❌ Error: {e}
+")
+        print(f"📋 This example requires: aiofiles package")
+        print(f"   Expected in SDK v1.1+
+")
+        print(f"💡 Workaround:")
+        print(f"   Install with: pip install aiofiles
+")
+        print("=" * 70)
+        exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)

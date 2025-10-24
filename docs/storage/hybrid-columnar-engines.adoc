@@ -4,6 +4,13 @@
 :icons: font
 :source-highlighter: rouge
 
+[NOTE]
+====
+For up-to-date REST/Graph endpoints and example requests, refer to:
+- link:../03-reference/rest-api-specification.adoc[REST API Specification]
+- link:../03-reference/graph_api_reference.adoc[Graph API Reference]
+====
+
 == Overview
 
 ProximaDB features 6 specialized storage engines with intelligent workload optimization. **Important**: Despite historical terminology, SST, SWIFT, and HELIX are **NOT row-based** - they use **ProximaBlocks**, a hybrid columnar format where all metadata is columnar and vectors use configurable encoding strategies.
@@ -24,7 +31,7 @@ image::https://raw.githubusercontent.com/proximadb/proximadb/main/docs/assets/st
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#ffffff", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "sectionBkgColor": "#f8fafc", "altSectionBkgColor": "#e2e8f0", "gridColor": "#cbd5e0", "tertiaryColor": "#f7fafc", "background": "#ffffff"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#ffffff", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "sectionBkgColor": "#f8fafc", "altSectionBkgColor": "#e2e8f0", "gridColor": "#cbd5e0", "tertiaryColor": "#f7fafc", "background": "#ffffff"}}%%
 flowchart TD
     subgraph WORKLOADS["🏢 Your Application Workloads"]
         direction TB

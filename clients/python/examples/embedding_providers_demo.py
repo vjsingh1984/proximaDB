@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+
+
+STATUS: ⚠️  Requires Future Feature
+SDK Version: v1.1+ (requires SFREmbeddingProvider)
+Server Version: v0.1.4+
+Test Result: SKIP - Advanced embedding providers not yet implemented
+
 ProximaDB Embedding Providers Demonstration
 
 This script demonstrates how to use all available embedding providers
@@ -14,6 +21,7 @@ Each example shows:
 - Query embedding generation
 - Document embedding generation
 - Integration with ProximaDB
+
 """
 
 import numpy as np
@@ -384,4 +392,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ImportError, ModuleNotFoundError) as e:
+        print("=" * 70)
+        print("🚧 FUTURE FEATURE - Not Yet Implemented")
+        print("=" * 70)
+        print(f"\n❌ Error: {e}\n")
+        print(f"📋 This example requires: SFREmbeddingProvider and other providers")
+        print(f"   Expected in SDK v1.1+\n")
+        print(f"💡 Workaround:")
+        print(f"   Use bert_utils.py for current embedding capabilities\n")
+        print("=" * 70)
+        exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)

@@ -19,7 +19,7 @@
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[What's your primary requirement?] --> B{Query Latency}
     A --> C{Throughput}
@@ -685,7 +685,7 @@ adaptive_engine = "RAPTOR"            # Let RAPTOR decide
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Start: Workload Analysis] --> B{Identify Workload Type}
 

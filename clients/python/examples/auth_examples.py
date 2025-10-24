@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
+
+
+STATUS: ⚠️  Partial - Authentication API Incomplete
+SDK Version: v1.0+ (AuthResult API needs refinement)
+Server Version: v0.1.4+
+Test Result: PARTIAL - Authentication partially implemented
+
 ProximaDB Python SDK Authentication Examples
 
 This module demonstrates various authentication methods supported by the ProximaDB Python SDK.
 These examples show how to leverage the enhanced authentication features implemented in the client.
+
 """
 
 import os
@@ -17,8 +25,11 @@ logger = logging.getLogger(__name__)
 
 # Import ProximaDB client and authentication components
 from proximadb import ProximaDBClient, connect
-from proximadb.auth import AuthConfig, AuthMethod, AuthResult
+from proximadb.auth import AuthConfig, AuthMethod
 from proximadb.models import CollectionConfig, VectorRecord
+
+# Note: AuthResult and full auth implementation coming in SDK v1.1+
+# This example demonstrates the planned authentication API
 
 def example_api_key_auth():
     """Example: API Key Authentication (Legacy and Enhanced)"""

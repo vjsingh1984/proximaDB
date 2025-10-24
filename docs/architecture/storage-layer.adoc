@@ -3,6 +3,13 @@
 :toclevels: 3
 :icons: font
 
+[NOTE]
+====
+For concrete REST and Graph endpoints and payloads, see:
+- link:../03-reference/rest-api-specification.adoc[REST API Specification]
+- link:../03-reference/graph_api_reference.adoc[Graph API Reference]
+====
+
 == Overview
 
 ProximaDB's storage layer provides 6 specialized storage engines, each optimized for different workload patterns. This document provides a high-level architectural overview and engine selection guidance.

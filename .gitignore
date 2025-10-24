@@ -250,7 +250,7 @@ terraform.rc
 .netlify/
 
 # Generated files
-archive/
+/archive/  # Root-level archive directory only
 log/
 localhost/
 performance_metrics/

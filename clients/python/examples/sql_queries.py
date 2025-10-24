@@ -1,8 +1,17 @@
 """
 Example: Using SQL queries with ProximaDB
 
+STATUS: ⚠️  Partial - Server Feature Incomplete
+SDK Version: v1.0+
+Server Version: v0.2.0+ (SQL lowering in development)
+Test Result: PARTIAL - Collection/insert works, SQL queries fail
+
 This example demonstrates how to use SQL queries for vector similarity search
 with metadata filtering.
+
+NOTE: SQL execution currently fails due to incomplete server-side SQL lowering support.
+Collection creation, vector insertion, and BERT embeddings work correctly.
+SQL query support is under active development for ProximaDB v0.2.0+.
 """
 
 import numpy as np
@@ -191,15 +200,19 @@ def main():
     ORDER BY VECTOR_SIMILARITY(vector, {vector_str_2}, 'cosine')
     LIMIT 3
     """
-    
-    result = client.execute_sql(sql_filtered)
-    print(f"\n✅ Found {result['row_count']} similar electronics:")
-    for i, row in enumerate(result['rows']):
-        metadata = row.get('metadata', {})
-        print(f"   {i+1}. {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} (Rating: {metadata.get('rating', 'N/A')})")
-        print(f"      📂 Category: {metadata.get('category')} (filtered)")
-        print(f"      📝 Features: {', '.join(metadata.get('features', []))}")
-        print(f"      🎯 Semantic match: '{query_text_2}' relates to this product's capabilities")
+
+    try:
+        result = client.execute_sql(sql_filtered)
+        print(f"\n✅ Found {result['row_count']} similar electronics:")
+        for i, row in enumerate(result['rows']):
+            metadata = row.get('metadata', {})
+            print(f"   {i+1}. {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} (Rating: {metadata.get('rating', 'N/A')})")
+            print(f"      📂 Category: {metadata.get('category')} (filtered)")
+            print(f"      📝 Features: {', '.join(metadata.get('features', []))}")
+            print(f"      🎯 Semantic match: '{query_text_2}' relates to this product's capabilities")
+    except Exception as e:
+        print(f"⚠️  SQL query failed (server limitation): {e}")
+        print("   Note: Use client.search() with metadata filtering as workaround")
     
     # Example 3: Semantic search for learning materials
     query_text_3 = "learning resources for programming and machine learning"
@@ -213,34 +226,42 @@ def main():
     ORDER BY VECTOR_SIMILARITY(vector, {vector_str_3}, 'cosine')
     LIMIT 5
     """
-    
-    result = client.execute_sql(sql_price)
-    print(f"\n✅ Found {result['row_count']} available learning products:")
-    for i, row in enumerate(result['rows']):
-        metadata = row.get('metadata', {})
-        stock = "In Stock" if metadata.get('in_stock') == True else "Out of Stock"
-        print(f"   {i+1}. {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} ({stock})")
-        print(f"      📂 Category: {metadata.get('category')}")
-        print(f"      🎯 Semantic match: Query about '{query_text_3}' matches educational content")
-        if metadata.get('description'):
-            print(f"      📝 Description: {metadata.get('description')[:60]}...")
+
+    try:
+        result = client.execute_sql(sql_price)
+        print(f"\n✅ Found {result['row_count']} available learning products:")
+        for i, row in enumerate(result['rows']):
+            metadata = row.get('metadata', {})
+            stock = "In Stock" if metadata.get('in_stock') == True else "Out of Stock"
+            print(f"   {i+1}. {metadata.get('name', 'N/A')}: ${metadata.get('price', 'N/A')} ({stock})")
+            print(f"      📂 Category: {metadata.get('category')}")
+            print(f"      🎯 Semantic match: Query about '{query_text_3}' matches educational content")
+            if metadata.get('description'):
+                print(f"      📝 Description: {metadata.get('description')[:60]}...")
+    except Exception as e:
+        print(f"⚠️  SQL query failed (server limitation): {e}")
+        print("   Note: Use client.search() with metadata filtering as workaround")
     
     # Example 4: Different distance metrics
     print("\n=== Example 4: Different Distance Metrics ===")
     metrics = ['cosine', 'euclidean', 'manhattan', 'dot']
-    
-    for metric in metrics:
-        sql_metric = f"""
-        SELECT id, metadata
-        FROM {collection_name}
-        ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, '{metric}')
-        LIMIT 1
-        """
-        
-        result = client.execute_sql(sql_metric)
-        if result['rows']:
-            metadata = result['rows'][0].get('metadata', {})
-            print(f"  {metric}: {metadata.get('name', 'N/A')}")
+
+    try:
+        for metric in metrics:
+            sql_metric = f"""
+            SELECT id, metadata
+            FROM {collection_name}
+            ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, '{metric}')
+            LIMIT 1
+            """
+
+            result = client.execute_sql(sql_metric)
+            if result['rows']:
+                metadata = result['rows'][0].get('metadata', {})
+                print(f"  {metric}: {metadata.get('name', 'N/A')}")
+    except Exception as e:
+        print(f"⚠️  SQL query failed (server limitation): {e}")
+        print("   Note: Use client.search() with distance_metric parameter as workaround")
     
     # Example 5: Select all fields including vector
     print("\n=== Example 5: Select All Fields ===")
@@ -250,30 +271,39 @@ def main():
     ORDER BY VECTOR_SIMILARITY(vector, {vector_str}, 'cosine')
     LIMIT 2
     """
-    
-    result = client.execute_sql(sql_all)
-    print(f"Found {result['row_count']} high-rated products with all fields")
-    for i, row in enumerate(result['rows']):
-        print(f"  Product {i+1}:")
-        print(f"    ID: {row['id']}")
-        print(f"    Vector dimension: {len(row.get('vector', []))}")
-        if 'metadata' in row:
-            print(f"    Metadata fields: {list(row['metadata'].keys())}")
+
+    try:
+        result = client.execute_sql(sql_all)
+        print(f"Found {result['row_count']} high-rated products with all fields")
+        for i, row in enumerate(result['rows']):
+            print(f"  Product {i+1}:")
+            print(f"    ID: {row['id']}")
+            print(f"    Vector dimension: {len(row.get('vector', []))}")
+            if 'metadata' in row:
+                print(f"    Metadata fields: {list(row['metadata'].keys())}")
+    except Exception as e:
+        print(f"⚠️  SQL query failed (server limitation): {e}")
+        print("   Note: Use client.get_vector() to retrieve full vector data")
     
     # Example 6: Pagination with OFFSET
     print("\n=== Example 6: Pagination ===")
     page_size = 2
-    for page in range(3):
-        offset = page * page_size
-        sql_page = f"""
-        SELECT id, metadata.name
-        FROM {collection_name}
-        ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, 'cosine')
-        LIMIT {page_size} OFFSET {offset}
-        """
-        
-        result = client.execute_sql(sql_page)
-        print(f"  Page {page + 1}: {[row['metadata.name'] for row in result['rows']]}")
+
+    try:
+        for page in range(3):
+            offset = page * page_size
+            sql_page = f"""
+            SELECT id, metadata.name
+            FROM {collection_name}
+            ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, 'cosine')
+            LIMIT {page_size} OFFSET {offset}
+            """
+
+            result = client.execute_sql(sql_page)
+            print(f"  Page {page + 1}: {[row['metadata.name'] for row in result['rows']]}")
+    except Exception as e:
+        print(f"⚠️  SQL query failed (server limitation): {e}")
+        print("   Note: Use client.search() with top_k for pagination workaround")
     
     # Cleanup
     client.delete_collection(collection_name)

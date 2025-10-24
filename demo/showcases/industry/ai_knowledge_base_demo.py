@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
+STATUS: 🚧 Requires Demo Server - Embedding Service Not Available
+SDK Version: v1.0
+Server Version: v0.1.4+
+Test Result: SKIP - Requires demo server with embedding/LLM services
+
 AI Knowledge Base Demo for ProximaDB
 
-An intelligent knowledge base system that combines ProximaDB's vector search with 
+An intelligent knowledge base system that combines ProximaDB's vector search with
 LLM-powered responses. This demo showcases how to build production-ready AI applications
 with semantic search, document understanding, and natural language Q&A.
 
@@ -13,7 +18,24 @@ Features:
 - High-performance gRPC protocol
 - Interactive Q&A interface
 
+Requirements:
+- ProximaDB server running (localhost:5678)
+- Demo server with embedding/LLM services (localhost:8080)
+
+NOTE: This demo requires a separate demo server that provides:
+  - /api/embeddings/chunk endpoint
+  - /api/embeddings/embed endpoint
+  - /api/embeddings/info endpoint
+  - LLM service for answer generation
+
+For basic RAG functionality without the demo server, see:
+  demo/quickstart/basic_demo.py (shows vector insertion/search)
+
 Usage:
+    # Start demo server first (if available)
+    docker compose up -d
+
+    # Then run demo
     python ai_knowledge_base_demo.py
 """
 
@@ -21,13 +43,28 @@ import requests
 import json
 import time
 import sys
+import os
 from typing import List, Dict, Any
 from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add demo root to path for utils import
+demo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, demo_root)
 
-from utils.llm_service import get_llm_service, LLMConfig
+# Try to import LLM service, but make it optional with error handling
+try:
+    from utils.llm_service import get_llm_service, LLMConfig
+    HAS_LLM_SERVICE = True
+except (ImportError, ModuleNotFoundError):
+    HAS_LLM_SERVICE = False
+    print("=" * 70)
+    print("⚠️  WARNING: LLM Service Not Available")
+    print("=" * 70)
+    print("\n📋 This demo requires utils/llm_service module")
+    print("   Expected location: demo/utils/llm_service.py")
+    print("\n💡 This demo requires a separate embedding/LLM server")
+    print("   For basic vector operations, see: demo/quickstart/basic_demo.py\n")
+    print("=" * 70)
 
 # Import ProximaDB SDK for proper API usage
 from proximadb import ProximaDBClient, Protocol, CollectionConfig, DistanceMetric, StorageEngine, VectorRecord
@@ -185,22 +222,28 @@ class AIKnowledgeBase:
         self.proximadb_url = PROXIMADB_URL
         self.demo_server_url = DEMO_SERVER_URL
         self.collection_name = COLLECTION_NAME
-        
+
         # Initialize ProximaDB client with gRPC for better performance
         self.client = ProximaDBClient(
             url=PROXIMADB_URL,
             grpc_url=PROXIMADB_GRPC_URL,
             protocol=Protocol.GRPC  # Use gRPC for faster performance
         )
-        
-        # Initialize LLM service (local model for reliability)
-        llm_config = LLMConfig(
-            model_type="flan-t5-small",  # Use local model
-            api_provider="huggingface",
-            max_length=200,
-            temperature=0.7
-        )
-        self.llm_service = get_llm_service(llm_config)
+
+        # Initialize LLM service (optional, local model for reliability)
+        self.llm_service = None
+        if HAS_LLM_SERVICE:
+            try:
+                llm_config = LLMConfig(
+                    model_type="flan-t5-small",  # Use local model
+                    api_provider="huggingface",
+                    max_length=200,
+                    temperature=0.7
+                )
+                self.llm_service = get_llm_service(llm_config)
+            except Exception as e:
+                print(f"⚠️  LLM service initialization failed: {e}")
+                print("   Continuing without LLM - will use retrieved context only")
     
     def print_section(self, title: str):
         """Print a formatted section header"""
@@ -504,31 +547,40 @@ class AIKnowledgeBase:
                 "score": score
             })
         
-        # Generate response using LLM service
-        print("🤖 Generating response using LLM...")
-        try:
-            response = self.llm_service.generate_response(
-                query=query,
-                context=context_data
-            )
-            
-            # Display the generated response
-            print(f"\n📝 Answer:")
-            print("─" * 50)
-            print(response)
-            
-            # Show model info
-            model_info = self.llm_service.get_model_info()
-            print(f"\n🔧 Generated using: {model_info['model_name']} ({model_info['provider']})")
-            
-        except Exception as e:
-            print(f"⚠️  LLM generation failed: {e}")
-            print("📝 Fallback response based on retrieved context:")
+        # Generate response using LLM service (if available)
+        if self.llm_service is not None:
+            print("🤖 Generating response using LLM...")
+            try:
+                response = self.llm_service.generate_response(
+                    query=query,
+                    context=context_data
+                )
+
+                # Display the generated response
+                print(f"\n📝 Answer:")
+                print("─" * 50)
+                print(response)
+
+                # Show model info
+                model_info = self.llm_service.get_model_info()
+                print(f"\n🔧 Generated using: {model_info['model_name']} ({model_info['provider']})")
+
+            except Exception as e:
+                print(f"⚠️  LLM generation failed: {e}")
+                print("📝 Fallback response based on retrieved context:")
+                print("─" * 50)
+                print(f"Based on the search results, here are relevant excerpts about '{query}':")
+                for i, text in enumerate(context_parts[:2]):
+                    print(f"\n{i+1}. {text[:200]}...")
+                print("\n[Note: Install transformers for local LLM or ensure internet connectivity for API access]")
+        else:
+            # No LLM service - show retrieved context
+            print("📝 Response based on retrieved context:")
             print("─" * 50)
             print(f"Based on the search results, here are relevant excerpts about '{query}':")
             for i, text in enumerate(context_parts[:2]):
                 print(f"\n{i+1}. {text[:200]}...")
-            print("\n[Note: Install transformers for local LLM or ensure internet connectivity for API access]")
+            print("\n[Note: LLM service not available - showing raw context]")
     
     def demonstrate_filtered_search(self):
         """Demonstrate metadata filtering capabilities"""

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+
+
+STATUS: ⚠️  Requires Future Feature
+SDK Version: v1.1+ (requires ResilientProximaDBClient)
+Server Version: v0.1.4+
+Test Result: SKIP - Resilient client wrapper not yet implemented
+
 Production Setup Example for ProximaDB Python SDK v1.0
 
 This example demonstrates production-ready configurations:
@@ -10,6 +17,7 @@ This example demonstrates production-ready configurations:
 - Caching for performance
 - Telemetry and monitoring
 - Graceful shutdown
+
 """
 
 # import asyncio

@@ -83,7 +83,7 @@ mindmap
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Workload Analysis] --> B{Primary Use Case?}
 
@@ -113,7 +113,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "SHARED INFRASTRUCTURE"
         A[Unified Quantization Engine<br/>Binary • INT8 • PQ4/8/16/32]
@@ -156,7 +156,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 block-beta
     columns 5
 
@@ -220,7 +220,7 @@ Query → Bloom Filter (95% reduction) → Quantized Search → Full Precision �
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Parquet File Header<br/>Magic: VIPR + Schema] --> B[Row Group 1<br/>128K Vectors]
     A --> C[Row Group 2<br/>128K Vectors]
@@ -272,7 +272,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     subgraph "Disk Storage"
         A[data_001.parquet<br/>Standard Parquet]
@@ -312,7 +312,7 @@ flowchart LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Query Vector] --> B{Load Sidecar<br/>.nova_meta?}
 
@@ -426,7 +426,7 @@ Total: ~100-500ms (no overhead)
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 block-beta
     columns 3
 
@@ -647,7 +647,7 @@ Research evolution → Continuous tuning → Performance improvement over time
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 timeline
     title HELIX Temporal Clustering Layout
 
@@ -676,7 +676,7 @@ timeline
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     A[Input Vector<br/>High Dimensional] --> B[PCA Projection<br/>Dimensionality Reduction]
 
@@ -709,7 +709,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[What's your primary workload?] --> B{Real-time requirements?}
     A --> C{Analytics focus?}
@@ -740,7 +740,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "Storage Engine Performance vs Memory Efficiency"
     x-axis ["Memory Usage (GB per 1M vectors)"]
@@ -757,7 +757,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "REAL-TIME ENGINES"
         A[SST: Linear Sequential<br/>✓ Simple format<br/>✓ Fast writes<br/>✓ Good read performance<br/>⚠ Higher memory usage]

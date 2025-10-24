@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-ProximaDB Quantization Demo
+ProximaDB Quantization Concepts Demo
 
-This example demonstrates how to use quantization and search optimization
-features in ProximaDB for improved performance.
+This example demonstrates quantization concepts and best practices
+for vector compression in ProximaDB.
+
+NOTE: This demo shows quantization concepts using simulated quantization.
+Full QuantizationConfig support is planned for SDK v1.1+.
 """
 
 import time
@@ -11,9 +14,9 @@ import numpy as np
 from typing import List, Dict, Any
 
 # Import ProximaDB client
-from proximadb import connect_rest
+from proximadb import connect_rest, VectorRecord
 from proximadb.models import (
-    CollectionConfig, 
+    CollectionConfig,
     DistanceMetric,
     QuantizationConfig,
     QuantizationType
@@ -31,19 +34,18 @@ def create_random_vectors(num_vectors: int, dimension: int) -> List[np.ndarray]:
     return vectors
 
 
-def benchmark_search(client, collection_name: str, query_vector: np.ndarray, 
+def benchmark_search(client, collection_name: str, query_vector: np.ndarray,
                     optimization_hints: Dict[str, Any] = None) -> tuple:
     """Benchmark search with given optimization hints"""
     start_time = time.time()
-    
+
     results = client.search(
-        collection_name,
-        query=query_vector.tolist(),
-        k=10,
-        include_metadata=True,
-        optimization_hints=optimization_hints
+        collection_id=collection_name,
+        vector=query_vector.tolist(),
+        top_k=10
+        # Note: optimization_hints not yet supported in current SDK
     )
-    
+
     search_time = time.time() - start_time
     return results, search_time
 
@@ -64,6 +66,7 @@ def main():
         {
             "name": "no_quantization",
             "config": CollectionConfig(
+                name="no_quantization",
                 dimension=dimension,
                 distance_metric=DistanceMetric.COSINE
             ),
@@ -72,6 +75,7 @@ def main():
         {
             "name": "scalar_quantization",
             "config": CollectionConfig(
+                name="scalar_quantization",
                 dimension=dimension,
                 distance_metric=DistanceMetric.COSINE,
                 quantization_config=QuantizationConfig(
@@ -86,6 +90,7 @@ def main():
         {
             "name": "product_quantization",
             "config": CollectionConfig(
+                name="product_quantization",
                 dimension=dimension,
                 distance_metric=DistanceMetric.COSINE,
                 quantization_config=QuantizationConfig(
@@ -102,6 +107,7 @@ def main():
         {
             "name": "binary_quantization",
             "config": CollectionConfig(
+                name="binary_quantization",
                 dimension=dimension,
                 distance_metric=DistanceMetric.COSINE,
                 quantization_config=QuantizationConfig(
@@ -115,12 +121,21 @@ def main():
         }
     ]
     
+    # Clean up any existing collections from previous runs
+    print("\n0. Cleaning up existing collections...")
+    for col_info in collections:
+        try:
+            client.delete_collection(col_info['name'])
+            print(f"   ✓ Deleted existing collection: {col_info['name']}")
+        except:
+            pass  # Collection doesn't exist, which is fine
+
     # Create collections and insert data
     print("\n1. Creating collections and inserting vectors...")
-    
+
     # Generate random vectors
     vectors = create_random_vectors(num_vectors, dimension)
-    
+
     for col_info in collections:
         print(f"\n   Creating {col_info['name']} - {col_info['description']}")
         
@@ -131,17 +146,20 @@ def main():
             # Insert vectors in batches
             batch_size = 1000
             insert_start = time.time()
-            
+
             for i in range(0, num_vectors, batch_size):
-                batch = vectors[i:i+batch_size]
-                ids = [f"vec_{j}" for j in range(i, min(i+batch_size, num_vectors))]
-                metadata = [{"index": j, "batch": i//batch_size} for j in range(i, min(i+batch_size, num_vectors))]
-                
-                client.insert_batch(
+                batch_vectors = []
+                for j in range(i, min(i+batch_size, num_vectors)):
+                    vec_record = VectorRecord(
+                        id=f"vec_{j}",
+                        vector=vectors[j].tolist(),
+                        metadata={"index": j, "batch": i//batch_size}
+                    )
+                    batch_vectors.append(vec_record)
+
+                client.insert_vectors(
                     col_info['name'],
-                    vectors=batch,
-                    ids=ids,
-                    metadata=metadata
+                    batch_vectors
                 )
             
             insert_time = time.time() - insert_start

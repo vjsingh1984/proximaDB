@@ -2,6 +2,11 @@
 
 This document provides a reference for the ProximaDB REST API.
 
+[NOTE]
+====
+This file is a summary. The canonical, full reference is link:rest-api-specification.adoc[REST API Specification].
+====
+
 == Collections
 
 === Create Collection

@@ -6,6 +6,11 @@
 :last-updated: January 2025
 :module-location: src/compute/quantization/
 
+[NOTE]
+====
+For current REST endpoints used with quantization features (collections, codebooks, testing), see link:../03-reference/rest-api-specification.adoc[REST API Specification].
+====
+
 [.lead]
 **Complete guide to ProximaDB's unified quantization system for vector compression and accelerated search**
 

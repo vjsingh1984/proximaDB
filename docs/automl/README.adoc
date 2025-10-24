@@ -163,7 +163,7 @@ image::https://raw.githubusercontent.com/proximadb/proximadb/main/docs/assets/au
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#ffffff", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "sectionBkgColor": "#f8fafc", "altSectionBkgColor": "#e2e8f0", "gridColor": "#cbd5e0", "tertiaryColor": "#f7fafc", "background": "#ffffff", "secondaryColor": "#667eea"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#ffffff", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "sectionBkgColor": "#f8fafc", "altSectionBkgColor": "#e2e8f0", "gridColor": "#cbd5e0", "tertiaryColor": "#f7fafc", "background": "#ffffff", "secondaryColor": "#667eea"}}%%
 flowchart TD
     subgraph BUSINESS["💼 Business Impact"]
         direction TB
@@ -277,7 +277,7 @@ One of AutoML's most powerful features is automatically choosing the right stora
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "sectionBkgColor": "#f8fafc", "altSectionBkgColor": "#e2e8f0", "gridColor": "#cbd5e0", "tertiaryColor": "#f7fafc", "background": "#ffffff"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "sectionBkgColor": "#f8fafc", "altSectionBkgColor": "#e2e8f0", "gridColor": "#cbd5e0", "tertiaryColor": "#f7fafc", "background": "#ffffff"}}%%
 flowchart LR
     subgraph APPS["🏢 Application Types"]
         direction TB

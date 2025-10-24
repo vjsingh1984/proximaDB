@@ -71,7 +71,28 @@ fn analyze_linearity(data: &[f32]) -> f64 {
     // Perfect linearity: all second deltas are identical (or very close)
     // IMPORTANT: Skip first few second deltas to avoid startup transients
     // (e.g., when first value is 0.0, it creates a huge initial delta)
-    let skip_count = (second_deltas.len() / 4).min(2).max(1); // Skip 25% or at least 1
+
+    // Special handling: If first second delta is much larger than the rest,
+    // it's likely due to starting at 0.0 (bit pattern = 0), so skip more aggressively
+    let first_sd_abs = second_deltas[0].unsigned_abs() as f64;
+    let rest_mean = if second_deltas.len() > 1 {
+        second_deltas[1..]
+            .iter()
+            .map(|&d| d.unsigned_abs() as f64)
+            .sum::<f64>()
+            / (second_deltas.len() - 1) as f64
+    } else {
+        first_sd_abs
+    };
+
+    // If first second delta is >100x larger than rest, skip more aggressively
+    let skip_count = if first_sd_abs > rest_mean * 100.0 && second_deltas.len() > 5 {
+        // Skip first 2 or 3 to avoid the 0.0 startup transient
+        (second_deltas.len() / 3).min(3).max(2)
+    } else {
+        (second_deltas.len() / 4).min(2).max(1) // Original logic: skip 25% or at least 1
+    };
+
     let stable_deltas = if second_deltas.len() > skip_count + 2 {
         &second_deltas[skip_count..]
     } else {
@@ -94,9 +115,19 @@ fn analyze_linearity(data: &[f32]) -> f64 {
         .sum::<f64>()
         / stable_deltas.len() as f64;
 
+    // NEW: Check if most second deltas are zero (perfect sequential pattern)
+    // This handles cases like [0.0, 1.0, 2.0, ...] where most second deltas are 0
+    // but there are occasional non-zero values due to floating point representation
+    let zero_count = stable_deltas.iter().filter(|&&d| d == 0).count();
+    let zero_ratio = zero_count as f64 / stable_deltas.len() as f64;
+
     // Linearity score based on how consistent the second deltas are
     // Perfect linear: all second deltas are identical (range ≈ 0)
-    let linearity = if dd_range < 10.0 {
+    let linearity = if zero_ratio > 0.85 {
+        // Most second deltas are zero - highly linear sequential pattern
+        // This catches [0.0, 1.0, 2.0, ...] type sequences
+        0.98
+    } else if dd_range < 10.0 {
         // All second deltas are nearly identical - perfect linearity
         1.0
     } else if mean_abs_dd < 100.0 {

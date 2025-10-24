@@ -18,7 +18,7 @@ Traditional vector databases require **weeks of manual setup** and expert config
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[Enterprise Environment] --> B[Environment Detection]
     B --> C[Resource Analysis]

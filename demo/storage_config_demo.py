@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
+STATUS: 🚧 Future Feature - Advanced Storage Configuration
+SDK Version: v1.1+ (requires StorageEngineConfig and related classes)
+Server Version: v0.2.0+
+Test Result: SKIP - Requires storage configuration API not yet in SDK
+
 ProximaDB Storage Engine Configuration Demo
 
 This script demonstrates how to use the new per-collection storage engine
 configuration feature to optimize performance for different use cases.
+
+NOTE: This demo requires StorageEngineConfig, ParquetWriterSettings, FooterCacheSettings,
+and other advanced storage configuration classes that will be added in SDK v1.1+.
+For current storage engine selection, see: demo/quickstart/basic_demo.py
 """
 
 import sys

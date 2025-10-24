@@ -14,7 +14,7 @@
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 quadrantChart
     title Vector Database Platform Positioning
     x-axis Low Performance --> High Performance
@@ -85,7 +85,7 @@ quadrantChart
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "Multi-Platform Performance Leadership (Million ops/sec)"
     x-axis [768D BERT, 1536D OpenAI, 2048D Custom]
@@ -102,7 +102,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Business Problem<br/>Fragmented AI Stack<br/>$525K/year] --> B[ProximaDB Solution<br/>Unified Platform<br/>$25K/year]
 
@@ -140,7 +140,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "TRADITIONAL SINGLE-ENGINE APPROACH"
         A[Single Storage Engine<br/>One-size-fits-all<br/>Performance compromises]
@@ -221,7 +221,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "TRADITIONAL AI INTEGRATION"
         A[Manual Development<br/>Custom code required<br/>Expert teams needed]
@@ -328,7 +328,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 gantt
     title Deployment Timeline Comparison
     dateFormat X
@@ -361,7 +361,7 @@ gantt
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 pie title "Annual Enterprise Platform Costs Comparison"
     "Traditional Multi-Vendor ($425K)" : 425
     "Single Vector Platform ($100K)" : 100
@@ -413,7 +413,7 @@ pie title "Annual Enterprise Platform Costs Comparison"
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "PERFORMANCE LEADERSHIP"
         A[20.6M+ ops/sec<br/>Hardware acceleration<br/>Multi-platform optimization]
@@ -481,7 +481,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 pie title "Vector Database Market Segmentation (TAM: $4.3B by 2025)"
     "Enterprise Managed ($2.1B)" : 49
     "Infrastructure Platforms ($1.3B)" : 30

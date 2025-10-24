@@ -11,7 +11,7 @@ toc::[]
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     subgraph "Logo Types"
         A[Symbol Only<br/>Small sizes]
@@ -76,7 +76,7 @@ convert icons/favicon-{16,32,48}.png icons/favicon.ico
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "Cover Formats"
         A[Standard<br/>1200×600]
@@ -128,7 +128,7 @@ inkscape proximadb_cover.svg -w 1500 -h 500 -o covers/proximadb_twitter.png
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 pie title Brand Color Usage
     "Primary Blue (#1e88e5)" : 40
     "Success Green (#43a047)" : 25
