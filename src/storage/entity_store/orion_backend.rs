@@ -56,7 +56,9 @@ use std::sync::Arc;
 use super::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
 use super::EntityStore;
 use crate::graph::{GraphOperationsService, Node, PropertyValue};
-use crate::proto::proximadb_v1::{property_value, Entity, MetadataFilter, NodeQuery, Relation};
+use crate::proto::proximadb_v1::{
+    property_value, EdgeQuery, Entity, MetadataFilter, NodeQuery, Relation,
+};
 
 /// Orion-backed entity store using graph-first architecture
 pub struct OrionBackedEntityStore {
@@ -396,20 +398,39 @@ impl OrionBackedEntityStore {
     /// Get relations for an entity
     ///
     /// ## Implementation
-    /// 1. Get neighbors from Orion (uses CSR for O(1) access)
-    /// 2. Fetch edges between entity and neighbors
-    /// 3. Convert Edges to Relations
+    /// 1. Query outgoing edges from the entity using EdgeQuery
+    /// 2. Convert Edges to Relations using RelationEdgeMapper
+    /// 3. Return all relations for this entity
     pub async fn get_relations(&self, entity_id: &str) -> Result<Vec<Relation>> {
-        // Get neighbors (uses CSR internally for O(1) access)
-        let neighbors = self
-            .graph_service
-            .get_neighbors(&self.graph_id, &entity_id.to_string())
-            .await
-            .context("Failed to get neighbors")?;
+        // Query all outgoing edges from this entity
+        let edge_query = EdgeQuery {
+            graph_id: self.graph_id.clone(),
+            from_node_id: Some(entity_id.to_string()),
+            to_node_id: None,
+            edge_types: Vec::new(), // Get all edge types
+            filters: Vec::new(),
+            limit: None,
+            offset: None,
+            continuation_token: None,
+        };
 
-        // TODO: Fetch actual edges and convert to Relations
-        // For now, return empty vector as placeholder
-        Ok(Vec::new())
+        let edges = self
+            .graph_service
+            .query_edges(&self.graph_id, edge_query)
+            .await
+            .context("Failed to query edges")?;
+
+        // Convert edges to relations
+        let mut relations = Vec::new();
+        for edge in edges {
+            let relation = self
+                .relation_mapper
+                .edge_to_relation(&edge)
+                .context("Failed to convert edge to relation")?;
+            relations.push(relation);
+        }
+
+        Ok(relations)
     }
 
     /// Traverse graph from a starting entity
@@ -598,5 +619,89 @@ mod tests {
             .expect("Failed to get entity");
 
         assert!(retrieved.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_add_and_get_relations() {
+        let graph_service = Arc::new(GraphOperationsService::new());
+
+        // Create graph collection first
+        let create_request = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: "test-collection-3".to_string(),
+            name: Some("Test Collection 3".to_string()),
+            description: None,
+            schema: None,
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        graph_service
+            .create_graph_collection(create_request)
+            .await
+            .expect("Failed to create graph collection");
+
+        let store =
+            OrionBackedEntityStore::new(graph_service.clone(), "test-collection-3".to_string());
+
+        // Create two entities
+        let entity1 = Entity {
+            id: "entity-1".to_string(),
+            collection_id: "test-collection-3".to_string(),
+            embeddings: vec![],
+            typed_metadata: None,
+            flexible_metadata: HashMap::new(),
+            provenance: None,
+            temporal: None,
+            relations: Vec::new(),
+        };
+
+        let entity2 = Entity {
+            id: "entity-2".to_string(),
+            collection_id: "test-collection-3".to_string(),
+            embeddings: vec![],
+            typed_metadata: None,
+            flexible_metadata: HashMap::new(),
+            provenance: None,
+            temporal: None,
+            relations: Vec::new(),
+        };
+
+        store
+            .upsert_entity("test-collection-3", entity1.clone())
+            .await
+            .expect("Failed to upsert entity1");
+        store
+            .upsert_entity("test-collection-3", entity2.clone())
+            .await
+            .expect("Failed to upsert entity2");
+
+        // Add a relation between entity1 and entity2
+        let relation = Relation {
+            source_entity_id: "entity-1".to_string(),
+            target_entity_id: "entity-2".to_string(),
+            relation_type: "related_to".to_string(),
+            weight: 0.85,
+            created_at_ms: 1234567890,
+            properties: HashMap::new(),
+        };
+
+        let relation_id = store
+            .add_relation(relation.clone())
+            .await
+            .expect("Failed to add relation");
+
+        assert!(!relation_id.is_empty());
+
+        // Get relations for entity1
+        let relations = store
+            .get_relations("entity-1")
+            .await
+            .expect("Failed to get relations");
+
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].source_entity_id, "entity-1");
+        assert_eq!(relations[0].target_entity_id, "entity-2");
+        assert_eq!(relations[0].relation_type, "related_to");
+        assert_eq!(relations[0].weight, 0.85);
     }
 }
