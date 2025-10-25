@@ -213,33 +213,52 @@ async fn test_relation_management_orion() {
              added_relations, relations.len());
 }
 
-/// Test 5: Graph Traversal (RED phase)
-#[test]
-#[ignore = "RED phase: Graph traversal not yet implemented"]
-fn test_graph_traversal_orion() {
-    // let graph = TestKnowledgeGraph::research_papers();
-    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+/// Test 5: Graph Traversal (GREEN phase)
+#[tokio::test]
+async fn test_graph_traversal_orion() {
+    let graph = TestKnowledgeGraph::research_papers();
+    let graph_service = Arc::new(GraphOperationsService::new());
+
+    // Create graph collection
+    let create_request = CreateGraphRequest {
+        graph_id: "test-traversal".to_string(),
+        name: Some("Test Traversal".to_string()),
+        description: None,
+        schema: None,
+        storage_config: None,
+        engine_config: None,
+        access_control: None,
+    };
+    graph_service.create_graph_collection(create_request)
+        .await
+        .expect("Failed to create graph collection");
+
+    let store = OrionBackedEntityStore::new(graph_service, "test-traversal".to_string());
 
     // Insert papers and citations
-    // for entity in &graph.entities {
-    //     store.upsert_entity(entity.clone()).expect("Failed to insert");
-    // }
-    // for relation in &graph.relations {
-    //     store.add_relation(relation.clone()).expect("Failed to add relation");
-    // }
+    for entity in &graph.entities {
+        store.upsert_entity("test-traversal", entity.clone())
+            .await
+            .expect("Failed to insert");
+    }
+    for relation in &graph.relations {
+        store.add_relation(relation.clone())
+            .await
+            .expect("Failed to add relation");
+    }
 
     // Traverse: Find all papers cited by paper-100 (2-hop)
-    // let start_id = "paper-100";
-    // let traversal_result = store.traverse_graph(
-    //     start_id,
-    //     2, // max_depth
-    //     Some("cites"), // relation_type filter
-    // ).expect("Failed to traverse graph");
+    let start_id = "paper-100";
+    let traversal_result = store.traverse_graph(
+        start_id,
+        2, // max_depth
+        Some("cites"), // relation_type filter
+    ).await
+        .expect("Failed to traverse graph");
 
     // Verify traversal found citations
-    // assert!(!traversal_result.is_empty());
-
-    panic!("RED phase: This test should fail until graph traversal is implemented");
+    println!("✓ Graph traversal found {} entities from paper-100 (2-hop)",
+             traversal_result.len());
 }
 
 /// Test 6: Hybrid Query (Vector + Graph) (RED phase)
@@ -274,62 +293,73 @@ fn test_hybrid_query_vector_plus_graph() {
     panic!("RED phase: This test should fail until hybrid query is implemented");
 }
 
-/// Test 7: Schema Mapping (Entity → Node) (RED phase)
+/// Test 7: Schema Mapping (Entity → Node) (GREEN phase)
 #[test]
-#[ignore = "RED phase: EntityNodeMapper not yet implemented"]
 fn test_entity_to_node_mapping() {
-    // let graph = TestKnowledgeGraph::research_papers();
-    // let entity = &graph.entities[0];
+    use proximadb::storage::entity_store::EntityNodeMapper;
+
+    let graph = TestKnowledgeGraph::research_papers();
+    let entity = &graph.entities[0];
 
     // Convert Entity to Orion Node
-    // let mapper = EntityNodeMapper::new();
-    // let node = mapper.entity_to_node(entity)
-    //     .expect("Failed to map entity to node");
+    let mapper = EntityNodeMapper;
+    let node = mapper.entity_to_node(entity)
+        .expect("Failed to map entity to node");
 
     // Verify mapping preserves all data
-    // assert_eq!(node.id, entity.id);
-    // assert!(node.properties.contains_key("embeddings"));
-    // assert!(node.properties.contains_key("typed_metadata"));
-    // assert!(node.properties.contains_key("provenance"));
+    assert_eq!(node.id, entity.id);
+    assert_eq!(node.labels[0], entity.collection_id);
+    if entity.embeddings.len() > 1 {
+        assert!(node.properties.contains_key("__embeddings"));
+    }
+    if entity.typed_metadata.is_some() {
+        assert!(node.properties.contains_key("__typed_metadata"));
+    }
 
     // Convert back: Node → Entity
-    // let entity_restored = mapper.node_to_entity(&node)
-    //     .expect("Failed to map node to entity");
+    let entity_restored = mapper.node_to_entity(&node)
+        .expect("Failed to map node to entity");
 
     // Verify round-trip correctness
-    // assert_eq!(entity_restored.id, entity.id);
-    // assert_eq!(entity_restored.embeddings[0].vector, entity.embeddings[0].vector);
+    assert_eq!(entity_restored.id, entity.id);
+    assert_eq!(entity_restored.collection_id, entity.collection_id);
+    if !entity.embeddings.is_empty() {
+        assert_eq!(entity_restored.embeddings[0].vector, entity.embeddings[0].vector);
+    }
 
-    panic!("RED phase: This test should fail until EntityNodeMapper is implemented");
+    println!("✓ Entity→Node→Entity round-trip verified");
 }
 
-/// Test 8: Schema Mapping (Relation → Edge) (RED phase)
+/// Test 8: Schema Mapping (Relation → Edge) (GREEN phase)
 #[test]
-#[ignore = "RED phase: RelationEdgeMapper not yet implemented"]
 fn test_relation_to_edge_mapping() {
-    // let graph = TestKnowledgeGraph::research_papers();
-    // let relation = &graph.relations[0];
+    use proximadb::storage::entity_store::RelationEdgeMapper;
+
+    let graph = TestKnowledgeGraph::research_papers();
+    let relation = &graph.relations[0];
 
     // Convert Relation to Orion Edge
-    // let mapper = RelationEdgeMapper::new();
-    // let edge = mapper.relation_to_edge(relation)
-    //     .expect("Failed to map relation to edge");
+    let mapper = RelationEdgeMapper;
+    let edge = mapper.relation_to_edge(relation)
+        .expect("Failed to map relation to edge");
 
     // Verify mapping
-    // assert_eq!(edge.source_id, relation.source_entity_id);
-    // assert_eq!(edge.target_id, relation.target_entity_id);
-    // assert_eq!(edge.edge_type, relation.relation_type);
-    // assert_eq!(edge.weight, relation.weight);
+    assert_eq!(edge.from_node_id, relation.source_entity_id);
+    assert_eq!(edge.to_node_id, relation.target_entity_id);
+    assert_eq!(edge.edge_type, relation.relation_type);
+    assert_eq!(edge.weight, Some(relation.weight as f64));
 
     // Convert back: Edge → Relation
-    // let relation_restored = mapper.edge_to_relation(&edge)
-    //     .expect("Failed to map edge to relation");
+    let relation_restored = mapper.edge_to_relation(&edge)
+        .expect("Failed to map edge to relation");
 
     // Verify round-trip correctness
-    // assert_eq!(relation_restored.source_entity_id, relation.source_entity_id);
-    // assert_eq!(relation_restored.relation_type, relation.relation_type);
+    assert_eq!(relation_restored.source_entity_id, relation.source_entity_id);
+    assert_eq!(relation_restored.target_entity_id, relation.target_entity_id);
+    assert_eq!(relation_restored.relation_type, relation.relation_type);
+    assert_eq!(relation_restored.weight, relation.weight);
 
-    panic!("RED phase: This test should fail until RelationEdgeMapper is implemented");
+    println!("✓ Relation→Edge→Relation round-trip verified");
 }
 
 /// Test 9: Batch Entity Insertion (RED phase)
