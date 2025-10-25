@@ -331,6 +331,35 @@ impl OrionGraphEngine {
         }
     }
 
+    /// Recover graph from snapshots and WAL
+    ///
+    /// This method should be called during server startup to restore the graph state
+    /// from persistent storage. It will:
+    /// 1. Load the latest snapshot (if available)
+    /// 2. Replay WAL operations since the snapshot
+    pub async fn recover(&self) -> Result<()> {
+        if let Some(ref persistence) = self.persistence {
+            tracing::info!("🔄 Starting ORION graph recovery...");
+
+            // Step 1: Load latest snapshot (if available)
+            // TODO: Implement snapshot discovery and loading
+            // For now, we'll just replay WAL from the beginning
+
+            // Step 2: Replay WAL operations
+            persistence.replay_wal(self).await?;
+
+            tracing::info!(
+                "✅ ORION graph recovery complete: {} nodes, {} edges",
+                self.memory_pool.nodes.len(),
+                self.edge_metadata.len()
+            );
+        } else {
+            tracing::warn!("⚠️  No persistence configured for ORION graph");
+        }
+
+        Ok(())
+    }
+
     // Convenience alias methods for persistence module compatibility
     pub async fn create_node(&self, node: Node) -> Result<Arc<Node>> {
         self.insert_node(node)

@@ -271,6 +271,75 @@ impl GraphOperationsService {
         self.graphs.remove(graph_id).map(|(_, engine)| engine)
     }
 
+    /// Recover all graphs from persistent storage
+    ///
+    /// This method should be called during server startup to restore all graph state
+    /// from persistent storage (snapshots + WAL replay).
+    pub async fn recover_all_graphs(&self) -> Result<()> {
+        tracing::info!("🔄 Starting graph collection recovery...");
+
+        // Get all graph collections from metadata
+        let collections = self.collection_service.list_graphs().await?;
+
+        if collections.is_empty() {
+            tracing::info!("✅ No graphs to recover");
+            return Ok(());
+        }
+
+        tracing::info!("📋 Found {} graph collections to recover", collections.len());
+
+        // Recover each graph
+        let mut recovered_count = 0;
+        let mut failed_count = 0;
+
+        for collection in collections {
+            let graph_id = &collection.graph_id;
+            tracing::info!("🔍 Recovering graph: {}", graph_id);
+
+            match self.recover_graph(graph_id).await {
+                Ok(()) => {
+                    recovered_count += 1;
+                    tracing::info!("✅ Graph {} recovered successfully", graph_id);
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    tracing::warn!("⚠️  Failed to recover graph {}: {}", graph_id, e);
+                    // Continue with other graphs even if one fails
+                }
+            }
+        }
+
+        tracing::info!(
+            "🎉 Graph collection recovery complete: {} succeeded, {} failed",
+            recovered_count,
+            failed_count
+        );
+
+        Ok(())
+    }
+
+    /// Recover a single graph from persistent storage
+    async fn recover_graph(&self, graph_id: &str) -> Result<()> {
+        // Create Orion engine with persistence enabled
+        let engine = OrionGraphEngine::with_persistence_for_graph(
+            graph_id.to_string(),
+            self.base_storage_url.clone(),
+            true, // Enable WAL
+        )
+        .await?;
+
+        // Trigger recovery (WAL replay)
+        engine.recover().await?;
+
+        // Store in graphs map
+        self.graphs.insert(
+            graph_id.to_string(),
+            Arc::new(crate::graph::engines::GraphEngineImpl::Orion(engine)),
+        );
+
+        Ok(())
+    }
+
     /// Compute shortest path with algorithm selection and optional k-shortest support.
     /* moved to service_traversal_api.rs
     pub async fn shortest_path(
