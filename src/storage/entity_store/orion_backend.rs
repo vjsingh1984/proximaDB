@@ -276,7 +276,7 @@ impl EntityStore for OrionBackedEntityStore {
     async fn search_entities(
         &self,
         collection_id: &str,
-        _query_vector: Option<Vec<f32>>,
+        query_vector: Option<Vec<f32>>,
         _metadata_filter: Option<MetadataFilter>,
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>> {
@@ -289,15 +289,12 @@ impl EntityStore for OrionBackedEntityStore {
             );
         }
 
-        // TODO: Implement hybrid search with AXIS vector index
-        // For now, return empty results as placeholder
-
-        // Create a simple query to get all nodes (placeholder)
+        // Get all nodes in the collection
         let query = NodeQuery {
             graph_id: self.graph_id.clone(),
             labels: vec![collection_id.to_string()],
             filters: Vec::new(),
-            limit: Some(top_k as u32),
+            limit: None, // Get all nodes for scoring
             offset: None,
             continuation_token: None,
         };
@@ -308,17 +305,48 @@ impl EntityStore for OrionBackedEntityStore {
             .await
             .context("Failed to query nodes")?;
 
-        // Convert nodes to entities with placeholder scores
-        let mut results = Vec::new();
+        // If no query vector provided, return nodes with default score
+        let query_vec = match query_vector {
+            Some(vec) => vec,
+            None => {
+                // No vector search - return first top_k nodes with score 1.0
+                let mut results = Vec::new();
+                for node in nodes.into_iter().take(top_k) {
+                    let entity = self
+                        .entity_mapper
+                        .node_to_entity(&node)
+                        .context("Failed to convert node to entity")?;
+                    results.push((entity, 1.0));
+                }
+                return Ok(results);
+            }
+        };
+
+        // Vector similarity search: Score all nodes by cosine similarity
+        let mut scored_results = Vec::new();
         for node in nodes {
-            let entity = self
-                .entity_mapper
-                .node_to_entity(&node)
-                .context("Failed to convert node to entity")?;
-            results.push((entity, 1.0)); // Placeholder score
+            // Get node embedding
+            if let Some(ref embedding) = node.embedding {
+                // Compute cosine similarity
+                let similarity = Self::cosine_similarity(&query_vec, &embedding.vector);
+
+                // Convert node to entity
+                let entity = self
+                    .entity_mapper
+                    .node_to_entity(&node)
+                    .context("Failed to convert node to entity")?;
+
+                scored_results.push((entity, similarity));
+            }
         }
 
-        Ok(results)
+        // Sort by similarity (descending)
+        scored_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Return top_k results
+        scored_results.truncate(top_k);
+
+        Ok(scored_results)
     }
 
     /// List all entities in a collection
@@ -489,6 +517,25 @@ impl OrionBackedEntityStore {
         }
 
         Ok(entities)
+    }
+
+    /// Compute cosine similarity between two vectors
+    ///
+    /// Returns a value between -1.0 (opposite) and 1.0 (identical)
+    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() {
+            return 0.0; // Dimension mismatch
+        }
+
+        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0; // Avoid division by zero
+        }
+
+        dot_product / (norm_a * norm_b)
     }
 }
 
@@ -703,5 +750,123 @@ mod tests {
         assert_eq!(relations[0].target_entity_id, "entity-2");
         assert_eq!(relations[0].relation_type, "related_to");
         assert_eq!(relations[0].weight, 0.85);
+    }
+
+    #[tokio::test]
+    async fn test_vector_similarity_search() {
+        let graph_service = Arc::new(GraphOperationsService::new());
+
+        // Create graph collection
+        let create_request = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: "test-collection-4".to_string(),
+            name: Some("Test Collection 4 - Vector Search".to_string()),
+            description: Some("Test vector similarity search".to_string()),
+            schema: None,
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+
+        graph_service
+            .create_graph_collection(create_request)
+            .await
+            .expect("Failed to create graph collection");
+
+        let store = OrionBackedEntityStore::new(graph_service.clone(), "test-collection-4".to_string());
+
+        // Create entities with different embeddings
+        let entity1 = Entity {
+            id: "entity-1".to_string(),
+            collection_id: "test-collection-4".to_string(),
+            embeddings: vec![EmbeddingVersion {
+                model_id: "test-model".to_string(),
+                model_version: "v1".to_string(),
+                vector: vec![1.0, 0.0, 0.0], // Unit vector in x direction
+                dimension: 3,
+                created_at_ms: 1234567890,
+                model_params: HashMap::new(),
+                modality: Modality::Text as i32,
+            }],
+            typed_metadata: None,
+            flexible_metadata: HashMap::new(),
+            provenance: None,
+            temporal: None,
+            relations: Vec::new(),
+        };
+
+        let entity2 = Entity {
+            id: "entity-2".to_string(),
+            collection_id: "test-collection-4".to_string(),
+            embeddings: vec![EmbeddingVersion {
+                model_id: "test-model".to_string(),
+                model_version: "v1".to_string(),
+                vector: vec![0.0, 1.0, 0.0], // Unit vector in y direction
+                dimension: 3,
+                created_at_ms: 1234567890,
+                model_params: HashMap::new(),
+                modality: Modality::Text as i32,
+            }],
+            typed_metadata: None,
+            flexible_metadata: HashMap::new(),
+            provenance: None,
+            temporal: None,
+            relations: Vec::new(),
+        };
+
+        let entity3 = Entity {
+            id: "entity-3".to_string(),
+            collection_id: "test-collection-4".to_string(),
+            embeddings: vec![EmbeddingVersion {
+                model_id: "test-model".to_string(),
+                model_version: "v1".to_string(),
+                vector: vec![0.9, 0.1, 0.0], // Almost x direction (similar to entity1)
+                dimension: 3,
+                created_at_ms: 1234567890,
+                model_params: HashMap::new(),
+                modality: Modality::Text as i32,
+            }],
+            typed_metadata: None,
+            flexible_metadata: HashMap::new(),
+            provenance: None,
+            temporal: None,
+            relations: Vec::new(),
+        };
+
+        // Insert entities
+        store
+            .upsert_entity("test-collection-4", entity1.clone())
+            .await
+            .expect("Failed to upsert entity1");
+        store
+            .upsert_entity("test-collection-4", entity2.clone())
+            .await
+            .expect("Failed to upsert entity2");
+        store
+            .upsert_entity("test-collection-4", entity3.clone())
+            .await
+            .expect("Failed to upsert entity3");
+
+        // Search for entities similar to [1.0, 0.0, 0.0]
+        let query_vector = vec![1.0, 0.0, 0.0];
+        let results = store
+            .search_entities("test-collection-4", Some(query_vector), None, 2)
+            .await
+            .expect("Failed to search entities");
+
+        // Should return entity1 and entity3 (most similar to query)
+        assert_eq!(results.len(), 2);
+
+        // First result should be entity1 (exact match, similarity = 1.0)
+        assert_eq!(results[0].0.id, "entity-1");
+        assert!((results[0].1 - 1.0).abs() < 0.01); // similarity ≈ 1.0
+
+        // Second result should be entity3 (similar, but not exact)
+        assert_eq!(results[1].0.id, "entity-3");
+        assert!(results[1].1 > 0.9); // high similarity
+        assert!(results[1].1 < 1.0); // but less than entity1
+
+        println!("✓ Vector similarity search working correctly");
+        println!("  - entity-1 similarity: {}", results[0].1);
+        println!("  - entity-3 similarity: {}", results[1].1);
     }
 }
