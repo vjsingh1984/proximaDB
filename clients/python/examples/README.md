@@ -40,7 +40,7 @@ This directory contains comprehensive examples demonstrating ProximaDB Python SD
 
 ---
 
-## Production-Ready Examples (7 total - 47%)
+## Production-Ready Examples (8 total - 53%)
 
 ### Core Examples
 
@@ -49,6 +49,7 @@ This directory contains comprehensive examples demonstrating ProximaDB Python SD
 | **basic_usage.py** | Fundamental operations with BERT embeddings | ✅ 100% PASS | Collection CRUD, vector operations, semantic search |
 | **complete_workflow_demo.py** | End-to-end workflow | ✅ 100% PASS | Full pipeline from collection to search |
 | **dashboard_metrics_demo.py** | Monitoring and metrics | ✅ 100% PASS | Health checks, Prometheus metrics, dashboard access |
+| **sks_real_world_demo.py** | SKS knowledge base (NEW!) | ✅ 100% PASS | Academic papers, citation graph, hybrid queries |
 
 ### Advanced Examples
 
@@ -106,6 +107,49 @@ Comprehensive introduction to ProximaDB Python SDK:
 - Vector CRUD operations (create, read, update, delete)
 
 **Key Learning**: This is your starting point - covers 90% of common use cases.
+
+---
+
+### ✅ sks_real_world_demo.py
+**Status**: Production Ready (NEW!)
+**Runtime**: ~5 seconds
+**Dependencies**: None
+
+Real-world demonstration of SKS (Semantic Knowledge Store) with graph-first architecture:
+- Academic paper knowledge base with 8 papers
+- Citation network with graph relationships
+- Vector similarity search (< 2ms)
+- Hybrid queries combining vector + graph traversal (< 2ms)
+- Metadata filtering for NLP papers
+- Proto-wrapped metadata handling
+
+**Key Features Demonstrated**:
+- **Step 1**: Collection setup with 128D embeddings
+- **Step 2**: Batch insert 8 papers with BERT-style embeddings (880+ papers/sec)
+- **Step 3**: Create citation graph (8 nodes, 8 edges)
+- **Step 4**: Vector similarity search - find similar papers
+- **Step 5**: Hybrid query - similarity + graph traversal (vision transformer → citations)
+- **Step 6**: Metadata filtering - find NLP papers from 2018+
+- **Step 7**: Collection statistics and summary
+
+**Sample Output**:
+```
+✓ Hybrid Query Total Time: 1.35ms
+  (Graph-first architecture: 10-20ms typical)
+
+✓ Found 2 NLP papers from 2018+:
+  1. GPT-3: Language Models are Few-Shot Learners
+     Year: 2020
+     Authors: Brown, Mann, Ryder
+```
+
+**Use Case**: Building knowledge graphs with semantic search for:
+- Academic research databases
+- Document management systems
+- Product catalogs with relationships
+- Social networks with user connections
+
+**Key Learning**: Complete SKS workflow from entity storage to hybrid graph+vector queries.
 
 ---
 

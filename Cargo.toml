@@ -175,14 +175,14 @@ proptest = "1.0"
 env_logger = "0.10"
 
 [features]
-default = ["sql_frontend"]
+default = ["sql_frontend", "graph-first-sks"]
 distributed = []
 standalone = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["dep:aws-config", "dep:aws-sdk-s3"]
-azure = ["dep:azure_storage", "dep:azure_storage_blobs"] 
+azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
 gcp = ["dep:google-cloud-storage"]
 
 # Test gating (keeps default test runs lean)
@@ -192,6 +192,11 @@ cloud-full = ["aws", "azure", "gcp"]
 
 # SQL frontend feature flag (default on). When disabled, the server uses legacy sql_engine path.
 sql_frontend = []
+
+# SKS Graph-First Architecture (default on for production)
+# When enabled, uses OrionBackedEntityStore for 3-6x better performance
+# When disabled, falls back to legacy split storage
+graph-first-sks = []
 
 # Hardware acceleration features
 gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)

@@ -12,6 +12,7 @@ mod legacy;
 // New graph-first implementation
 pub mod graph_schema;
 pub mod orion_backend;
+pub mod migration;
 
 // Re-export legacy types for backward compatibility
 pub use legacy::{
