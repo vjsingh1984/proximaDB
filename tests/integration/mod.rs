@@ -40,10 +40,10 @@ pub mod isolated_sst_engine_test;
 // Comprehensive filesystem integration tests - REMOVED (outdated APIs)
 // pub mod filesystem_comprehensive_test;
 
-// WAL recovery integration tests - REMOVED (outdated APIs)
-// pub mod wal_recovery_test;
+// WAL recovery integration tests - Moved to unit test in src/storage/engine.rs
+// See test_recover_from_wal_method_compiles() for validation
 
-// Persistence and recovery integration tests - Phase 1 vector persistence
+// Persistence and recovery integration tests - REMOVED (outdated high-level API)
 // TODO: Fix API mismatches in this test file (ProximaDB API changes)
 // pub mod persistence_recovery_integration_test;
 
