@@ -11,6 +11,7 @@ mod legacy;
 
 // New graph-first implementation
 pub mod graph_schema;
+pub mod orion_backend;
 
 // Re-export legacy types for backward compatibility
 pub use legacy::{
@@ -20,3 +21,4 @@ pub use legacy::{
 
 // Re-export graph-first types
 pub use graph_schema::{EntityNodeMapper, RelationEdgeMapper};
+pub use orion_backend::OrionBackedEntityStore;
