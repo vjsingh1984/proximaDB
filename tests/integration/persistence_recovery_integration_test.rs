@@ -564,4 +564,174 @@ mod advanced_recovery_tests {
             }
         }
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_graph_durability_across_restart() {
+        // Test that graph nodes and edges persist across server restarts via WAL recovery
+        // This validates Phase 2 of the persistence implementation
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+
+        const GRAPH_ID: &str = "durability_test_graph";
+        const NUM_NODES: usize = 50;
+        const NUM_EDGES: usize = 75;
+
+        // Phase 1: Create graph and insert nodes/edges
+        {
+            debug!("Phase 1: Creating graph and inserting nodes/edges");
+            let db = ProximaDB::new(config.clone()).await.unwrap();
+
+            // Create graph collection
+            db.create_graph_collection(GRAPH_ID.to_string()).await.unwrap();
+            debug!("Phase 1: Graph collection '{}' created", GRAPH_ID);
+
+            // Insert nodes
+            for i in 0..NUM_NODES {
+                let node = proximadb::graph::types::Node {
+                    id: format!("node_{}", i),
+                    label: Some(format!("TestNode{}", i)),
+                    properties: {
+                        let mut props = std::collections::HashMap::new();
+                        props.insert("index".to_string(), serde_json::json!(i));
+                        props.insert("type".to_string(), serde_json::json!("test"));
+                        props
+                    },
+                };
+
+                db.create_node(GRAPH_ID, node).await.unwrap();
+            }
+            debug!("Phase 1: Inserted {} nodes", NUM_NODES);
+
+            // Insert edges (creating a connected graph)
+            for i in 0..NUM_EDGES {
+                let from_idx = i % NUM_NODES;
+                let to_idx = (i + 1) % NUM_NODES;
+
+                let edge = proximadb::graph::types::Edge {
+                    id: format!("edge_{}", i),
+                    from: format!("node_{}", from_idx),
+                    to: format!("node_{}", to_idx),
+                    label: Some("connects".to_string()),
+                    properties: {
+                        let mut props = std::collections::HashMap::new();
+                        props.insert("weight".to_string(), serde_json::json!(i as f64 / 10.0));
+                        props
+                    },
+                };
+
+                db.create_edge(GRAPH_ID, edge).await.unwrap();
+            }
+            debug!("Phase 1: Inserted {} edges", NUM_EDGES);
+
+            // Give WAL time to flush
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Explicitly drop DB to simulate shutdown
+            drop(db);
+            debug!("Phase 1: Database shutdown (dropped)");
+        }
+
+        // Phase 2: Restart server and verify graph was recovered
+        {
+            debug!("Phase 2: Restarting server to test graph WAL recovery");
+
+            let result = timeout(Duration::from_secs(15), async {
+                let db = ProximaDB::new(config.clone()).await?;
+                debug!("Phase 2: Server restarted successfully");
+
+                // Verify graph collection exists
+                let graphs = db.list_graph_collections().await?;
+                let graph_found = graphs.iter().any(|g| g.graph_id == GRAPH_ID);
+                assert!(graph_found, "Graph collection '{}' should exist after restart", GRAPH_ID);
+                debug!("Phase 2: Graph collection found after restart");
+
+                // Verify nodes were recovered
+                let mut recovered_nodes = 0;
+                for i in 0..NUM_NODES {
+                    let node_id = format!("node_{}", i);
+                    match db.get_node(GRAPH_ID, &node_id).await {
+                        Ok(Some(node)) => {
+                            assert_eq!(node.id, node_id, "Node ID should match");
+                            assert_eq!(
+                                node.label,
+                                Some(format!("TestNode{}", i)),
+                                "Node label should match"
+                            );
+                            recovered_nodes += 1;
+                        }
+                        Ok(None) => {
+                            panic!("Node {} should exist after WAL recovery", node_id);
+                        }
+                        Err(e) => {
+                            panic!("Failed to get node {}: {:?}", node_id, e);
+                        }
+                    }
+                }
+                debug!("Phase 2: Recovered {} nodes", recovered_nodes);
+                assert_eq!(recovered_nodes, NUM_NODES, "All nodes should be recovered");
+
+                // Verify edges were recovered
+                let mut recovered_edges = 0;
+                for i in 0..NUM_EDGES {
+                    let edge_id = format!("edge_{}", i);
+                    match db.get_edge(GRAPH_ID, &edge_id).await {
+                        Ok(Some(edge)) => {
+                            assert_eq!(edge.id, edge_id, "Edge ID should match");
+                            assert_eq!(edge.label, Some("connects".to_string()), "Edge label should match");
+                            recovered_edges += 1;
+                        }
+                        Ok(None) => {
+                            panic!("Edge {} should exist after WAL recovery", edge_id);
+                        }
+                        Err(e) => {
+                            panic!("Failed to get edge {}: {:?}", edge_id, e);
+                        }
+                    }
+                }
+                debug!("Phase 2: Recovered {} edges", recovered_edges);
+                assert_eq!(recovered_edges, NUM_EDGES, "All edges should be recovered");
+
+                // Verify graph statistics
+                match db.get_graph_stats(GRAPH_ID).await {
+                    Ok(stats) => {
+                        debug!("Phase 2: Graph stats: {:?}", stats);
+                        assert!(
+                            stats.node_count >= NUM_NODES as u64,
+                            "Node count should be at least {}, got {}",
+                            NUM_NODES,
+                            stats.node_count
+                        );
+                        assert!(
+                            stats.edge_count >= NUM_EDGES as u64,
+                            "Edge count should be at least {}, got {}",
+                            NUM_EDGES,
+                            stats.edge_count
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to get graph stats (non-critical): {:?}", e);
+                    }
+                }
+
+                info!(
+                    "✅ Graph durability test PASSED: {} nodes and {} edges persisted and recovered across restart",
+                    recovered_nodes, recovered_edges
+                );
+
+                Ok::<_, anyhow::Error>(())
+            }).await;
+
+            match result {
+                Ok(Ok(_)) => {
+                    info!("✅ Graph durability across restart verified successfully");
+                }
+                Ok(Err(e)) => {
+                    panic!("❌ Graph durability test failed: {:?}", e);
+                }
+                Err(_) => {
+                    panic!("❌ Graph durability test timed out - recovery took too long!");
+                }
+            }
+        }
+    }
 }

@@ -43,8 +43,9 @@ pub mod isolated_sst_engine_test;
 // WAL recovery integration tests - Moved to unit test in src/storage/engine.rs
 // See test_recover_from_wal_method_compiles() for validation
 
-// Persistence and recovery integration tests - REMOVED (outdated high-level API)
-// TODO: Fix API mismatches in this test file (ProximaDB API changes)
+// Persistence and recovery integration tests - DEFERRED (requires ProximaDB API updates)
+// TODO: Update tests to use current ProximaDB high-level API (graph methods moved to services)
+// Graph persistence test draft added in persistence_recovery_integration_test.rs:568-736
 // pub mod persistence_recovery_integration_test;
 
 // gRPC integration tests
