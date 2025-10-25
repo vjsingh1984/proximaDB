@@ -248,16 +248,16 @@ graph TD
 - Multi-level quantization (Binary, INT8, PQ)
 - Single binary deployment
 
-**Known Limitations (v0.1.4)**:
-- **Entity store durability**: Data does NOT persist across server restarts (WAL infrastructure exists but disabled by default)
-- **Graph persistence**: Collection metadata persists, but graph nodes/edges are volatile (in-memory only)
-- Workaround: Re-insert data on server startup until persistence is enabled in v0.2.0+
+**Data Persistence (v0.1.4+)**:
+- **Automatic WAL-based persistence**: All data (vectors, graphs, entities) automatically persists across server restarts
+- **6-stage recovery process**: Collections → Vectors → Graphs → Assignments → Buffers → Services
+- **Zero configuration required**: Persistence enabled by default with graceful failure handling
+- **Unified architecture**: Graph-first design means entity store and SKS data persist automatically via graph WAL
 
 **In Progress**:
 - Multi-node clustering
 - JavaScript/TypeScript SDK
 - Monitoring dashboard
-- Persistent entity store and graph (v0.2.0)
 
 **Roadmap 2025**:
 - GPU acceleration (feature-gated backends)
