@@ -438,4 +438,133 @@ mod advanced_recovery_tests {
             }
         }
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_vector_durability_across_restart() {
+        // Test that vectors persist across server restarts via WAL recovery
+        // This validates Phase 1 of the persistence implementation
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+
+        const COLLECTION_NAME: &str = "durability_test_collection";
+        const NUM_VECTORS: usize = 100;
+        const DIMENSION: usize = 128;
+
+        // Phase 1: Create collection and insert vectors
+        {
+            debug!("Phase 1: Creating collection and inserting vectors");
+            let db = ProximaDB::new(config.clone()).await.unwrap();
+
+            // Create collection
+            db.create_collection(
+                COLLECTION_NAME.to_string(),
+                DIMENSION,
+                proximadb::compute::distance_computation::DistanceMetric::Cosine,
+                None,
+                None
+            ).await.unwrap();
+
+            // Insert vectors
+            let mut vectors = Vec::new();
+            for i in 0..NUM_VECTORS {
+                let vector: Vec<f32> = (0..DIMENSION)
+                    .map(|j| ((i * DIMENSION + j) as f32) / 1000.0)
+                    .collect();
+
+                let record = proximadb::proto::proximadb_v1::VectorRecord {
+                    id: format!("vec_{}", i),
+                    vector,
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(chrono::Utc::now().timestamp_millis() as u64),
+                    updated_at: Some(chrono::Utc::now().timestamp_millis() as u64),
+                    expires_at: None,
+                    version: Some(1),
+                    source: None,
+                };
+                vectors.push(record);
+            }
+
+            db.insert_vectors(COLLECTION_NAME, vectors).await.unwrap();
+
+            debug!("Phase 1: Inserted {} vectors successfully", NUM_VECTORS);
+
+            // Give WAL time to flush
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Explicitly drop DB to simulate shutdown
+            drop(db);
+            debug!("Phase 1: Database shutdown (dropped)");
+        }
+
+        // Phase 2: Restart server and verify vectors were recovered
+        {
+            debug!("Phase 2: Restarting server to test WAL recovery");
+
+            let result = timeout(Duration::from_secs(15), async {
+                let db = ProximaDB::new(config.clone()).await?;
+
+                debug!("Phase 2: Server restarted successfully");
+
+                // Verify collection exists
+                let collections = db.list_collections().await?;
+                let collection_found = collections.iter().any(|c| c.id == COLLECTION_NAME);
+                assert!(collection_found, "Collection '{}' should exist after restart", COLLECTION_NAME);
+
+                debug!("Phase 2: Collection found after restart");
+
+                // Verify vectors were recovered by searching
+                // Create a query vector (same as vec_0)
+                let query_vector: Vec<f32> = (0..DIMENSION)
+                    .map(|j| (j as f32) / 1000.0)
+                    .collect();
+
+                let search_params = proximadb::core::search::SearchParams {
+                    k: Some(10),
+                    ..Default::default()
+                };
+
+                let results = db.search_vectors(
+                    COLLECTION_NAME,
+                    query_vector,
+                    search_params
+                ).await?;
+
+                debug!("Phase 2: Search returned {} results", results.len());
+
+                // We should get results if vectors were recovered
+                assert!(!results.is_empty(),
+                    "Search should return results after WAL recovery. Got {} results",
+                    results.len());
+
+                // Verify we can find specific vectors
+                let vector_ids: Vec<String> = results.iter()
+                    .map(|r| r.id.clone())
+                    .collect();
+
+                debug!("Phase 2: Recovered vector IDs: {:?}", vector_ids);
+
+                // Should find vec_0 (exact match to query)
+                assert!(vector_ids.contains(&"vec_0".to_string()),
+                    "Should find vec_0 in search results. Found: {:?}",
+                    vector_ids);
+
+                info!("✅ Vector durability test PASSED: {} vectors persisted and recovered across restart",
+                    results.len());
+
+                Ok::<_, anyhow::Error>(())
+            }).await;
+
+            match result {
+                Ok(Ok(_)) => {
+                    info!("✅ Vector durability across restart verified successfully");
+                }
+                Ok(Err(e)) => {
+                    panic!("❌ Vector durability test failed: {:?}", e);
+                }
+                Err(_) => {
+                    panic!("❌ Vector durability test timed out - recovery took too long!");
+                }
+            }
+        }
+    }
 }
