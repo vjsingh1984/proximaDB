@@ -43,6 +43,10 @@ pub mod isolated_sst_engine_test;
 // WAL recovery integration tests - REMOVED (outdated APIs)
 // pub mod wal_recovery_test;
 
+// Persistence and recovery integration tests - Phase 1 vector persistence
+// TODO: Fix API mismatches in this test file (ProximaDB API changes)
+// pub mod persistence_recovery_integration_test;
+
 // gRPC integration tests
 pub mod grpc;
 

@@ -170,18 +170,16 @@ async fn test_recovery_after_crash_simulation() {
         
         // Insert some vectors
         let vectors = vec![
-            proximadb::core::VectorRecord {
-                id: Some("vec1".to_string())),
+            proximadb::proto::proximadb_v1::VectorRecord {
+                id: "vec1".to_string(),
                 vector: vec![0.1; 128],
-                metadata: vec![],
-                ..Default::default(),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
-        }
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(chrono::Utc::now().timestamp_millis() as u64),
+                updated_at: Some(chrono::Utc::now().timestamp_millis() as u64),
+                expires_at: None,
+                version: Some(1),
+                source: None,
+            }
         ];
         
         db.insert_vectors("test_collection", vectors).await.unwrap();
@@ -370,7 +368,6 @@ fn create_test_config(temp_dir: &TempDir) -> Config {
     }
 }
 
-#[cfg(test)]
 mod advanced_recovery_tests {
     use super::*;
     
