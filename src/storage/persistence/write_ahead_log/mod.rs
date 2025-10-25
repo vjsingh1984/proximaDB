@@ -1245,6 +1245,20 @@ impl WriteAheadLogManager {
         &self.config
     }
 
+    /// Get recovery manager for WAL recovery operations
+    /// Returns None if recovery manager is not initialized
+    pub fn recovery_manager(&self) -> Option<Arc<RecoveryManager>> {
+        // Use try_read to avoid blocking - recovery manager is set once at startup
+        match self.recovery_manager_cache.try_read() {
+            Ok(cache) => cache.as_ref().map(|rm| Arc::new(rm.clone())),
+            Err(_) => {
+                // If we can't acquire read lock, try blocking read
+                let cache = self.recovery_manager_cache.blocking_read();
+                cache.as_ref().map(|rm| Arc::new(rm.clone()))
+            }
+        }
+    }
+
     /// Insert single vector record (converted to batch of 1 via WALVectorBatch)
     pub async fn insert(
         &self,

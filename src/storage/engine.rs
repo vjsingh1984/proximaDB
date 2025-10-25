@@ -275,6 +275,75 @@ impl StorageEngine {
         Ok(())
     }
 
+    /// Recover all vectors from WAL files for all collections
+    /// This method should be called during server startup after collections are recovered from metadata
+    pub async fn recover_from_wal(&self) -> crate::storage::Result<()> {
+        info!("🔄 STORAGE_ENGINE: Starting WAL recovery for all collections...");
+
+        // Get recovery manager from WAL manager
+        let recovery_manager = match self.write_ahead_log_manager.recovery_manager() {
+            Some(manager) => manager,
+            None => {
+                warn!("⚠️  STORAGE_ENGINE: No recovery manager available, skipping WAL recovery");
+                return Ok(());
+            }
+        };
+
+        // Get all collections from metadata provider
+        let metadata_provider = self.metadata_provider.read().await;
+        let provider = match metadata_provider.as_ref() {
+            Some(p) => p,
+            None => {
+                warn!("⚠️  STORAGE_ENGINE: No metadata provider set, cannot recover collections");
+                return Ok(());
+            }
+        };
+
+        let collections = provider.list_collections().await.map_err(|e| {
+            crate::storage::StorageError::WalError(format!(
+                "Failed to list collections during WAL recovery: {}",
+                e
+            ))
+        })?;
+
+        info!(
+            "📋 STORAGE_ENGINE: Found {} collections to recover",
+            collections.len()
+        );
+
+        // Recover each collection
+        let mut total_vectors_recovered = 0u64;
+        for collection in collections {
+            info!(
+                "🔍 STORAGE_ENGINE: Recovering collection: {}",
+                collection.id
+            );
+
+            match recovery_manager.recover_collection(&collection.id).await {
+                Ok(stats) => {
+                    total_vectors_recovered += stats.total_vectors_recovered;
+                    info!(
+                        "✅ STORAGE_ENGINE: Collection {} recovered: {} vectors from {} files",
+                        collection.id, stats.total_vectors_recovered, stats.total_files_recovered
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {}",
+                        collection.id, e
+                    );
+                    // Continue with other collections even if one fails
+                }
+            }
+        }
+
+        info!(
+            "🎉 STORAGE_ENGINE: WAL recovery complete: {} total vectors recovered",
+            total_vectors_recovered
+        );
+        Ok(())
+    }
+
     /// Get WAL manager for sharing between services
     pub fn write_ahead_log_manager(&self) -> Arc<WriteAheadLogManager> {
         self.write_ahead_log_manager.clone()
@@ -726,81 +795,6 @@ impl StorageEngine {
         Ok(())
     }
 
-    async fn recover_from_wal(&self) -> crate::storage::Result<()> {
-        tracing::info!("🔄 STORAGE_ENGINE: Starting WAL recovery");
-
-        // First, get all existing collections from the metadata provider
-        tracing::info!("📋 STORAGE_ENGINE: Getting collection list from metadata provider");
-        let existing_collections = if let Some(provider) = self.get_metadata_provider().await {
-            tracing::info!(
-                "📋 STORAGE_ENGINE: Metadata provider available, calling list_collections()"
-            );
-            match provider.list_collections().await {
-                Ok(collections) => {
-                    tracing::info!(
-                        "📋 STORAGE_ENGINE: Found {} existing collections from metadata provider",
-                        collections.len()
-                    );
-                    tracing::debug!(
-                        "📋 STORAGE_ENGINE: Existing collections: {:?}",
-                        collections.iter().map(|c| &c.id).collect::<Vec<_>>()
-                    );
-                    collections
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "⚠️ STORAGE_ENGINE: Failed to get collections from metadata provider: {}",
-                        e
-                    );
-                    Vec::new()
-                }
-            }
-        } else {
-            tracing::info!("📋 STORAGE_ENGINE: No metadata provider available yet");
-            Vec::new()
-        };
-
-        // STEP 1: Register storage engines for recovery BEFORE calling recover()
-        tracing::info!("🔧 STORAGE_ENGINE: Registering storage engines for recovery");
-        if let Err(e) = self.register_collections_for_recovery().await {
-            tracing::warn!(
-                "⚠️ STORAGE_ENGINE: Failed to register collections for recovery: {}",
-                e
-            );
-            // Continue even if registration fails - graceful skip will handle it
-        }
-
-        // STEP 2: Now call recover() with engines registered
-        tracing::info!("📊 STORAGE_ENGINE: About to call write_ahead_log_manager.recover()");
-        match self.write_ahead_log_manager.recover().await {
-            Ok(recovered_entries) => {
-                tracing::info!(
-                    "✅ STORAGE_ENGINE: WAL recovery completed successfully, recovered {} entries",
-                    recovered_entries
-                );
-
-                // Add debug info about which collections had WAL entries vs those that didn't
-                if existing_collections.len() > 0 && recovered_entries == 0 {
-                    tracing::warn!(
-                        "🔍 STORAGE_ENGINE: Found {} existing collections but recovered 0 WAL entries. This might indicate:",
-                        existing_collections.len()
-                    );
-                    tracing::warn!(
-                        "   - Collections were created but no vectors were inserted yet"
-                    );
-                    tracing::warn!("   - WAL files were cleaned up or lost");
-                    tracing::warn!("   - WAL recovery is not finding the correct WAL files");
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                tracing::warn!("⚠️ STORAGE_ENGINE: WAL recovery failed: {}", e);
-                // Continue startup even if recovery fails
-                Ok(())
-            }
-        }
-    }
 
     /// Extract unique collection IDs and their metadata from recovered WAL entries
     /// This method is called by SharedServices during initialization to restore collection metadata
