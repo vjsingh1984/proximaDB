@@ -17,6 +17,9 @@ pub mod collection_builder;
 // Vector generation utilities (random, sequential, clustered, with metadata)
 pub mod vector_generator;
 
+// SKS test fixtures for graph-first architecture
+pub mod sks_fixtures;
+
 // Global test counter to ensure unique collection IDs
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 static INIT: Once = Once::new();

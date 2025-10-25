@@ -1,0 +1,389 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+
+//! SKS Graph-First Integration Tests
+//!
+//! This test suite validates the SKS graph-first architecture implementation
+//! following TDD principles (RED → GREEN → REFACTOR).
+//!
+//! Test Coverage:
+//! - Entity CRUD operations via Orion backend
+//! - Relation management (add, query, traverse)
+//! - Hybrid queries (vector similarity + graph traversal)
+//! - Schema mapping (Entity ↔ Node, Relation ↔ Edge)
+//! - Migration from legacy to graph-first
+
+#[path = "common/mod.rs"]
+mod common;
+
+use common::sks_fixtures::TestKnowledgeGraph;
+// use proximadb::storage::entity_store::orion_backend::OrionBackedEntityStore;
+// use proximadb::storage::entity_store::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
+
+/// Test 1: Entity Insertion (RED phase - this will fail until implemented)
+#[test]
+#[ignore = "RED phase: OrionBackedEntityStore not yet implemented"]
+fn test_entity_insertion_orion() {
+    // Setup
+    let graph = TestKnowledgeGraph::small();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Test: Insert all entities
+    // for entity in &graph.entities {
+    //     store.upsert_entity(entity.clone())
+    //         .expect("Failed to insert entity");
+    // }
+
+    // Verify: All entities should be retrievable
+    // for entity in &graph.entities {
+    //     let retrieved = store.get_entity(&entity.id)
+    //         .expect("Failed to retrieve entity")
+    //         .expect("Entity not found");
+    //     assert_eq!(retrieved.id, entity.id);
+    //     assert_eq!(retrieved.embeddings.len(), entity.embeddings.len());
+    // }
+
+    panic!("RED phase: This test should fail until OrionBackedEntityStore is implemented");
+}
+
+/// Test 2: Entity Retrieval (RED phase)
+#[test]
+#[ignore = "RED phase: OrionBackedEntityStore not yet implemented"]
+fn test_entity_retrieval_orion() {
+    // let graph = TestKnowledgeGraph::small();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Insert entity
+    // let entity = &graph.entities[0];
+    // store.upsert_entity(entity.clone()).expect("Failed to insert");
+
+    // Retrieve entity
+    // let retrieved = store.get_entity(&entity.id)
+    //     .expect("Failed to retrieve")
+    //     .expect("Entity not found");
+
+    // Verify all fields
+    // assert_eq!(retrieved.id, entity.id);
+    // assert_eq!(retrieved.collection_id, entity.collection_id);
+    // assert_eq!(retrieved.embeddings[0].vector, entity.embeddings[0].vector);
+    // assert_eq!(retrieved.typed_metadata, entity.typed_metadata);
+
+    panic!("RED phase: This test should fail until OrionBackedEntityStore is implemented");
+}
+
+/// Test 3: Entity Deletion (RED phase)
+#[test]
+#[ignore = "RED phase: OrionBackedEntityStore not yet implemented"]
+fn test_entity_deletion_orion() {
+    // let graph = TestKnowledgeGraph::small();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Insert and verify entity exists
+    // let entity = &graph.entities[0];
+    // store.upsert_entity(entity.clone()).expect("Failed to insert");
+    // assert!(store.get_entity(&entity.id).unwrap().is_some());
+
+    // Delete entity
+    // store.delete_entity(&entity.id).expect("Failed to delete");
+
+    // Verify entity is gone
+    // assert!(store.get_entity(&entity.id).unwrap().is_none());
+
+    panic!("RED phase: This test should fail until OrionBackedEntityStore is implemented");
+}
+
+/// Test 4: Relation Management (RED phase)
+#[test]
+#[ignore = "RED phase: OrionBackedEntityStore not yet implemented"]
+fn test_relation_management_orion() {
+    // let graph = TestKnowledgeGraph::small();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Insert entities first
+    // for entity in graph.entities.iter().take(10) {
+    //     store.upsert_entity(entity.clone()).expect("Failed to insert entity");
+    // }
+
+    // Insert relations
+    // for relation in graph.relations.iter().take(20) {
+    //     store.add_relation(relation.clone()).expect("Failed to add relation");
+    // }
+
+    // Query relations for first entity
+    // let relations = store.get_relations(&graph.entities[0].id)
+    //     .expect("Failed to query relations");
+
+    // Verify relations exist
+    // assert!(!relations.is_empty());
+
+    panic!("RED phase: This test should fail until relation management is implemented");
+}
+
+/// Test 5: Graph Traversal (RED phase)
+#[test]
+#[ignore = "RED phase: Graph traversal not yet implemented"]
+fn test_graph_traversal_orion() {
+    // let graph = TestKnowledgeGraph::research_papers();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Insert papers and citations
+    // for entity in &graph.entities {
+    //     store.upsert_entity(entity.clone()).expect("Failed to insert");
+    // }
+    // for relation in &graph.relations {
+    //     store.add_relation(relation.clone()).expect("Failed to add relation");
+    // }
+
+    // Traverse: Find all papers cited by paper-100 (2-hop)
+    // let start_id = "paper-100";
+    // let traversal_result = store.traverse_graph(
+    //     start_id,
+    //     2, // max_depth
+    //     Some("cites"), // relation_type filter
+    // ).expect("Failed to traverse graph");
+
+    // Verify traversal found citations
+    // assert!(!traversal_result.is_empty());
+
+    panic!("RED phase: This test should fail until graph traversal is implemented");
+}
+
+/// Test 6: Hybrid Query (Vector + Graph) (RED phase)
+#[test]
+#[ignore = "RED phase: Hybrid query engine not yet implemented"]
+fn test_hybrid_query_vector_plus_graph() {
+    // let graph = TestKnowledgeGraph::research_papers();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Insert data
+    // for entity in &graph.entities {
+    //     store.upsert_entity(entity.clone()).expect("Failed to insert");
+    // }
+    // for relation in &graph.relations {
+    //     store.add_relation(relation.clone()).expect("Failed to add relation");
+    // }
+
+    // Hybrid query:
+    // 1. Vector search for papers similar to query embedding
+    // 2. Graph traversal to find related papers via citations
+    // let query_embedding = &graph.embeddings[0];
+    // let hybrid_results = store.hybrid_search(
+    //     query_embedding,
+    //     10, // top_k for vector search
+    //     2,  // graph traversal depth
+    //     Some("cites"), // relation filter
+    // ).expect("Failed to execute hybrid query");
+
+    // Verify results combine vector similarity and graph structure
+    // assert!(!hybrid_results.is_empty());
+
+    panic!("RED phase: This test should fail until hybrid query is implemented");
+}
+
+/// Test 7: Schema Mapping (Entity → Node) (RED phase)
+#[test]
+#[ignore = "RED phase: EntityNodeMapper not yet implemented"]
+fn test_entity_to_node_mapping() {
+    // let graph = TestKnowledgeGraph::research_papers();
+    // let entity = &graph.entities[0];
+
+    // Convert Entity to Orion Node
+    // let mapper = EntityNodeMapper::new();
+    // let node = mapper.entity_to_node(entity)
+    //     .expect("Failed to map entity to node");
+
+    // Verify mapping preserves all data
+    // assert_eq!(node.id, entity.id);
+    // assert!(node.properties.contains_key("embeddings"));
+    // assert!(node.properties.contains_key("typed_metadata"));
+    // assert!(node.properties.contains_key("provenance"));
+
+    // Convert back: Node → Entity
+    // let entity_restored = mapper.node_to_entity(&node)
+    //     .expect("Failed to map node to entity");
+
+    // Verify round-trip correctness
+    // assert_eq!(entity_restored.id, entity.id);
+    // assert_eq!(entity_restored.embeddings[0].vector, entity.embeddings[0].vector);
+
+    panic!("RED phase: This test should fail until EntityNodeMapper is implemented");
+}
+
+/// Test 8: Schema Mapping (Relation → Edge) (RED phase)
+#[test]
+#[ignore = "RED phase: RelationEdgeMapper not yet implemented"]
+fn test_relation_to_edge_mapping() {
+    // let graph = TestKnowledgeGraph::research_papers();
+    // let relation = &graph.relations[0];
+
+    // Convert Relation to Orion Edge
+    // let mapper = RelationEdgeMapper::new();
+    // let edge = mapper.relation_to_edge(relation)
+    //     .expect("Failed to map relation to edge");
+
+    // Verify mapping
+    // assert_eq!(edge.source_id, relation.source_entity_id);
+    // assert_eq!(edge.target_id, relation.target_entity_id);
+    // assert_eq!(edge.edge_type, relation.relation_type);
+    // assert_eq!(edge.weight, relation.weight);
+
+    // Convert back: Edge → Relation
+    // let relation_restored = mapper.edge_to_relation(&edge)
+    //     .expect("Failed to map edge to relation");
+
+    // Verify round-trip correctness
+    // assert_eq!(relation_restored.source_entity_id, relation.source_entity_id);
+    // assert_eq!(relation_restored.relation_type, relation.relation_type);
+
+    panic!("RED phase: This test should fail until RelationEdgeMapper is implemented");
+}
+
+/// Test 9: Batch Entity Insertion (RED phase)
+#[test]
+#[ignore = "RED phase: Batch operations not yet implemented"]
+fn test_batch_entity_insertion() {
+    // let graph = TestKnowledgeGraph::medium();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Batch insert 1000 entities
+    // let start = std::time::Instant::now();
+    // store.batch_upsert_entities(&graph.entities)
+    //     .expect("Failed to batch insert");
+    // let duration = start.elapsed();
+
+    // Verify all entities inserted
+    // for entity in &graph.entities {
+    //     assert!(store.get_entity(&entity.id).unwrap().is_some());
+    // }
+
+    // Benchmark: Should be faster than individual inserts
+    // println!("Batch insert of {} entities took {:?}", graph.entities.len(), duration);
+
+    panic!("RED phase: This test should fail until batch operations are implemented");
+}
+
+/// Test 10: Metadata Filtering During Traversal (RED phase)
+#[test]
+#[ignore = "RED phase: Metadata filtering not yet implemented"]
+fn test_metadata_filtering_during_traversal() {
+    // let graph = TestKnowledgeGraph::ecommerce();
+    // let store = OrionBackedEntityStore::new().expect("Failed to create store");
+
+    // Insert products
+    // for entity in &graph.entities {
+    //     store.upsert_entity(entity.clone()).expect("Failed to insert");
+    // }
+    // for relation in &graph.relations {
+    //     store.add_relation(relation.clone()).expect("Failed to add relation");
+    // }
+
+    // Hybrid query with metadata filter:
+    // Find products related to product-0, but only in "Electronics" category
+    // let results = store.traverse_graph_filtered(
+    //     "product-0",
+    //     2, // max_depth
+    //     Some("related_to"), // relation filter
+    //     Some(|entity| {
+    //         // Metadata filter: category == "Electronics"
+    //         entity.typed_metadata.as_ref()
+    //             .and_then(|m| m.fields.get("category"))
+    //             .and_then(|f| f.value.as_ref())
+    //             .map(|v| {
+    //                 if let typed_field::Value::StringValue(s) = v {
+    //                     s == "Electronics"
+    //                 } else {
+    //                     false
+    //                 }
+    //             })
+    //             .unwrap_or(false)
+    //     })
+    // ).expect("Failed to execute filtered traversal");
+
+    // Verify all results are in Electronics category
+    // for entity in results {
+    //     let category = entity.typed_metadata.as_ref()
+    //         .unwrap()
+    //         .fields.get("category")
+    //         .unwrap()
+    //         .value.as_ref()
+    //         .unwrap();
+    //     if let typed_field::Value::StringValue(s) = category {
+    //         assert_eq!(s, "Electronics");
+    //     }
+    // }
+
+    panic!("RED phase: This test should fail until metadata filtering is implemented");
+}
+
+/// Test 11: Performance Comparison (Legacy vs Graph-First)
+#[test]
+#[ignore = "RED phase: Requires both implementations to compare"]
+fn test_performance_comparison_legacy_vs_graph_first() {
+    // let graph = TestKnowledgeGraph::medium();
+
+    // Benchmark legacy approach
+    // let legacy_start = std::time::Instant::now();
+    // // Simulate legacy: insert into separate stores
+    // let legacy_duration = legacy_start.elapsed();
+
+    // Benchmark graph-first approach
+    // let graph_first_start = std::time::Instant::now();
+    // // Use OrionBackedEntityStore
+    // let graph_first_duration = graph_first_start.elapsed();
+
+    // Verify graph-first is faster (target: 10-20x improvement)
+    // println!("Legacy: {:?}, Graph-first: {:?}", legacy_duration, graph_first_duration);
+    // assert!(graph_first_duration < legacy_duration);
+
+    panic!("RED phase: This test should fail until both implementations exist");
+}
+
+/// Test 12: Memory Overhead Comparison
+#[test]
+#[ignore = "RED phase: Requires memory profiling"]
+fn test_memory_overhead_comparison() {
+    // let graph = TestKnowledgeGraph::medium();
+
+    // Measure legacy memory overhead
+    // let legacy_memory = measure_memory_usage(|| {
+    //     // Simulate legacy: vectors + relations HashMap + KV metadata
+    // });
+
+    // Measure graph-first memory overhead
+    // let graph_first_memory = measure_memory_usage(|| {
+    //     // Use OrionBackedEntityStore with CSR
+    // });
+
+    // Verify graph-first uses less memory (target: 50% reduction)
+    // println!("Legacy: {} bytes, Graph-first: {} bytes", legacy_memory, graph_first_memory);
+    // assert!(graph_first_memory < legacy_memory);
+
+    panic!("RED phase: This test should fail until memory profiling is implemented");
+}
+
+/// Helper: Verify test fixtures are valid
+#[test]
+fn test_fixtures_validation() {
+    // Small graph
+    let small = TestKnowledgeGraph::small();
+    assert_eq!(small.entities.len(), 100);
+    assert!(small.relations.len() > 0);
+    assert_eq!(small.embeddings.len(), 100);
+
+    // Medium graph
+    let medium = TestKnowledgeGraph::medium();
+    assert_eq!(medium.entities.len(), 1000);
+    assert!(medium.relations.len() > 0);
+
+    // Research papers
+    let papers = TestKnowledgeGraph::research_papers();
+    assert_eq!(papers.entities.len(), 500);
+    for rel in &papers.relations {
+        assert_eq!(rel.relation_type, "cites");
+    }
+
+    // E-commerce
+    let ecommerce = TestKnowledgeGraph::ecommerce();
+    assert_eq!(ecommerce.entities.len(), 1000);
+    assert!(ecommerce.entities[0].typed_metadata.is_some());
+}
