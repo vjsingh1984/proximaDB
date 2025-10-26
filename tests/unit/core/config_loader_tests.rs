@@ -92,7 +92,7 @@ block_size_kb = 2048
     fn test_merge_configs() -> Result<()> {
         let mut base_config = Config::default();
         base_config.server.port = 5678;
-        base_config.storage.cache_size_mb, 512;
+        base_config.storage.cache_size_mb = 512;
 
         let override_config = r#"
 [server]
