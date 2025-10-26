@@ -53,6 +53,20 @@ metadata_url = "file:///custom/metadata"
 cache_size_mb = 512
 mmap_enabled = true
 
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+[storage.wal_config]
+# WAL defaults are fine, just need the section
+size_mb = 64
+
+[storage.compaction_config]
+# Compaction defaults
+
+[storage.filesystem_config]
+# Filesystem optimization defaults
+
 [storage.sst_config]
 level_count = 5
 compaction_threshold = 3
