@@ -422,8 +422,9 @@ impl PulsarGraphEngine {
     }
 }
 
+#[async_trait::async_trait]
 impl GraphEngine for PulsarGraphEngine {
-    fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+    async fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
         let _node_id = node.id.clone();
 
         // For now, use first available shard to avoid runtime nesting issues
@@ -435,7 +436,7 @@ impl GraphEngine for PulsarGraphEngine {
             .ok_or_else(|| ProximaDBError::Internal("No shards available".to_string()))?;
 
         // Insert into primary shard
-        let result = primary_shard.insert_node(node.clone())?;
+        let result = primary_shard.insert_node(node.clone()).await?;
 
         // Replicate to other shards asynchronously
         tokio::spawn({
@@ -452,14 +453,11 @@ impl GraphEngine for PulsarGraphEngine {
             }
         });
 
-        // Update stats
-        tokio::spawn({
-            let stats = Arc::clone(&self.stats);
-            async move {
-                let mut stats = stats.write().await;
-                stats.total_nodes += 1;
-            }
-        });
+        // Update stats synchronously (await for test correctness)
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_nodes += 1;
+        }
 
         Ok(result)
     }
@@ -473,38 +471,34 @@ impl GraphEngine for PulsarGraphEngine {
         }
     }
 
-    fn update_node(&self, node: Node) -> Result<Arc<Node>> {
-        let node_id = node.id.clone();
-
-        self.execute_with_consistency_sync(&node_id, move |shard| shard.update_node(node.clone()))
+    async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
+        // TODO: Add WAL support for update_node
+        // Get primary shard and update directly (avoiding sync closure issues)
+        let primary_shard = self.get_primary_shard(&node.id).await?;
+        primary_shard.update_node(node).await
     }
 
-    fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        let id_cloned = id.clone();
-        let result = self.execute_with_consistency_sync(id, move |shard| {
-            GraphEngine::delete_node(shard, &id_cloned)
-        })?;
+    async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+        // TODO: Add WAL support for delete_node
+        // Get primary shard and delete directly
+        let primary_shard = self.get_primary_shard(id).await?;
+        let result = GraphEngine::delete_node(&*primary_shard, id).await?;
 
-        // Update stats
+        // Update stats synchronously (await for test correctness)
         if result.is_some() {
-            tokio::spawn({
-                let stats = Arc::clone(&self.stats);
-                async move {
-                    let mut stats = stats.write().await;
-                    stats.total_nodes = stats.total_nodes.saturating_sub(1);
-                }
-            });
+            let mut stats = self.stats.write().await;
+            stats.total_nodes = stats.total_nodes.saturating_sub(1);
         }
 
         Ok(result)
     }
 
-    fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+    async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         // For edges, we need to consider both source and target nodes
         // For simplicity, use source node's shard as primary
-        let primary_shard = self.get_primary_shard_sync(&edge.from_node_id)?;
+        let primary_shard = self.get_primary_shard(&edge.from_node_id).await?;
 
-        let result = primary_shard.insert_edge(edge.clone())?;
+        let result = primary_shard.insert_edge(edge.clone()).await?;
 
         // Replicate edge insertion
         tokio::spawn({
@@ -521,14 +515,11 @@ impl GraphEngine for PulsarGraphEngine {
             }
         });
 
-        // Update stats
-        tokio::spawn({
-            let stats = Arc::clone(&self.stats);
-            async move {
-                let mut stats = stats.write().await;
-                stats.total_edges += 1;
-            }
-        });
+        // Update stats synchronously (await for test correctness)
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_edges += 1;
+        }
 
         Ok(result)
     }
@@ -546,17 +537,19 @@ impl GraphEngine for PulsarGraphEngine {
         Ok(None)
     }
 
-    fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        let primary_shard = self.get_primary_shard_sync(&edge.from_node_id)?;
+    async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        // TODO: Add WAL support for update_edge
+        let primary_shard = self.get_primary_shard(&edge.from_node_id).await?;
 
-        primary_shard.update_edge(edge)
+        primary_shard.update_edge(edge).await
     }
 
-    fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+    async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+        // TODO: Add WAL support for delete_edge
         // Similar to get_edge, we need to search across shards
         for shard_entry in self.shards.iter() {
             let shard = shard_entry.value();
-            if let Ok(Some(edge)) = GraphEngine::delete_edge(&**shard, id) {
+            if let Ok(Some(edge)) = GraphEngine::delete_edge(&**shard, id).await {
                 // Update stats (using try_write for sync context)
                 if let Ok(mut stats) = self.stats.try_write() {
                     stats.total_edges = stats.total_edges.saturating_sub(1);
@@ -737,17 +730,14 @@ mod tests {
         };
 
         // Insert node
-        let inserted = engine.insert_node(node).unwrap();
+        let inserted = engine.insert_node(node).await.unwrap();
         assert_eq!(inserted.id, "test_node");
-
-        // Give some time for async operations
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Get node
         let retrieved = engine.get_node(&"test_node".to_string()).unwrap().unwrap();
         assert_eq!(retrieved.id, "test_node");
 
-        // Verify stats updated
+        // Verify stats updated (stats now updated synchronously, no sleep needed)
         let stats = engine.get_stats().await;
         assert_eq!(stats.total_nodes, 1);
     }

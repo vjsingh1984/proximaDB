@@ -177,11 +177,13 @@ impl OrionPersistence {
                 })?;
 
             // Initialize WAL writer with path (not URL)
-            let wal_writer = UnifiedWALWriter::new(wal_path_str).await.map_err(|e| {
+            tracing::debug!("Creating WAL writer with path: {}", wal_path_str);
+            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone()).await.map_err(|e| {
                 ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
                     e.to_string(),
                 ))
             })?;
+            tracing::debug!("WAL writer created successfully");
 
             (
                 Some(wal_path),
@@ -402,6 +404,8 @@ impl OrionPersistence {
         if let Some(ref wal_writer) = self.wal_writer {
             use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
 
+            tracing::debug!("Writing node operation to WAL for node: {}", node.id);
+
             let graph_op = GraphOperation::CreateNode {
                 graph_id: self.graph_id.clone(),
                 node,
@@ -414,10 +418,15 @@ impl OrionPersistence {
                 .append(unified_op)
                 .await
                 .map_err(|e| {
+                    tracing::error!("WAL append failed: {:?}", e);
                     ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
                         e.to_string(),
                     ))
                 })?;
+
+            tracing::debug!("WAL write completed successfully");
+        } else {
+            tracing::warn!("No WAL writer available - operations will not be persisted!");
         }
 
         Ok(())
@@ -470,12 +479,29 @@ impl OrionPersistence {
         Ok(())
     }
 
+    /// Flush WAL buffer to disk
+    /// This ensures all pending operations are persisted
+    pub async fn flush_wal(&self) -> Result<()> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            wal_writer.lock().await.flush().await.map_err(|e| {
+                ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                    e.to_string(),
+                ))
+            })?;
+            tracing::debug!("WAL flushed to disk for graph: {}", self.graph_id);
+        }
+        Ok(())
+    }
+
     /// Replay WAL operations from all segments
     pub async fn replay_wal(&self, engine: &OrionGraphEngine) -> Result<()> {
         if let Some(ref wal_path) = self.wal_path {
             use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALReader;
 
-            let reader = UnifiedWALReader::new(wal_path.to_string_lossy().to_string())
+            let wal_path_str = wal_path.to_string_lossy().to_string();
+            tracing::debug!("Attempting WAL recovery from path: {}", wal_path_str);
+
+            let reader = UnifiedWALReader::new(wal_path_str.clone())
                 .await
                 .map_err(|e| {
                     ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(

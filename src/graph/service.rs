@@ -488,12 +488,39 @@ impl GraphOperationsService {
         matches!(self.mode, OperationMode::GraphOnly | OperationMode::Unified)
     }
 
-    /// Check if vector operations are enabled  
+    /// Check if vector operations are enabled
     pub fn vector_enabled(&self) -> bool {
         matches!(
             self.mode,
             OperationMode::VectorOnly | OperationMode::Unified
         )
+    }
+
+    /// Flush WAL buffer to disk for a specific graph
+    ///
+    /// This ensures all pending write operations are persisted to disk.
+    /// Should be called during graceful shutdown or before critical operations
+    /// that require durability guarantees.
+    ///
+    /// # Arguments
+    /// * `graph_id` - The ID of the graph to flush
+    ///
+    /// # Returns
+    /// * `Ok(())` if flush succeeds or graph not found
+    /// * `Err` if flush fails
+    pub async fn flush_wal(&self, graph_id: &str) -> Result<()> {
+        if let Some(engine) = self.graphs.get(graph_id) {
+            match engine.value().as_ref() {
+                crate::graph::engines::GraphEngineImpl::Orion(orion) => {
+                    orion.flush_wal().await?;
+                }
+                _ => {
+                    // Other engines don't support WAL yet
+                    tracing::debug!("WAL flush not supported for this engine type");
+                }
+            }
+        }
+        Ok(())
     }
 
     // create_node moved to service_node_ops.rs
@@ -1262,7 +1289,7 @@ impl GraphOperationsService {
 
         let mut results = Vec::with_capacity(nodes.len());
         for node in nodes {
-            results.push(engine.insert_node(node)?);
+            results.push(engine.insert_node(node).await?);
         }
         Ok(results)
     }
@@ -1287,15 +1314,15 @@ impl GraphOperationsService {
             match if_exists {
                 "update" => {
                     // TODO: Implement upsert logic
-                    results.push(engine.insert_node(node)?);
+                    results.push(engine.insert_node(node).await?);
                 }
                 "skip" => {
                     // TODO: Check if exists, skip if it does
-                    results.push(engine.insert_node(node)?);
+                    results.push(engine.insert_node(node).await?);
                 }
                 "error" => {
                     // TODO: Check if exists, error if it does
-                    results.push(engine.insert_node(node)?);
+                    results.push(engine.insert_node(node).await?);
                 }
                 _ => {
                     return Err(ProximaDBError::InvalidInput(format!(
@@ -1324,7 +1351,7 @@ impl GraphOperationsService {
 
         let mut results = Vec::with_capacity(edges.len());
         for edge in edges {
-            results.push(engine.insert_edge(edge)?);
+            results.push(engine.insert_edge(edge).await?);
         }
         Ok(results)
     }

@@ -1108,10 +1108,10 @@ mod tests {
 
         // Recover the collection (should go to storage engine)
         let recovered = recovery_manager
-            .recover_collection(collection_id, None)
+            .recover_collection(collection_id)
             .await
             .expect("Failed to recover collection");
-        assert_eq!(recovered, 3);
+        assert_eq!(recovered.total_vectors_recovered, 3);
 
         // Verify WAL files were cleaned up
         let remaining_files = disk_manager

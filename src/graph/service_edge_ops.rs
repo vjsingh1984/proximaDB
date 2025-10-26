@@ -47,7 +47,7 @@ impl super::GraphOperationsService {
                 .await?;
         }
 
-        let edge_arc = engine.insert_edge(edge)?;
+        let edge_arc = engine.insert_edge(edge).await?;
         // Update edge stats
         self.stats_edges
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -77,7 +77,7 @@ impl super::GraphOperationsService {
             self.enforce_cardinality_on_edge(graph_id, &edge, engine.as_ref())
                 .await?;
         }
-        engine.update_edge(edge)
+        engine.update_edge(edge).await
     }
 
     /// Delete an edge
@@ -88,7 +88,7 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        let deleted = crate::graph::engines::GraphEngine::delete_edge(&*engine, id)?;
+        let deleted = crate::graph::engines::GraphEngine::delete_edge(&*engine, id).await?;
         if let Some(ref edge) = deleted {
             self.stats_edges
                 .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);

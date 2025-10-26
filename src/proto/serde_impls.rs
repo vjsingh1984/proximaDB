@@ -92,40 +92,114 @@ impl Serialize for PropertyValue {
     where
         S: Serializer,
     {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(1))?;
+        use serde::ser::SerializeStruct;
+        // Use serialize_struct instead of serialize_map for bincode compatibility
+        let mut state = serializer.serialize_struct("PropertyValue", 9)?;
 
+        // Serialize all fields as Options (matching PropertyValueHelper in deserialize)
         match &self.value {
             Some(PropertyValueVariant::StringValue(v)) => {
-                map.serialize_entry("string_value", v)?;
+                state.serialize_field("string_value", &Some(v))?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             Some(PropertyValueVariant::IntValue(v)) => {
-                map.serialize_entry("int_value", v)?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &Some(v))?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             Some(PropertyValueVariant::DoubleValue(v)) => {
-                map.serialize_entry("double_value", v)?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &Some(v))?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             Some(PropertyValueVariant::BoolValue(v)) => {
-                map.serialize_entry("bool_value", v)?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &Some(v))?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             Some(PropertyValueVariant::BytesValue(v)) => {
-                map.serialize_entry("bytes_value", &base64_encode(v))?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &Some(base64_encode(v)))?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             Some(PropertyValueVariant::ArrayValue(v)) => {
-                map.serialize_entry("array_value", v)?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &Some(v))?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             Some(PropertyValueVariant::ObjectValue(v)) => {
-                map.serialize_entry("object_value", v)?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &Some(v))?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             Some(PropertyValueVariant::VectorValue(v)) => {
-                map.serialize_entry("vector_value", &v.values)?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &Some(&v.values))?;
+                state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
             None => {
-                map.serialize_entry("null_value", &serde_json::Value::Null)?;
+                state.serialize_field("string_value", &None::<String>)?;
+                state.serialize_field("int_value", &None::<i64>)?;
+                state.serialize_field("double_value", &None::<f64>)?;
+                state.serialize_field("bool_value", &None::<bool>)?;
+                state.serialize_field("bytes_value", &None::<String>)?;
+                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field("vector_value", &None::<Vec<f32>>)?;
+                state.serialize_field("null_value", &Some(serde_json::Value::Null))?;
             }
         }
 
-        map.end()
+        state.end()
     }
 }
 impl<'de> Deserialize<'de> for PropertyValue {
@@ -454,7 +528,12 @@ impl Serialize for Node {
         let mut state = serializer.serialize_struct("Node", 6)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("labels", &self.labels)?;
-        state.serialize_field("properties", &self.properties)?;
+
+        // Sort HashMap keys for deterministic bincode serialization
+        let sorted_properties: std::collections::BTreeMap<_, _> =
+            self.properties.iter().collect();
+        state.serialize_field("properties", &sorted_properties)?;
+
         state.serialize_field("embedding", &self.embedding)?;
         state.serialize_field("created_at_ms", &self.created_at_ms)?;
         state.serialize_field("updated_at_ms", &self.updated_at_ms)?;
@@ -501,7 +580,12 @@ impl Serialize for Edge {
         state.serialize_field("from_node_id", &self.from_node_id)?;
         state.serialize_field("to_node_id", &self.to_node_id)?;
         state.serialize_field("edge_type", &self.edge_type)?;
-        state.serialize_field("properties", &self.properties)?;
+
+        // Sort HashMap keys for deterministic bincode serialization
+        let sorted_properties: std::collections::BTreeMap<_, _> =
+            self.properties.iter().collect();
+        state.serialize_field("properties", &sorted_properties)?;
+
         state.serialize_field("weight", &self.weight)?;
         state.serialize_field("created_at_ms", &self.created_at_ms)?;
         state.serialize_field("updated_at_ms", &self.updated_at_ms)?;

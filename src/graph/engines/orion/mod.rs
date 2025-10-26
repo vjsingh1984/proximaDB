@@ -360,42 +360,53 @@ impl OrionGraphEngine {
         Ok(())
     }
 
+    /// Flush WAL buffer to disk
+    /// This should be called before shutdown to ensure all operations are persisted
+    pub async fn flush_wal(&self) -> Result<()> {
+        if let Some(ref persistence) = self.persistence {
+            persistence.flush_wal().await?;
+        }
+        Ok(())
+    }
+
     // Convenience alias methods for persistence module compatibility
     pub async fn create_node(&self, node: Node) -> Result<Arc<Node>> {
-        self.insert_node(node)
+        self.insert_node(node).await
     }
 
     pub async fn create_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        self.insert_edge(edge)
+        self.insert_edge(edge).await
     }
 
     pub async fn delete_node(&self, node_id: &NodeId) -> Result<Option<Arc<Node>>> {
-        GraphEngine::delete_node(self, node_id)
+        GraphEngine::delete_node(self, node_id).await
     }
 
     pub async fn delete_edge(&self, edge_id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        GraphEngine::delete_edge(self, edge_id)
+        GraphEngine::delete_edge(self, edge_id).await
     }
 }
 
+#[async_trait::async_trait]
 impl GraphEngine for OrionGraphEngine {
-    fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
-        // Write to WAL if persistence is enabled
+    async fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+        tracing::debug!("insert_node called for node: {}", node.id);
+
+        // Write to WAL SYNCHRONOUSLY if persistence is enabled
+        // This ensures durability - method only returns after WAL write completes
         if let Some(persistence) = &self.persistence {
-            tokio::spawn({
-                let persistence = Arc::clone(persistence);
-                let node_for_wal = node.clone();
-                async move {
-                    if let Err(e) = persistence.write_node_operation(node_for_wal).await {
-                        tracing::error!("Failed to write node operation to WAL: {:?}", e);
-                    }
-                }
-            });
+            tracing::debug!("Persistence is enabled, calling write_node_operation");
+            persistence.write_node_operation(node.clone()).await?;
+            tracing::debug!("write_node_operation completed successfully");
+        } else {
+            tracing::warn!("Persistence is None - WAL writes disabled for node {}", node.id);
         }
 
-        let node_arc = self.memory_pool.insert_node(node);
+        // Insert into memory pool
+        let node_arc = self.memory_pool.insert_node(node.clone());
+        tracing::debug!("Node {} inserted into memory pool", node.id);
 
-        // Update stats
+        // Update stats (non-critical, can be async)
         tokio::spawn({
             let stats = Arc::clone(&self.stats);
             async move {
@@ -411,7 +422,8 @@ impl GraphEngine for OrionGraphEngine {
         Ok(self.memory_pool.get_node(id))
     }
 
-    fn update_node(&self, node: Node) -> Result<Arc<Node>> {
+    async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
+        // TODO: Add WAL support for update_node
         let node_id = node.id.clone();
 
         // Remove old node from indexes
@@ -434,7 +446,8 @@ impl GraphEngine for OrionGraphEngine {
         Ok(node_arc)
     }
 
-    fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+    async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+        // TODO: Add WAL support for delete_node
         let removed = self.memory_pool.remove_node(id);
 
         if removed.is_some() {
@@ -451,7 +464,9 @@ impl GraphEngine for OrionGraphEngine {
         Ok(removed)
     }
 
-    fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+    async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        tracing::debug!("insert_edge called for edge: {}", edge.id);
+
         // Validate that both nodes exist
         if self.memory_pool.get_node(&edge.from_node_id).is_none() {
             return Err(ProximaDBError::InvalidInput(format!(
@@ -467,22 +482,20 @@ impl GraphEngine for OrionGraphEngine {
             )));
         }
 
-        // Write to WAL if persistence is enabled
+        // Write to WAL SYNCHRONOUSLY if persistence is enabled
+        // This ensures durability - method only returns after WAL write completes
         if let Some(persistence) = &self.persistence {
-            tokio::spawn({
-                let persistence = Arc::clone(persistence);
-                let edge_for_wal = edge.clone();
-                async move {
-                    if let Err(e) = persistence.write_edge_operation(edge_for_wal).await {
-                        tracing::error!("Failed to write edge operation to WAL: {:?}", e);
-                    }
-                }
-            });
+            tracing::debug!("Persistence is enabled, calling write_edge_operation");
+            persistence.write_edge_operation(edge.clone()).await?;
+            tracing::debug!("write_edge_operation completed successfully");
+        } else {
+            tracing::warn!("Persistence is None - WAL writes disabled for edge {}", edge.id);
         }
 
         let edge_arc = self.memory_pool.insert_edge(edge.clone());
+        tracing::debug!("Edge {} inserted into memory pool", edge.id);
 
-        // Add to CSR structures (async task to avoid blocking)
+        // Add to CSR structures (async task - non-critical for durability)
         tokio::spawn({
             let engine = OrionGraphEngine {
                 memory_pool: Arc::clone(&self.memory_pool),
@@ -518,7 +531,8 @@ impl GraphEngine for OrionGraphEngine {
         Ok(self.edge_metadata.get(id).map(|entry| Arc::clone(&entry)))
     }
 
-    fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+    async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        // TODO: Add WAL support for update_edge
         let edge_id = edge.id.clone();
 
         // Remove old edge
@@ -547,10 +561,11 @@ impl GraphEngine for OrionGraphEngine {
         }
 
         // Insert new edge
-        self.insert_edge(edge)
+        self.insert_edge(edge).await
     }
 
-    fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+    async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+        // TODO: Add WAL support for delete_edge
         let removed = self.memory_pool.remove_edge(id);
 
         if let Some(ref edge) = removed {
@@ -712,7 +727,7 @@ mod tests {
         };
 
         // Insert node
-        let inserted = engine.insert_node(node).unwrap();
+        let inserted = engine.insert_node(node).await.unwrap();
         assert_eq!(engine.node_count().unwrap(), 1);
 
         // Get node
@@ -748,8 +763,8 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node1).unwrap();
-        engine.insert_node(node2).unwrap();
+        engine.insert_node(node1).await.unwrap();
+        engine.insert_node(node2).await.unwrap();
 
         // Create edge
         let edge = Edge {
@@ -764,7 +779,7 @@ mod tests {
         };
 
         // Insert edge
-        let inserted_edge = engine.insert_edge(edge).unwrap();
+        let inserted_edge = engine.insert_edge(edge).await.unwrap();
         assert_eq!(engine.edge_count().unwrap(), 1);
 
         // Give time for async CSR update

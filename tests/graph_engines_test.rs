@@ -55,11 +55,8 @@ async fn test_pulsar_engine_basic_operations() {
         updated_at_ms: 0,
     };
 
-    let inserted = engine.insert_node(node).unwrap();
+    let inserted = engine.insert_node(node).await.unwrap();
     assert_eq!(inserted.id, "test_node_pulsar");
-
-    // Wait for async operations
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Test node retrieval
     let retrieved = engine
@@ -104,7 +101,7 @@ async fn test_quasar_engine_basic_operations() {
         updated_at_ms: 0,
     };
 
-    let inserted = engine.insert_node(node).unwrap();
+    let inserted = engine.insert_node(node).await.unwrap();
     assert_eq!(inserted.id, "test_node_quasar");
 
     // Test node retrieval
@@ -149,8 +146,8 @@ async fn test_pulsar_edge_operations() {
         updated_at_ms: 0,
     };
 
-    engine.insert_node(node1).unwrap();
-    engine.insert_node(node2).unwrap();
+    engine.insert_node(node1).await.unwrap();
+    engine.insert_node(node2).await.unwrap();
 
     // Create edge
     let edge = Edge {
@@ -164,7 +161,7 @@ async fn test_pulsar_edge_operations() {
         updated_at_ms: 0,
     };
 
-    let inserted_edge = engine.insert_edge(edge).unwrap();
+    let inserted_edge = engine.insert_edge(edge).await.unwrap();
     assert_eq!(inserted_edge.id, "edge1");
 
     // Wait for async operations
@@ -209,7 +206,7 @@ async fn test_quasar_tiering_behavior() {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node).unwrap();
+        engine.insert_node(node).await.unwrap();
     }
 
     // Wait for background migration
@@ -312,7 +309,7 @@ async fn test_pulsar_cross_shard_operations() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        engine.insert_node(node).unwrap();
+        engine.insert_node(node).await.unwrap();
     }
 
     // Wait for async operations
@@ -356,7 +353,7 @@ async fn test_quasar_access_pattern_tracking() {
         updated_at_ms: 0,
     };
 
-    engine.insert_node(node).unwrap();
+    engine.insert_node(node).await.unwrap();
 
     // Access the node multiple times to build access pattern
     for _ in 0..5 {

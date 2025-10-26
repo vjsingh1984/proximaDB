@@ -1225,7 +1225,7 @@ mod tests {
         // and has the correct signature. If this compiles, Phase 1 is complete.
 
         let config = crate::core::StorageConfig::default();
-        let storage = StorageEngine::new_without_collection_service(config, None)
+        let storage = StorageEngine::new_without_collection_service(config)
             .await
             .expect("Failed to create storage engine");
 
