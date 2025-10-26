@@ -14,14 +14,14 @@ fn test_default_config() {
     let config = Config::default();
 
     // Test default server config
-    assert_eq!(config.server.node_id, "default-node");
+    assert_eq!(config.server.node_id, "node-1");
     assert_eq!(config.server.bind_address, "127.0.0.1");
     assert_eq!(config.server.port, 5678);
 
     // Test default storage config
     assert!(!config.storage.storage_locations.is_empty());
     assert!(config.storage.metadata_url.contains("metadata"));
-    assert_eq!(config.storage.cache_size_mb, 256);
+    assert_eq!(config.storage.cache_size_mb, 512);
     assert!(config.storage.mmap_enabled);
 
     // Test default SST config - sst_config is Option<SstConfig>
@@ -56,6 +56,7 @@ mmap_enabled = true
 [storage.sst_config]
 memtable_size_mb = 128
 level_count = 5
+compaction_threshold = 3
 enable_write_ahead_log = true
 write_ahead_log_directory = "/custom/write_ahead_log"
 data_directory = "/custom/sst_data"
