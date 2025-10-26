@@ -172,10 +172,9 @@ fn test_sst_record_optimized_serialization() {
     for (test_name, vector) in test_cases {
         let record = create_test_sst_record(format!("test_{}", test_name), vector);
 
-        // Test optimized serialization
-        let config = VectorSerializationConfig::for_dimension(record.record.vector.len());
-        let serialized = bincode::serialize(&record).unwrap();
-        let deserialized: SstEntry = bincode::deserialize(&serialized).unwrap();
+        // Test SstEntry's custom serialization (uses protobuf + bincode internally)
+        let serialized = record.serialize().unwrap();
+        let deserialized = SstEntry::deserialize(&serialized).unwrap();
 
         // Verify all fields match
         assert_eq!(record.record.id, deserialized.record.id);
