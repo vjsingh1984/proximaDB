@@ -355,9 +355,9 @@ fn test_mvcc_result_sorting() {
     let deduplicated = apply_mvcc_logic(results);
     assert_eq!(deduplicated.len(), 4);
 
-    // Verify sorted by score (descending)
-    assert_eq!(deduplicated[0].score, 0.9); // doc2
-    assert_eq!(deduplicated[1].score, 0.7); // doc3
-    assert_eq!(deduplicated[2].score, 0.5); // doc1
-    assert_eq!(deduplicated[3].score, 0.3); // doc4
+    // Verify sorted by score (descending) - use approximate comparison for floating point
+    assert!((deduplicated[0].score - 0.9).abs() < 0.01); // doc2
+    assert!((deduplicated[1].score - 0.7).abs() < 0.01); // doc3
+    assert!((deduplicated[2].score - 0.5).abs() < 0.01); // doc1
+    assert!((deduplicated[3].score - 0.3).abs() < 0.01); // doc4
 }
