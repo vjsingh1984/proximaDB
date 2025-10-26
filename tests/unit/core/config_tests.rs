@@ -27,7 +27,7 @@ fn test_default_config() {
     // Test default SST config - sst_config is Option<SstConfig>
     if let Some(ref sst_config) = config.storage.sst_config {
         assert_eq!(sst_config.level_count, 7);
-        assert_eq!(sst_config.compaction_threshold, 3);
+        assert_eq!(sst_config.compaction_threshold, 5); // Default is 5, not 3
         // Note: memtable_size_mb and enable_write_ahead_log fields no longer exist
     }
 
@@ -57,6 +57,7 @@ mmap_enabled = true
 memtable_size_mb = 128
 level_count = 5
 compaction_threshold = 3
+block_size_kb = 1024
 enable_write_ahead_log = true
 write_ahead_log_directory = "/custom/write_ahead_log"
 data_directory = "/custom/sst_data"
