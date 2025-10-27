@@ -159,7 +159,8 @@ class TestSqlIntegration:
     
     def test_filtered_similarity_search(self, client, sql_test_collection):
         """Test similarity search with metadata filters"""
-        query_vector = np.random.rand(384).tolist()
+        from ..embedding_utils import embed_seed
+        query_vector = embed_seed(0, 384)
         query_str = json.dumps(query_vector)
         
         sql = f"""
@@ -190,7 +191,8 @@ class TestSqlIntegration:
     
     def test_multi_condition_filters(self, client, sql_test_collection):
         """Test complex multi-condition filtering"""
-        query_vector = np.random.rand(384).tolist()
+        from ..embedding_utils import embed_seed
+        query_vector = embed_seed(1, 384)
         query_str = json.dumps(query_vector)
         
         sql = f"""
@@ -215,7 +217,8 @@ class TestSqlIntegration:
     
     def test_pagination_with_offset(self, client, sql_test_collection):
         """Test pagination using OFFSET and LIMIT"""
-        query_vector = np.random.rand(384).tolist()
+        from ..embedding_utils import embed_seed
+        query_vector = embed_seed(2, 384)
         query_str = json.dumps(query_vector)
         
         # Get first page (with retry for flaky SQL parser)
@@ -255,7 +258,8 @@ class TestSqlIntegration:
     
     def test_all_supported_metrics(self, client, sql_test_collection):
         """Test all distance metrics with real data"""
-        query_vector = np.random.rand(384).tolist()
+        from ..embedding_utils import embed_seed
+        query_vector = embed_seed(3, 384)
         query_str = json.dumps(query_vector)
         
         metrics = {
@@ -286,7 +290,8 @@ class TestSqlIntegration:
     
     def test_large_result_set(self, client, sql_test_collection):
         """Test LIMIT clause functionality"""
-        query_vector = np.random.rand(384).tolist()
+        from ..embedding_utils import embed_seed
+        query_vector = embed_seed(4, 384)
         query_str = json.dumps(query_vector)
         
         sql = f"""
@@ -312,7 +317,8 @@ class TestSqlIntegration:
     
     def test_select_all_fields(self, client, sql_test_collection):
         """Test selecting all fields including vector"""
-        query_vector = np.random.rand(384).tolist()
+        from ..embedding_utils import embed_seed
+        query_vector = embed_seed(999, 384)
         query_str = json.dumps(query_vector)
         
         sql = f"""
@@ -339,7 +345,8 @@ class TestSqlIntegration:
         """Test running multiple SQL queries concurrently"""
         import concurrent.futures
         
-        query_vectors = [np.random.rand(384).tolist() for _ in range(5)]
+        from ..embedding_utils import embed_many
+        query_vectors = embed_many(5, 384)
         
         def run_query(query_idx):
             query_str = json.dumps(query_vectors[query_idx])
@@ -365,7 +372,8 @@ class TestSqlIntegration:
     
     def test_performance_baseline(self, client, sql_test_collection):
         """Test query performance baseline"""
-        query_vector = np.random.rand(384).tolist()
+        from ..embedding_utils import embed_seed
+        query_vector = embed_seed(5, 384)
         query_str = json.dumps(query_vector)
         
         # Warm up

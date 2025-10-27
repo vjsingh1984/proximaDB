@@ -7,6 +7,7 @@ requiring a running ProximaDB server and gRPC connections.
 import pytest
 import time
 import numpy as np
+from ..embedding_utils import embed_seed
 from pathlib import Path
 import sys
 
@@ -91,7 +92,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             for i in range(5):
                 vec = VectorRecord(
                     id=f"test_vec_{i}",
-                    vector=np.random.randn(64).tolist(),
+                    vector=embed_seed(i, 64),
                     metadata={"index": i, "type": "test"}
                 )
                 vectors.append(vec)
@@ -107,7 +108,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             assert retrieved.metadata["index"] == 0
             
             # Search vectors
-            query_vector = np.random.randn(64).tolist()
+            query_vector = embed_seed(999, 64)
             search_results = client.search_vectors(
                 collection_name=collection_name,
                 query_vector=query_vector,
@@ -136,7 +137,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             for i in range(batch_size):
                 vec = VectorRecord(
                     id=f"batch_vec_{i}",
-                    vector=np.random.randn(32).tolist(),
+                    vector=embed_seed(i, 32),
                     metadata={"batch": True, "index": i}
                 )
                 vectors.append(vec)
@@ -151,7 +152,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             # Verify with search
             search_results = client.search_vectors(
                 collection_name=collection_name,
-                query_vector=np.random.randn(32).tolist(),
+                query_vector=embed_seed(777, 32),
                 k=10
             )
             assert len(search_results.results) == 10
@@ -181,7 +182,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             # Large vector to test compression benefit
             large_vector = VectorRecord(
                 id="large_vec",
-                vector=np.random.randn(512).tolist(),
+                vector=embed_seed(i, 512),
                 metadata={"size": "large", "test": "compression"}
             )
             
@@ -190,7 +191,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             assert result1.success
             
             # Search with both clients
-            query = np.random.randn(512).tolist()
+            query = embed_seed(555, 512)
             results_compressed = client_compressed.search_vectors(
                 collection_name, query, k=1
             )
@@ -228,7 +229,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             def search_operation(index):
                 return client.search_vectors(
                     collection_name,
-                    np.random.randn(128).tolist(),
+                    embed_seed(i, 128),
                     k=5
                 )
             
@@ -236,7 +237,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             vectors = [
                 VectorRecord(
                     id=f"pool_test_{i}",
-                    vector=np.random.randn(128).tolist(),
+                    vector=embed_seed(i, 128),
                     metadata={"pool_test": True}
                 )
                 for i in range(20)
@@ -272,7 +273,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
         try:
             wrong_dim_vector = VectorRecord(
                 id="wrong_dim",
-                vector=np.random.randn(128).tolist(),  # Wrong dimension
+                vector=embed_seed(1, 128),  # Wrong dimension (kept 128 per original intent)
                 metadata={}
             )
             with pytest.raises(ProximaDBError):
@@ -292,7 +293,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             for i in range(20):
                 vec = VectorRecord(
                     id=f"filter_test_{i}",
-                    vector=np.random.randn(64).tolist(),
+                    vector=embed_seed(i, 64),
                     metadata={
                         "category": f"cat_{i % 3}",
                         "value": i,
@@ -307,7 +308,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             # Search with filters
             results = client.search_vectors(
                 collection_name=collection_name,
-                query_vector=np.random.randn(64).tolist(),
+                query_vector=embed_seed(321, 64),
                 k=10,
                 filter={"category": "cat_1"}
             )
@@ -337,7 +338,7 @@ class TestGrpcPerformance(BaseProximaDBTest):
             vectors = [
                 VectorRecord(
                     id=f"perf_{i}",
-                    vector=np.random.randn(384).tolist(),
+                    vector=embed_seed(i, 384),
                     metadata={"perf_test": True}
                 )
                 for i in range(num_vectors)
@@ -360,7 +361,7 @@ class TestGrpcPerformance(BaseProximaDBTest):
             for _ in range(num_searches):
                 client.search_vectors(
                     collection_name,
-                    np.random.randn(384).tolist(),
+                    embed_seed(i, 384),
                     k=10
                 )
             search_time = time.time() - start

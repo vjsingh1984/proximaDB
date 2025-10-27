@@ -9,6 +9,7 @@ from client SDK through to storage engines.
 import pytest
 import time
 import numpy as np
+from ..embedding_utils import embed_seed, embed_many
 import logging
 from typing import List, Dict, Any
 
@@ -89,13 +90,13 @@ class TestQuantizationE2E:
         assert any(c.name == collection_name for c in collections)
         
         # Insert vectors
-        vectors = np.random.rand(10, 128).astype(np.float32)
+        vectors = np.array(embed_many(10, 128), dtype=np.float32)
         ids = [f"vec_{i}" for i in range(10)]
         
         rest_client.insert_vectors(collection_name, vectors, ids)
         
         # Search without hints
-        query = np.random.rand(128).astype(np.float32)
+        query = np.array(embed_seed(999, 128), dtype=np.float32)
         results = rest_client.search(collection_name, query, top_k=5)
         # Server-side fix applied: top_k parameter is now properly respected
         assert len(results) == 5, f"Expected exactly 5 results (top_k=5), got {len(results)}"
@@ -127,7 +128,7 @@ class TestQuantizationE2E:
         metadata = []
 
         for i in range(num_vectors):
-            vec = np.random.randn(256).astype(np.float32)
+            vec = np.array(embed_seed(i, 256), dtype=np.float32)
             vec = vec / np.linalg.norm(vec)  # Normalize
             vectors.append(vec)
             ids.append(f"doc_{i}")
@@ -136,7 +137,7 @@ class TestQuantizationE2E:
         rest_client.insert_vectors(collection_name, vectors, ids, metadata)
 
         # Test different optimization hints
-        query = np.random.randn(256).astype(np.float32)
+        query = np.array(embed_seed(777, 256), dtype=np.float32)
         query = query / np.linalg.norm(query)
 
         # No optimization
@@ -193,7 +194,7 @@ class TestQuantizationE2E:
         for i in range(10):
             vec = VectorRecord(
                 id=f"grpc_vec_{i}",
-                vector=np.random.randn(384).astype(np.float32).tolist(),
+                vector=embed_seed(i, 384),
                 metadata={"index": i}
             )
             vectors.append(vec)
@@ -201,7 +202,7 @@ class TestQuantizationE2E:
         grpc_client.insert_vectors(collection_name, vectors)
         
         # Search with optimization hints
-        query = np.random.randn(384).astype(np.float32).tolist()
+        query = embed_seed(555, 384)
         
         hints = SearchOptimizationHints(
             enable_two_stage=True,
@@ -272,12 +273,12 @@ class TestQuantizationE2E:
                 logger.info(f"✓ Created collection with {type_name} quantization")
                 
                 # Insert a few vectors
-                vectors = np.random.rand(5, dimension).astype(np.float32)
+                vectors = np.array(embed_many(5, dimension), dtype=np.float32)
                 ids = [f"{type_name}_{i}" for i in range(5)]
                 rest_client.insert_vectors(collection_name, vectors, ids)
                 
                 # Search
-                query = np.random.rand(dimension).astype(np.float32)
+                query = np.array(embed_seed(1, dimension), dtype=np.float32)
                 results = rest_client.search(collection_name, query, top_k=3)
 
                 # Server-side fix applied: top_k parameter is now properly respected
@@ -312,7 +313,7 @@ class TestQuantizationE2E:
         total_inserted = 0
         
         for batch_size in batch_sizes:
-            vectors = np.random.rand(batch_size, 128).astype(np.float32)
+            vectors = np.array(embed_many(batch_size, 128), dtype=np.float32)
             ids = [f"prog_{total_inserted + i}" for i in range(batch_size)]
             
             rest_client.insert_vectors(collection_name, vectors, ids)
@@ -321,7 +322,7 @@ class TestQuantizationE2E:
             logger.info(f"Inserted {total_inserted} vectors total")
             
             # Search after each batch
-            query = np.random.rand(128).astype(np.float32)
+            query = np.array(embed_seed(2, 128), dtype=np.float32)
             # NOTE: search_hints disabled due to server bug with search_optimization field
             # See test_search_with_optimization_hints_rest for details
             results = rest_client.search(

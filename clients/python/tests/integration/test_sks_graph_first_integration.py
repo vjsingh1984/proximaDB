@@ -24,6 +24,7 @@ import pytest
 from typing import List
 
 import numpy as np
+from ..embedding_utils import embed_seed
 
 from proximadb import ProximaDBClient, VectorRecord
 
@@ -96,7 +97,7 @@ def test_batch_entity_insertion_performance(client, test_collection):
     # Generate entities
     records = []
     for i in range(num_entities):
-        vector = np.random.randn(dimension).astype(np.float32)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
         vector = vector / np.linalg.norm(vector)
 
         record = VectorRecord(
@@ -160,10 +161,10 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
     # Insert test entities
     num_entities = 50
     records = []
+    from ..embedding_utils import embed_seed
     for i in range(num_entities):
-        vector = np.random.randn(dimension).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)
-
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
+        
         record = VectorRecord(
             id=f"doc_{i}",
             vector=vector.tolist(),
@@ -197,7 +198,7 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
         )
 
     # Hybrid Query Step 1: Vector search
-    query_vector = np.random.randn(dimension).astype(np.float32)
+    query_vector = np.array(embed_seed(123, dimension), dtype=np.float32)
     query_vector = query_vector / np.linalg.norm(query_vector)
 
     start_time = time.time()
@@ -261,7 +262,7 @@ def test_entity_retrieval_by_id(client, test_collection):
     test_ids = [f"entity_{i}" for i in range(10)]
     records = []
     for entity_id in test_ids:
-        vector = np.random.randn(dimension).astype(np.float32)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
         vector = vector / np.linalg.norm(vector)
 
         record = VectorRecord(
@@ -355,8 +356,7 @@ def test_metadata_filtering(client, test_collection):
     categories = ["tech", "science", "business"]
     records = []
     for i in range(30):
-        vector = np.random.randn(dimension).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=f"doc_{i}",
@@ -372,7 +372,7 @@ def test_metadata_filtering(client, test_collection):
     assert result.metrics.successful_count >= 30
 
     # Search with metadata filter (if supported by SDK)
-    query_vector = np.random.randn(dimension).astype(np.float32)
+    query_vector = np.array(embed_seed(321, dimension), dtype=np.float32)
     query_vector = query_vector / np.linalg.norm(query_vector)
 
     results = client.search(
@@ -407,7 +407,7 @@ def test_concurrent_operations(client, test_collection):
     # Insert initial entities
     records = []
     for i in range(100):
-        vector = np.random.randn(dimension).astype(np.float32)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
         vector = vector / np.linalg.norm(vector)
 
         record = VectorRecord(
@@ -424,8 +424,7 @@ def test_concurrent_operations(client, test_collection):
     import concurrent.futures
 
     def search_task(task_id):
-        query_vector = np.random.randn(dimension).astype(np.float32)
-        query_vector = query_vector / np.linalg.norm(query_vector)
+        query_vector = np.array(embed_seed(task_id, dimension), dtype=np.float32)
 
         results = client.search(
             collection_id=collection,

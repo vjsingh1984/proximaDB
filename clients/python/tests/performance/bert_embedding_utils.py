@@ -5,6 +5,7 @@ Provides real text corpus generation and BERT embeddings
 """
 
 import numpy as np
+from ..embedding_utils import embed_text
 import time
 from typing import List, Dict, Any, Tuple
 
@@ -140,79 +141,13 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
 
 
 def create_bert_embeddings(texts: List[str], dimension: int = 384) -> np.ndarray:
-    """
-    Create BERT-style embeddings for texts
-    Uses deterministic approach based on text content for reproducibility
-    """
-    
-    embeddings = []
-    
-    for text in texts:
-        # Create deterministic embedding based on text content
-        embedding = create_deterministic_embedding(text, dimension)
-        embeddings.append(embedding)
-    
-    return np.array(embeddings, dtype=np.float32)
+    """Create sentence-transformer embeddings for texts (realistic)."""
+    return np.array([embed_text(text, dimension) for text in texts], dtype=np.float32)
 
 
 def create_deterministic_embedding(text: str, dimension: int = 384) -> np.ndarray:
-    """
-    Create a deterministic BERT-style embedding for a text
-    Uses text content to generate reproducible embeddings with semantic clustering
-    """
-    
-    # Use text hash for reproducible randomness
-    text_hash = hash(text.lower().strip()) % (2**32)
-    np.random.seed(text_hash)
-    
-    # Create base embedding
-    embedding = np.random.normal(0, 0.1, dimension)
-    
-    # Add semantic structure based on keywords and categories
-    text_lower = text.lower()
-    
-    # Technology cluster (dimensions 0-75)
-    tech_keywords = ['ai', 'artificial', 'intelligence', 'machine', 'learning', 'computer', 
-                     'programming', 'software', 'algorithm', 'data', 'cloud', 'cyber']
-    if any(keyword in text_lower for keyword in tech_keywords):
-        embedding[0:76] += np.random.normal(0.3, 0.1, 76)
-    
-    # Science cluster (dimensions 76-151) 
-    science_keywords = ['physics', 'chemistry', 'biology', 'quantum', 'molecular', 
-                       'genetic', 'astronomy', 'medicine', 'research', 'scientific']
-    if any(keyword in text_lower for keyword in science_keywords):
-        embedding[76:152] += np.random.normal(0.3, 0.1, 76)
-    
-    # Business cluster (dimensions 152-227)
-    business_keywords = ['business', 'marketing', 'finance', 'management', 'strategy',
-                        'sales', 'investment', 'entrepreneurship', 'corporate', 'economic']
-    if any(keyword in text_lower for keyword in business_keywords):
-        embedding[152:228] += np.random.normal(0.3, 0.1, 76)
-    
-    # Arts cluster (dimensions 228-303)
-    arts_keywords = ['art', 'music', 'literature', 'poetry', 'painting', 'film',
-                    'theater', 'dance', 'creative', 'design', 'fashion', 'photography']
-    if any(keyword in text_lower for keyword in arts_keywords):
-        embedding[228:304] += np.random.normal(0.3, 0.1, 76)
-    
-    # Sports cluster (dimensions 304-379)
-    sports_keywords = ['sport', 'football', 'basketball', 'tennis', 'golf', 'swimming',
-                      'running', 'cycling', 'hockey', 'volleyball', 'athletic', 'competition']
-    if any(keyword in text_lower for keyword in sports_keywords):
-        embedding[304:380] += np.random.normal(0.3, 0.1, 76)
-    
-    # Add word-level features for remaining dimensions
-    words = text_lower.split()
-    for i, word in enumerate(words[:4]):  # Use first 4 words
-        word_hash = hash(word) % (2**16)
-        embedding[380 + i] = (word_hash / (2**16)) * 0.2
-    
-    # Normalize embedding
-    norm = np.linalg.norm(embedding)
-    if norm > 0:
-        embedding = embedding / norm
-    
-    return embedding.astype(np.float32)
+    """Backwards-compatible wrapper using sentence-transformers embedding."""
+    return np.array(embed_text(text, dimension), dtype=np.float32)
 
 
 def create_query_texts() -> List[Dict[str, Any]]:

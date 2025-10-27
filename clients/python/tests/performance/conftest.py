@@ -290,8 +290,8 @@ def performance_monitor():
 # Test data generators
 def generate_test_vectors(count: int, dimension: int) -> list:
     """Generate test vectors for use in tests"""
-    import numpy as np
-    return [np.random.random(dimension).astype(np.float32).tolist() for _ in range(count)]
+    from ..embedding_utils import embed_many
+    return embed_many(count, dimension)
 
 
 def generate_test_metadata(count: int, categories: list = None) -> list:

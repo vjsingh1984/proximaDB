@@ -76,8 +76,8 @@ class TestRealServerBatching(BaseProximaDBTest):
         # Create test vectors
         vectors = []
         for i in range(100):
-            np.random.seed(i)
-            vector = np.random.randn(384).astype(np.float32)
+            from ..embedding_utils import embed_seed
+            vector = np.array(embed_seed(i, 384), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             
             record = VectorRecord(
@@ -126,8 +126,8 @@ class TestRealServerBatching(BaseProximaDBTest):
             vectors = []
             
             for i in range(count):
-                np.random.seed(worker_id * 1000 + i)
-                vector = np.random.randn(384).astype(np.float32)
+                from ..embedding_utils import embed_seed
+                vector = np.array(embed_seed(worker_id * 1000 + i, 384), dtype=np.float32)
                 vector = vector / np.linalg.norm(vector)
                 
                 record = VectorRecord(
@@ -195,8 +195,8 @@ class TestRealServerBatching(BaseProximaDBTest):
             # Create vectors for this test
             vectors = []
             for i in range(total_vectors):
-                np.random.seed(i + total_vectors)
-                vector = np.random.randn(384).astype(np.float32)
+                from ..embedding_utils import embed_seed
+                vector = np.array(embed_seed(i + total_vectors, 384), dtype=np.float32)
                 vector = vector / np.linalg.norm(vector)
                 
                 record = VectorRecord(
@@ -293,8 +293,8 @@ class TestBatchHelpers(BaseProximaDBTest):
         # Create test vectors
         vectors = []
         for i in range(75):
-            np.random.seed(i)
-            vector = np.random.randn(384).tolist()
+            from ..embedding_utils import embed_seed
+            vector = embed_seed(i, 384)
             
             record = VectorRecord(
                 id=f"helper_vec_{i:04d}",
@@ -338,8 +338,8 @@ class TestGRPCBatching(BaseProximaDBTest):
         # Create test vectors
         vectors = []
         for i in range(50):
-            np.random.seed(i)
-            vector = np.random.randn(384).astype(np.float32)
+            from ..embedding_utils import embed_seed
+            vector = np.array(embed_seed(i, 384), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             
             record = VectorRecord(
@@ -387,8 +387,8 @@ class TestGRPCBatching(BaseProximaDBTest):
         # Create vectors for both
         vectors = []
         for i in range(30):
-            np.random.seed(i)
-            vector = np.random.randn(384).astype(np.float32)
+            from ..embedding_utils import embed_seed
+            vector = np.array(embed_seed(i, 384), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             
             record = VectorRecord(

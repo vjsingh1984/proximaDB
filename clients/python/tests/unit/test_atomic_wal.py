@@ -11,6 +11,7 @@ import time
 import requests
 import json
 import numpy as np
+from ..embedding_utils import embed_seed
 from proximadb import ProximaDBClient, Protocol
 
 
@@ -51,7 +52,7 @@ def test_atomic_wal_behavior():
     test_vectors = [
         {
             "id": "atomic_test_vec_1",
-            "vector": np.random.random(384).astype(np.float32).tolist(),
+            "vector": embed_seed(0, 384),
             "metadata": {"test": "atomic_normal", "sequence": 1}
         }
     ]
@@ -79,7 +80,7 @@ def test_atomic_wal_behavior():
     for i in range(5):
         more_vectors.append({
             "id": f"atomic_test_vec_{i+2}",
-            "vector": np.random.random(384).astype(np.float32).tolist(),
+            "vector": embed_seed(1, 384),
             "metadata": {"test": "atomic_batch", "sequence": i+2}
         })
     
@@ -109,7 +110,7 @@ def test_atomic_wal_behavior():
     print(f"\n🔍 Test 3: Search to verify memtable access")
     
     try:
-        query_vector = np.random.random(384).astype(np.float32).tolist()
+        query_vector = embed_seed(2, 384)
         search_result = client.search(
             collection_id,
             query_vector,

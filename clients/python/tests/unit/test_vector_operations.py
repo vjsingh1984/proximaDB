@@ -7,6 +7,7 @@ Consolidated tests for vector CRUD operations, batch insertions, and large-scale
 import pytest
 import time
 import numpy as np
+from ..embedding_utils import embed_seed
 import logging
 from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
@@ -56,7 +57,7 @@ class TestVectorCRUD:
     def test_single_vector_operations_rest(self, rest_client, test_collection):
         """Test single vector CRUD operations via REST"""
         vector_id = "test_vector_1"
-        vector = np.random.random(128).astype(np.float32).tolist()
+        vector = embed_seed(0, 128)
         metadata = {
             "description": "Test vector",
             "category": "test",
@@ -87,7 +88,7 @@ class TestVectorCRUD:
             logger.debug(f"Skipping get_vector test (not implemented): {e}")
         
         # Update vector (upsert)
-        updated_vector = np.random.random(128).astype(np.float32).tolist()
+        updated_vector = embed_seed(1, 128)
         updated_metadata = {
             "description": "Updated test vector",
             "category": "updated",
@@ -117,7 +118,7 @@ class TestVectorCRUD:
     def test_single_vector_operations_grpc(self, grpc_client, test_collection):
         """Test single vector CRUD operations via gRPC"""
         vector_id = "grpc_test_vector_1"
-        vector = np.random.random(128).astype(np.float32).tolist()
+        vector = embed_seed(2, 128)
         metadata = {
             "description": "gRPC test vector",
             "category": "grpc_test",
@@ -151,7 +152,8 @@ class TestVectorCRUD:
         
         # Insert via REST
         rest_vector_id = "cross_protocol_rest"
-        rest_vector = np.random.random(128).astype(np.float32).tolist()
+        from ..embedding_utils import embed_seed
+        rest_vector = embed_seed(0, 128)
         rest_metadata = {"source": "rest", "test": "cross_protocol"}
         
         rest_client.insert_vector(
@@ -186,7 +188,7 @@ class TestVectorCRUD:
         
         # Insert via gRPC
         grpc_vector_id = "cross_protocol_grpc"
-        grpc_vector = np.random.random(128).astype(np.float32).tolist()
+        grpc_vector = embed_seed(1, 128)
         grpc_metadata = {"source": "grpc", "test": "cross_protocol"}
         
         grpc_client.insert_vector(
@@ -258,7 +260,7 @@ class TestBatchVectorOperations:
         metadatas = []
         
         for i in range(batch_size):
-            vector = np.random.random(384).astype(np.float32).tolist()
+            vector = embed_seed(i, 384)
             vectors.append(vector)
             vector_ids.append(f"batch_rest_{i}")
             metadatas.append({
@@ -288,7 +290,7 @@ class TestBatchVectorOperations:
         metadatas = []
         
         for i in range(batch_size):
-            vector = np.random.random(384).astype(np.float32).tolist()
+            vector = embed_seed(100 + i, 384)
             vectors.append(vector)
             vector_ids.append(f"batch_grpc_{i}")
             metadatas.append({
@@ -366,7 +368,7 @@ class TestLargeScaleOperations:
             batch_metadatas = []
             
             for i in range(batch_start, batch_end):
-                vector = np.random.normal(0, 1, 512).astype(np.float32).tolist()
+                vector = embed_seed(i, 512)
                 batch_vectors.append(vector)
                 batch_ids.append(f"large_vector_{i}")
                 batch_metadatas.append({
@@ -403,7 +405,7 @@ class TestLargeScaleOperations:
             batch_metadatas = []
             
             for i in range(batch_start, batch_end):
-                vector = np.random.normal(0, 1, 512).astype(np.float32).tolist()
+                vector = embed_seed(200 + i, 512)
                 batch_vectors.append(vector)
                 batch_ids.append(f"grpc_large_{i}")
                 batch_metadatas.append({
@@ -433,7 +435,7 @@ class TestLargeScaleOperations:
         metadatas = []
         
         for i in range(vector_count):
-            vector = np.random.normal(0, 1, 512).astype(np.float32).tolist()
+                vector = embed_seed(300 + i, 512)
             vectors.append(vector)
             vector_ids.append(f"stress_{i}")
             metadatas.append({
@@ -457,7 +459,7 @@ class TestLargeScaleOperations:
         # Phase 2: Update operations to create versioning pressure
         update_count = vector_count // 2
         for i in range(update_count):
-            updated_vector = np.random.normal(0, 1, 512).astype(np.float32).tolist()
+            updated_vector = embed_seed(400, 512)
             updated_metadata = {
                 "index": i,
                 "phase": "updated",
@@ -500,7 +502,7 @@ class TestVectorValidation:
         
         try:
             # Try to insert vector with wrong dimensions
-            wrong_vector = np.random.random(256).tolist()  # Wrong size
+            wrong_vector = embed_seed(500, 256)  # Wrong size
             
             with pytest.raises((VectorDimensionError, ProximaDBError)):
                 client.insert_vector(
@@ -602,7 +604,7 @@ class TestStreamingBatchingConcepts:
             metadatas = []
             
             for i in range(start_idx, start_idx + size):
-                vector = np.random.random(256).astype(np.float32).tolist()
+                vector = embed_seed(i, 256)
                 vectors.append(vector)
                 ids.append(f"stream_vec_{i}")
                 metadatas.append({
@@ -648,7 +650,7 @@ class TestStreamingBatchingConcepts:
         metadatas = []
         
         for i in range(100):
-            vectors.append(np.random.random(256).astype(np.float32).tolist())
+            vectors.append(embed_seed(i, 256))
             ids.append(f"search_stream_{i}")
             metadatas.append({"index": i, "group": f"group_{i % 5}"})
         
@@ -662,7 +664,7 @@ class TestStreamingBatchingConcepts:
         time.sleep(1)  # Wait for indexing
         
         # Simulate streaming search results by making multiple smaller searches
-        query_vector = np.random.random(256).astype(np.float32).tolist()
+        query_vector = embed_seed(999, 256)
         all_results = []
         page_size = 20
         max_results = 50
@@ -743,7 +745,7 @@ class TestBatchingOptimization:
                 batch_metadatas = []
                 
                 for i in range(batch_start, batch_end):
-                    vector = np.random.random(128).astype(np.float32).tolist()
+                    vector = embed_seed(i, 128)
                     batch_vectors.append(vector)
                     batch_ids.append(f"batch_{batch_size}_{i}")
                     batch_metadatas.append({"batch_size": batch_size, "index": i})
@@ -798,7 +800,7 @@ class TestBatchingOptimization:
                 vector_counter += size
             
             for i in range(start_idx, start_idx + size):
-                vector = np.random.random(128).astype(np.float32).tolist()
+                vector = embed_seed(100 + i, 128)
                 vectors.append(vector)
                 ids.append(f"concurrent_{i}")
                 metadatas.append({"batch": batch_num, "index": i})
@@ -854,7 +856,7 @@ class TestBatchingOptimization:
             metadatas = []
             
             for i in range(current_batch_size):
-                vector = np.random.random(128).astype(np.float32).tolist()
+                vector = embed_seed(200 + i, 128)
                 vectors.append(vector)
                 ids.append(f"adaptive_{total_vectors + i}")
                 metadatas.append({"batch_size": current_batch_size})

@@ -104,7 +104,8 @@ class IntegrationTest:
         
         try:
             # Generate test vectors
-            vectors = np.random.random((10, 128)).astype(np.float32)
+            from ..embedding_utils import embed_many
+            vectors = np.array(embed_many(10, 128), dtype=np.float32)
             ids = [f"vec_{i}" for i in range(10)]
             metadata = [{"index": i, "type": "test"} for i in range(10)]
             
@@ -131,7 +132,8 @@ class IntegrationTest:
         
         try:
             # Generate query vector
-            query = np.random.random(128).astype(np.float32)
+            from ..embedding_utils import embed_seed
+            query = np.array(embed_seed(999, 128), dtype=np.float32)
             
             # Search for similar vectors
             results = self.client.search(
