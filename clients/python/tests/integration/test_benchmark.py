@@ -344,8 +344,10 @@ class TestComprehensiveBenchmark:
                 search_times.append(search_time)
                 
                 # Calculate accuracy
+                # search_results is already a list, not a dict with 'results' key
+                results_list = search_results if isinstance(search_results, list) else search_results.get("results", [])
                 accuracy = self.calculate_search_accuracy(
-                    search_results.get("results", []),
+                    results_list,
                     query_info["expected_terms"]
                 )
                 search_accuracies.append(accuracy)
