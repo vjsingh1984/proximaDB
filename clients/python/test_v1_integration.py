@@ -54,7 +54,7 @@ def test_v1_client_message_compatibility():
         logger.info("✅ VectorRecord created: {vector_record.id}")
         
         # Test proto message creation (internal method - not called but validated)
-        from proximadb.proto.proximadb.v1 import vector_types_pb2
+        from proximadb.v1 import vector_types_pb2
         
         proto_vector = vector_types_pb2.VectorRecord(
             id=vector_record.id,
@@ -93,7 +93,7 @@ def test_enum_compatibility():
     
     try:
         from proximadb.models import DistanceMetric, StorageEngine
-        from proximadb.proto.proximadb.v1 import vector_types_pb2
+        from proximadb.v1 import vector_types_pb2
         
         # Test DistanceMetric compatibility
         sdk_metric = DistanceMetric.COSINE

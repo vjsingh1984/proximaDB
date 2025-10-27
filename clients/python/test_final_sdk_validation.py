@@ -120,7 +120,7 @@ def test_proto_v1_message_generation():
     logger.info("\nTesting v1 proto message generation...")
     
     try:
-        from proximadb.proto.proximadb.v1 import (
+        from proximadb.v1 import (
             vector_types_pb2,
             collection_types_pb2,
             vector_pb2,
@@ -174,7 +174,7 @@ def test_proto_v1_message_generation():
         logger.info("✅ VectorGetRequest proto: {get_request.vector_id}")
         
         # SQL messages  
-        from proximadb.proto.proximadb.v1 import types_pb2
+        from proximadb.v1 import types_pb2
         sql_request = types_pb2.ExecuteSqlRequest(
             query="SELECT * FROM test_collection",
             parameters=[]
@@ -193,7 +193,7 @@ def test_enum_mappings():
     
     try:
         from proximadb.models import DistanceMetric, StorageEngine, IndexingAlgorithm
-        from proximadb.proto.proximadb.v1.vector_types_pb2 import (
+        from proximadb.v1.vector_types_pb2 import (
             DistanceMetric as ProtoDistanceMetric,
             StorageEngine as ProtoStorageEngine, 
             IndexingAlgorithm as ProtoIndexingAlgorithm
@@ -287,7 +287,7 @@ def test_full_workflow_simulation():
         logger.info("✅ Search payload: top_k={search_payload['top_k']}")
         
         # Test proto message generation (internal gRPC method would be called)
-        from proximadb.proto.proximadb.v1 import vector_types_pb2
+        from proximadb.v1 import vector_types_pb2
         
         proto_vectors = [
             vector_types_pb2.VectorRecord(

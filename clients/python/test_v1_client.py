@@ -34,7 +34,7 @@ def test_v1_imports():
     
     try:
         # Test proto imports
-        from proximadb.proto.proximadb.v1 import (
+        from proximadb.v1 import (
             vector_pb2, 
             vector_pb2_grpc,
             collection_pb2,
@@ -80,7 +80,7 @@ def test_proto_message_creation():
     logger.info("\nTesting proto message creation...")
     
     try:
-        from proximadb.proto.proximadb.v1 import vector_types_pb2, collection_types_pb2
+        from proximadb.v1 import vector_types_pb2, collection_types_pb2
         
         # Test VectorRecord proto creation (metadata as empty dict for proto compatibility)
         vector_proto = vector_types_pb2.VectorRecord(

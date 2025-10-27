@@ -34,7 +34,7 @@ def test_graph_operations():
     
     try:
         from proximadb.client_v1 import ProximaDBClientV1
-        from proximadb.proto.proximadb.v1 import graph_pb2
+        from proximadb.v1 import graph_pb2
         
         # Test both REST and gRPC clients
         rest_client = ProximaDBClientV1(url="http://localhost:5678", protocol="rest")
@@ -92,7 +92,7 @@ def test_hybrid_search():
     
     try:
         from proximadb.client_v1 import ProximaDBClientV1
-        from proximadb.proto.proximadb.v1 import graph_pb2, vector_types_pb2
+        from proximadb.v1 import graph_pb2, vector_types_pb2
         
         # Test both REST and gRPC clients
         rest_client = ProximaDBClientV1(url="http://localhost:5678", protocol="rest")
@@ -177,7 +177,7 @@ def test_advanced_vector_search():
     
     try:
         from proximadb.client_v1 import ProximaDBClientV1
-        from proximadb.proto.proximadb.v1 import vector_types_pb2
+        from proximadb.v1 import vector_types_pb2
         
         # Test both REST and gRPC clients
         rest_client = ProximaDBClientV1(url="http://localhost:5678", protocol="rest")
@@ -283,7 +283,7 @@ def test_graph_traversal_algorithms():
     
     try:
         from proximadb.client_v1 import ProximaDBClientV1
-        from proximadb.proto.proximadb.v1 import graph_pb2
+        from proximadb.v1 import graph_pb2
         
         client = ProximaDBClientV1(url="http://localhost:5679", protocol="grpc")
         
@@ -346,7 +346,7 @@ def test_proto_enum_compatibility():
     print("\nTesting proto enum compatibility...")
     
     try:
-        from proximadb.proto.proximadb.v1 import graph_pb2, vector_types_pb2
+        from proximadb.v1 import graph_pb2, vector_types_pb2
         
         # Test graph proto enums
         traversal_algorithms = [
@@ -445,7 +445,7 @@ def test_comprehensive_functionality():
             'graph_pb2', 'graph_pb2_grpc', 'vector_types_pb2', 'types_pb2'
         ]
         
-        from proximadb.proto.proximadb.v1 import (
+        from proximadb.v1 import (
             graph_pb2, graph_pb2_grpc, vector_types_pb2, types_pb2
         )
         
