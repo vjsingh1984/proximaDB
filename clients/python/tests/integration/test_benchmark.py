@@ -337,7 +337,7 @@ class TestComprehensiveBenchmark:
                 start_search = time.time()
                 search_results = client.search(
                     collection_id=collection_name,
-                    query_vector=query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding,
+                    vector=query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding,  # Changed from query_vector to vector
                     top_k=10
                 )
                 search_time = time.time() - start_search
