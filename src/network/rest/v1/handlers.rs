@@ -122,12 +122,10 @@ pub async fn get_vector(
     Path((collection_id, vector_id)): Path<(String, String)>,
     Query(params): Query<GetVectorParams>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    info!(
-        "Get vector: collection={}, id={}, include_vector={}, include_metadata={}",
+    debug!(
+        "Get vector: collection={}, id={}",
         collection_id,
-        vector_id,
-        params.include_vector.unwrap_or(true),
-        params.include_metadata.unwrap_or(true)
+        vector_id
     );
 
     // Validate parameters
