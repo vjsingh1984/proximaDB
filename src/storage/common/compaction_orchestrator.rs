@@ -112,6 +112,7 @@ pub trait StorageEngine: Send + Sync {
     ) -> Self::CompactionTask;
 
     /// Execute the actual compaction operation
+    #[allow(async_fn_in_trait)]
     async fn execute_compaction(
         &self,
         task: Self::CompactionTask,

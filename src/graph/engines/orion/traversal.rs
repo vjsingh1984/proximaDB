@@ -1006,7 +1006,7 @@ pub async fn k_shortest_paths(
             self.partial_cmp(o).unwrap_or(Ordering::Equal)
         }
     }
-    let mut B: BinaryHeap<Cand> = BinaryHeap::new();
+    let mut b: BinaryHeap<Cand> = BinaryHeap::new();
 
     for k_i in 1..k {
         let (last_path, last_cost) = &A[k_i - 1];
@@ -1036,13 +1036,13 @@ pub async fn k_shortest_paths(
                 total_path.extend(spur_path);
                 let cost_prefix = 0.0; // simplification: not recalculating prefix cost separately
                 let total_cost = cost_prefix + spur_cost;
-                B.push(Cand {
+                b.push(Cand {
                     path: total_path,
                     cost: total_cost,
                 });
             }
         }
-        if let Some(best) = B.pop() {
+        if let Some(best) = b.pop() {
             if !A.iter().any(|(p, _)| *p == best.path) {
                 A.push((best.path, best.cost));
             } else {

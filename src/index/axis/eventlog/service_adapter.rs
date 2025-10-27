@@ -232,7 +232,7 @@ impl EventLogQuery for EventLogServiceAdapter {
 impl EventLogCommand for EventLogServiceAdapter {
     async fn add_event(&self, event: IndexEvent) -> Result<()> {
         let event_log = self.manager.get_event_log(&event.collection_id).await?;
-        event_log.add_event(event);
+        event_log.add_event(event).await;
 
         self.stats.write().await.total_events_processed += 1;
         Ok(())

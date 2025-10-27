@@ -1240,8 +1240,8 @@ impl HybridQueryEngine {
             ..Default::default()
         };
 
-        // Execute VOS search for each collection specified in vector component
-        for collection_id in &vector_comp.collection {
+        // Execute VOS search for the collection specified in vector component
+        if let Some(collection_id) = &vector_comp.collection {
             match self
                 .vector_service
                 .unified_search_native(
