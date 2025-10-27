@@ -435,7 +435,7 @@ class TestLargeScaleOperations:
         metadatas = []
         
         for i in range(vector_count):
-                vector = embed_seed(300 + i, 512)
+            vector = embed_seed(300 + i, 512)
             vectors.append(vector)
             vector_ids.append(f"stress_{i}")
             metadatas.append({
