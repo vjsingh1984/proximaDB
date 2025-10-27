@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::storage::persistence::filesystem::{
     FilesystemFactory,
@@ -691,21 +691,17 @@ impl TransactionCoordinator {
         self.active_operations.remove(operation_id);
 
         // List the final directory to confirm files are there
-        info!(
-            "📂 Listing final directory after operation: {}",
+        trace!(
+            "Listing final directory after operation: {}",
             metadata.final_url
         );
         if let Ok(final_entries) = self.filesystem.list(&metadata.final_url).await {
-            info!("📂 Found {} files in final location", final_entries.len());
-            for (idx, entry) in final_entries.iter().enumerate() {
-                info!(
-                    "    [{}] {} (size: {} bytes)",
-                    idx, entry.name, entry.metadata.size
-                );
-            }
+            debug!("Found {} files in final location", final_entries.len());
+            // Individual file listing removed - way too verbose for production
+            // Use trace if needed for deep debugging
         }
 
-        info!("🎉 Atomic operation completed: {}", operation_id);
+        debug!("Atomic operation completed: {}", operation_id);
         Ok(())
     }
 
