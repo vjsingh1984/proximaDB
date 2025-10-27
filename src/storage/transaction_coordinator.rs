@@ -374,9 +374,9 @@ impl TransactionCoordinator {
     ) -> Result<TransactionalOperationMetadata> {
         let operation_id = Uuid::new_v4().to_string();
 
-        info!("🚀 Beginning atomic operation: {}", operation_id);
-        info!(
-            "📋 Staging config: base_url={}, operation_type={:?}, custom_staging_dir={:?}",
+        debug!("Beginning atomic operation: {}", operation_id);
+        trace!(
+            "Staging config: base_url={}, operation_type={:?}, custom_staging_dir={:?}",
             staging_config.base_url,
             staging_config.operation_type,
             staging_config.custom_staging_dir
@@ -385,18 +385,18 @@ impl TransactionCoordinator {
         // Build staging and final URLs
         let (staging_url, final_url) = self.build_operation_urls(staging_config, &operation_id)?;
 
-        info!("📁 Staging URL: {}", staging_url);
-        info!("🎯 Final URL: {}", final_url);
+        trace!("Staging URL: {}", staging_url);
+        trace!("Final URL: {}", final_url);
 
         // Create both staging and final directories upfront for robustness
         // Note: staging_url and final_url are directory URLs, not file URLs
-        info!("📂 Creating staging directory: {}", staging_url);
+        trace!("Creating staging directory: {}", staging_url);
         self.filesystem
             .create_dir_all(&staging_url)
             .await
             .context("Failed to create staging directory")?;
 
-        info!("📂 Creating final directory: {}", final_url);
+        trace!("Creating final directory: {}", final_url);
         self.filesystem
             .create_dir_all(&final_url)
             .await
@@ -472,10 +472,7 @@ impl TransactionCoordinator {
         relative_path: &str,
         data: &[u8],
     ) -> Result<()> {
-        info!("📝 write_to_staging START");
-        info!("    operation_id: {}", operation_id);
-        info!("    relative_path: {}", relative_path);
-        info!("    data size: {} bytes", data.len());
+        trace!("write_to_staging: {} bytes to {}", data.len(), relative_path);
 
         // Get operation metadata from DashMap
         let metadata = self
@@ -483,8 +480,6 @@ impl TransactionCoordinator {
             .get(operation_id)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
-
-        info!("    metadata.staging_url: {}", metadata.staging_url);
 
         // Update status to staging
         self.update_operation_status(operation_id, TransactionalOperationStatus::Staging)
@@ -497,11 +492,8 @@ impl TransactionCoordinator {
             relative_path
         );
 
-        info!("    staging_file_url: {}", staging_file_url);
-
         // Create file options using write strategy
         let fs = self.filesystem.get_filesystem(&staging_file_url)?;
-        info!("    filesystem type: {}", fs.filesystem_type());
 
         let file_options = self
             .write_strategy
@@ -509,21 +501,19 @@ impl TransactionCoordinator {
 
         // Extract path for write
         let staging_path = FilesystemFactory::resolve_path(&staging_file_url)?;
-        info!("    staging_path extracted: {}", staging_path);
 
         // Write to staging using atomic executor
-        info!("    Calling write_atomic...");
         match self
             .atomic_executor
             .write_atomic(fs.as_ref(), &staging_path, data, Some(file_options))
             .await
         {
             Ok(_) => {
-                info!("✅ Written to staging: {}", staging_file_url);
+                trace!("Written to staging: {}", staging_file_url);
                 Ok(())
             }
             Err(e) => {
-                error!("❌ Failed to write to staging: {}", e);
+                error!("Failed to write to staging: {}", e);
                 Err(anyhow::anyhow!("Failed to write to staging: {}", e))
             }
         }
