@@ -169,7 +169,7 @@ impl VectorOperationsService {
         svc.orchestrator = ctx.orchestrator.clone();
         // Add tenant integration from context if available
         // TODO: Add tenant_manager and rbac_enforcer fields to SharedContext
-        if let Some(ref tenant_manager) = ctx.tenant_manager {
+        if let Some(ref _tenant_manager) = ctx.tenant_manager {
             svc.tenant_manager = Some(tenant_manager.clone());
         }
         if let Some(ref rbac_enforcer) = ctx.rbac_enforcer {
@@ -555,7 +555,7 @@ impl VectorOperationsService {
         );
 
         // NEW: Multi-tenant validation and security
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // STEP 1: Validate tenant ownership of collection
                 // TODO: Implement get_collection_tenant method
@@ -708,7 +708,7 @@ impl VectorOperationsService {
                                 );
 
                                 // Log security incident for audit trail
-                                if let Some(ref audit_logger) = self.get_audit_logger() {
+                                if let Some(ref _audit_logger) = self.get_audit_logger() {
                                     // TODO: Implement log_security_incident method
                                     warn!(
                                         "Security incident logged: cross_tenant_data_leakage_prevented for vector {}",
@@ -733,7 +733,7 @@ impl VectorOperationsService {
                         vector_result.id
                     );
 
-                    if let Some(ref audit_logger) = self.get_audit_logger() {
+                    if let Some(ref _audit_logger) = self.get_audit_logger() {
                         // TODO: Implement log_security_incident method
                         warn!(
                             "Security incident logged: missing_tenant_metadata for vector {}",

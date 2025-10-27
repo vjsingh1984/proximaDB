@@ -174,7 +174,7 @@ impl SksExecutor {
     pub async fn execute_follow(
         &self,
         follow: &FollowOperator,
-        graph_id: &str,
+        _graph_id: &str,
         start_node: &str,
     ) -> Result<Vec<QueryRow>> {
         info!("Executing FOLLOW traversal from node: {}", start_node);
@@ -183,7 +183,7 @@ impl SksExecutor {
         // TODO: Add node existence validation
 
         // 2. Configure traversal with ORION engine
-        let traversal_config = crate::graph::engines::orion::traversal::TraversalConfig {
+        let _traversal_config = crate::graph::engines::orion::traversal::TraversalConfig {
             max_depth: Some(follow.max_depth as u32),
             max_nodes: Some(1000), // Default limit
             edge_types: Some(vec![follow.relation_type.clone()]),
@@ -217,8 +217,8 @@ impl SksExecutor {
     /// - Multi-graph support with graph_id parameter
     pub async fn execute_assemble(
         &self,
-        assemble: &AssembleOperator,
-        graph_id: &str,
+        _assemble: &AssembleOperator,
+        _graph_id: &str,
         context_items: &[String],
     ) -> Result<Vec<QueryRow>> {
         info!(

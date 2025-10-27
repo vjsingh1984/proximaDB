@@ -173,7 +173,7 @@ impl EventLogWAL {
             .ok_or_else(|| anyhow::anyhow!("Invalid ack file path: {:?}", ack_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
-        let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
+        let _acknowledged_ids = if filesystem.exists(ack_file_str).await? {
             let content_bytes = filesystem.read(ack_file_str).await?;
             let content = String::from_utf8(content_bytes).unwrap_or_default();
             content
@@ -304,7 +304,7 @@ impl EventLogWAL {
             .ok_or_else(|| anyhow::anyhow!("Invalid ack file path: {:?}", ack_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
-        let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
+        let _acknowledged_ids = if filesystem.exists(ack_file_str).await? {
             let content_bytes = filesystem.read(ack_file_str).await?;
             let content = String::from_utf8(content_bytes).unwrap_or_default();
             content

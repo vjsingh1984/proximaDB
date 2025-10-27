@@ -502,7 +502,7 @@ pub async fn execute_sql(
 
     // Execute through v1 path (typed params and rows)
     // Optional: read seeding strategy from HTTP header (X-Seeding-Strategy) or from request.parameters via a special key
-    let seeding_strategy = crate::query::execution::SeedingStrategy::Average; // default
+    let _seeding_strategy = crate::query::execution::SeedingStrategy::Average; // default
 
     let query_with_hint = if let Some(seeding) = &request.seeding {
         let seed_upper = seeding.to_ascii_uppercase();

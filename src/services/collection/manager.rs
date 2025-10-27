@@ -167,7 +167,7 @@ impl CollectionService {
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
         // NEW: Tenant validation for get operations
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // Validate tenant ownership of collection
                 // TODO: Implement get_collection_tenant method
@@ -182,7 +182,7 @@ impl CollectionService {
                 }
 
                 // RBAC permission validation
-                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
                     // TODO: Implement check_permission method
                     let permission_result = crate::storage::tenant::rbac::PermissionResult {
                         allowed: true,
@@ -218,7 +218,7 @@ impl CollectionService {
         debug!("🗑️ Deleting collection: {}", collection_name);
 
         // NEW: Tenant validation for delete operations
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // Validate tenant ownership
                 // TODO: Implement get_collection_tenant method
@@ -235,7 +235,7 @@ impl CollectionService {
                 }
 
                 // RBAC permission validation (delete requires admin or owner permissions)
-                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
                     // TODO: Implement check_permission method
                     let permission_result = crate::storage::tenant::rbac::PermissionResult {
                         allowed: true,
@@ -282,7 +282,7 @@ impl CollectionService {
         let start_time = std::time::Instant::now();
 
         // NEW: Multi-tenant validation if tenant manager is available
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // Step 1: Validate tenant access and resource limits
                 // TODO: Implement check_collection_creation_limits method
@@ -299,7 +299,7 @@ impl CollectionService {
                 }
 
                 // Step 2: RBAC permission validation if enforcer is available
-                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
                     // TODO: Implement check_permission method
                     let permission_result = crate::storage::tenant::rbac::PermissionResult {
                         allowed: true,

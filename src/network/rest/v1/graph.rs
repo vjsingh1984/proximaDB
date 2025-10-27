@@ -714,8 +714,8 @@ pub fn create_graph_router() -> Router<AppState> {
 
 /// Create a new node
 pub async fn create_node(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(request): Json<CreateNodeRequest>,
 ) -> impl IntoResponse {
     debug!(
@@ -758,7 +758,7 @@ pub async fn create_node(
 
 /// Get a node by ID
 pub async fn get_node(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     debug!("Getting node: {} from graph: {}", node_id, graph_id);
@@ -807,7 +807,7 @@ pub async fn get_node(
 
 /// Update a node
 pub async fn update_node(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path((graph_id, node_id)): Path<(String, String)>,
     Json(mut node_input): Json<RestNodeInput>,
 ) -> impl IntoResponse {
@@ -851,7 +851,7 @@ pub async fn update_node(
 
 /// Delete a node
 pub async fn delete_node(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     debug!("Deleting node: {} from graph: {}", node_id, graph_id);
@@ -900,7 +900,7 @@ pub async fn delete_node(
 
 /// Get neighbors of a node
 pub async fn get_node_neighbors(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     debug!(
@@ -945,8 +945,8 @@ pub async fn get_node_neighbors(
 
 /// Create a new edge
 pub async fn create_edge(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(request): Json<CreateEdgeRequest>,
 ) -> impl IntoResponse {
     debug!(
@@ -1019,8 +1019,8 @@ struct DdlResponse {
 
 /// Compute shortest path using Dijkstra algorithm
 pub async fn shortest_path(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     headers: HeaderMap,
     Json(mut req): Json<ShortestPathRequest>,
 ) -> impl IntoResponse {
@@ -1098,8 +1098,8 @@ fn parse_sp_algorithm(
 
 /// Add unique constraint (label, property)
 pub async fn add_unique_constraint(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(req): Json<UniqueConstraintRequest>,
 ) -> impl IntoResponse {
     match app_state
@@ -1123,8 +1123,8 @@ pub async fn add_unique_constraint(
 
 /// Remove unique constraint (label, property)
 pub async fn remove_unique_constraint(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(req): Json<UniqueConstraintRequest>,
 ) -> impl IntoResponse {
     // remove_unique_constraint now returns Result and is async
@@ -1149,8 +1149,8 @@ pub async fn remove_unique_constraint(
 
 /// Get connected components (weakly connected)
 pub async fn get_connected_components(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
         .unified_handlers
@@ -1177,8 +1177,8 @@ pub async fn get_connected_components(
 
 /// Detect directed cycles
 pub async fn check_cycles(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
         .unified_handlers
@@ -1205,7 +1205,7 @@ pub async fn check_cycles(
 
 /// Get an edge by ID
 pub async fn get_edge(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path((graph_id, edge_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     debug!("Getting edge: {} from graph: {}", edge_id, graph_id);
@@ -1254,7 +1254,7 @@ pub async fn get_edge(
 
 /// Update an edge
 pub async fn update_edge(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path((graph_id, edge_id)): Path<(String, String)>,
     Json(mut edge_input): Json<RestEdgeInput>,
 ) -> impl IntoResponse {
@@ -1298,7 +1298,7 @@ pub async fn update_edge(
 
 /// Delete an edge
 pub async fn delete_edge(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path((graph_id, edge_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     debug!("Deleting edge: {} from graph: {}", edge_id, graph_id);
@@ -1347,8 +1347,8 @@ pub async fn delete_edge(
 
 /// Perform graph traversal
 pub async fn traverse_graph(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(request): Json<RestTraversalRequest>,
 ) -> impl IntoResponse {
     debug!(
@@ -1397,8 +1397,8 @@ pub async fn traverse_graph(
 
 /// Query nodes by labels and properties
 pub async fn query_nodes(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(query): Json<RestNodeQuery>,
 ) -> impl IntoResponse {
     debug!(
@@ -1457,8 +1457,8 @@ pub async fn query_nodes(
 
 /// Query edges by types and properties
 pub async fn query_edges(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(query): Json<RestEdgeQuery>,
 ) -> impl IntoResponse {
     debug!("Querying edges in graph: {}", graph_id);
@@ -1512,8 +1512,8 @@ pub async fn query_edges(
 
 /// Batch create nodes
 pub async fn batch_create_nodes(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(request): Json<BatchCreateNodesRequest>,
 ) -> impl IntoResponse {
     debug!(
@@ -1562,8 +1562,8 @@ pub async fn batch_create_nodes(
 
 /// Batch create edges
 pub async fn batch_create_edges(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
     Json(request): Json<BatchCreateEdgesRequest>,
 ) -> impl IntoResponse {
     debug!(
@@ -1624,8 +1624,8 @@ struct CycleResponse {
 }
 
 pub async fn get_graph_stats(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
 ) -> impl IntoResponse {
     debug!("Getting graph statistics for graph: {}", graph_id);
 
@@ -1667,7 +1667,7 @@ const DEFAULT_GRAPH_ID: &str = "default";
 
 /// Legacy create node handler (uses default graph)
 pub async fn create_node_legacy(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Json(request): Json<CreateNodeRequest>,
 ) -> impl IntoResponse {
     create_node(
@@ -1680,7 +1680,7 @@ pub async fn create_node_legacy(
 
 /// Legacy get node handler (uses default graph)
 pub async fn get_node_legacy(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
     get_node(
@@ -1692,7 +1692,7 @@ pub async fn get_node_legacy(
 
 /// Legacy create edge handler (uses default graph)
 pub async fn create_edge_legacy(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Json(request): Json<CreateEdgeRequest>,
 ) -> impl IntoResponse {
     create_edge(
@@ -1704,7 +1704,7 @@ pub async fn create_edge_legacy(
 }
 
 /// Legacy get graph stats handler (uses default graph)
-pub async fn get_graph_stats_legacy(State(app_state): State<AppState>) -> impl IntoResponse {
+pub async fn get_graph_stats_legacy(State(_app_state): State<AppState>) -> impl IntoResponse {
     get_graph_stats(State(app_state), Path(DEFAULT_GRAPH_ID.to_string())).await
 }
 
@@ -1734,7 +1734,7 @@ struct GraphCollectionResponse {
 
 /// Create a new graph collection
 pub async fn create_graph_collection(
-    State(app_state): State<AppState>,
+    State(_app_state): State<AppState>,
     Json(request): Json<CreateGraphCollectionRequest>,
 ) -> impl IntoResponse {
     let create_request = crate::proto::proximadb_v1::CreateGraphRequest {
@@ -1784,7 +1784,7 @@ pub async fn create_graph_collection(
 }
 
 /// List all graph collections
-pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl IntoResponse {
+pub async fn list_graph_collections(State(_app_state): State<AppState>) -> impl IntoResponse {
     match app_state
         .unified_handlers
         .graph_collection_service
@@ -1822,8 +1822,8 @@ pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl I
 
 /// Get a specific graph collection
 pub async fn get_graph_collection(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
         .unified_handlers
@@ -1866,8 +1866,8 @@ pub async fn get_graph_collection(
 
 /// Delete a graph collection
 pub async fn delete_graph_collection(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
         .unified_handlers
@@ -1900,9 +1900,9 @@ pub async fn delete_graph_collection(
 
 /// Update graph schema
 pub async fn update_graph_schema(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-    Json(schema): Json<serde_json::Value>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
+    Json(_schema): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     // TODO: Implement schema update once GraphSchema is properly defined
     (

@@ -740,7 +740,7 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services..."
         );
-        let mut unified_handlers_instance = UnifiedHandlers::new(
+        let unified_handlers_instance = UnifiedHandlers::new(
             collection_service.clone(),
             vector_operations_service.clone(),
             graph_collection_service.clone(), // SHARED instance

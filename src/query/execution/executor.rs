@@ -291,7 +291,7 @@ impl QueryExecutor {
                     buffers.push(excepted);
                 }
                 ExecutionOperation::CteMaterialization {
-                    cte_name,
+                    cte_name: _,
                     query_plan,
                 } => {
                     // Execute the CTE query plan and store results for reference
@@ -693,9 +693,9 @@ impl QueryExecutor {
         &self,
         collection_id: &str,
         query_vector: Option<&Vec<f32>>,
-        filters: Option<&FilterExpression>,
+        _filters: Option<&FilterExpression>,
         top_k: usize,
-        distance_metric: &str,
+        _distance_metric: &str,
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
         #[cfg(test)]
@@ -1269,9 +1269,9 @@ impl QueryExecutor {
     async fn execute_graph_traversal_operation(
         &self,
         start_nodes: &[String],
-        edge_types: &[String],
-        max_depth: u32,
-        filters: Option<&FilterExpression>,
+        _edge_types: &[String],
+        _max_depth: u32,
+        _filters: Option<&FilterExpression>,
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
         // Check for test mock data first

@@ -71,7 +71,7 @@ impl RbacService {
 
     /// Get roles for a user
     pub fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>, AuthError> {
-        let user_roles = self
+        let _user_roles = self
             .user_roles
             .try_read()
             .map_err(|_| AuthError::InvalidCredentials)?;
@@ -283,7 +283,7 @@ impl RbacService {
 
     /// Get all users with a specific role
     pub async fn get_users_with_role(&self, role: &str) -> Vec<String> {
-        let user_roles = self.user_roles.read().await;
+        let _user_roles = self.user_roles.read().await;
         user_roles
             .iter()
             .filter(|(_, roles)| roles.contains(role))
@@ -358,7 +358,7 @@ impl RbacService {
 
         // Tenant isolation check
         if let Some(resource_tenant) = &context.tenant_id {
-            let user_roles = self.get_user_roles(user_id)?;
+            let _user_roles = self.get_user_roles(user_id)?;
             // Check if user belongs to the same tenant (simplified check)
             // In production, this would involve more complex tenant validation
             if !self.user_belongs_to_tenant(user_id, resource_tenant).await {
@@ -370,7 +370,7 @@ impl RbacService {
     }
 
     /// Check if user has access to a specific collection
-    async fn user_has_collection_access(&self, user_id: &str, collection_id: &str) -> bool {
+    async fn user_has_collection_access(&self, user_id: &str, _collection_id: &str) -> bool {
         // This is a simplified implementation
         // In production, this would check collection-specific ACLs
         let roles = match self.get_user_roles(user_id) {

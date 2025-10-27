@@ -473,11 +473,11 @@ impl ServerBuilder {
         tracing::info!("✅ Indexing system initialized");
 
         // Initialize monitoring systems before building storage system
-        let monitoring_system = self.initialize_monitoring_systems().await?;
+        let _monitoring_system = self.initialize_monitoring_systems().await?;
         tracing::info!("✅ Monitoring systems initialized");
 
         // Initialize network layer before building storage system
-        let network_system = self.initialize_network_layer().await?;
+        let _network_system = self.initialize_network_layer().await?;
         tracing::info!("✅ Network layer initialized");
 
         // Extract server config before storage builder move
