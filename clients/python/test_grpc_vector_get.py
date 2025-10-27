@@ -17,13 +17,16 @@ server_process = None
 def start_server():
     """Start ProximaDB server for testing"""
     global server_process
-    print("🚀 Starting ProximaDB server...")
-    
-    # Kill any existing server
-    os.system("pkill -f proximadb-server")
-    time.sleep(1)
-    
-    # Start server
+    print("🚀 Assuming ProximaDB server is already running...")
+
+    # DISABLED: Don't kill existing server - tests should use already running server
+    # os.system("pkill -f proximadb-server")
+    # time.sleep(1)
+
+    # DISABLED: Don't start new server - use existing one
+    return
+
+    # Start server (DISABLED)
     server_process = subprocess.Popen(
         [
             "/home/vsingh/code/proximaDB/target/release/proximadb-server",
@@ -42,14 +45,16 @@ def start_server():
 def stop_server():
     """Stop ProximaDB server"""
     global server_process
+    # DISABLED: Don't stop server - let it continue running for other tests
+    return
     if server_process:
         print("🛑 Stopping server...")
         server_process.terminate()
         server_process.wait()
         server_process = None
 
-# Register cleanup
-atexit.register(stop_server)
+# DISABLED: Don't register cleanup - server should keep running
+# atexit.register(stop_server)
 
 def test_grpc_vector_get():
     """Test gRPC vector insert and get operations"""
