@@ -87,7 +87,7 @@ impl SqlFrontendParser {
                         SetOp::Intersect,
                         matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
                     ),
-                    SqlSetOperator::Except => (
+                    SqlSetOperator::Except | SqlSetOperator::Minus => (
                         SetOp::Except,
                         matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
                     ),
@@ -139,7 +139,7 @@ impl SqlFrontendParser {
                         SetOp::Intersect,
                         matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
                     ),
-                    SqlSetOperator::Except => (
+                    SqlSetOperator::Except | SqlSetOperator::Minus => (
                         SetOp::Except,
                         matches!(set_quantifier, sqlparser::ast::SetQuantifier::All),
                     ),
@@ -204,8 +204,8 @@ impl SqlFrontendParser {
 
         // Convert GROUP BY
         let group_by = match &select.group_by {
-            sqlparser::ast::GroupByExpr::All => vec![], // Handle GROUP BY ALL (PostgreSQL extension)
-            sqlparser::ast::GroupByExpr::Expressions(exprs) => exprs
+            sqlparser::ast::GroupByExpr::All(_) => vec![], // Handle GROUP BY ALL (PostgreSQL extension)
+            sqlparser::ast::GroupByExpr::Expressions(exprs, _modifiers) => exprs
                 .iter()
                 .map(|expr| self.convert_expr(expr))
                 .collect::<Result<Vec<_>>>()?,
@@ -224,25 +224,31 @@ impl SqlFrontendParser {
             .map(|order_expr| self.convert_order_by_expr(order_expr))
             .collect::<Result<Vec<_>>>()?;
 
-        // Convert LIMIT and OFFSET
-        let limit = query.limit.as_ref().and_then(|expr| {
-            if let SqlExpr::Value(Value::Number(n, _)) = expr {
-                n.parse::<u64>().ok()
-            } else {
+        // Convert LIMIT and OFFSET (sqlparser 0.59 uses limit_clause)
+        let limit = query
+            .limit_clause
+            .as_ref()
+            .and_then(|lc| lc.limit.as_ref())
+            .and_then(|expr| {
+                if let SqlExpr::Value(value_with_span) = expr {
+                    if let Value::Number(n, _) = &value_with_span.value {
+                        return n.parse::<u64>().ok();
+                    }
+                }
                 None
-            }
-        });
+            });
 
         let offset = query
-            .offset
+            .limit_clause
             .as_ref()
-            .map(|offset_expr| &offset_expr.value)
-            .and_then(|expr| {
-                if let SqlExpr::Value(Value::Number(n, _)) = expr {
-                    n.parse::<u64>().ok()
-                } else {
-                    None
+            .and_then(|lc| lc.offset.as_ref())
+            .and_then(|offset_expr| {
+                if let SqlExpr::Value(value_with_span) = &offset_expr.value {
+                    if let Value::Number(n, _) = &value_with_span.value {
+                        return n.parse::<u64>().ok();
+                    }
                 }
+                None
             });
 
         Ok(Select {
