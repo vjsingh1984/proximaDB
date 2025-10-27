@@ -27,14 +27,22 @@ def start_server():
     os.system("pkill -f proximadb-server")
     time.sleep(1)
 
+    # Find project root (assumes test is in clients/python/tests/server_lifecycle/)
+    test_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(test_dir, "../../../.."))
+    server_binary = os.path.join(project_root, "target/release/proximadb-server")
+    config_file = os.path.join(project_root, "config/config.toml")
+
+    if not os.path.exists(server_binary):
+        print(f"❌ Server binary not found at: {server_binary}")
+        print("   Please build with: cargo build --release")
+        return
+
     # Start server
     server_process = subprocess.Popen(
-        [
-            "/home/vsingh/code/proximaDB/target/release/proximadb-server",
-            "--config", "/tmp/proximadb_test/test-config.toml"
-        ],
-        cwd="/home/vsingh/code/proximaDB",
-        env={**os.environ, "RUST_LOG": "debug"},
+        [server_binary, "--config", config_file],
+        cwd=project_root,
+        env={**os.environ, "RUST_LOG": "info"},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
