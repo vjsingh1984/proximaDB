@@ -348,23 +348,30 @@ impl SqlFrontendParser {
     }
 
     fn convert_join(&self, join: &SqlJoin) -> Result<Join> {
-        let kind = match join.join_operator {
+        let kind = match &join.join_operator {
+            JoinOperator::Join(_) => JoinType::Inner, // Default JOIN is treated as INNER
             JoinOperator::Inner(_) => JoinType::Inner,
-            JoinOperator::LeftOuter(_) => JoinType::LeftOuter,
+            JoinOperator::Left(_) | JoinOperator::LeftOuter(_) => JoinType::LeftOuter,
+            JoinOperator::Right(_) | JoinOperator::RightOuter(_) => JoinType::RightOuter,
+            JoinOperator::FullOuter(_) => JoinType::FullOuter,
             _ => return Err(anyhow!("Unsupported join type: {:?}", join.join_operator)),
         };
 
         let right = self.convert_table_factor(&join.relation)?;
 
         let on = match &join.join_operator {
-            JoinOperator::Inner(constraint) | JoinOperator::LeftOuter(constraint) => {
-                match constraint {
-                    JoinConstraint::On(expr) => Some(self.convert_expr(expr)?),
-                    JoinConstraint::Using(_) => return Err(anyhow!("USING clause not supported")),
-                    JoinConstraint::Natural => None,
-                    JoinConstraint::None => None,
-                }
-            }
+            JoinOperator::Join(constraint)
+            | JoinOperator::Inner(constraint)
+            | JoinOperator::Left(constraint)
+            | JoinOperator::LeftOuter(constraint)
+            | JoinOperator::Right(constraint)
+            | JoinOperator::RightOuter(constraint)
+            | JoinOperator::FullOuter(constraint) => match constraint {
+                JoinConstraint::On(expr) => Some(self.convert_expr(expr)?),
+                JoinConstraint::Using(_) => return Err(anyhow!("USING clause not supported")),
+                JoinConstraint::Natural => None,
+                JoinConstraint::None => None,
+            },
             _ => None,
         };
 
