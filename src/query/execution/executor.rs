@@ -693,7 +693,7 @@ impl QueryExecutor {
         &self,
         collection_id: &str,
         query_vector: Option<&Vec<f32>>,
-        _filters: Option<&FilterExpression>,
+        filters: Option<&FilterExpression>,
         top_k: usize,
         _distance_metric: &str,
         metrics: &mut QueryPerformanceMetrics,

@@ -108,7 +108,7 @@ impl DomainKnowledgeGraph {
     /// Create domain knowledge graph with business context
     pub async fn new(
         domain_context: DomainContext,
-        tenant_manager: Arc<TenantManager>,
+        _tenant_manager: Arc<TenantManager>,
     ) -> Result<Self> {
         let domain_id = domain_context.domain_id.clone();
         let tenant_id = domain_context.tenant_id.clone();

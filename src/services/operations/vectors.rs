@@ -169,7 +169,7 @@ impl VectorOperationsService {
         svc.orchestrator = ctx.orchestrator.clone();
         // Add tenant integration from context if available
         // TODO: Add tenant_manager and rbac_enforcer fields to SharedContext
-        if let Some(ref _tenant_manager) = ctx.tenant_manager {
+        if let Some(ref tenant_manager) = ctx.tenant_manager {
             svc.tenant_manager = Some(tenant_manager.clone());
         }
         if let Some(ref rbac_enforcer) = ctx.rbac_enforcer {

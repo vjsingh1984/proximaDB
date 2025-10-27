@@ -71,7 +71,7 @@ impl RbacService {
 
     /// Get roles for a user
     pub fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>, AuthError> {
-        let _user_roles = self
+        let user_roles = self
             .user_roles
             .try_read()
             .map_err(|_| AuthError::InvalidCredentials)?;
@@ -283,7 +283,7 @@ impl RbacService {
 
     /// Get all users with a specific role
     pub async fn get_users_with_role(&self, role: &str) -> Vec<String> {
-        let _user_roles = self.user_roles.read().await;
+        let user_roles = self.user_roles.read().await;
         user_roles
             .iter()
             .filter(|(_, roles)| roles.contains(role))
