@@ -7,8 +7,48 @@
 This directory contains tests that:
 - Start/stop/restart the ProximaDB server
 - Test server recovery and persistence
-- Verify server lifecycle behavior
-- Test server configuration changes
+- Verify WAL persistence for vectors, graphs, and entities
+- Test server lifecycle behavior
+- Validate configuration changes
+
+## Test Files
+
+### 1. `test_comprehensive_recovery.py`
+**Tests:** Vector + Graph + Entity recovery after restart
+
+**What it does:**
+- Creates vector collection with 10 vectors
+- Creates graph with 5 nodes and 4 edges
+- Inserts entity data
+- Stops server
+- Restarts server
+- Verifies all data recovered
+
+**Run:** `pytest tests/server_lifecycle/test_comprehensive_recovery.py -v`
+
+### 2. `test_wal_persistence_detailed.py`
+**Tests:** Detailed WAL file verification and recovery
+
+**What it does:**
+- Creates collection and gets actual storage path
+- Inserts 20 vectors
+- Verifies WAL files created in correct location (multi-disk layout)
+- Stops server
+- Restarts server
+- Verifies vectors recovered from WAL
+- Reports recovery percentage
+
+**Run:** `pytest tests/server_lifecycle/test_wal_persistence_detailed.py -v`
+
+### 3. `test_grpc_vector_get.py`
+**Tests:** gRPC operations across server restart
+
+**What it does:**
+- Tests gRPC insert/get operations
+- Verifies consistency between gRPC and REST
+- Tests vector retrieval after insert
+
+**Run:** `pytest tests/server_lifecycle/test_grpc_vector_get.py -v`
 
 ## Important Notes
 
