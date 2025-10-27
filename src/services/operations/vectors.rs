@@ -622,8 +622,8 @@ impl VectorOperationsService {
             .as_ref()
             .map(|c| c.progressive_search)
             .unwrap_or(false);
-        info!(
-            "🔍 Starting unified search for collection {} (progressive: {})",
+        debug!(
+            "Search: collection={}, progressive={}",
             collection_id, progressive_enabled
         );
 
@@ -793,8 +793,8 @@ impl VectorOperationsService {
             .as_ref()
             .map(|c| c.progressive_search)
             .unwrap_or(false);
-        info!(
-            "🔍 Starting unified search (v1) for collection {} (progressive: {})",
+        debug!(
+            "Search v1: collection={}, progressive={}",
             collection_id, progressive_enabled
         );
 
@@ -1404,15 +1404,12 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        info!(
-            "🎯 Executing PARALLEL TWO-STAGE search for collection {} (method: {:?}, filter: {})",
+        debug!(
+            "TWO-STAGE search: collection={}, method={:?}, filter={}",
             collection_id,
             method,
             filter.is_some()
         );
-        info!("   Stage 1 & 2 running in PARALLEL:");
-        info!("   - Stage 1: WAL/memtable search for recent unflushed vectors");
-        info!("   - Stage 2: Storage engine search for flushed/compacted vectors");
 
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
@@ -1480,8 +1477,8 @@ impl VectorOperationsService {
                         true,            // include_metadata
                     )
                     .await?;
-                info!(
-                    "✅ Stage 1 complete: Found {} unflushed vectors from WAL",
+                debug!(
+                    "Stage 1 complete: {} WAL results",
                     results.len()
                 );
                 Ok::<_, anyhow::Error>(results)
@@ -1489,15 +1486,15 @@ impl VectorOperationsService {
             // Stage 2: Storage engine search
             async {
                 debug!(
-                    "🔍 Stage 2: Searching storage engine for collection {}",
+                    "Stage 2: Searching storage engine for {}",
                     collection_id
                 );
                 let results = self
                     .storage_engine
                     .search_vectors_unified(&search_context)
                     .await?;
-                info!(
-                    "✅ Stage 2 complete: Found {} vectors from storage",
+                debug!(
+                    "Stage 2 complete: {} storage results",
                     results.len()
                 );
                 Ok::<_, anyhow::Error>(results)
@@ -1527,8 +1524,8 @@ impl VectorOperationsService {
         // Take top-k
         all_results.truncate(candidates);
 
-        info!(
-            "✅ TWO-STAGE search complete: Returning {} results",
+        debug!(
+            "TWO-STAGE search complete: {} results",
             all_results.len()
         );
         Ok(all_results)
