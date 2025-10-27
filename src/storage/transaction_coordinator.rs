@@ -531,18 +531,12 @@ impl TransactionCoordinator {
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
-        trace!("📋 [] Operation metadata:");
-        info!("    operation_id: {}", metadata.operation_id);
-        info!("    staging_url: {}", metadata.staging_url);
-        info!("    final_url: {}", metadata.final_url);
-        info!("    operation_type: {:?}", metadata.operation_type);
-        info!("    collection_id: {:?}", metadata.collection_id);
-        info!("    zero_copy_managed: {}", metadata.zero_copy_managed);
-
-        debug!("📋 [DEBUG] Operation metadata:");
-        debug!("    staging_url: {}", metadata.staging_url);
-        debug!("    final_url: {}", metadata.final_url);
-        debug!("    zero_copy_managed: {}", metadata.zero_copy_managed);
+        trace!(
+            "Operation metadata: id={}, type={:?}, zero_copy={}",
+            metadata.operation_id,
+            metadata.operation_type,
+            metadata.zero_copy_managed
+        );
 
         // Check if this operation is managed by ZeroCopyFilesystem
         if metadata.zero_copy_managed {
@@ -1093,12 +1087,10 @@ impl TransactionCoordinator {
     ) -> Result<(String, String)> {
         let base_url = config.base_url.trim_end_matches('/');
 
-        info!("🔍 build_operation_urls START");
-        info!("    base_url: {}", base_url);
-        info!("    operation_type: {:?}", config.operation_type);
-        info!("    custom_staging_dir: {:?}", config.custom_staging_dir);
-        info!("    collection_id: {:?}", config.collection_id);
-        info!("    skip_uuid_subdir: {}", config.skip_uuid_subdir);
+        trace!(
+            "build_operation_urls: base={}, type={:?}, collection={:?}",
+            base_url, config.operation_type, config.collection_id
+        );
 
         // Build collection-specific path if provided
         let collection_path = if let Some(ref collection_id) = config.collection_id {
@@ -1114,15 +1106,12 @@ impl TransactionCoordinator {
             .map(|s| s.as_str())
             .unwrap_or_else(|| config.operation_type.staging_dir_name());
 
-        info!("    staging_dir resolved to: '{}'", staging_dir);
-        info!("    collection_path: '{}'", collection_path);
-
         // For metadata operations with custom staging dir containing path separators,
         // we need special handling
         let (staging_url, final_url) = if config.operation_type == TransactionStageType::Metadata
             && staging_dir.starts_with("../")
         {
-            info!("    Using metadata with relative staging path");
+            trace!("Using metadata with relative staging path");
             // For relative paths like "../staging", we need to resolve them properly
             // base_url is like "file:///path/to/metadata/current"
             // We want staging to be "file:///path/to/metadata/staging/{operation_id}"
@@ -1145,28 +1134,20 @@ impl TransactionCoordinator {
                 );
                 let final_url = base_url.to_string();
 
-                info!(
-                    "    Resolved URLs: staging='{}', final='{}'",
-                    staging_url, final_url
-                );
                 (staging_url, final_url)
             } else {
                 // Fallback for non-URL paths
-                info!("    Fallback: simple staging dir");
                 let staging_url = format!("{}/{}/{}", base_url, staging_dir, operation_id);
                 let final_url = base_url.to_string();
                 (staging_url, final_url)
             }
         } else if config.operation_type == TransactionStageType::Metadata {
-            info!("    Using simple metadata staging");
             let staging_url = format!("{}/{}/{}", base_url, staging_dir, operation_id);
             let final_url = base_url.to_string();
             (staging_url, final_url)
         } else {
-            info!("    Using non-metadata staging");
             // Check if UUID subdirectory should be skipped (useful for compaction to avoid cleanup issues)
             if config.skip_uuid_subdir {
-                info!("    Skipping UUID subdirectory as requested");
                 let staging_url = format!("{}{}/{}", base_url, collection_path, staging_dir);
                 let final_url = format!("{}{}", base_url, collection_path);
                 (staging_url, final_url)
@@ -1181,9 +1162,7 @@ impl TransactionCoordinator {
             }
         };
 
-        info!("🔍 build_operation_urls COMPLETE");
-        info!("    Final staging_url: {}", staging_url);
-        info!("    Final final_url: {}", final_url);
+        trace!("URLs: staging={}, final={}", staging_url, final_url);
         Ok((staging_url, final_url))
     }
 
