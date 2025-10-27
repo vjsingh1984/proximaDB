@@ -29,16 +29,24 @@ except ImportError as e:
     print(f"SDK path: {sdk_path}")
     sys.exit(1)
 
+# Realistic embeddings via sentence-transformers (all-MiniLM-L6-v2 → 384D)
+try:
+    from sentence_transformers import SentenceTransformer
+    _embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+    _embed_dim = _embed_model.get_sentence_embedding_dimension()
+except Exception as e:
+    print(f"❌ sentence-transformers not available: {e}")
+    print("Please install it to run demos with realistic embeddings:")
+    print("pip install sentence-transformers")
+    sys.exit(1)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
-def generate_random_vector(dimension: int) -> list:
-    """Generate a random normalized vector"""
-    vec = [random.gauss(0, 1) for _ in range(dimension)]
-    magnitude = sum(x**2 for x in vec) ** 0.5
-    return [x / magnitude for x in vec]
+def embed_texts(texts):
+    return _embed_model.encode(texts, convert_to_tensor=False).tolist()
 
 
 def main():
@@ -48,7 +56,7 @@ def main():
 
     # Configuration
     collection_name = f"basic_demo_{int(time.time())}"
-    dimension = 128
+    dimension = _embed_dim  # 384 for all-MiniLM-L6-v2
     num_vectors = 100
     search_top_k = 10
 
@@ -89,6 +97,23 @@ def main():
     try:
         start_time = time.time()
 
+        # Prepare sample texts and embeddings
+        sample_texts = [
+            "Machine learning for data analysis",
+            "Vector databases for similarity search",
+            "Natural language understanding systems",
+            "Computer vision and image processing",
+            "Deep learning neural networks",
+            "Recommendation systems and personalization",
+            "Dimensionality reduction techniques",
+            "Knowledge graphs and entity relations",
+            "Semantic search and embeddings",
+            "Efficient retrieval with typed filters",
+        ]
+        # Repeat to reach num_vectors
+        texts = (sample_texts * ((num_vectors // len(sample_texts)) + 1))[:num_vectors]
+        embeddings = embed_texts(texts)
+
         # Insert in batches
         batch_size = 50
         for batch_start in range(0, num_vectors, batch_size):
@@ -96,8 +121,8 @@ def main():
             vectors = [
                 {
                     "id": f"vec_{i}",
-                    "vector": generate_random_vector(dimension),
-                    "metadata": {"index": i, "batch": batch_start // batch_size}
+                    "vector": embeddings[i],
+                    "metadata": {"index": i, "batch": batch_start // batch_size, "text": texts[i]}
                 }
                 for i in range(batch_start, batch_end)
             ]
@@ -119,7 +144,8 @@ def main():
     # Step 4: Vector Search
     print(f"\n🔍 Step 4: Searching for top {search_top_k} similar vectors...")
     try:
-        query_vector = generate_random_vector(dimension)
+        query_text = "vector database similarity search"
+        query_vector = embed_texts([query_text])[0]
 
         start_time = time.time()
         results = client.search_vectors(
@@ -163,7 +189,7 @@ def main():
         latencies = []
 
         for _ in range(iterations):
-            query_vector = generate_random_vector(dimension)
+            query_vector = embed_texts([random.choice(texts)])[0]
             start_time = time.time()
             results = client.search_vectors(
                 collection_id=collection_name,
