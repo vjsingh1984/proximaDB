@@ -278,34 +278,48 @@ impl StorageEngine {
     /// Recover all vectors from WAL files for all collections
     /// This method should be called during server startup after collections are recovered from metadata
     pub async fn recover_from_wal(&self) -> crate::storage::Result<()> {
+        eprintln!("🔍 DEBUG: recover_from_wal() CALLED");
         info!("🔄 STORAGE_ENGINE: Starting WAL recovery for all collections...");
 
         // Get recovery manager from WAL manager
+        eprintln!("🔍 DEBUG: Checking recovery_manager...");
         let recovery_manager = match self.write_ahead_log_manager.recovery_manager() {
-            Some(manager) => manager,
+            Some(manager) => {
+                eprintln!("🔍 DEBUG: Recovery manager EXISTS");
+                manager
+            }
             None => {
+                eprintln!("❌ DEBUG: Recovery manager is NONE - THIS IS THE BUG!");
                 warn!("⚠️  STORAGE_ENGINE: No recovery manager available, skipping WAL recovery");
                 return Ok(());
             }
         };
 
         // Get all collections from metadata provider
+        eprintln!("🔍 DEBUG: Checking metadata_provider...");
         let metadata_provider = self.metadata_provider.read().await;
         let provider = match metadata_provider.as_ref() {
-            Some(p) => p,
+            Some(p) => {
+                eprintln!("🔍 DEBUG: Metadata provider EXISTS");
+                p
+            }
             None => {
+                eprintln!("❌ DEBUG: Metadata provider is NONE - THIS IS THE BUG!");
                 warn!("⚠️  STORAGE_ENGINE: No metadata provider set, cannot recover collections");
                 return Ok(());
             }
         };
 
+        eprintln!("🔍 DEBUG: Listing collections for recovery...");
         let collections = provider.list_collections().await.map_err(|e| {
+            eprintln!("❌ DEBUG: Failed to list collections: {}", e);
             crate::storage::StorageError::WalError(format!(
                 "Failed to list collections during WAL recovery: {}",
                 e
             ))
         })?;
 
+        eprintln!("🔍 DEBUG: Found {} collections to recover", collections.len());
         info!(
             "📋 STORAGE_ENGINE: Found {} collections to recover",
             collections.len()
@@ -313,7 +327,9 @@ impl StorageEngine {
 
         // Recover each collection
         let mut total_vectors_recovered = 0u64;
+        eprintln!("🔍 DEBUG: Starting per-collection recovery loop...");
         for collection in collections {
+            eprintln!("🔍 DEBUG: Recovering collection: {}", collection.id);
             info!(
                 "🔍 STORAGE_ENGINE: Recovering collection: {}",
                 collection.id
@@ -321,6 +337,8 @@ impl StorageEngine {
 
             match recovery_manager.recover_collection(&collection.id).await {
                 Ok(stats) => {
+                    eprintln!("✅ DEBUG: Collection {} recovered: {} vectors from {} files",
+                        collection.id, stats.total_vectors_recovered, stats.total_files_recovered);
                     total_vectors_recovered += stats.total_vectors_recovered;
                     info!(
                         "✅ STORAGE_ENGINE: Collection {} recovered: {} vectors from {} files",
@@ -328,6 +346,8 @@ impl StorageEngine {
                     );
                 }
                 Err(e) => {
+                    eprintln!("❌ DEBUG: Failed to recover collection {}: {}", collection.id, e);
+                    eprintln!("❌ DEBUG: Error details: {:?}", e);
                     warn!(
                         "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {}",
                         collection.id, e
@@ -337,6 +357,7 @@ impl StorageEngine {
             }
         }
 
+        eprintln!("🔍 DEBUG: Recovery loop complete. Total vectors: {}", total_vectors_recovered);
         info!(
             "🎉 STORAGE_ENGINE: WAL recovery complete: {} total vectors recovered",
             total_vectors_recovered

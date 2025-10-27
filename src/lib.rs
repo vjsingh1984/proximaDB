@@ -341,16 +341,20 @@ impl ProximaDB {
         );
 
         // Step 2: Recover vectors from WAL (persisted data)
+        eprintln!("🔍 DEBUG: ProximaDB::start - About to call storage.recover_from_wal()");
         tracing::info!(
             "📦 ProximaDB::start - Step 2: Recovering vectors from WAL (persisted data)..."
         );
         {
             let storage = self.storage.read().await;
+            eprintln!("🔍 DEBUG: Got storage lock, calling recover_from_wal()...");
             match storage.recover_from_wal().await {
                 Ok(()) => {
+                    eprintln!("✅ DEBUG: recover_from_wal() returned Ok(())");
                     tracing::info!("✅ ProximaDB::start - Vectors recovered from WAL successfully");
                 }
                 Err(e) => {
+                    eprintln!("❌ DEBUG: recover_from_wal() returned Err: {}", e);
                     tracing::warn!(
                         "⚠️  ProximaDB::start - WAL recovery failed (continuing anyway): {}",
                         e
@@ -359,6 +363,7 @@ impl ProximaDB {
                 }
             }
         }
+        eprintln!("🔍 DEBUG: ProximaDB::start - WAL recovery step complete");
 
         // Step 3: Recover graphs from snapshots + WAL
         tracing::info!(
