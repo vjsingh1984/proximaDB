@@ -238,7 +238,14 @@ class GrpcConnectionPool:
     def close(self) -> None:
         """Close all channels in the pool"""
         logger.info(f"Closing gRPC connection pool")
-        self._pool.close()
+        try:
+            # Give background threads time to finish before closing
+            import time
+            time.sleep(0.1)  # 100ms grace period for background threads
+            self._pool.close()
+        except Exception as e:
+            # Suppress errors during cleanup - pool is closing anyway
+            logger.debug(f"Error during pool close (suppressed): {e}")
 
 
 class RestConnectionPool:
