@@ -117,7 +117,7 @@ Docker images are planned for v0.2.0. For now, use source build above.
 [source,bash]
 ----
 # Server should be running on port 5678
-curl http://localhost:5678/api/v1/health
+curl http://localhost:5678/health
 
 # Expected response (server is ready):
 {"status":"healthy"}

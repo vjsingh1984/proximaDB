@@ -190,9 +190,9 @@ _Quality assurance documentation for maintaining professional standards_
 
 === Supporting Documentation Files
 
-- [x] `docs/quickstart/getting_started.adoc` - Setup guide
-- [x] `docs/operations/PRODUCTION_RUNBOOK.adoc` - Operations guide
-- [x] `docs/security.adoc` - Security documentation
+- [x] `docs/01-getting-started/getting_started.adoc` - Setup guide
+- [x] `docs/04-operations/PRODUCTION_RUNBOOK.adoc` - Operations guide
+- [x] `docs/06-security/README.adoc` - Security documentation
 - [x] `docs/architecture/CACHE_ARCHITECTURE.adoc` - Cache architecture
 - [x] `docs/09-roadmap/README.adoc` - Development roadmap
 

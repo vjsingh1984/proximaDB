@@ -132,7 +132,7 @@ docs/
 
 **Goal**: Get ProximaDB running in < 15 minutes
 
-**Start Here**: link:01-getting-started/quickstart.adoc[Quickstart Guide]
+**Start Here**: link:01-getting-started/getting_started.adoc[Getting Started]
 
 === Tier 2: Guides
 
@@ -230,9 +230,9 @@ docs/
 **Goal**: Contribute to ProximaDB
 
 **Docs**:
-- link:08-development/contributing.adoc[Contributing Guide]
-- link:08-development/development-setup.adoc[Development Setup]
-- link:08-development/testing-guide.adoc[Testing Guide]
+- link:08-development/CONTRIBUTING.adoc[Contributing Guide]
+- link:08-development/README.adoc[Development Overview]
+- link:08-development/testing-troubleshooting.adoc[Testing & Troubleshooting]
 
 === Tier 9: Roadmap
 
@@ -301,7 +301,7 @@ src/
 
 === By Role
 
-**New User**: Start with link:01-getting-started/quickstart.adoc[Quickstart]
+**New User**: Start with link:01-getting-started/getting_started.adoc[Getting Started]
 
 **Application Developer**: Read link:02-guides/[Guides] and link:03-reference/[Reference]
 
@@ -313,7 +313,7 @@ src/
 
 === By Task
 
-**Installing ProximaDB**: link:01-getting-started/installation.adoc[Installation Guide]
+**Installing ProximaDB**: link:01-getting-started/getting_started.adoc#installation[Installation]
 
 **Creating first collection**: link:01-getting-started/first-collection.adoc[First Collection]
 
@@ -325,16 +325,15 @@ src/
 
 **Troubleshooting issues**: link:04-operations/production-runbook.adoc[Production Runbook]
 
-**Contributing code**: link:08-development/contributing.adoc[Contributing Guide]
+**Contributing code**: link:08-development/CONTRIBUTING.adoc[Contributing Guide]
 
 === By Component
 
 **Storage Engines**:
-- Overview: link:07-architecture/storage-layer.adoc[Storage Layer]
+- Overview: link:architecture/storage-layer.adoc[Storage Layer]
 - Implementation: `src/storage/engines/impls/*/README.adoc`
 
 **AXIS Index System**:
-- Overview: link:07-architecture/index-layer.adoc[Index Layer]
 - Implementation: `src/index/axis/README.adoc`
 
 **Quantization**:
@@ -408,7 +407,7 @@ For implementation details, see link:../../src/storage/engines/impls/sst/README.
 
 - **Format**: AsciiDoc (`.adoc`) for all docs
 - **Diagrams**: Mermaid only, using ProximaDB color scheme
-- **Style**: Follow link:08-development/style-guide.adoc[Style Guide]
+- **Style**: Follow link:08-development/style_guide_checklist.adoc[Style Guide]
 - **Cross-references**: Use `link:` for internal references
 
 ### Validation
@@ -439,7 +438,7 @@ Run documentation validation:
 - link:../README.adoc[Main README] - Project overview
 - link:../CLAUDE.md[CLAUDE.md] - Development guidelines
 - link:DOCUMENTATION_ARCHITECTURE.adoc[Documentation Architecture] - Complete architecture
-- link:../CONTRIBUTING.adoc[Contributing Guide] - How to contribute
+- link:08-development/CONTRIBUTING.adoc[Contributing Guide] - How to contribute
 
 ---
 
