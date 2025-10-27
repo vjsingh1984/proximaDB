@@ -570,21 +570,21 @@ impl UniversalMetadataBackend {
 
     /// Atomic write operation using TransactionCoordinator for ACID guarantees
     async fn atomic_persist_operation(&self, operation: &IncrementalOperation) -> Result<()> {
-        eprintln!(
+        trace!(
             "🔍 DEBUG: atomic_persist_operation() called for seq={}",
             operation.sequence
         );
-        eprintln!(
+        trace!(
             "🔍 DEBUG: atomic_operations_enabled = {}",
             self.atomic_operations_enabled
         );
 
         if !self.atomic_operations_enabled {
-            eprintln!("🔍 DEBUG: Using simple persist (atomic disabled)");
+            trace!("DEBUG: Using simple persist (atomic disabled)");
             return self.execute_simple_persist(operation).await;
         }
 
-        eprintln!("🔍 DEBUG: Using atomic coordinator");
+        trace!("DEBUG: Using atomic coordinator");
 
         // Use the atomic coordinator with simple atomic operations
         let coordinator = self.atomic_coordinator.clone();
@@ -641,9 +641,9 @@ impl UniversalMetadataBackend {
         );
 
         // Begin atomic operation
-        eprintln!("🔍 DEBUG: About to call begin_atomic_operation()");
+        trace!("DEBUG: About to call begin_atomic_operation()");
         let op_metadata = coordinator.begin_atomic_operation(&staging_config).await?;
-        eprintln!(
+        trace!(
             "🔍 DEBUG: begin_atomic_operation() SUCCESS - operation_id={}",
             op_metadata.operation_id
         );
@@ -654,7 +654,7 @@ impl UniversalMetadataBackend {
         debug!("    filename: op_{:016}.oplog", operation.sequence);
         debug!("    operation_id: {}", op_metadata.operation_id);
 
-        eprintln!("🔍 DEBUG: About to call write_to_staging()");
+        trace!("DEBUG: About to call write_to_staging()");
         match coordinator
             .write_to_staging(
                 &op_metadata.operation_id,
@@ -664,7 +664,7 @@ impl UniversalMetadataBackend {
             .await
         {
             Ok(_) => {
-                eprintln!("🔍 DEBUG: write_to_staging() SUCCESS");
+                trace!("DEBUG: write_to_staging() SUCCESS");
                 debug!("✅ Write to staging successful");
                 // Update in-memory state atomically before finalizing disk write
                 match operation.operation_type {
@@ -682,7 +682,7 @@ impl UniversalMetadataBackend {
 
                 // Finalize the atomic operation (moves from staging to final)
                 debug!("🔄 Starting finalize operation...");
-                eprintln!(
+                trace!(
                     "🔍 DEBUG: About to call finalize_atomic_operation() with operation_id={}",
                     op_metadata.operation_id
                 );
@@ -691,13 +691,13 @@ impl UniversalMetadataBackend {
                     .await
                 {
                     Ok(_) => {
-                        eprintln!("🔍 DEBUG: finalize_atomic_operation() SUCCESS");
+                        trace!("DEBUG: finalize_atomic_operation() SUCCESS");
                         self.check_snapshot_trigger().await?;
                         debug!(
                             "✅ Atomic operation completed for seq={}",
                             operation.sequence
                         );
-                        eprintln!(
+                        trace!(
                             "🔍 DEBUG: Atomic operation FULLY COMPLETED for seq={}",
                             operation.sequence
                         );
@@ -705,7 +705,7 @@ impl UniversalMetadataBackend {
                     }
                     Err(e) => {
                         // Rollback in-memory state on disk finalization failure
-                        eprintln!("❌ DEBUG: finalize_atomic_operation() FAILED: {}", e);
+                        trace!("DEBUG ERROR: finalize_atomic_operation() FAILED: {}", e);
                         error!("❌ Failed to finalize atomic operation: {}", e);
                         // Note: In production, we'd implement proper rollback of in-memory state
                         Err(e)
@@ -713,7 +713,7 @@ impl UniversalMetadataBackend {
                 }
             }
             Err(e) => {
-                eprintln!("❌ DEBUG: write_to_staging() FAILED: {}", e);
+                trace!("DEBUG ERROR: write_to_staging() FAILED: {}", e);
                 // Abort the operation on write failure
                 let abort_result = coordinator
                     .abort_atomic_operation(

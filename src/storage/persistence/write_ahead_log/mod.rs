@@ -1687,10 +1687,10 @@ impl WriteAheadLogManager {
                 config::WriteBufferStrategyType::AvroBatch => SerializationFormat::Avro,
                 config::WriteBufferStrategyType::ProtoBatch => SerializationFormat::ProtocolBuffers,
             };
-            info!("🔄 DEBUG: Selected serialization format: {:?}", format);
+            trace!("WAL: Selected serialization format: {:?}", format);
 
             // Create serializer and serialize batch
-            info!("🔄 DEBUG: Creating serializer for format: {:?}", format);
+            trace!("WAL: Creating serializer for format: {:?}", format);
             let serializer = SerializerFactory::create(format);
 
             info!(
@@ -1717,7 +1717,7 @@ impl WriteAheadLogManager {
                 config::SyncMode::PerBatch => true,
                 _ => false,
             };
-            info!("🔄 DEBUG: should_sync = {}", should_sync);
+            trace!("WAL: should_sync = {}", should_sync);
 
             // Get base location for this collection
             let assigned = self.assigned_collections.read().await;
@@ -1738,13 +1738,13 @@ impl WriteAheadLogManager {
                     "/tmp/proximadb2/data".to_string()
                 });
             drop(assigned);
-            info!("🔄 DEBUG: base_location = {}", base_location);
+            trace!("WAL: base_location = {}", base_location);
 
             // Create disk manager and write batch
-            info!("🔄 DEBUG: Creating FilesystemFactory");
+            trace!("WAL: Creating FilesystemFactory");
             let filesystem_factory = match FilesystemFactory::create_default().await {
                 Ok(factory) => {
-                    info!("🔄 DEBUG: FilesystemFactory created successfully");
+                    trace!("WAL: FilesystemFactory created successfully");
                     Arc::new(factory)
                 }
                 Err(e) => {
@@ -1782,7 +1782,7 @@ impl WriteAheadLogManager {
                 .await
             {
                 Ok(file_info) => {
-                    info!("🔄 DEBUG: write_batch_with_sync SUCCESS: {:?}", file_info);
+                    trace!("WAL: write_batch_with_sync SUCCESS: {:?}", file_info);
                 }
                 Err(e) => {
                     info!("🔄 DEBUG ERROR: write_batch_with_sync FAILED: {:?}", e);

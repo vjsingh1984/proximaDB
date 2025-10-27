@@ -1307,7 +1307,7 @@ impl CollectionService {
                     write_buffer_dir, e
                 );
             } else {
-                info!("✅ Created WAL storage directory: {}", write_buffer_dir);
+                debug!("Created WAL storage directory: {}", write_buffer_dir);
                 created_components.push(StorageComponentType::Wal);
             }
 
@@ -1315,7 +1315,7 @@ impl CollectionService {
             if let Err(e) = filesystem.create_dir_all(&data_dir).await {
                 warn!("⚠️ Failed to create data directory {}: {}", data_dir, e);
             } else {
-                info!("✅ Created data storage directory: {}", data_dir);
+                debug!("Created data storage directory: {}", data_dir);
                 created_components.push(StorageComponentType::Storage);
             }
 
@@ -1323,7 +1323,7 @@ impl CollectionService {
             if let Err(e) = filesystem.create_dir_all(&indexes_dir).await {
                 warn!("⚠️ Failed to create index directory {}: {}", indexes_dir, e);
             } else {
-                info!("✅ Created index storage directory: {}", indexes_dir);
+                debug!("Created index storage directory: {}", indexes_dir);
                 created_components.push(StorageComponentType::Index);
             }
         } else {

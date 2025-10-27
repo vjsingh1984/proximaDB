@@ -2174,7 +2174,7 @@ impl VectorOperationsService {
             }
         }
 
-        info!("✅ Force flush all completed");
+        debug!("Force flush all completed");
         Ok(())
     }
 
@@ -2216,7 +2216,7 @@ impl VectorOperationsService {
             );
         }
 
-        info!("✅ Force flush for collection {} completed", collection_id);
+        debug!("Force flush for collection {} completed", collection_id);
         Ok(())
     }
 
