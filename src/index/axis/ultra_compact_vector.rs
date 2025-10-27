@@ -34,11 +34,11 @@
 //!    - Compression breaks alignment → 10-100x slowdown
 //! 
 //! 4. **Zero-Copy Lost**: Current design is zero-copy
-//!    ```rust
+//!    ```rust,ignore
 //!    let vector = bytemuck::cast_slice(&data[offset..]);  // Direct access!
 //!    ```
 //!    With compression:
-//!    ```rust
+//!    ```rust,ignore
 //!    let decompressed = decompress(&data[offset..]);  // Allocates!
 //!    let vector = bytemuck::cast_slice(&decompressed);  // Extra copy!
 //!    ```

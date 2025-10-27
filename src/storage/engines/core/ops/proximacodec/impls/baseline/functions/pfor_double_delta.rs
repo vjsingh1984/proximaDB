@@ -229,10 +229,10 @@ fn encode_pfor_double_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<V
 /// 6. Store outliers as patches with their positions
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [base:4 bytes][first_delta:4 bytes][bits:1 byte][num_patches:4 bytes]
 /// [bitpacked_double_deltas...][patch_count:4][patches:(pos:4, value:4)*]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode
@@ -242,12 +242,12 @@ fn encode_pfor_double_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<V
 /// Raw encoded bytes (NO scheme marker, NO count header)
 ///
 /// # Example
-/// ```
+/// ```text
 /// // Linear sequence: [0.1, 0.2, 0.3, 0.4, 0.5]
 /// // First deltas: [0, Δ1, Δ2, Δ3, Δ4]
 /// // Second deltas: [0, Δ1, (Δ2-Δ1), (Δ3-Δ2), (Δ4-Δ3)]
 /// // If linear: second deltas are constant → excellent compression!
-/// ```
+/// ```text
 pub fn encode_f32(values: &[f32], base: i64) -> Result<Vec<u8>> {
     helpers::encode_generic(values, |wire_values| {
         encode_pfor_double_delta_i32_base(wire_values, base as i32)

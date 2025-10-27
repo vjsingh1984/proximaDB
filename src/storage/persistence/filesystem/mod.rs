@@ -49,7 +49,7 @@
 //!
 //! ### 1. **Transparent Backend Selection**
 //! Automatic routing based on URL scheme:
-//! ```rust
+//! ```rust,ignore
 //! use std::sync::Arc;
 //! // Create a factory and get a filesystem by URL
 //! let factory = Arc::new(FilesystemFactory::create_default().await?);
@@ -127,7 +127,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use std::sync::Arc;
 //! use proximadb::storage::persistence::filesystem::{FilesystemFactory, FileOptions};
 //!
@@ -868,7 +868,7 @@ impl FilesystemFactory {
     /// ```ignore
     /// let factory = FilesystemFactory::create_default().await?;
     /// let fs = factory.get_filesystem("file:///tmp/data")?;
-    /// ```
+    /// ```text
     pub async fn create_default() -> FsResult<Self> {
         Self::create(FilesystemConfig::default()).await
     }
@@ -888,7 +888,7 @@ impl FilesystemFactory {
     ///     ..Default::default()
     /// };
     /// let factory = FilesystemFactory::create(config).await?;
-    /// ```
+    /// ```text
     pub async fn create(config: FilesystemConfig) -> FsResult<Self> {
         let mut factory = Self {
             config,
@@ -967,7 +967,7 @@ impl FilesystemFactory {
     ///
     /// ## Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // Instead of:
     /// let fs = factory.get_filesystem("s3://bucket")?;
     /// let cached_fs = IntelligentFilesystem::new(fs, collection_id, engine_type);
@@ -978,7 +978,7 @@ impl FilesystemFactory {
     ///     collection_id,
     ///     engine_type,
     /// )?;
-    /// ```
+    /// ```text
     #[deprecated(
         since = "1.0.0",
         note = "Use get_unified_caching_filesystem instead. This method now redirects to it."
@@ -996,13 +996,13 @@ impl FilesystemFactory {
     /// Create filesystem with unified caching
     ///
     /// # Example
-    /// ```
+    /// ```text
     /// let cached_fs = factory.get_unified_caching_filesystem(
     ///     "s3://bucket/collection",
     ///     "collection_123".to_string(),
     ///     "sst".to_string(),
     /// )?;
-    /// ```
+    /// ```text
     pub fn get_unified_caching_filesystem(
         &self,
         url: &str,

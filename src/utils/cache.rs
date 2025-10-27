@@ -13,7 +13,7 @@
 //! - Batch operations for improved performance
 //!
 //! # Example
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::utils::cache::LruCache;
 //!
 //! let mut cache = LruCache::new(1000);

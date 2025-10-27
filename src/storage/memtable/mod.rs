@@ -69,7 +69,7 @@
 //! ## MVCC Support
 //!
 //! Multi-Version Concurrency Control for transactions:
-//! ```rust
+//! ```rust,ignore
 //! pub trait MemtableMVCC {
 //!     async fn insert_mvcc(&self, key, value, version);
 //!     async fn get_mvcc(&self, key, version);
@@ -157,7 +157,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::memtable::{MemtableFactory, MemtableConfig};
 //!
 //! // Create production memtable
@@ -183,7 +183,7 @@
 //! ## Benchmarking Framework
 //!
 //! Compare implementations for your workload:
-//! ```rust
+//! ```rust,ignore
 //! let benchmark = MemtableBenchmark::new(config);
 //! let report = benchmark.run_all().await;
 //! report.print();  // Shows ops/sec, latencies, memory

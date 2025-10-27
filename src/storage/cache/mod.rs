@@ -69,7 +69,7 @@
 //!
 //! ### Adaptive Eviction
 //! The cache automatically selects optimal eviction policy:
-//! ```rust
+//! ```rust,ignore
 //! // Monitor access patterns
 //! if access_pattern.is_sequential() {
 //!     use_lru();  // Better for scans
@@ -153,7 +153,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::cache::{CrossCacheOrchestrator, CacheConfig};
 //!
 //! // Initialize cache system

@@ -83,9 +83,9 @@ fn encode_sparse_coo_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 /// 2. Store as pairs: (index:u32, value:f32)
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [num_nonzero:4 bytes]([index:4 bytes][value:4 bytes])*
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode (may be sparse)

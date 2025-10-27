@@ -24,7 +24,7 @@
 //! ### **🏗️ PROVEN PATTERNS - Follow HELIX's Example!**
 //!
 //! **HELIX engine demonstrates the CORRECT way to use Proxima:**
-//! ```rust
+//! ```rust,ignore
 //! // ✅ CORRECT: Composition pattern that leverages Proxima capabilities
 //! pub struct HelixBlockMetadata {
 //!     pub proxima_metadata: ProximaBlockMetadata,  // <- Reuse auto-generated stats!
@@ -34,7 +34,7 @@
 //! ```
 //!
 //! **❌ ANTI-PATTERN: What SST/SWIFT currently do (manual reimplementation):**
-//! ```rust
+//! ```rust,ignore
 //! // ❌ WRONG: Manual statistics calculation that duplicates Proxima work
 //! let mut metadata_min_values = HashMap::new();
 //! let mut metadata_max_values = HashMap::new();
@@ -46,7 +46,7 @@
 //! ## 📚 **How to Use Proxima Capabilities (Quick Start)**
 //!
 //! ### **1. Create Blocks with Auto-Features**
-//! ```rust
+//! ```rust,ignore
 //! use crate::storage::engines::core::formats::proximablocks::*;
 //!
 //! // ✅ Proxima automatically calculates all metadata
@@ -60,7 +60,7 @@
 //! ```
 //!
 //! ### **2. Use Composition Pattern for Engine-Specific Data**
-//! ```rust
+//! ```rust,ignore
 //! // ✅ RECOMMENDED: Wrap Proxima metadata, don't replace it
 //! pub struct MyEngineBlockMetadata {
 //!     pub proxima_metadata: ProximaBlockMetadata,  // <- All the auto-generated goodness
@@ -69,7 +69,7 @@
 //! ```
 //!
 //! ### **3. Leverage Auto-Generated Bloom Filters**
-//! ```rust
+//! ```rust,ignore
 //! // ✅ Proxima can auto-generate bloom filters
 //! let block = ProximaDataBlock::new_with_bloom_filters(records, compression_config, bloom_config);
 //!

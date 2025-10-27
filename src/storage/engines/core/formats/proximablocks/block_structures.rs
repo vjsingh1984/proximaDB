@@ -215,7 +215,7 @@ pub struct BlockMetadataStats {
 /// - **Encoding Selection**: `block.encoding_marker` chooses optimal SIMD encoding automatically
 ///
 /// ### **🏗️ COMPOSITION PATTERN (Follow HELIX's Example)**
-/// ```rust
+/// ```rust,ignore
 /// // ✅ CORRECT: Compose with Proxima, don't replace it
 /// pub struct MyEngineMetadata {
 ///     pub proxima_metadata: ProximaBlockMetadata,  // <- Reuse all auto-generated data
@@ -610,7 +610,7 @@ impl ProximaDataBlock {
     /// ## **🎯 Usage Examples**
     ///
     /// ### **Basic Usage (Replaces 100+ lines of manual code)**
-    /// ```rust
+    /// ```rust,ignore
     /// let compression_config = BlockCompressionConfig::default();
     /// let block = ProximaDataBlock::new(records, compression_config);
     ///
@@ -622,7 +622,7 @@ impl ProximaDataBlock {
     /// ```
     ///
     /// ### **Engine Integration (Follow HELIX Pattern)**
-    /// ```rust
+    /// ```rust,ignore
     /// // ✅ Wrap Proxima capabilities in your engine-specific metadata
     /// pub struct MyEngineBlockMetadata {
     ///     pub proxima_metadata: ProximaBlockMetadata,  // <- All the auto-generated goodness
@@ -915,7 +915,7 @@ impl ProximaDataBlock {
     /// - **Memory Efficient**: Bloom filter sized automatically based on record count
     ///
     /// ## **🎯 Usage in Storage Engines:**
-    /// ```rust
+    /// ```rust,ignore
     /// // ✅ Instead of implementing custom bloom filter logic, just use this:
     /// if block.contains_id("vector_123") {
     ///     // Block likely contains this ID - proceed with detailed search

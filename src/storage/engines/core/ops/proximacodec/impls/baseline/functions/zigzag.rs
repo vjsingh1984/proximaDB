@@ -63,9 +63,9 @@ fn encode_zigzag_i64_wire(wire_values: &[i64], bits: u8) -> Result<Vec<u8>> {
 /// 3. Bit-pack the unsigned values
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [bits:1 byte][bitpacked_zigzag_values...]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

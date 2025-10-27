@@ -37,9 +37,12 @@
 //!
 //! ## Error Propagation
 //!
-//! ```rust
+//! ```rust,no_run
+//! # use proximadb::core::ProximaDBError;
 //! // Automatic conversion with ? operator
 //! fn process_vector() -> Result<(), ProximaDBError> {
+//! #   fn load_config() -> Result<(), ProximaDBError> { Ok(()) }
+//! #   fn open_storage() -> Result<(), ProximaDBError> { Ok(()) }
 //!     let config = load_config()?;  // ConfigError -> ProximaDBError
 //!     let storage = open_storage()?; // StorageError -> ProximaDBError
 //!     Ok(())
@@ -50,7 +53,7 @@
 //!
 //! All errors implement Serialize/Deserialize for network transmission:
 //!
-//! ```rust
+//! ```rust,ignore
 //! // Convert to gRPC status
 //! let status = match error {
 //!     ProximaDBError::NotFound { .. } => Status::not_found(error.to_string()),

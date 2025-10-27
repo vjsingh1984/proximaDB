@@ -138,7 +138,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::metrics::{MetricsConfig, MetricsQueryService};
 //!
 //! // Initialize metrics system

@@ -23,9 +23,9 @@ use anyhow::Result;
 /// 2. Pack using specified bit width
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [bitpacked_values...]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode
@@ -366,7 +366,7 @@ pub(crate) fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 /// // 5-bit signed value: 11111 (binary) = -1 (signed)
 /// // Without sign extension: 31 (unsigned)
 /// // With sign extension: 0xFFFFFFFF = -1 (i32)
-/// ```
+/// ```text
 pub(crate) fn unbitpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
     if bits > 32 {
         return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));

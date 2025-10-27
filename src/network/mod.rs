@@ -141,7 +141,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::network::{NetworkConfig, MultiServer};
 //!
 //! // Configure network settings

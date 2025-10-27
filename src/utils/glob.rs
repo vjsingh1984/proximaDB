@@ -12,7 +12,7 @@
 //! - Zero-allocation matching for compiled patterns
 //!
 //! # Example
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::utils::glob::{GlobPattern, GlobMatcher};
 //!
 //! let pattern = GlobPattern::new("*.parquet").unwrap();

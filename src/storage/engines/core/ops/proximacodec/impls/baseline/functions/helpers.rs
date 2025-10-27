@@ -85,7 +85,7 @@ impl ToWireFormat for i64 {
 ///         encode_frame_of_ref_wire(wire_values, base)
 ///     })
 /// }
-/// ```
+/// ```text
 #[inline]
 pub fn encode_generic<T: ToWireFormat>(
     values: &[T],
@@ -109,7 +109,7 @@ pub fn encode_generic<T: ToWireFormat>(
 ///         decode_delta_wire(d, c)
 ///     })
 /// }
-/// ```
+/// ```text
 #[inline]
 pub fn decode_generic<T: ToWireFormat>(
     data: &[u8],

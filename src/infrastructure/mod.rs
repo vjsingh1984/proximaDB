@@ -101,7 +101,7 @@
 //! ## Design Patterns
 //!
 //! ### Lock-Free Programming
-//! ```rust
+//! ```rust,ignore
 //! // Example: Lock-free counter
 //! struct Counter {
 //!     value: AtomicU64,
@@ -115,7 +115,7 @@
 //! ```
 //!
 //! ### Tiering Strategy Pattern
-//! ```rust
+//! ```rust,ignore
 //! trait TierPolicy {
 //!     fn should_promote(&self, item: &Item) -> bool;
 //!     fn should_demote(&self, item: &Item) -> bool;
@@ -162,7 +162,7 @@
 //! ## Usage Examples
 //!
 //! ### Concurrent Storage
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::infrastructure::ConcurrentStorage;
 //!
 //! let storage = ConcurrentStorage::new();
@@ -176,7 +176,7 @@
 //! ```
 //!
 //! ### Tiering Policy
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::infrastructure::{SmartTierPolicy, WorkloadMetrics};
 //!
 //! let policy = SmartTierPolicy::new(config);
@@ -192,7 +192,7 @@
 //! ```
 //!
 //! ### Adaptive Store
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::infrastructure::AdaptiveStore;
 //!
 //! let store = AdaptiveStore::new(config);

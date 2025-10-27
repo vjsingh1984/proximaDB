@@ -114,9 +114,9 @@ fn encode_sparse_bitmap_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 /// 3. Store non-zero values sequentially
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [num_nonzero:4 bytes][bitmap_bytes...][nonzero_values...]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode (may be sparse)

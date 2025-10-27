@@ -109,9 +109,9 @@ fn encode_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<Vec<u8>> {
 /// 4. Bit-pack deltas
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [base:4 bytes][bits:1 byte][bitpacked_deltas...]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

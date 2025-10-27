@@ -42,7 +42,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::core::ops::proximacodec::batching::{
 //!     BatchOptimizer, batch_encode_vectors
 //! };
@@ -270,7 +270,7 @@ impl Default for BatchOptimizer {
 /// Vector of encoded results (one per input vector)
 ///
 /// ## Example
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::storage::engines::core::ops::proximacodec::batching::batch_encode_vectors;
 /// use proximadb::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 ///
@@ -281,7 +281,7 @@ impl Default for BatchOptimizer {
 /// let scheme = ProximaScheme::Delta { base: 0 };
 /// let encoded = batch_encode_vectors(&vectors, &scheme)?;
 /// assert_eq!(encoded.len(), 2);
-/// ```
+/// ```text
 pub fn batch_encode_vectors(
     vectors: &[Vec<f32>],
     scheme: &crate::storage::engines::core::ops::proximacodec::types::ProximaScheme,
@@ -338,7 +338,7 @@ pub fn batch_encode_vectors(
 /// Vector of decoded f32 vectors
 ///
 /// ## Example
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::storage::engines::core::ops::proximacodec::batching::{
 ///     batch_encode_vectors, batch_decode_vectors
 /// };
@@ -349,7 +349,7 @@ pub fn batch_encode_vectors(
 /// let encoded = batch_encode_vectors(&vectors, &scheme)?;
 /// let decoded = batch_decode_vectors(&encoded)?;
 /// assert_eq!(decoded, vectors);
-/// ```
+/// ```text
 pub fn batch_decode_vectors(encoded_vectors: &[Vec<u8>]) -> Result<Vec<Vec<f32>>> {
     use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
 

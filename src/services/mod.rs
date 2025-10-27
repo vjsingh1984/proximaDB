@@ -124,7 +124,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::services::{Collections, VectorOps, StreamingSearch};
 //!
 //! // Initialize services

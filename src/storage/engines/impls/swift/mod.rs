@@ -19,7 +19,7 @@
 //! SWIFT excels in scenarios requiring hierarchical organization and large-scale management:
 //!
 //! ### ✅ **Enterprise Content Management Systems**
-//! ```rust
+//! ```rust,ignore
 //! // Digital asset libraries with departmental organization
 //! let media_vectors = load_enterprise_assets(); // 50M+ digital assets
 //! swift_engine.create_department_hierarchy(&org_structure).await; // Department SuperBlocks
@@ -32,7 +32,7 @@
 //! ```
 //!
 //! ### ✅ **Multi-Tenant SaaS Platforms**
-//! ```rust
+//! ```rust,ignore
 //! // Complete tenant isolation with hierarchical storage
 //! for tenant_batch in enterprise_tenants {
 //!     swift_engine.create_tenant_superblock(
@@ -49,7 +49,7 @@
 //! ```
 //!
 //! ### ✅ **Version-Controlled Document Systems**
-//! ```rust
+//! ```rust,ignore
 //! // Document versioning with efficient historical access
 //! for document_version in document_history {
 //!     swift_engine.append_document_version(
@@ -65,7 +65,7 @@
 //! ```
 //!
 //! ### ✅ **Geospatial Data Organization**
-//! ```rust
+//! ```rust,ignore
 //! // Geographic hierarchy for location-based services
 //! let location_vectors = load_poi_embeddings(); // Points of interest
 //! swift_engine.create_geographic_hierarchy(

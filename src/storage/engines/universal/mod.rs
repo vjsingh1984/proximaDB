@@ -64,7 +64,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::universal::{
 //!     UniversalDistanceAdapter, DistanceComputationRequest,
 //!     ProgressiveRefinementConfig, StorageFormat

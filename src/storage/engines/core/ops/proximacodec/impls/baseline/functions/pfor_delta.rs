@@ -167,10 +167,10 @@ fn encode_pfor_delta_i64_base(wire_values: &[i64], base: i64) -> Result<Vec<u8>>
 /// 5. Store outliers as patches with their positions
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [base:4 bytes][bits:1 byte][num_patches:4 bytes]
 /// [bitpacked_values...][patches:(pos:4, value:8)*]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

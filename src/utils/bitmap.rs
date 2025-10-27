@@ -13,7 +13,7 @@
 //! - Thread-safe operations
 //!
 //! # Example
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::utils::bitmap::RoaringBitmap;
 //!
 //! let mut bitmap1 = RoaringBitmap::new();

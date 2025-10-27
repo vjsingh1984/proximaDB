@@ -1031,7 +1031,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         // 5. **Predictive prefetching**: Uses access patterns for zero-copy operations
         //
         // Implementation pattern:
-        // ```rust
+        // ```rust,ignore
         // let axis_manager = self.get_axis_manager().await?;
         // let cost_estimator = self.get_cost_estimator().await?;
         //

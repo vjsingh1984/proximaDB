@@ -246,7 +246,7 @@ impl ProximaDBRecommendations {
            - Use "zstandard" for maximum compression
            
         Example Avro with compression:
-        ```rust
+        ```rust,ignore
         let schema = Schema::parse_str(SCHEMA_JSON)?;
         let mut writer = Writer::with_codec(
             &schema,

@@ -19,7 +19,7 @@
 //! VIPER excels in production scenarios requiring high throughput and analytical capabilities:
 //!
 //! ### ✅ **High-Volume E-commerce Platforms**
-//! ```rust
+//! ```rust,ignore
 //! // Product recommendation systems with millions of products
 //! let product_embeddings = load_product_catalog(); // 100M+ products
 //! viper_engine.flush_batch(product_embeddings, BatchConfig::new()
@@ -37,7 +37,7 @@
 //! ```
 //!
 //! ### ✅ **Media and Content Analytics**
-//! ```rust
+//! ```rust,ignore
 //! // Content similarity analysis for media platforms
 //! let content_embeddings = load_media_library(); // 50M+ media items
 //! viper_engine.configure_analytics_mode(
@@ -56,7 +56,7 @@
 //! ```
 //!
 //! ### ✅ **Financial Data Processing**
-//! ```rust
+//! ```rust,ignore
 //! // Risk analysis with complex filtering requirements
 //! let market_vectors = load_financial_data(); // Real-time market embeddings
 //! viper_engine.flush_with_compression(market_vectors,
@@ -76,7 +76,7 @@
 //! ```
 //!
 //! ### ✅ **IoT and Sensor Data Analytics**
-//! ```rust
+//! ```rust,ignore
 //! // Time-series sensor data with massive scale
 //! let sensor_embeddings = load_iot_data(); // Billions of sensor readings
 //! viper_engine.configure_iot_optimizations(
@@ -191,7 +191,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::viper::ViperEngine;
 //!
 //! let viper = ViperEngine::new(config)?;

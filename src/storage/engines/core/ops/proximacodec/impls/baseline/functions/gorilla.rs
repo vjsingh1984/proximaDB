@@ -168,9 +168,9 @@ fn encode_gorilla_u64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 ///    - If XOR != 0: store control bit (1) + compressed XOR
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [first_value:4 bytes][compressed_stream...]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

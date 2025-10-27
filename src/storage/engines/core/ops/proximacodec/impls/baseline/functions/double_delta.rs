@@ -228,9 +228,9 @@ fn encode_double_delta_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 /// 3. Bit-pack the double deltas with minimal bits
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [base:4 bytes][first_delta:8 bytes i64][bits:1 byte][bitpacked_double_deltas...]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

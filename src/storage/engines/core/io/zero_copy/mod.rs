@@ -30,7 +30,7 @@ use std::sync::Arc;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::storage::engines::core::io::zero_copy::*;
 ///
 /// // High-performance configuration

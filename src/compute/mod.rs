@@ -124,7 +124,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compute::{ComputeConfig, UnifiedDistanceCompute};
 //!
 //! // Auto-detect hardware and create engine

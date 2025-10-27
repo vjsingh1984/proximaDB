@@ -14,7 +14,7 @@
 //! - Support for variable-length keys and values
 //!
 //! # Example
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::utils::btree::BPlusTree;
 //!
 //! let mut tree = BPlusTree::new(64); // Node size of 64

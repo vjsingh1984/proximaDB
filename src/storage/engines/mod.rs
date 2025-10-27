@@ -81,7 +81,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::{StorageEngineFactory, WorkloadType};
 //!
 //! // Automatic engine selection

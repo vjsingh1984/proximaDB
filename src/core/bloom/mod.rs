@@ -87,7 +87,7 @@
 //! - **FNV-1a**: Simple and fast, good for small keys
 //!
 //! Double hashing generates k hash values from 2 base hashes:
-//! ```rust
+//! ```rust,ignore
 //! hash_i = hash1 + i * hash2 (mod m)
 //! ```
 //!
@@ -159,7 +159,7 @@
 //! ## Usage Examples
 //!
 //! ### Basic Bloom Filter
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::bloom::{BloomFilterBuilder, BloomFilterConfig};
 //!
 //! let config = BloomFilterConfig::for_sstable(10000);
@@ -180,7 +180,7 @@
 //! ```
 //!
 //! ### Metadata Filtering
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::bloom::SstableBloomFilter;
 //!
 //! let filter = SstableBloomFilter::new(...);

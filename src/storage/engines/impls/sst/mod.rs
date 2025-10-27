@@ -24,7 +24,7 @@
 //! SST excels in real-time scenarios requiring low latency and frequent updates:
 //!
 //! ### ✅ **Real-Time Recommendation Systems**
-//! ```rust
+//! ```rust,ignore
 //! // E-commerce product recommendations with real-time updates
 //! let user_vectors = load_user_behavior(); // Real-time user interactions
 //! sst_engine.insert_realtime(user_vectors).await; // Immediate availability via MemTable
@@ -38,7 +38,7 @@
 //! ```
 //!
 //! ### ✅ **Financial Trading Systems**
-//! ```rust
+//! ```rust,ignore
 //! // High-frequency trading with microsecond latency requirements
 //! let market_vectors = load_realtime_market_data(); // Live market embeddings
 //! sst_engine.configure_ultra_low_latency(
@@ -54,7 +54,7 @@
 //! ```
 //!
 //! ### ✅ **Live Chat and Social Media**
-//! ```rust
+//! ```rust,ignore
 //! // Real-time content moderation with immediate response
 //! let message_embeddings = extract_message_vectors(live_messages); // Real-time analysis
 //! sst_engine.stream_insert(message_embeddings).await; // Continuous ingestion
@@ -68,7 +68,7 @@
 //! ```
 //!
 //! ### ✅ **IoT Device Management**
-//! ```rust
+//! ```rust,ignore
 //! // Real-time device monitoring with frequent status updates
 //! let device_embeddings = load_device_telemetry(); // Continuous device data
 //! sst_engine.configure_iot_ingestion(
@@ -194,7 +194,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::sst::SstEngine;
 //!
 //! let sst = SstEngine::new(config)?;

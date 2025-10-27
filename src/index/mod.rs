@@ -44,7 +44,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::index::{AxisManager, IndexConfig, HnswConfig};
 //!
 //! // Create AXIS manager with HNSW index
@@ -103,7 +103,7 @@ use crate::core::{VectorId, VectorRecord};
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// # use proximadb::index::GlobalIdIndex;
 /// # use proximadb::core::{VectorId, VectorRecord};
 /// # async fn example() -> anyhow::Result<()> {

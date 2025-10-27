@@ -101,7 +101,7 @@
 //!
 //! ### Strategy Pattern
 //! All engines implement `UnifiedStorageEngine` trait:
-//! ```rust
+//! ```rust,ignore
 //! trait UnifiedStorageEngine {
 //!     async fn insert(&self, records: Vec<VectorRecord>) -> Result<InsertResult>;
 //!     async fn search(&self, query: SearchQuery) -> Result<SearchResult>;

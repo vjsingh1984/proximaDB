@@ -12,7 +12,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::core::utils::metadata_conversions::*;
 //!
 //! // Convert protobuf metadata to JSON

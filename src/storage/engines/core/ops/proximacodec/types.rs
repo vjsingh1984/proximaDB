@@ -312,7 +312,7 @@ impl ProximaScheme {
     ///
     /// To ensure lossless encoding:
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // For f32 (32-bit floats)
     /// ProximaScheme::BitPacked { bits: 32 }              // ✅ Lossless
     /// ProximaScheme::FrameOfReference { reference: 0, bits: 32 }  // ✅ Lossless

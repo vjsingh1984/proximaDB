@@ -79,7 +79,7 @@
 //! ## SIMD Optimization Strategy
 //!
 //! ### Automatic Selection
-//! ```rust
+//! ```rust,ignore
 //! match hardware.preferred_backend() {
 //!     AVX512 => use_avx512_kernels(),
 //!     AVX2 => use_avx2_kernels(),
@@ -159,7 +159,7 @@
 //! ## Usage Examples
 //!
 //! ### Initialization
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::hardware::{initialize_hardware_capabilities, HardwareConfig};
 //!
 //! // Initialize at server startup
@@ -168,7 +168,7 @@
 //! ```
 //!
 //! ### Runtime Queries
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::hardware::{hardware_capabilities, HardwareQuery};
 //!
 //! // Get capabilities

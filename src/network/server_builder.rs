@@ -36,7 +36,7 @@
 //!
 //! ## Usage Example:
 //!
-//! ```rust
+//! ```rust,ignore
 //! let rest_config = RestHttpServerBuilder::new()
 //!     .bind_address("0.0.0.0:5678")
 //!     .rest_compression(true)

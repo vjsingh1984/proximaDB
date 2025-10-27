@@ -18,7 +18,7 @@
 //! RAPTOR excels in dynamic environments requiring workload adaptation:
 //!
 //! ### ✅ **Dynamic Recommendation Systems**
-//! ```rust
+//! ```rust,ignore
 //! // E-commerce platforms with changing user preferences
 //! let user_embeddings = load_user_behavior_vectors(); // 512D user profiles
 //! raptor_engine.flush_with_adaptation(user_embeddings).await; // Adapts to usage patterns
@@ -26,7 +26,7 @@
 //! ```
 //!
 //! ### ✅ **Multi-Tenant SaaS Platforms**
-//! ```rust
+//! ```rust,ignore
 //! // Different tenants with varying query patterns
 //! for tenant_batch in tenant_data_batches {
 //!     raptor_engine.configure_adaptive_params(&tenant_batch.tenant_id,
@@ -36,7 +36,7 @@
 //! ```
 //!
 //! ### ✅ **Research and Development Workloads**
-//! ```rust
+//! ```rust,ignore
 //! // Experimental datasets with unknown query patterns
 //! let research_vectors = load_experimental_embeddings(); // Variable dimensions
 //! raptor_engine.enable_adaptive_mode(true).await; // Learn optimal parameters

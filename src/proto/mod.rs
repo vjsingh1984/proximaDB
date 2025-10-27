@@ -146,7 +146,7 @@
 //! ## Proto-First Benefits in Practice
 //!
 //! ### Direct Field Access
-//! ```rust
+//! ```rust,ignore
 //! // No conversion needed - direct proto usage
 //! let record = VectorRecord {
 //!     id: "vec_123".to_string(),
@@ -161,7 +161,7 @@
 //! ```
 //!
 //! ### Zero-Copy Persistence
-//! ```rust
+//! ```rust,ignore
 //! // Write proto directly to storage
 //! storage.write_proto(&record)?;
 //!

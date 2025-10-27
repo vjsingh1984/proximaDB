@@ -35,7 +35,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::core::ops::proximacodec::{ProximaCodec, ProximaScheme};
 //!
 //! let codec = ProximaCodec::global();

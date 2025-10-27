@@ -339,14 +339,14 @@ impl ReaderMigrationHelper {
     pub async fn migrate_existing_reader_example() -> Result<(), ProximaDBError> {
         // This is what existing code looks like:
         //
-        // ```rust
+        // ```rust,ignore
         // let reader = ExistingReader::new(filesystem_factory.clone());
         // let data = reader.read("s3://bucket/file.sst").await?;
         // ```
         //
         // This is what it becomes with zero-copy optimization:
         //
-        // ```rust
+        // ```rust,ignore
         // let io_system = ZeroCopyIOSystemBuilder::new().build()?;
         // let zero_copy_fs = filesystem_factory.create_zero_copy_filesystem(
         //     "s3://bucket/",

@@ -65,7 +65,7 @@
 //!
 //! ### 1. **No Compression**
 //! For already compressed or small data:
-//! ```rust
+//! ```rust,ignore
 //! if data.len() < 1024 || is_compressed(&data) {
 //!     return CompressionAlgorithm::None;
 //! }
@@ -73,7 +73,7 @@
 //!
 //! ### 2. **Mixed Compression**
 //! Different algorithms per data type:
-//! ```rust
+//! ```rust,ignore
 //! let strategy = MixedCompressionStrategy {
 //!     vectors: CompressionAlgorithm::LZ4,
 //!     metadata: CompressionAlgorithm::ZSTD,
@@ -83,7 +83,7 @@
 //!
 //! ### 3. **Adaptive Compression**
 //! Adjust based on compression ratio:
-//! ```rust
+//! ```rust,ignore
 //! let ratio = compressed_size as f64 / original_size as f64;
 //! if ratio > 0.9 {
 //!     // Poor compression, switch to faster algorithm
@@ -93,7 +93,7 @@
 //!
 //! ### 4. **Dictionary Compression**
 //! For repetitive data patterns:
-//! ```rust
+//! ```rust,ignore
 //! let dict = train_dictionary(&sample_data);
 //! let compressed = zstd_compress_with_dict(&data, &dict);
 //! ```
@@ -144,7 +144,7 @@
 //! ## Usage Examples
 //!
 //! ### Basic Compression
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compression::{compress, decompress, CompressionAlgorithm};
 //!
 //! let data = vec![1, 2, 3, 4, 5];
@@ -154,7 +154,7 @@
 //! ```
 //!
 //! ### Context-Aware Compression
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compression::CompressionContext;
 //!
 //! let ctx = CompressionContext::new()
@@ -167,7 +167,7 @@
 //! ```
 //!
 //! ### Streaming Compression
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compression::StreamingCompressor;
 //!
 //! let mut compressor = StreamingCompressor::new(CompressionAlgorithm::LZ4);

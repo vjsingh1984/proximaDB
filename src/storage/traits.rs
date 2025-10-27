@@ -66,7 +66,7 @@ use std::sync::Arc;
 /// - **Archive**: Glacier/Archive with maximum compression (ZSTD level 19)
 ///
 /// ## Usage Example:
-/// ```rust
+/// ```rust,ignore
 /// // Mark frequently accessed data as hot
 /// engine.set_tier(collection_id, PerformanceTier::Hot)?;
 ///
@@ -271,7 +271,7 @@ impl UnifiedMetricsCollector {
     /// This ensures metrics never impact production performance.
     ///
     /// ## Usage:
-    /// ```rust
+    /// ```rust,ignore
     /// let start = Instant::now();
     /// let result = do_operation()?;
     /// metrics.record(

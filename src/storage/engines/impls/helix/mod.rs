@@ -34,7 +34,7 @@
 //! HELIX excels in scenarios requiring spatial locality and clustering:
 //!
 //! ### ✅ **Image/Video Similarity Search**
-//! ```rust
+//! ```rust,ignore
 //! // High-dimensional image embeddings benefit from spatial clustering
 //! // Similar images cluster together in Hilbert space
 //! let image_vectors = load_cnn_embeddings(); // 2048D CNN features
@@ -46,7 +46,7 @@
 //! ```
 //!
 //! ### ✅ **Recommendation Systems**
-//! ```rust
+//! ```rust,ignore
 //! // User/item embeddings with natural clustering patterns
 //! // Users with similar preferences cluster in vector space
 //! let user_embeddings = model.encode_users(users); // 384D embeddings
@@ -57,7 +57,7 @@
 //! ```
 //!
 //! ### ✅ **Document Clustering & Topic Modeling**
-//! ```rust
+//! ```rust,ignore
 //! // Text embeddings from BERT/Sentence Transformers
 //! // Documents on similar topics cluster naturally
 //! let doc_embeddings = sentence_model.encode(documents); // 768D
@@ -68,7 +68,7 @@
 //! ```
 //!
 //! ### ✅ **Geospatial Applications**
-//! ```rust
+//! ```rust,ignore
 //! // GPS coordinates + feature vectors
 //! // Geographic proximity preserved in Hilbert space
 //! let location_features = combine_gps_and_features(locations); // [lat, lon, ...features]

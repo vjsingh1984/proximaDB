@@ -24,11 +24,11 @@ use super::impls::simd::{SimdDecoder, SimdEncoder};
 /// The ONLY public encoding/decoding interface
 ///
 /// Usage:
-/// ```
+/// ```text
 /// let codec = ProximaCodec::global();
 /// let encoded = codec.encode(&values, ProximaScheme::Delta { base: 0 })?;
 /// let decoded = codec.decode::<f32>(&encoded)?;
-/// ```
+/// ```text
 pub struct ProximaCodec {
     wire_format: WireFormatManager,
     registry: ImplementationRegistry,

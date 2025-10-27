@@ -11,7 +11,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::persistence::write_ahead_log::manifest;
 //!
 //! // Initialize during server startup

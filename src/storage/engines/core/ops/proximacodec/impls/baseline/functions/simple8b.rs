@@ -58,9 +58,9 @@ fn encode_simple8b_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 /// 3. Choose optimal selector for each batch
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [word_count:4 bytes][64-bit words with selector:4 bits + data:60 bits]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

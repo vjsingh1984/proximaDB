@@ -55,7 +55,7 @@
 //!
 //! ## Usage Pattern
 //!
-//! ```rust
+//! ```rust,ignore
 //! // ProximaCodec calls SIMD encoder
 //! let raw_data = simd::try_simd_encode_delta(values, base)?;
 //!

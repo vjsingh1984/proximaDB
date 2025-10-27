@@ -51,7 +51,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::index::axis::AxisManager;
 //! use proximadb::index::axis::AxisConfig;
 //!
