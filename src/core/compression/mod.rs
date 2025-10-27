@@ -179,7 +179,7 @@
 //! ## Format Markers
 //!
 //! Each compressed block includes a header:
-//! ```
+//! ```text
 //! [Magic: 4 bytes][Algorithm: 1 byte][Level: 1 byte][Size: 4 bytes][Data...]
 //! ```
 //!
