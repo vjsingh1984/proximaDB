@@ -15,18 +15,19 @@ import atexit
 server_process = None
 
 def start_server():
-    """Start ProximaDB server for testing"""
+    """Start ProximaDB server for testing
+
+    NOTE: This function kills and restarts the server.
+    This test is in tests/server_lifecycle/ and should be run separately.
+    """
     global server_process
-    print("🚀 Assuming ProximaDB server is already running...")
+    print("🚀 Starting ProximaDB server...")
 
-    # DISABLED: Don't kill existing server - tests should use already running server
-    # os.system("pkill -f proximadb-server")
-    # time.sleep(1)
+    # Kill any existing server (OK in server_lifecycle tests)
+    os.system("pkill -f proximadb-server")
+    time.sleep(1)
 
-    # DISABLED: Don't start new server - use existing one
-    return
-
-    # Start server (DISABLED)
+    # Start server
     server_process = subprocess.Popen(
         [
             "/home/vsingh/code/proximaDB/target/release/proximadb-server",
@@ -43,18 +44,19 @@ def start_server():
     print("✅ Server started")
 
 def stop_server():
-    """Stop ProximaDB server"""
+    """Stop ProximaDB server
+
+    NOTE: This is OK in server_lifecycle tests which run in isolation.
+    """
     global server_process
-    # DISABLED: Don't stop server - let it continue running for other tests
-    return
     if server_process:
         print("🛑 Stopping server...")
         server_process.terminate()
         server_process.wait()
         server_process = None
 
-# DISABLED: Don't register cleanup - server should keep running
-# atexit.register(stop_server)
+# Register cleanup - OK in server_lifecycle tests
+atexit.register(stop_server)
 
 def test_grpc_vector_get():
     """Test gRPC vector insert and get operations"""
