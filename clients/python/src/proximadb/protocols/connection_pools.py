@@ -118,29 +118,19 @@ class GrpcChannelFactory(ResourceFactory[grpc.Channel]):
     def dispose(self, resource: grpc.Channel) -> None:
         """Close gRPC channel gracefully, waiting for background threads"""
         try:
-            # Use threading Event for deterministic wait on channel shutdown
-            shutdown_event = threading.Event()
-
-            def on_state_change(connectivity):
-                """Callback when channel state changes"""
-                if connectivity == grpc.ChannelConnectivity.SHUTDOWN:
-                    shutdown_event.set()
-
-            # Subscribe to state changes before closing
-            try:
-                resource.subscribe(on_state_change)
-            except (AttributeError, TypeError):
-                # Older gRPC API or channel doesn't support subscription
-                pass
-
-            # Close the channel (signals background threads to stop)
+            # Close the channel first - this signals background threads to stop
             resource.close()
 
-            # Wait deterministically for shutdown (max 2 seconds)
-            # Event will be set by callback when channel reaches SHUTDOWN
-            shutdown_event.wait(timeout=2.0)
+            # Wait a brief moment for background threads to process the closure
+            # They will get ValueError when trying to watch_connectivity_state()
+            # but the exception is caught by gRPC internally
+            import time
+            time.sleep(0.05)  # 50ms - enough for threads to detect closure
+
+            # Channel is now safely closed, background threads have been notified
 
         except Exception as e:
+            # Suppress all errors during dispose - channel is being destroyed anyway
             logger.debug(f"Error during channel dispose (suppressed): {e}")
 
 

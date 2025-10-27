@@ -577,12 +577,8 @@ impl TransactionCoordinator {
             .await?;
 
         // List all files in staging directory
-        info!(
-            "📂 [DEBUG] Listing staging directory: {}",
-            metadata.staging_url
-        );
-        debug!(
-            "📂 [DEBUG] Listing staging directory: {}",
+        trace!(
+            "Listing staging directory: {}",
             metadata.staging_url
         );
 
@@ -592,25 +588,12 @@ impl TransactionCoordinator {
             .await
             .context("Failed to list staging directory")?;
 
-        info!(
-            "📂 [DEBUG] Found {} files in staging",
-            staging_entries.len()
-        );
-        debug!(
-            "📂 [DEBUG] Found {} files in staging",
+        trace!(
+            "Found {} files in staging",
             staging_entries.len()
         );
 
-        for (idx, entry) in staging_entries.iter().enumerate() {
-            info!(
-                "    [{}] name={}, url={}, is_dir={}",
-                idx, entry.name, entry.url, entry.metadata.is_directory
-            );
-            debug!(
-                "    [{}] name={}, url={}, is_dir={}",
-                idx, entry.name, entry.url, entry.metadata.is_directory
-            );
-        }
+        // Individual file listing removed - too verbose for production
 
         // Move each file atomically from staging to final location
         // Note: Final directory was already created during begin_atomic_operation
@@ -624,12 +607,7 @@ impl TransactionCoordinator {
                     entry.name
                 );
 
-                trace!("🔄 [] Moving file:");
-                info!("    From (staging): {}", staging_file_url);
-                info!("    To (final):     {}", final_file_url);
-                debug!("🔄 [DEBUG] Moving file:");
-                debug!("    From (staging): {}", staging_file_url);
-                debug!("    To (final):     {}", final_file_url);
+                trace!("Moving file: {} -> {}", staging_file_url, final_file_url);
 
                 // Use FilesystemFactory's atomic move which handles cross-storage scenarios
                 match self
@@ -638,29 +616,11 @@ impl TransactionCoordinator {
                     .await
                 {
                     Ok(_) => {
-                        trace!("    ✅ [] Move successful");
-                        trace!("    ✅ [] Move successful");
-                        // Verify the file exists at the final location
-                        if let Ok(fs) = self.filesystem.get_filesystem(&final_file_url) {
-                            if let Ok(exists) = fs.exists(&final_file_url).await {
-                                info!(
-                                    "    ✅ [DEBUG] Verified file exists at final location: {}",
-                                    exists
-                                );
-                                info!(
-                                    "    ✅ [DEBUG] Verified file exists at final location: {}",
-                                    exists
-                                );
-                            } else {
-                                warn!("    ⚠️ [DEBUG] Could not verify file at final location");
-                            }
-                        } else {
-                            warn!("    ⚠️ [DEBUG] Could not get filesystem for verification");
-                        }
+                        trace!("Move successful: {}", entry.name);
+                        // File existence verification removed - move_atomic already guarantees this
                     }
                     Err(e) => {
-                        error!("    ❌ [DEBUG] Move failed: {}", e);
-                        error!("    ❌ [DEBUG] Move failed: {}", e);
+                        error!("Failed to move file {}: {}", entry.name, e);
                         return Err(anyhow::anyhow!(
                             "Failed to move {} to {}: {}",
                             staging_file_url,
