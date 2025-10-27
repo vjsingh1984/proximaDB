@@ -1369,6 +1369,7 @@ enum EmbeddingModel {
     /// Generic normalized embeddings: unit norm (L2 = 1)
     Normalized,
     /// Random uniform distribution
+    #[allow(dead_code)]
     RandomUniform,
 }
 
@@ -4172,6 +4173,7 @@ where
     Ok(((mean, std_dev), result.unwrap()))
 }
 
+#[allow(dead_code)]
 fn benchmark_encoding_statistical(
     vector_count: usize,
     dimension: usize,
@@ -5039,6 +5041,7 @@ fn benchmark_simd_encoding_schemes(
         encode_ms: f64, // Encoding time with ProximaCodec
         compression_ratio: f64,
         compressed_size: usize,
+        #[allow(dead_code)]
         success: bool,
         pattern_detection_us: f64, // Pattern detection time in microseconds
         detected_scheme: String,
