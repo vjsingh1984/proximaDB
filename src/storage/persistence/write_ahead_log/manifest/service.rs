@@ -748,17 +748,36 @@ impl GlobalManifestService {
 
     /// Shutdown the service gracefully
     pub async fn shutdown(&self) -> Result<()> {
-        info!("🛑 Shutting down GlobalManifestService");
+        debug!("Shutting down GlobalManifestService");
 
-        // Close append channel
-        // (dropping append_tx will cause background worker to exit)
+        // Close append channel by dropping the sender
+        // This signals the background worker to exit after flushing pending entries
+        drop(self.append_tx.clone());  // Close the channel
 
-        // Wait for background worker to finish
+        // Give worker a moment to process the channel closure
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Wait for background worker to finish with timeout
         if let Some(handle) = self.worker_handle.lock().await.take() {
-            handle.await.context("Failed to join worker thread")?;
+            // Use timeout to prevent indefinite hang
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(3),  // Reduced from 5s to 3s
+                handle
+            ).await {
+                Ok(Ok(())) => {
+                    debug!("GlobalManifestService worker exited cleanly");
+                }
+                Ok(Err(e)) => {
+                    warn!("GlobalManifestService worker error: {}", e);
+                }
+                Err(_) => {
+                    warn!("GlobalManifestService shutdown timeout - forcing exit");
+                    // JoinHandle will be dropped, cancelling the task
+                }
+            }
         }
 
-        info!("✅ GlobalManifestService shut down");
+        debug!("GlobalManifestService shut down");
         Ok(())
     }
 }

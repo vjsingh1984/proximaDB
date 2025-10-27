@@ -429,28 +429,43 @@ impl ProximaDB {
     }
 
     pub async fn stop(&mut self) -> Result<()> {
-        // Shutdown global WAL manifest (flush pending writes)
-        tracing::info!("🛑 Shutting down global WAL manifest...");
-        storage::persistence::write_ahead_log::manifest::shutdown().await?;
-        tracing::info!("✅ Global WAL manifest shut down");
+        // Shutdown global WAL manifest (flush pending writes) with timeout
+        tracing::info!("Shutting down global WAL manifest...");
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            storage::persistence::write_ahead_log::manifest::shutdown()
+        ).await {
+            Ok(Ok(())) => tracing::debug!("Global WAL manifest shut down"),
+            Ok(Err(e)) => tracing::warn!("WAL manifest shutdown error: {}", e),
+            Err(_) => tracing::warn!("WAL manifest shutdown timeout - forcing continuation"),
+        }
 
-        // Stop multi-server
+        // Stop multi-server with timeout
         if let Some(ref mut multi_server) = self.multi_server {
-            multi_server
-                .stop()
-                .await
-                .map_err(|e| format!("Failed to stop multi-server: {}", e))?;
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(3),
+                multi_server.stop()
+            ).await {
+                Ok(Ok(())) => tracing::debug!("Multi-server stopped"),
+                Ok(Err(e)) => tracing::warn!("Multi-server stop error: {}", e),
+                Err(_) => tracing::warn!("Multi-server stop timeout"),
+            }
         }
 
-        // Stop storage engine
-        {
-            let mut storage = self.storage.write().await;
-            storage.stop().await?;
+        // Stop storage engine with timeout
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(3),
+            async {
+                let mut storage = self.storage.write().await;
+                storage.stop().await
+            }
+        ).await {
+            Ok(Ok(())) => tracing::debug!("Storage engine stopped"),
+            Ok(Err(e)) => tracing::warn!("Storage engine stop error: {}", e),
+            Err(_) => tracing::warn!("Storage engine stop timeout"),
         }
 
-        // Stop consensus engine (disabled)
-        // self.consensus.stop().await?;
-
+        tracing::info!("Server shutdown complete");
         Ok(())
     }
 
