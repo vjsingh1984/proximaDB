@@ -299,12 +299,28 @@ impl SQLValidator {
         }
 
         // Add result limiting if not present
-        if sanitized_query.limit.is_none() {
-            use sqlparser::ast::Expr;
-            sanitized_query.limit = Some(Expr::Value(sqlparser::ast::Value::Number(
-                self.config.max_result_limit.to_string(),
-                false,
-            )));
+        // In sqlparser 0.59, LimitClause is an enum
+        let has_limit = if let Some(lc) = &sanitized_query.limit_clause {
+            match lc {
+                sqlparser::ast::LimitClause::LimitOffset { limit, .. } => limit.is_some(),
+                sqlparser::ast::LimitClause::OffsetCommaLimit { .. } => true,
+            }
+        } else {
+            false
+        };
+
+        if !has_limit {
+            use sqlparser::ast::{Expr, LimitClause, ValueWithSpan, Value};
+            use sqlparser::tokenizer::Span;
+
+            sanitized_query.limit_clause = Some(LimitClause::LimitOffset {
+                limit: Some(Expr::Value(ValueWithSpan {
+                    value: Value::Number(self.config.max_result_limit.to_string(), false),
+                    span: Span::empty(),
+                })),
+                offset: None,
+                limit_by: vec![],
+            });
         }
 
         Ok(sanitized_query)

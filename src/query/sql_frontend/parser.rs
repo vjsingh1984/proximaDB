@@ -114,13 +114,14 @@ impl SqlFrontendParser {
                     &SqlQuery {
                         with: None,
                         body: Box::new(SetExpr::Select(sel.clone())),
-                        order_by: vec![],
-                        limit: None,
-                        offset: None,
+                        order_by: None,
+                        limit_clause: None,
                         fetch: None,
                         locks: vec![],
-                        limit_by: vec![],
                         for_clause: None,
+                        settings: None,
+                        format_clause: None,
+                        pipe_operators: vec![],
                     },
                 )?))
             }
@@ -218,38 +219,65 @@ impl SqlFrontendParser {
         };
 
         // Convert ORDER BY
-        let order_by = query
-            .order_by
-            .iter()
-            .map(|order_expr| self.convert_order_by_expr(order_expr))
-            .collect::<Result<Vec<_>>>()?;
+        let order_by = if let Some(order_by_clause) = &query.order_by {
+            match &order_by_clause.kind {
+                sqlparser::ast::OrderByKind::Expressions(exprs) => exprs
+                    .iter()
+                    .map(|order_expr| self.convert_order_by_expr(order_expr))
+                    .collect::<Result<Vec<_>>>()?,
+                sqlparser::ast::OrderByKind::All(_) => vec![],
+            }
+        } else {
+            vec![]
+        };
 
-        // Convert LIMIT and OFFSET (sqlparser 0.59 uses limit_clause)
-        let limit = query
-            .limit_clause
-            .as_ref()
-            .and_then(|lc| lc.limit.as_ref())
-            .and_then(|expr| {
-                if let SqlExpr::Value(value_with_span) = expr {
-                    if let Value::Number(n, _) = &value_with_span.value {
-                        return n.parse::<u64>().ok();
-                    }
+        // Convert LIMIT and OFFSET (sqlparser 0.59 uses LimitClause enum)
+        let (limit, offset) = if let Some(lc) = &query.limit_clause {
+            match lc {
+                sqlparser::ast::LimitClause::LimitOffset { limit: lim, offset: off, .. } => {
+                    let limit_val = lim.as_ref().and_then(|expr| {
+                        if let SqlExpr::Value(value_with_span) = expr {
+                            if let Value::Number(n, _) = &value_with_span.value {
+                                return n.parse::<u64>().ok();
+                            }
+                        }
+                        None
+                    });
+                    let offset_val = off.as_ref().and_then(|off_expr| {
+                        if let SqlExpr::Value(value_with_span) = &off_expr.value {
+                            if let Value::Number(n, _) = &value_with_span.value {
+                                return n.parse::<u64>().ok();
+                            }
+                        }
+                        None
+                    });
+                    (limit_val, offset_val)
                 }
-                None
-            });
-
-        let offset = query
-            .limit_clause
-            .as_ref()
-            .and_then(|lc| lc.offset.as_ref())
-            .and_then(|offset_expr| {
-                if let SqlExpr::Value(value_with_span) = &offset_expr.value {
-                    if let Value::Number(n, _) = &value_with_span.value {
-                        return n.parse::<u64>().ok();
-                    }
+                sqlparser::ast::LimitClause::OffsetCommaLimit { offset: off, limit: lim } => {
+                    let limit_val = if let SqlExpr::Value(value_with_span) = lim {
+                        if let Value::Number(n, _) = &value_with_span.value {
+                            n.parse::<u64>().ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    let offset_val = if let SqlExpr::Value(value_with_span) = off {
+                        if let Value::Number(n, _) = &value_with_span.value {
+                            n.parse::<u64>().ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    (limit_val, offset_val)
                 }
-                None
-            });
+            }
+        } else {
+            (None, None)
+        };
 
         Ok(Select {
             projection,
@@ -351,9 +379,9 @@ impl SqlFrontendParser {
         match expr {
             SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
 
-            SqlExpr::Value(value) => match value {
+            SqlExpr::Value(value_with_span) => match &value_with_span.value {
                 Value::Placeholder(ph) => Ok(Expr::Param(ph.clone())),
-                _ => Ok(Expr::Literal(self.convert_value(value)?)),
+                _ => Ok(Expr::Literal(self.convert_value(&value_with_span.value)?)),
             },
 
             SqlExpr::BinaryOp { left, op, right } => {
@@ -380,8 +408,12 @@ impl SqlFrontendParser {
 
             SqlExpr::Function(func) => {
                 let name = func.name.to_string();
-                let args = func
-                    .args
+                // In sqlparser 0.59, args is FunctionArguments enum
+                let arg_list = match &func.args {
+                    sqlparser::ast::FunctionArguments::List(func_arg_list) => &func_arg_list.args,
+                    _ => return Err(anyhow!("Unsupported function argument type")),
+                };
+                let args = arg_list
                     .iter()
                     .map(|arg| self.convert_function_arg(arg))
                     .collect::<Result<Vec<_>>>()?;
@@ -451,7 +483,7 @@ impl SqlFrontendParser {
                             let threshold = if args.len() >= 4 {
                                 match &args[3] {
                                     Expr::Literal(Literal::Number(n)) => {
-                                        if *n < 0.0 {
+                                        if n < &0.0 {
                                             return Err(anyhow!("SIMILAR: threshold must be ≥ 0"));
                                         }
                                         Some(*n)
@@ -514,7 +546,7 @@ impl SqlFrontendParser {
                             // depth must be positive integer
                             let max_depth = match &args[2] {
                                 Expr::Literal(Literal::Number(n)) => {
-                                    if *n < 1.0 {
+                                    if n < &1.0 {
                                         return Err(anyhow!("FOLLOW: max_depth must be ≥ 1"));
                                     }
                                     *n as u32
@@ -549,8 +581,9 @@ impl SqlFrontendParser {
             SqlExpr::Case {
                 operand,
                 conditions,
-                results,
                 else_result,
+                case_token: _,
+                end_token: _,
             } => {
                 // Convert CASE expression
                 let lowered_operand = if let Some(op) = operand {
@@ -560,9 +593,10 @@ impl SqlFrontendParser {
                 };
 
                 let mut lowered_conditions = Vec::new();
-                for (condition, result) in conditions.iter().zip(results.iter()) {
-                    let when_expr = self.convert_expr(condition)?;
-                    let then_expr = self.convert_expr(result)?;
+                // In sqlparser 0.59, conditions is Vec<CaseWhen>
+                for case_when in conditions {
+                    let when_expr = self.convert_expr(&case_when.condition)?;
+                    let then_expr = self.convert_expr(&case_when.result)?;
                     lowered_conditions.push((when_expr, then_expr));
                 }
 
@@ -683,7 +717,8 @@ impl SqlFrontendParser {
 
     fn convert_order_by_expr(&self, order_expr: &SqlOrderByExpr) -> Result<OrderByExpr> {
         let expr = self.convert_expr(&order_expr.expr)?;
-        let asc = order_expr.asc.unwrap_or(true); // Default to ascending
+        // In sqlparser 0.59, asc is in options.asc
+        let asc = order_expr.options.asc.unwrap_or(true); // Default to ascending
 
         Ok(OrderByExpr { expr, asc })
     }

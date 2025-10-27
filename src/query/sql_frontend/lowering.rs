@@ -109,22 +109,42 @@ impl QueryLowering {
 
         // 4. Process ORDER BY with vector function recognition
         let order_by = if let Some(order_by_clause) = &query.order_by {
-            self.lower_order_by(&order_by_clause.exprs).await?
+            match &order_by_clause.kind {
+                sqlparser::ast::OrderByKind::Expressions(exprs) => self.lower_order_by(exprs).await?,
+                sqlparser::ast::OrderByKind::All(_) => vec![],
+            }
         } else {
             vec![]
         };
 
         // 5. Process LIMIT/OFFSET with bounds checking
-        let limit = query
-            .limit_clause
-            .as_ref()
-            .and_then(|lc| lc.limit.as_ref())
-            .and_then(|expr| self.extract_limit(expr));
-        let offset = query
-            .limit_clause
-            .as_ref()
-            .and_then(|lc| lc.offset.as_ref())
-            .and_then(|offset_expr| self.extract_offset(offset_expr));
+        // In sqlparser 0.59, LimitClause is an enum
+        let (limit, offset) = if let Some(lc) = &query.limit_clause {
+            match lc {
+                sqlparser::ast::LimitClause::LimitOffset { limit: lim, offset: off, .. } => {
+                    let limit_val = lim.as_ref().and_then(|expr| self.extract_limit(expr));
+                    // In sqlparser 0.59, offset is Option<Offset>
+                    let offset_val = off.as_ref().and_then(|off_struct| self.extract_offset(off_struct));
+                    (limit_val, offset_val)
+                }
+                sqlparser::ast::LimitClause::OffsetCommaLimit { offset: off, limit: lim } => {
+                    let limit_val = self.extract_limit(lim);
+                    // In OffsetCommaLimit, offset is an Expr, not an Offset struct
+                    let offset_val = if let SqlExpr::Value(value_with_span) = off {
+                        if let Value::Number(n, _) = &value_with_span.value {
+                            n.parse::<u64>().ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    (limit_val, offset_val)
+                }
+            }
+        } else {
+            (None, None)
+        };
 
         Ok(Select {
             projection,
@@ -352,8 +372,8 @@ impl QueryLowering {
 
         for order_expr in order_by {
             let expr = self.lower_expr(&order_expr.expr).await?;
-            // In sqlparser 0.59, asc_desc is Option<bool> where Some(true) = ASC, Some(false) = DESC, None = ASC (default)
-            let asc = order_expr.asc_desc.map(|ad| ad.is_some()).unwrap_or(true);
+            // In sqlparser 0.59, asc is in options.asc: Option<bool> where Some(true) = ASC, Some(false) = DESC, None = ASC (default)
+            let asc = order_expr.options.asc.unwrap_or(true);
 
             order_exprs.push(OrderByExpr { expr, asc });
         }
@@ -433,11 +453,12 @@ impl QueryLowering {
         Box::pin(async move {
             match expr {
                 SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
-                SqlExpr::Value(value) => {
+                SqlExpr::Value(value_with_span) => {
                     // Handle parameter placeholders separately
-                    match value {
+                    // In sqlparser 0.59, Value is wrapped in ValueWithSpan
+                    match &value_with_span.value {
                         Value::Placeholder(placeholder) => Ok(Expr::Param(placeholder.clone())),
-                        _ => Ok(Expr::Literal(self.convert_value(value)?)),
+                        _ => Ok(Expr::Literal(self.convert_value(&value_with_span.value)?)),
                     }
                 }
                 SqlExpr::BinaryOp { left, op, right } => {
@@ -455,8 +476,9 @@ impl QueryLowering {
                 SqlExpr::Case {
                     operand,
                     conditions,
-                    results,
                     else_result,
+                    case_token: _,
+                    end_token: _,
                 } => {
                     let lowered_operand = if let Some(op) = operand {
                         Some(Box::new(self.lower_expr(op).await?))
@@ -464,9 +486,10 @@ impl QueryLowering {
                         None
                     };
                     let mut lowered_conditions = Vec::new();
-                    for (condition, result) in conditions.iter().zip(results.iter()) {
-                        let when_expr = self.lower_expr(condition).await?;
-                        let then_expr = self.lower_expr(result).await?;
+                    // In sqlparser 0.59, conditions is Vec<CaseWhen> where CaseWhen has condition and result
+                    for case_when in conditions {
+                        let when_expr = self.lower_expr(&case_when.condition).await?;
+                        let then_expr = self.lower_expr(&case_when.result).await?;
                         lowered_conditions.push((when_expr, then_expr));
                     }
                     let lowered_else_expr = if let Some(el) = else_result {
