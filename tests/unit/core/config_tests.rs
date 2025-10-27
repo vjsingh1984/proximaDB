@@ -14,20 +14,20 @@ fn test_default_config() {
     let config = Config::default();
 
     // Test default server config
-    assert_eq!(config.server.node_id, "default-node");
+    assert_eq!(config.server.node_id, "node-1");
     assert_eq!(config.server.bind_address, "127.0.0.1");
     assert_eq!(config.server.port, 5678);
 
     // Test default storage config
     assert!(!config.storage.storage_locations.is_empty());
     assert!(config.storage.metadata_url.contains("metadata"));
-    assert_eq!(config.storage.cache_size_mb, 256);
+    assert_eq!(config.storage.cache_size_mb, 512);
     assert!(config.storage.mmap_enabled);
 
     // Test default SST config - sst_config is Option<SstConfig>
     if let Some(ref sst_config) = config.storage.sst_config {
         assert_eq!(sst_config.level_count, 7);
-        assert_eq!(sst_config.compaction_threshold, 3);
+        assert_eq!(sst_config.compaction_threshold, 5); // Default is 5, not 3
         // Note: memtable_size_mb and enable_write_ahead_log fields no longer exist
     }
 
@@ -53,12 +53,36 @@ metadata_url = "file:///custom/metadata"
 cache_size_mb = 512
 mmap_enabled = true
 
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+[storage.wal_config]
+# WAL defaults are fine, just need the section
+size_mb = 64
+
+[storage.compaction_config]
+# Compaction defaults
+
+[storage.filesystem_config]
+# Filesystem optimization defaults
+
 [storage.sst_config]
-memtable_size_mb = 128
 level_count = 5
-enable_write_ahead_log = true
-write_ahead_log_directory = "/custom/write_ahead_log"
+compaction_threshold = 3
+block_size_kb = 1024
+compaction_strategy = "leveled"
+compression = "lz4"
+compression_level = 3
+cache_size_mb = 128
+max_files_per_level = 10
+level_size_multiplier = 10.0
+max_levels = 7
+background_thread_count = 4
 data_directory = "/custom/sst_data"
+mmap_enabled = true
+prefetch_enabled = true
+prefetch_size_kb = 1024
 
 [api]
 rest_port = 8080

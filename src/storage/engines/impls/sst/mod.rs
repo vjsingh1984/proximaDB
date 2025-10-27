@@ -557,11 +557,11 @@ impl SstEntry {
         // Serialize SST metadata using bincode
         let meta_data = bincode::serialize(&self.sst_meta)?;
 
-        // Combine with length prefixes
+        // Combine with length prefixes (both as u32 for consistency)
         let mut buffer = Vec::with_capacity(8 + proto_buf.len() + meta_data.len());
         buffer.extend_from_slice(&(proto_buf.len() as u32).to_le_bytes());
         buffer.extend_from_slice(&proto_buf);
-        buffer.extend_from_slice(&(meta_data.len()).to_le_bytes());
+        buffer.extend_from_slice(&(meta_data.len() as u32).to_le_bytes());
         buffer.extend_from_slice(&meta_data);
 
         Ok(buffer)

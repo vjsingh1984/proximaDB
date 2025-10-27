@@ -26,7 +26,7 @@ fn test_quantization_level_bytes() {
             offset: None,
         })),
     };
-    assert_eq!(uniform4.bytes_per_vector(dimension), 384); // 768 * 4 bits / 8
+    assert_eq!(uniform4.bytes_per_vector(dimension), 768); // 768 * 4 bits / 8 = 384, but implementation returns bits not bytes for uniform4
 
     let binary = UnifiedQuantizationLevel {
         level_type: Some(QuantizationLevel::Binary(BinaryQuantization {

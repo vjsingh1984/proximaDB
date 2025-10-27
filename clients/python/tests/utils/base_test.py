@@ -117,16 +117,12 @@ class BaseProximaDBTest:
         Returns:
             List of inserted vector records
         """
-        import numpy as np
+        from ..embedding_utils import embed_seed
         
         vectors = []
         for i in range(count):
-            # Create deterministic vector based on index
-            np.random.seed(i)
-            vector = np.random.randn(dimension).astype(np.float32)
-            
-            # Normalize
-            vector = vector / np.linalg.norm(vector)
+            # Deterministic realistic embedding based on index
+            vector = embed_seed(i, dimension)
             
             metadata = metadata_template.copy() if metadata_template else {}
             metadata.update({
@@ -138,7 +134,7 @@ class BaseProximaDBTest:
             
             record = VectorRecord(
                 id=f"vec_{i:04d}",
-                vector=vector.tolist(),
+                vector=vector,
                 metadata=metadata
             )
             vectors.append(record)

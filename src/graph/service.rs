@@ -271,6 +271,75 @@ impl GraphOperationsService {
         self.graphs.remove(graph_id).map(|(_, engine)| engine)
     }
 
+    /// Recover all graphs from persistent storage
+    ///
+    /// This method should be called during server startup to restore all graph state
+    /// from persistent storage (snapshots + WAL replay).
+    pub async fn recover_all_graphs(&self) -> Result<()> {
+        tracing::info!("🔄 Starting graph collection recovery...");
+
+        // Get all graph collections from metadata
+        let collections = self.collection_service.list_graphs().await?;
+
+        if collections.is_empty() {
+            tracing::info!("✅ No graphs to recover");
+            return Ok(());
+        }
+
+        tracing::info!("📋 Found {} graph collections to recover", collections.len());
+
+        // Recover each graph
+        let mut recovered_count = 0;
+        let mut failed_count = 0;
+
+        for collection in collections {
+            let graph_id = &collection.graph_id;
+            tracing::info!("🔍 Recovering graph: {}", graph_id);
+
+            match self.recover_graph(graph_id).await {
+                Ok(()) => {
+                    recovered_count += 1;
+                    tracing::info!("✅ Graph {} recovered successfully", graph_id);
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    tracing::warn!("⚠️  Failed to recover graph {}: {}", graph_id, e);
+                    // Continue with other graphs even if one fails
+                }
+            }
+        }
+
+        tracing::info!(
+            "🎉 Graph collection recovery complete: {} succeeded, {} failed",
+            recovered_count,
+            failed_count
+        );
+
+        Ok(())
+    }
+
+    /// Recover a single graph from persistent storage
+    async fn recover_graph(&self, graph_id: &str) -> Result<()> {
+        // Create Orion engine with persistence enabled
+        let engine = OrionGraphEngine::with_persistence_for_graph(
+            graph_id.to_string(),
+            self.base_storage_url.clone(),
+            true, // Enable WAL
+        )
+        .await?;
+
+        // Trigger recovery (WAL replay)
+        engine.recover().await?;
+
+        // Store in graphs map
+        self.graphs.insert(
+            graph_id.to_string(),
+            Arc::new(crate::graph::engines::GraphEngineImpl::Orion(engine)),
+        );
+
+        Ok(())
+    }
+
     /// Compute shortest path with algorithm selection and optional k-shortest support.
     /* moved to service_traversal_api.rs
     pub async fn shortest_path(
@@ -419,12 +488,39 @@ impl GraphOperationsService {
         matches!(self.mode, OperationMode::GraphOnly | OperationMode::Unified)
     }
 
-    /// Check if vector operations are enabled  
+    /// Check if vector operations are enabled
     pub fn vector_enabled(&self) -> bool {
         matches!(
             self.mode,
             OperationMode::VectorOnly | OperationMode::Unified
         )
+    }
+
+    /// Flush WAL buffer to disk for a specific graph
+    ///
+    /// This ensures all pending write operations are persisted to disk.
+    /// Should be called during graceful shutdown or before critical operations
+    /// that require durability guarantees.
+    ///
+    /// # Arguments
+    /// * `graph_id` - The ID of the graph to flush
+    ///
+    /// # Returns
+    /// * `Ok(())` if flush succeeds or graph not found
+    /// * `Err` if flush fails
+    pub async fn flush_wal(&self, graph_id: &str) -> Result<()> {
+        if let Some(engine) = self.graphs.get(graph_id) {
+            match engine.value().as_ref() {
+                crate::graph::engines::GraphEngineImpl::Orion(orion) => {
+                    orion.flush_wal().await?;
+                }
+                _ => {
+                    // Other engines don't support WAL yet
+                    tracing::debug!("WAL flush not supported for this engine type");
+                }
+            }
+        }
+        Ok(())
     }
 
     // create_node moved to service_node_ops.rs
@@ -1193,7 +1289,7 @@ impl GraphOperationsService {
 
         let mut results = Vec::with_capacity(nodes.len());
         for node in nodes {
-            results.push(engine.insert_node(node)?);
+            results.push(engine.insert_node(node).await?);
         }
         Ok(results)
     }
@@ -1218,15 +1314,15 @@ impl GraphOperationsService {
             match if_exists {
                 "update" => {
                     // TODO: Implement upsert logic
-                    results.push(engine.insert_node(node)?);
+                    results.push(engine.insert_node(node).await?);
                 }
                 "skip" => {
                     // TODO: Check if exists, skip if it does
-                    results.push(engine.insert_node(node)?);
+                    results.push(engine.insert_node(node).await?);
                 }
                 "error" => {
                     // TODO: Check if exists, error if it does
-                    results.push(engine.insert_node(node)?);
+                    results.push(engine.insert_node(node).await?);
                 }
                 _ => {
                     return Err(ProximaDBError::InvalidInput(format!(
@@ -1255,7 +1351,7 @@ impl GraphOperationsService {
 
         let mut results = Vec::with_capacity(edges.len());
         for edge in edges {
-            results.push(engine.insert_edge(edge)?);
+            results.push(engine.insert_edge(edge).await?);
         }
         Ok(results)
     }

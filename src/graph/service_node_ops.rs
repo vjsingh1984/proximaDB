@@ -260,6 +260,8 @@ impl super::GraphOperationsService {
     }
     /// Create a new node
     pub async fn create_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
+        tracing::debug!("GraphOperationsService::create_node called for graph: {}, node: {}", graph_id, node.id);
+
         if !self.graph_enabled() {
             return Err(crate::core::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
@@ -267,11 +269,14 @@ impl super::GraphOperationsService {
         }
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
+        tracing::debug!("Got engine, enforcing schema for node: {}", node.id);
         self.enforce_schema_on_node(graph_id, &node).await?;
         self.enforce_unique_constraints_on_node(graph_id, &node)?;
         self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
 
-        let node_arc = engine.insert_node(node)?;
+        tracing::debug!("Calling engine.insert_node for node: {}", node.id);
+        let node_arc = engine.insert_node(node).await?;
+        tracing::debug!("engine.insert_node returned successfully");
         self.register_node_in_unique_constraints(graph_id, &node_arc);
         self.register_node_in_multi_unique_constraints(graph_id, &node_arc);
         Ok(node_arc)
@@ -299,7 +304,7 @@ impl super::GraphOperationsService {
         self.enforce_schema_on_node(graph_id, &node).await?;
         self.enforce_unique_constraints_on_node(graph_id, &node)?;
         self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
-        let node_arc = engine.update_node(node)?;
+        let node_arc = engine.update_node(node).await?;
         self.register_node_in_unique_constraints(graph_id, &node_arc);
         self.register_node_in_multi_unique_constraints(graph_id, &node_arc);
         Ok(node_arc)
@@ -317,7 +322,7 @@ impl super::GraphOperationsService {
             self.unregister_node_from_unique_constraints(graph_id, &node);
             self.unregister_node_from_multi_unique_constraints(graph_id, &node);
         }
-        crate::graph::engines::GraphEngine::delete_node(&*engine, id)
+        crate::graph::engines::GraphEngine::delete_node(&*engine, id).await
     }
 
     /// Delete a node and detach all incident edges (DETACH mode)
@@ -340,7 +345,7 @@ impl super::GraphOperationsService {
             edge_ids.insert(e.id.clone());
         }
         for eid in edge_ids.into_iter() {
-            if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid)? {
+            if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid).await? {
                 self.stats_edges
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
@@ -352,7 +357,7 @@ impl super::GraphOperationsService {
             self.unregister_node_from_unique_constraints(graph_id, &node);
             self.unregister_node_from_multi_unique_constraints(graph_id, &node);
         }
-        crate::graph::engines::GraphEngine::delete_node(&*engine, id)
+        crate::graph::engines::GraphEngine::delete_node(&*engine, id).await
     }
 
     // ===== Unique constraints (single-field) =====

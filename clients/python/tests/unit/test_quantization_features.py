@@ -7,6 +7,7 @@ features added to ProximaDB.
 
 import pytest
 import numpy as np
+from ..embedding_utils import embed_seed, embed_many
 import logging
 from proximadb import (
     QuantizationType,
@@ -323,7 +324,7 @@ class TestQuantizationIntegration:
             pytest.skip("ProximaDB server not running")
             
         # Create collection with quantization
-        collection_name = f"test_quant_{np.random.randint(1000000)}"
+        collection_name = f"test_quant_123456"
         
         try:
             # Create collection
@@ -359,7 +360,7 @@ class TestQuantizationIntegration:
         except Exception:
             pytest.skip("ProximaDB server not running")
             
-        collection_name = f"test_search_hints_{np.random.randint(1000000)}"
+        collection_name = f"test_search_hints_123456"
         
         try:
             # Create collection
@@ -367,12 +368,12 @@ class TestQuantizationIntegration:
             collection = client.create_collection(collection_name, config)
             
             # Insert test vectors
-            vectors = np.random.rand(100, 128).astype(np.float32)
+            vectors = np.array(embed_many(100, 128), dtype=np.float32)
             ids = [f"vec_{i}" for i in range(100)]
             client.insert_vectors(collection_name, vectors, ids)
             
             # Search with optimization hints
-            query = np.random.rand(128).astype(np.float32)
+            query = np.array(embed_seed(999, 128), dtype=np.float32)
             hints = {
                 "enable_two_stage_search": True,
                 "quantization_hint": "FP32",

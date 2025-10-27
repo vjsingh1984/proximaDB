@@ -334,7 +334,39 @@ impl RecoveryManager {
     }
 
     /// Recover a specific collection (public API)
-    pub async fn recover_collection(
+    /// Returns RecoveryStats with detailed recovery information
+    pub async fn recover_collection(&self, collection_id: &str) -> Result<RecoveryStats> {
+        let (vectors_recovered, files_recovered) = Self::recover_collection_internal(
+            collection_id,
+            self.disk_manager.clone(),
+            self.storage_engines.clone(),
+            self.flush_coordinator.clone(),
+            self.recovery_mode,
+            None, // No progress callback for startup recovery
+            self.metadata_provider.clone(),
+        )
+        .await?;
+
+        // Update global stats
+        if vectors_recovered > 0 {
+            let mut stats = self.stats.write().await;
+            stats.total_collections_recovered += 1;
+            stats.total_vectors_recovered += vectors_recovered;
+            stats.total_files_recovered += files_recovered;
+        }
+
+        // Return recovery stats for this collection
+        Ok(RecoveryStats {
+            total_files_recovered: files_recovered,
+            total_vectors_recovered: vectors_recovered,
+            total_collections_recovered: if vectors_recovered > 0 { 1 } else { 0 },
+            recovery_errors: 0,
+            total_bytes_processed: 0, // TODO: Track bytes if needed
+        })
+    }
+
+    /// Recover a specific collection with progress callback (for manual recovery)
+    pub async fn recover_collection_with_progress(
         &self,
         collection_id: &str,
         progress_callback: Option<RecoveryProgressCallback>,
@@ -1076,10 +1108,10 @@ mod tests {
 
         // Recover the collection (should go to storage engine)
         let recovered = recovery_manager
-            .recover_collection(collection_id, None)
+            .recover_collection(collection_id)
             .await
             .expect("Failed to recover collection");
-        assert_eq!(recovered, 3);
+        assert_eq!(recovered.total_vectors_recovered, 3);
 
         // Verify WAL files were cleaned up
         let remaining_files = disk_manager

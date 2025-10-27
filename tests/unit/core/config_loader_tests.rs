@@ -19,7 +19,7 @@ mod tests {
         assert_eq!(config.api.grpc_port, 5679);
         assert_eq!(config.api.rest_port, 5678);
         assert!(config.storage.mmap_enabled);
-        assert_eq!(config.storage.cache_size_mb, 2048);
+        assert_eq!(config.storage.cache_size_mb, 512);
 
         Ok(())
     }
@@ -92,7 +92,7 @@ block_size_kb = 2048
     fn test_merge_configs() -> Result<()> {
         let mut base_config = Config::default();
         base_config.server.port = 5678;
-        base_config.storage.cache_size_mb = 2048;
+        base_config.storage.cache_size_mb = 512;
 
         let override_config = r#"
 [server]
@@ -114,7 +114,7 @@ mmap_enabled = false
         // Verify merged values
         assert_eq!(merged.server.port, 9090); // Overridden
         assert!(!merged.storage.mmap_enabled); // Overridden
-        assert_eq!(merged.storage.cache_size_mb, 2048); // Kept from base
+        assert_eq!(merged.storage.cache_size_mb, 512); // Kept from base
 
         Ok(())
     }
@@ -162,7 +162,7 @@ mmap_enabled = false
         // These assertions expect env override, but Config::default() doesn't apply them
         assert_eq!(config.server.port, 5678); // Default value
         assert_eq!(config.api.grpc_port, 5679); // Default value
-        assert_eq!(config.storage.cache_size_mb, 2048); // Default value
+        assert_eq!(config.storage.cache_size_mb, 512); // Default value
 
         // Clean up env vars (unsafe in Rust 2024)
         unsafe {
@@ -303,7 +303,7 @@ port = 6789
 
         // Default values for undefined sections
         assert_eq!(config.api.grpc_port, 5679);
-        assert_eq!(config.storage.cache_size_mb, 2048);
+        assert_eq!(config.storage.cache_size_mb, 512);
 
         Ok(())
     }

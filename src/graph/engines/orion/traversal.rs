@@ -1243,9 +1243,9 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node0).unwrap();
-        engine.insert_node(node1).unwrap();
-        engine.insert_node(node2).unwrap();
+        engine.insert_node(node0).await.unwrap();
+        engine.insert_node(node1).await.unwrap();
+        engine.insert_node(node2).await.unwrap();
 
         let edge1 = Edge {
             id: "e1".to_string(),
@@ -1269,8 +1269,8 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_edge(edge1).unwrap();
-        engine.insert_edge(edge2).unwrap();
+        engine.insert_edge(edge1).await.unwrap();
+        engine.insert_edge(edge2).await.unwrap();
 
         // Wait for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -1313,8 +1313,8 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node0).unwrap();
-        engine.insert_node(node1).unwrap();
+        engine.insert_node(node0).await.unwrap();
+        engine.insert_node(node1).await.unwrap();
 
         let edge1 = Edge {
             id: "e1".to_string(),
@@ -1327,7 +1327,7 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_edge(edge1).unwrap();
+        engine.insert_edge(edge1).await.unwrap();
 
         // Wait for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -1357,7 +1357,7 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_node(node).unwrap();
+            engine.insert_node(node).await.unwrap();
         }
 
         // Create edges: 0->1->3 and 0->2->3 (shorter path)
@@ -1379,7 +1379,7 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_edge(edge).unwrap();
+            engine.insert_edge(edge).await.unwrap();
         }
 
         // Wait for async operations

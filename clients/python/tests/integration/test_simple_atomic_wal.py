@@ -9,6 +9,7 @@ requiring a running ProximaDB server at localhost:5678.
 import json
 import requests
 import numpy as np
+from ..embedding_utils import embed_seed
 
 def test_atomic_wal():
     """Test atomic WAL with direct HTTP requests"""
@@ -86,7 +87,7 @@ def test_atomic_wal():
     
     vector_data = {
         "id": "atomic_test_vector_1",
-        "vector": np.random.random(384).astype(np.float32).tolist(),
+        "vector": embed_seed(0, 384),
         "metadata": {"test": "atomic", "timestamp": "2025-07-03"}
     }
     

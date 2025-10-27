@@ -7,6 +7,7 @@ This directory contains comprehensive demos and examples for ProximaDB vector da
 - [Quick Start](#quick-start)
 - [Prerequisites](#prerequisites)
 - [Demo Organization](#demo-organization)
+- [Business PoV Demos](#business-pov-demos)
 - [Running Demos](#running-demos)
 - [Troubleshooting](#troubleshooting)
 - [Demo Status](#demo-status)
@@ -87,6 +88,7 @@ Install Python SDK dependencies:
 ```bash
 cd clients/python
 pip install -r requirements.txt
+pip install sentence-transformers
 ```
 
 **Key Dependencies:**
@@ -94,6 +96,7 @@ pip install -r requirements.txt
 - `requests` - REST API communication
 - `grpcio` - gRPC protocol support
 - `pydantic` - Data validation
+ - `sentence-transformers` - Realistic text embeddings (all-MiniLM-L6-v2)
 
 ---
 
@@ -116,6 +119,12 @@ demo/
 │   ├── industry/            # Industry use cases
 │   │   ├── ecommerce_demo.py
 │   │   └── ai_knowledge_base_demo.py
+│   │
+│   ├── business/            # Business PoV demos (this PR)
+│   │   ├── ecommerce_pov.py
+│   │   ├── fraud_pov.py
+│   │   ├── customer360_pov.py
+│   │   └── hybrid_pov.py
 │   │
 │   └── advanced/            # Advanced topics
 │       ├── embedding_service.py
@@ -194,6 +203,36 @@ python3 demo/showcases/features/wal_search.py
 ### Advanced Demos
 
 See individual demo headers for specific prerequisites and requirements.
+
+---
+
+## Business PoV Demos
+
+These short, opinionated demos showcase concrete business value using realistic constraints and outputs. All run in <5s with synthetic data and clean up after themselves.
+
+Run from repo root (server on :5678):
+
+```bash
+export PYTHONPATH=./clients/python/src
+
+# 1) E‑commerce: in-stock electronics under $500 with high ratings
+python3 demo/showcases/business/ecommerce_pov.py
+
+# 2) Fraud: similar risky transactions; optional 2‑hop account traversal
+python3 demo/showcases/business/fraud_pov.py
+
+# 3) Customer 360: similar customers for retention/upsell targeting
+python3 demo/showcases/business/customer360_pov.py
+
+# 4) Hybrid: unified entities (embeddings + relations) and entity search
+python3 demo/showcases/business/hybrid_pov.py
+```
+
+What they demonstrate:
+- Vector similarity + typed filters improve relevance and latency
+- Business‑aligned fields (price, churn_risk, region, etc.)
+- Optional graph context where it adds value (fraud PoV)
+- Hybrid entity API under /api/v1/collections/<id>/entities demonstrates the unified store
 
 ---
 

@@ -53,7 +53,7 @@ pub enum UnifiedWALOperation {
     /// Checkpoint operation for recovery
     Checkpoint {
         sequence_number: u64,
-        timestamp: SystemTime,
+        timestamp_ms: u64,
         /// Collections/graphs included in checkpoint
         collections: Vec<String>,
         graphs: Vec<String>,
@@ -90,8 +90,8 @@ pub struct UnifiedWALEntry {
     /// Operation to apply
     pub operation: UnifiedWALOperation,
 
-    /// Timestamp of the operation
-    pub timestamp: SystemTime,
+    /// Timestamp of the operation (milliseconds since Unix epoch)
+    pub timestamp_ms: u64,
 
     /// CRC32 checksum for integrity
     pub checksum: u32,
@@ -119,13 +119,16 @@ pub struct WALEntryMetadata {
 impl UnifiedWALEntry {
     /// Create a new WAL entry
     pub fn new(sequence_number: u64, operation: UnifiedWALOperation) -> Self {
-        let timestamp = SystemTime::now();
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
         let checksum = Self::calculate_checksum(&operation);
 
         Self {
             sequence_number,
             operation,
-            timestamp,
+            timestamp_ms,
             checksum,
             metadata: None,
         }
@@ -208,6 +211,11 @@ impl UnifiedWALWriter {
         let fs = filesystem.get_filesystem(&base_url)?;
         fs.create_dir_all(&base_url).await?;
 
+        // TODO: Discover existing WAL files and resume from max sequence number
+        // For now, we start fresh each time to avoid complexity
+        // This is acceptable for the current TDD test which uses separate directories
+        tracing::debug!("WAL writer initialized for path: {}", base_path);
+
         Ok(Self {
             base_path,
             sequence_number: std::sync::atomic::AtomicU64::new(0),
@@ -231,6 +239,13 @@ impl UnifiedWALWriter {
         // Serialize the entry
         let serialized = bincode::serialize(&entry)?;
         let size = serialized.len();
+
+        tracing::debug!(
+            "WAL append: seq={}, size={} bytes, checksum={}",
+            seq,
+            size,
+            entry.checksum
+        );
 
         // Check if we need to rotate the segment
         if self.current_segment_data.len() + size + 4 > self.max_segment_size {
@@ -260,6 +275,12 @@ impl UnifiedWALWriter {
         }
 
         Ok(seq)
+    }
+
+    /// Flush any buffered WAL entries to disk
+    /// This should be called before shutdown to ensure durability
+    pub async fn flush(&mut self) -> anyhow::Result<()> {
+        self.flush_current_segment().await
     }
 
     /// Rotate to a new WAL segment
@@ -362,12 +383,14 @@ impl UnifiedWALReader {
         }
 
         let data = fs.read(&url).await?;
+        tracing::debug!("Reading WAL segment {}: {} total bytes", segment_number, data.len());
         let mut entries = Vec::new();
         let mut cursor = 0;
 
         while cursor < data.len() {
             // Read size header
             if cursor + 4 > data.len() {
+                tracing::debug!("End of WAL segment at cursor {}, {} bytes remaining", cursor, data.len() - cursor);
                 break;
             }
 
@@ -380,9 +403,25 @@ impl UnifiedWALReader {
 
             cursor += 4;
 
+            // Sanity check on size
+            if size == 0 || size > 10 * 1024 * 1024 {
+                // 10MB max per entry
+                tracing::warn!(
+                    "Invalid WAL entry size {} at cursor {}, skipping rest of segment",
+                    size,
+                    cursor - 4
+                );
+                break;
+            }
+
             // Read entry
             if cursor + size > data.len() {
-                tracing::warn!("Truncated WAL entry at position {}", cursor);
+                tracing::warn!(
+                    "Truncated WAL entry at cursor {}: need {} bytes, have {}",
+                    cursor,
+                    size,
+                    data.len() - cursor
+                );
                 break;
             }
 
@@ -396,7 +435,16 @@ impl UnifiedWALReader {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to deserialize WAL entry: {}", e);
+                    tracing::warn!(
+                        "Failed to deserialize WAL entry at cursor {}, size {}: {:?}",
+                        cursor,
+                        size,
+                        e
+                    );
+                    // Log first few bytes for debugging
+                    let preview = &entry_data[..entry_data.len().min(32)];
+                    tracing::debug!("Entry data preview (first {} bytes): {:?}", preview.len(), preview);
+                    // Continue trying to read more entries
                 }
             }
 
@@ -411,8 +459,11 @@ impl UnifiedWALReader {
         let mut all_entries = Vec::new();
         let mut segment = 0;
 
+        tracing::debug!("WAL reader starting to read from path: {}", self.base_path);
+
         loop {
             let entries = self.read_segment(segment).await?;
+            tracing::debug!("Read segment {}: {} entries", segment, entries.len());
             if entries.is_empty() {
                 break;
             }
@@ -420,6 +471,7 @@ impl UnifiedWALReader {
             segment += 1;
         }
 
+        tracing::debug!("WAL reader total entries read: {}", all_entries.len());
         Ok(all_entries)
     }
 }

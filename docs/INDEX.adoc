@@ -35,7 +35,7 @@ Complete documentation map for ProximaDB - High-Performance Vector Database
 |link:02-guides/sks_graph_first_migration_guide.adoc[**SKS Graph-First Migration**]
 |Migrate to Semantic Knowledge Store architecture
 
-|link:01-getting-started/quickstart.adoc[**Quickstart Tutorial**]
+|link:01-getting-started/getting_started.adoc[**Getting Started Tutorial**]
 |5-minute introduction to ProximaDB
 |===
 
@@ -183,10 +183,10 @@ Complete documentation map for ProximaDB - High-Performance Vector Database
 |===
 |Document |Description
 
-|link:BUILD_OPTIMIZATION.adoc[**Build Optimization**]
+|link:08-development/BUILD_OPTIMIZATION.adoc[**Build Optimization**]
 |Cargo profiles and build performance
 
-|link:OPTIMIZATION_INFRASTRUCTURE_REUSE.adoc[**Infrastructure Reuse**]
+|link:08-development/OPTIMIZATION_INFRASTRUCTURE_REUSE.adoc[**Infrastructure Reuse**]
 |Code reuse patterns and shared utilities
 
 |link:testing/IGNORED_TESTS_ANALYSIS.adoc[**Test Coverage Analysis**]
@@ -253,7 +253,7 @@ Historical and development documentation moved to archive:
 
 * https://github.com/vjsingh1984/proximaDB[**GitHub Repository**]
 * **Rust API Docs**: Run `cargo doc --open`
-* **Python SDK**: `clients/python/README.md`
+* **Python SDK**: `clients/python/README.adoc`
 * **Examples**: `clients/python/examples/README.md`
 
 ---

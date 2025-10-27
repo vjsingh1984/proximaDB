@@ -340,22 +340,22 @@ impl ReplicationManager {
     ) -> Result<()> {
         match operation {
             ReplicationOperation::InsertNode(node) => {
-                shard.insert_node(node)?;
+                shard.insert_node(node).await?;
             }
             ReplicationOperation::InsertEdge(edge) => {
-                shard.insert_edge(edge)?;
+                shard.insert_edge(edge).await?;
             }
             ReplicationOperation::UpdateNode(node) => {
-                shard.update_node(node)?;
+                shard.update_node(node).await?;
             }
             ReplicationOperation::UpdateEdge(edge) => {
-                shard.update_edge(edge)?;
+                shard.update_edge(edge).await?;
             }
             ReplicationOperation::DeleteNode(node_id) => {
-                GraphEngine::delete_node(shard, &node_id)?;
+                GraphEngine::delete_node(shard, &node_id).await?;
             }
             ReplicationOperation::DeleteEdge(edge_id) => {
-                GraphEngine::delete_edge(shard, &edge_id)?;
+                GraphEngine::delete_edge(shard, &edge_id).await?;
             }
         }
 

@@ -102,8 +102,8 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Insert nodes
-    engine.insert_node(node1)?;
-    engine.insert_node(node2)?;
+    engine.insert_node(node1).await?;
+    engine.insert_node(node2).await?;
     println!("✓ Inserted 2 nodes across shards");
 
     // Create edge
@@ -123,7 +123,7 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
         updated_at_ms: chrono::Utc::now().timestamp_millis(),
     };
 
-    engine.insert_edge(edge)?;
+    engine.insert_edge(edge).await?;
     println!("✓ Created relationship: Alice KNOWS Bob");
 
     // Wait for async operations
@@ -206,7 +206,7 @@ async fn demo_quasar_engine() -> Result<(), Box<dyn std::error::Error>> {
             updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
-        engine.insert_node(node)?;
+        engine.insert_node(node).await?;
         println!("✓ Inserted person_{}", i);
     }
 
@@ -236,7 +236,7 @@ async fn demo_quasar_engine() -> Result<(), Box<dyn std::error::Error>> {
             created_at_ms: chrono::Utc::now().timestamp_millis(),
             updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
-        engine.insert_edge(edge)?;
+        engine.insert_edge(edge).await?;
     }
 
     println!("✓ Created 3 edges between persons");

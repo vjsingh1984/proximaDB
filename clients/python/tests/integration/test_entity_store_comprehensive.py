@@ -26,6 +26,7 @@ import pytest
 from typing import List, Dict, Any
 
 import numpy as np
+from ..embedding_utils import embed_seed
 
 from proximadb import ProximaDBClient, VectorRecord
 
@@ -89,7 +90,7 @@ def test_entity_create_single(client, test_collection):
     collection, dimension = test_collection
 
     # Create entity with comprehensive metadata
-    vector = np.random.randn(dimension).astype(np.float32)
+    vector = np.array(embed_seed(0, dimension), dtype=np.float32)
     vector = vector / np.linalg.norm(vector)
 
     record = VectorRecord(
@@ -119,8 +120,8 @@ def test_entity_read_by_id(client, test_collection):
 
     # Create entity
     entity_id = "entity_read_001"
-    vector = np.random.randn(dimension).astype(np.float32)
-    vector = vector / np.linalg.norm(vector)
+    from ..embedding_utils import embed_seed
+    vector = np.array(embed_seed(0, dimension), dtype=np.float32)
 
     record = VectorRecord(
         id=entity_id,
@@ -157,8 +158,8 @@ def test_entity_update_metadata(client, test_collection):
     collection, dimension = test_collection
 
     entity_id = "entity_update_001"
-    vector = np.random.randn(dimension).astype(np.float32)
-    vector = vector / np.linalg.norm(vector)
+    from ..embedding_utils import embed_seed
+    vector = np.array(embed_seed(1, dimension), dtype=np.float32)
 
     # Create entity
     record = VectorRecord(
@@ -192,8 +193,8 @@ def test_entity_delete(client, test_collection):
 
     # Create entity
     entity_id = "entity_delete_001"
-    vector = np.random.randn(dimension).astype(np.float32)
-    vector = vector / np.linalg.norm(vector)
+    from ..embedding_utils import embed_seed
+    vector = np.array(embed_seed(2, dimension), dtype=np.float32)
 
     record = VectorRecord(
         id=entity_id,
@@ -235,7 +236,7 @@ def test_entity_batch_create(client, test_collection):
     batch_size = 500
     records = []
     for i in range(batch_size):
-        vector = np.random.randn(dimension).astype(np.float32)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
         vector = vector / np.linalg.norm(vector)
 
         record = VectorRecord(
@@ -270,9 +271,9 @@ def test_entity_batch_read(client, test_collection):
     # Create batch
     batch_size = 100
     records = []
+    from ..embedding_utils import embed_seed
     for i in range(batch_size):
-        vector = np.random.randn(dimension).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=f"read_batch_{i}",
@@ -284,8 +285,7 @@ def test_entity_batch_read(client, test_collection):
     client.insert_vectors(collection, records=records)
 
     # Read batch via search
-    query_vector = np.random.randn(dimension).astype(np.float32)
-    query_vector = query_vector / np.linalg.norm(query_vector)
+    query_vector = np.array(embed_seed(999, dimension), dtype=np.float32)
 
     results = client.search(
         collection_id=collection,
@@ -307,7 +307,7 @@ def test_entity_metadata_types(client, test_collection):
     """Test: Entity metadata with various data types"""
     collection, dimension = test_collection
 
-    vector = np.random.randn(dimension).astype(np.float32)
+    vector = np.array(embed_seed(999, dimension), dtype=np.float32)
     vector = vector / np.linalg.norm(vector)
 
     # Test various metadata types (avoid nested dicts for Pydantic validation)
@@ -354,8 +354,7 @@ def test_entity_search_with_metadata(client, test_collection):
     # Create entities with different categories
     categories = ["tech", "science", "business"]
     for i in range(30):
-        vector = np.random.randn(dimension).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=f"search_entity_{i}",
@@ -369,8 +368,7 @@ def test_entity_search_with_metadata(client, test_collection):
         client.insert_vectors(collection, records=[record])
 
     # Search with metadata
-    query_vector = np.random.randn(dimension).astype(np.float32)
-    query_vector = query_vector / np.linalg.norm(query_vector)
+    query_vector = np.array(embed_seed(888, dimension), dtype=np.float32)
 
     results = client.search(
         collection_id=collection,
@@ -399,9 +397,9 @@ def test_entity_with_relationships(client, test_collection):
 
     # Create entities
     num_entities = 10
+    from ..embedding_utils import embed_seed
     for i in range(num_entities):
-        vector = np.random.randn(dimension).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)
+        vector = np.array(embed_seed(i, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=f"graph_entity_{i}",
@@ -452,8 +450,7 @@ def test_entity_relationship_types(client, test_collection):
     # Create entities
     entity_ids = ["rel_test_A", "rel_test_B", "rel_test_C"]
     for entity_id in entity_ids:
-        vector = np.random.randn(dimension).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)
+        vector = np.array(embed_seed(hash(entity_id) % 1000, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=entity_id,
@@ -510,8 +507,7 @@ def test_entity_large_metadata(client, test_collection):
     """Test: Entity with large metadata payload"""
     collection, dimension = test_collection
 
-    vector = np.random.randn(dimension).astype(np.float32)
-    vector = vector / np.linalg.norm(vector)
+    vector = np.array(embed_seed(777, dimension), dtype=np.float32)
 
     # Create large metadata (flatten history to avoid nested dict validation)
     large_metadata = {
@@ -542,8 +538,7 @@ def test_entity_high_dimensional_vector(client, test_collection):
     collection, dimension = test_collection
 
     # Use full dimension
-    vector = np.random.randn(dimension).astype(np.float32)
-    vector = vector / np.linalg.norm(vector)
+    vector = np.array(embed_seed(666, dimension), dtype=np.float32)
 
     record = VectorRecord(
         id="high_dim_001",
@@ -575,8 +570,7 @@ def test_entity_concurrent_operations(client, test_collection):
     import concurrent.futures
 
     def create_entity(idx):
-        vector = np.random.randn(dimension).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)
+        vector = np.array(embed_seed(idx, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=f"concurrent_{idx}",
@@ -600,8 +594,7 @@ def test_entity_empty_metadata(client, test_collection):
     """Test: Entity with empty metadata"""
     collection, dimension = test_collection
 
-    vector = np.random.randn(dimension).astype(np.float32)
-    vector = vector / np.linalg.norm(vector)
+    vector = np.array(embed_seed(555, dimension), dtype=np.float32)
 
     record = VectorRecord(
         id="empty_metadata_001",

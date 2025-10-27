@@ -117,7 +117,7 @@ Docker images are planned for v0.2.0. For now, use source build above.
 [source,bash]
 ----
 # Server should be running on port 5678
-curl http://localhost:5678/api/v1/health
+curl http://localhost:5678/health
 
 # Expected response (server is ready):
 {"status":"healthy"}
@@ -443,32 +443,42 @@ compression_level = 3    # Balance speed vs ratio
 - Lower memory bandwidth: Less data movement
 - SIMD-optimized: Vectorized decompression
 
-== Known Limitations (v0.1.4)
+== Data Persistence (v0.1.4+)
 
-**Be aware of current constraints:**
+**ProximaDB provides automatic persistence for all data types:**
 
-⚠️ **Entity Store Durability**: Data does NOT persist across server restarts
+✅ **Automatic WAL-Based Persistence**
 
-- **What this means**: If you restart the server, vectors and graph data are lost
-- **Why**: WAL (Write-Ahead Log) infrastructure exists but is disabled by default
-- **Workaround**: Re-insert data on startup (suitable for development/testing)
-- **Fix coming**: v0.2.0 will enable persistence by default
+- **What persists**: Vectors, graph nodes/edges, entity store data, collection metadata
+- **How it works**: Write-Ahead Log (WAL) captures all operations before applying them
+- **Recovery process**: 6-stage automatic recovery on server restart (Collections → Vectors → Graphs → Assignments → Buffers → Services)
+- **Configuration**: Enabled by default, zero configuration required
 
-⚠️ **Graph Persistence**: Collection metadata persists, but graph nodes/edges are volatile
+✅ **Unified Architecture Benefits**
 
-- **What persists**: Collection configuration, schema
-- **What doesn't**: Graph nodes, edges, vector data
-- **Workaround**: Store graph structure externally or re-create on startup
+- **Graph-first design**: Entity store and SKS data automatically persist via graph WAL
+- **Single source of truth**: One recovery path for all data types
+- **Graceful degradation**: Per-graph recovery with failure isolation
 
-**Example persistence test:**
+**Server Restart Behavior:**
 
 [source,bash]
 ----
-# Test durability yourself
-python3 /tmp/test_durability.py
+# Data persists automatically across restarts
+# 1. Insert vectors and graph data
+# 2. Restart server
+# 3. Data automatically recovered from WAL
+# Result: ✓ All data preserved after restart
+----
 
-# Result: ✗ Data did NOT persist after restart
-# (Expected behavior in v0.1.4)
+**Recovery Logs:**
+
+[source,text]
+----
+🔄 ProximaDB::start - Step 2: Recovering vectors from WAL...
+✅ Vectors recovered successfully
+🌳 ProximaDB::start - Step 3: Recovering graphs from persistent storage...
+✅ Graphs recovered successfully
 ----
 
 == Troubleshooting

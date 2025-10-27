@@ -16,6 +16,20 @@ Build semantic search, RAG systems, and knowledge graphs with hybrid vector + gr
 
 ---
 
+== At a Glance
+
+- Unified “Hybrid Entity Store” (embeddings + typed metadata + relations) via a single API.
+- Use vector‑only or graph‑only endpoints independently when that’s all you need.
+- Production‑oriented: single binary, typed filters, measured performance in repo benches.
+- Demos for business PoV ship in minutes; deep details live in `/docs`.
+
+Quick links
+- Demos: `demo/showcases/business/*` (hybrid, e‑commerce, fraud, customer360)
+- Docs index: `docs/INDEX.adoc` • REST API: `docs/03-reference/rest-api-specification.adoc`
+- Performance hub: `docs/performance/README.adoc`
+
+---
+
 == Who Is This For?
 
 - Practitioners who want a clean API for inserting/querying vectors with metadata
@@ -156,7 +170,7 @@ make build-server && make server-start
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/v1/collections \
+curl -X POST http://localhost:5678/api/v1/collections \
   -H "Content-Type: application/json" \
   -d '{
     "name": "products",
@@ -174,8 +188,10 @@ curl -X POST http://localhost:5678/v1/collections \
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/v1/collections/products/search \
+curl -X POST http://localhost:5678/api/v1/search \
+  -H "Content-Type: application/json" \
   -d '{
+    "collection_id": "products",
     "query_vector": [0.1, 0.2, ..., 0.768],
     "top_k": 10,
     "filter_expression": {
@@ -189,6 +205,14 @@ curl -X POST http://localhost:5678/v1/collections/products/search \
 ----
 
 ---
+
+== Essential Commands
+
+- Build (debug): `make build` • Release: `make build-release`
+- Run server: `make server-start` or `cargo run --bin proximadb-server`
+- Rust tests: `make test` (or `make test-rust`) • Integration: `make test-integration`
+- Lint/format: `make check` (fmt + clippy + tests)
+- Python SDK tests: `cd clients/python && pip install -e .[dev] && pytest -q`
 
 == Capabilities (v0.1.4)
 
@@ -248,16 +272,16 @@ graph TD
 - Multi-level quantization (Binary, INT8, PQ)
 - Single binary deployment
 
-**Known Limitations (v0.1.4)**:
-- **Entity store durability**: Data does NOT persist across server restarts (WAL infrastructure exists but disabled by default)
-- **Graph persistence**: Collection metadata persists, but graph nodes/edges are volatile (in-memory only)
-- Workaround: Re-insert data on server startup until persistence is enabled in v0.2.0+
+**Data Persistence (v0.1.4+)**:
+- **Automatic WAL-based persistence**: All data (vectors, graphs, entities) automatically persists across server restarts
+- **6-stage recovery process**: Collections → Vectors → Graphs → Assignments → Buffers → Services
+- **Zero configuration required**: Persistence enabled by default with graceful failure handling
+- **Unified architecture**: Graph-first design means entity store and SKS data persist automatically via graph WAL
 
 **In Progress**:
 - Multi-node clustering
 - JavaScript/TypeScript SDK
 - Monitoring dashboard
-- Persistent entity store and graph (v0.2.0)
 
 **Roadmap 2025**:
 - GPU acceleration (feature-gated backends)
@@ -485,7 +509,113 @@ print(f"Found {len(citations)} citations from similar paper")
 
 ---
 
+== Hybrid Entity Store (USP)
+
+Entities unify embeddings, typed metadata, relations, provenance, and temporal info under one ID. This enables single‑API hybrid queries without gluing a vector DB and a graph DB.
+
+Key differences
+- Versus Vector: multiple embedding versions + typed schema + provenance in one object.
+- Versus Graph: relation‑aware by default with attached embeddings for semantic search.
+
+Entity API (REST)
+
+[source,bash]
+----
+# Upsert entity with embedding, typed metadata, and a relation
+curl -X POST http://localhost:5678/api/v1/collections/customers/entities \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity": {
+      "id": "cust_001",
+      "collection_id": "customers",
+      "embeddings": [{
+        "model_id": "demo", "model_version": "v1",
+        "vector": [0.12, 0.08, ...], "dimension": 64
+      }],
+      "typed_metadata": {"fields": {
+        "segment": {"string_value": "pro", "indexed": true, "filterable": true},
+        "score": {"double_value": 0.82, "indexed": true, "filterable": true}
+      }},
+      "relations": [{
+        "source_entity_id": "cust_001",
+        "target_entity_id": "cust_002",
+        "relation_type": "REFERRED_BY",
+        "weight": 0.7
+      }]
+    },
+    "create_collection_if_missing": true
+  }'
+
+# Entity search: vector + metadata filter
+curl -X POST http://localhost:5678/api/v1/collections/customers/entities/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query_vector": [0.11, 0.07, ...],
+    "filters": {"clauses": [
+      {"field": "segment", "op": "EQ", "string_value": "pro"},
+      {"field": "score", "op": "GT", "double_value": 0.7}
+    ], "op": "AND"},
+    "top_k": 5
+  }'
+----
+
+Business PoV Demos
+- E‑commerce filters and relevance: `demo/showcases/business/ecommerce_pov.py`
+- Fraud risk with 2‑hop graph context: `demo/showcases/business/fraud_pov.py`
+- Customer 360 lookalikes: `demo/showcases/business/customer360_pov.py`
+- Hybrid entity store (USP): `demo/showcases/business/hybrid_pov.py`
+
+=== When To Use Hybrid vs Vector + Graph
+
+Guidance
+- Prefer Hybrid (Entity API) for most app workflows that need semantic similarity with business filters and light relations; it’s simpler and faster to ship.
+- Use Vector + Graph endpoints when you need advanced graph operations (custom traversals, analytics) or to interop with existing graph tooling.
+
+[cols="2,3,3,3", options="header"]
+|===
+|Approach |Pros |Cons |When to use
+
+|Hybrid Entity Store (single API)
+| - One object: embeddings + typed metadata + relations + provenance
+  - Predicate pushdown on typed filters; fewer joins
+  - Operational simplicity (one flow, one model)
+| - Less control over bespoke graph algorithms
+  - Entity REST is newer; graph analytics features evolve separately
+| - App features: RAG, Customer 360, recommendations, fraud triage
+  - Unified retrieval where relations provide context
+  - Endpoints: `/api/v1/collections/<id>/entities`, `/entities/search`
+  - Demo: `demo/showcases/business/hybrid_pov.py`
+
+|Vector + Graph (two APIs)
+| - Full access to graph endpoints/traversal knobs
+  - Clear separation of concerns for heavy graph analytics
+| - More glue code; two payloads and flows
+  - Cross-call latency and complexity
+| - Graph‑heavy workflows (multi-hop analysis, constraints)
+  - Interop with existing graph processes
+  - Endpoints: `/api/v1/search`, `/api/v1/graph/graphs/...`
+  - Demo: `demo/showcases/business/fraud_pov.py`
+|===
+
 == Adaptive Engine Selection
+ 
+=== Vector‑Only or Graph‑Only Usage
+
+Both subsystems can be used independently without the hybrid entity API:
+
+- Vector‑only
+  - Use cases: semantic search with typed metadata filters, similarity analytics, content search.
+  - When: relationships are not needed (or handled elsewhere); prioritize lowest latency and simplest ops.
+  - Why: simplest schema and API surface; typed filters enable predicate pushdown for speed.
+  - Endpoints: `/api/v1/collections`, `/api/v1/vectors/batch`, `/api/v1/search`, `/api/v1/search/with_metadata`.
+  - Demos: `demo/quickstart/basic_demo.py`, `demo/showcases/business/ecommerce_pov.py`.
+
+- Graph‑only
+  - Use cases: relationship exploration, pathfinding, graph stats/constraints, topology analysis.
+  - When: you need multi‑hop traversals, constraints, or graph analytics; embeddings optional or external.
+  - Why: full control of traversal algorithms and graph primitives without vector/collection overhead.
+  - Endpoints: `/api/v1/graph/graphs`, `/api/v1/graph/graphs/<id>/nodes`, `/edges`, `/traverse`, `/query/nodes`.
+  - Demos: graph step in `demo/showcases/business/fraud_pov.py` (2‑hop traversal), clients/python examples (graph‑first).
 
 [source,mermaid]
 ----

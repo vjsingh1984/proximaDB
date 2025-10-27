@@ -340,9 +340,53 @@ impl ProximaDB {
             "✅ ProximaDB::start - Storage engine started, collections recovered from metadata_info"
         );
 
-        // Step 2: Recover assignments from collection metadata
+        // Step 2: Recover vectors from WAL (persisted data)
         tracing::info!(
-            "🗺️ ProximaDB::start - Step 2: Recovering assignments from collection metadata..."
+            "📦 ProximaDB::start - Step 2: Recovering vectors from WAL (persisted data)..."
+        );
+        {
+            let storage = self.storage.read().await;
+            match storage.recover_from_wal().await {
+                Ok(()) => {
+                    tracing::info!("✅ ProximaDB::start - Vectors recovered from WAL successfully");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️  ProximaDB::start - WAL recovery failed (continuing anyway): {}",
+                        e
+                    );
+                    // Don't fail startup if WAL recovery fails - data might still be in memtable
+                }
+            }
+        }
+
+        // Step 3: Recover graphs from snapshots + WAL
+        tracing::info!(
+            "🌳 ProximaDB::start - Step 3: Recovering graphs from persistent storage..."
+        );
+        if let Some(ref multi_server) = self.multi_server {
+            match multi_server
+                .shared_services
+                .graph_service
+                .recover_all_graphs()
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!("✅ ProximaDB::start - Graphs recovered successfully");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️  ProximaDB::start - Graph recovery failed (continuing anyway): {}",
+                        e
+                    );
+                    // Don't fail startup if graph recovery fails
+                }
+            }
+        }
+
+        // Step 4: Recover assignments from collection metadata
+        tracing::info!(
+            "🗺️ ProximaDB::start - Step 4: Recovering assignments from collection metadata..."
         );
         // TODO: When AssignmentService is added to SharedServices, call:
         // self.multi_server.as_ref().unwrap().shared_services.assignment_service.recover_assignments().await?;
@@ -350,8 +394,8 @@ impl ProximaDB {
             "✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)"
         );
 
-        // Step 3: Recover vectors from write buffer
-        tracing::info!("🔄 ProximaDB::start - Step 3: Recovering vectors from write buffer...");
+        // Step 5: Recover vectors from write buffer (in-memory data)
+        tracing::info!("🔄 ProximaDB::start - Step 5: Recovering vectors from write buffer...");
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
@@ -359,9 +403,9 @@ impl ProximaDB {
                 .await?;
         }
 
-        // Step 4: Start multi-server (HTTP and gRPC on separate ports)
+        // Step 6: Start multi-server (HTTP and gRPC on separate ports)
         tracing::info!(
-            "🌐 ProximaDB::start - Step 4: Starting multi-server (gRPC:5679 + REST:5678)..."
+            "🌐 ProximaDB::start - Step 6: Starting multi-server (gRPC:5679 + REST:5678)..."
         );
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server
@@ -372,13 +416,15 @@ impl ProximaDB {
         tracing::info!("✅ ProximaDB::start - Multi-server started successfully");
 
         tracing::info!(
-            "🎉 ProximaDB::start - Database startup complete with proper recovery order!"
+            "🎉 ProximaDB::start - Database startup complete with full persistence recovery!"
         );
         tracing::info!("📋 Recovery Order Summary:");
         tracing::info!("  1️⃣ Collections: Recovered from metadata snapshots");
-        tracing::info!("  2️⃣ Assignments: Recovered from collection metadata_info");
-        tracing::info!("  3️⃣ Vectors: Recovered from write buffer");
-        tracing::info!("  4️⃣ Services: HTTP/gRPC servers started");
+        tracing::info!("  2️⃣ Vectors (WAL): Recovered from persisted WAL files");
+        tracing::info!("  3️⃣ Graphs: Recovered from snapshots + WAL replay");
+        tracing::info!("  4️⃣ Assignments: Recovered from collection metadata");
+        tracing::info!("  5️⃣ Vectors (Buffer): Recovered from in-memory write buffer");
+        tracing::info!("  6️⃣ Services: HTTP/gRPC servers started");
         Ok(())
     }
 

@@ -289,7 +289,7 @@ impl QuasarGraphEngine {
 
     /// Insert node into hot tier
     async fn insert_node_to_hot(&self, node: Node) -> Result<Arc<Node>> {
-        let node_arc = self.hot_tier.insert_node(node)?;
+        let node_arc = self.hot_tier.insert_node(node).await?;
 
         // Update stats
         {
@@ -337,7 +337,7 @@ impl QuasarGraphEngine {
 
     /// Insert edge into hot tier
     async fn insert_edge_to_hot(&self, edge: Edge) -> Result<Arc<Edge>> {
-        let edge_arc = self.hot_tier.insert_edge(edge)?;
+        let edge_arc = self.hot_tier.insert_edge(edge).await?;
 
         // Update stats
         {
@@ -409,16 +409,16 @@ impl Drop for QuasarGraphEngine {
     }
 }
 
+#[async_trait::async_trait]
 impl GraphEngine for QuasarGraphEngine {
-    fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
-        // Simple sync implementation for test compatibility
-        let result = self.hot_tier.insert_node(node);
-        // For test compatibility, update stats synchronously if possible
-        if result.is_ok() {
-            // Use a simple approach to update stats without async
-            // This is a test-specific hack to make stats work
+    async fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+        let result = self.hot_tier.insert_node(node).await?;
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_nodes += 1;
         }
-        result
+        Ok(result)
     }
 
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
@@ -431,24 +431,22 @@ impl GraphEngine for QuasarGraphEngine {
         }
     }
 
-    fn update_node(&self, node: Node) -> Result<Arc<Node>> {
+    async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
+        // TODO: Add WAL support for update_node
         let node_id = node.id.clone();
 
         // Try to update in hot tier first
         if self.hot_tier.get_node(&node_id)?.is_some() {
-            return self.hot_tier.update_node(node);
+            return self.hot_tier.update_node(node).await;
         }
 
-        // If not in hot tier, insert into hot tier synchronously (acts as updated version)
-        let result = self.hot_tier.insert_node(node)?;
-        // Update stats asynchronously
-        tokio::spawn({
-            let stats = Arc::clone(&self.stats);
-            async move {
-                let mut stats = stats.write().await;
-                stats.hot_tier_nodes = stats.hot_tier_nodes.saturating_add(1);
-            }
-        });
+        // If not in hot tier, insert into hot tier (acts as updated version)
+        let result = self.hot_tier.insert_node(node).await?;
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_nodes = stats.hot_tier_nodes.saturating_add(1);
+        }
 
         // Remove from cold tier asynchronously
         tokio::spawn({
@@ -464,48 +462,35 @@ impl GraphEngine for QuasarGraphEngine {
         Ok(result)
     }
 
-    fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+    async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+        // TODO: Add WAL support for delete_node
         // Try deleting from hot tier first
-        // Use the synchronous GraphEngine trait method explicitly to avoid
-        // selecting the async inherent alias on OrionGraphEngine
-        if let Some(node) = crate::graph::engines::GraphEngine::delete_node(&*self.hot_tier, id)? {
+        if let Some(node) = crate::graph::engines::GraphEngine::delete_node(&*self.hot_tier, id).await? {
             // Update stats
-            tokio::spawn({
-                let stats = Arc::clone(&self.stats);
-                async move {
-                    let mut stats = stats.write().await;
-                    stats.hot_tier_nodes = stats.hot_tier_nodes.saturating_sub(1);
-                }
-            });
-
+            {
+                let mut stats = self.stats.write().await;
+                stats.hot_tier_nodes = stats.hot_tier_nodes.saturating_sub(1);
+            }
             return Ok(Some(node));
         }
 
-        // Deletion from cold tier is async; avoid blocking here.
-        // Spawn background task and return None synchronously.
-        let cold = Arc::clone(&self.cold_tier);
-        let stats = Arc::clone(&self.stats);
-        let id_owned = id.clone();
-        tokio::spawn(async move {
-            if let Ok(Some(_node)) = cold.delete_node(&id_owned).await {
-                let mut s = stats.write().await;
-                s.cold_tier_nodes = s.cold_tier_nodes.saturating_sub(1);
-            }
-        });
+        // Try deletion from cold tier
+        if let Some(node) = self.cold_tier.delete_node(id).await? {
+            let mut stats = self.stats.write().await;
+            stats.cold_tier_nodes = stats.cold_tier_nodes.saturating_sub(1);
+            return Ok(Some(node));
+        }
+
         Ok(None)
     }
 
-    fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        // Perform synchronous hot-tier insert to avoid blocking within a runtime
-        let edge_arc = self.hot_tier.insert_edge(edge)?;
-        // Update stats asynchronously
-        tokio::spawn({
-            let stats = Arc::clone(&self.stats);
-            async move {
-                let mut stats = stats.write().await;
-                stats.hot_tier_edges += 1;
-            }
-        });
+    async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        let edge_arc = self.hot_tier.insert_edge(edge).await?;
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_edges += 1;
+        }
         Ok(edge_arc)
     }
 
@@ -514,23 +499,21 @@ impl GraphEngine for QuasarGraphEngine {
         self.hot_tier.get_edge(id)
     }
 
-    fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+    async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        // TODO: Add WAL support for update_edge
         let edge_id = edge.id.clone();
 
         // Similar logic to update_node
         if self.hot_tier.get_edge(&edge_id)?.is_some() {
-            return self.hot_tier.update_edge(edge);
+            return self.hot_tier.update_edge(edge).await;
         }
 
-        // Insert directly into hot tier synchronously and update stats asynchronously
-        let result = self.hot_tier.insert_edge(edge)?;
-        tokio::spawn({
-            let stats = Arc::clone(&self.stats);
-            async move {
-                let mut stats = stats.write().await;
-                stats.hot_tier_edges += 1;
-            }
-        });
+        // Insert directly into hot tier and update stats
+        let result = self.hot_tier.insert_edge(edge).await?;
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_edges += 1;
+        }
 
         // Remove from cold tier asynchronously
         tokio::spawn({
@@ -546,16 +529,14 @@ impl GraphEngine for QuasarGraphEngine {
         Ok(result)
     }
 
-    fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+    async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+        // TODO: Add WAL support for delete_edge
         // Try hot tier first
-        if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*self.hot_tier, id)? {
-            tokio::spawn({
-                let stats = Arc::clone(&self.stats);
-                async move {
-                    let mut stats = stats.write().await;
-                    stats.hot_tier_edges = stats.hot_tier_edges.saturating_sub(1);
-                }
-            });
+        if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*self.hot_tier, id).await? {
+            {
+                let mut stats = self.stats.write().await;
+                stats.hot_tier_edges = stats.hot_tier_edges.saturating_sub(1);
+            }
 
             return Ok(Some(edge));
         }
@@ -680,7 +661,7 @@ mod tests {
         };
 
         // Insert node
-        let inserted = engine.insert_node(node).unwrap();
+        let inserted = engine.insert_node(node).await.unwrap();
         assert_eq!(inserted.id, "test_node");
 
         // Give some time for async operations

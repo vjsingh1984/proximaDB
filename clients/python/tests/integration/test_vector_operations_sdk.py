@@ -50,7 +50,8 @@ class TestVectorOperationsSDK:
             if seed is None:
                 seed = len(text) % 1000
             np.random.seed(seed)
-            return np.random.rand(dimension).tolist()
+            from ..embedding_utils import embed_seed
+            return embed_seed(seed, dimension)
         return _generate
     
     @pytest.fixture
@@ -547,7 +548,8 @@ class TestVectorOperationsSDK:
             vector_records = []
             for i, chunk in enumerate(chunks):
                 # Simulate embedding
-                embedding = np.random.rand(self.MODEL_DIMENSIONS[model]).tolist()
+                from ..embedding_utils import embed_seed
+                embedding = embed_seed(i, self.MODEL_DIMENSIONS[model])
                 
                 # Build comprehensive metadata
                 metadata = {
@@ -595,7 +597,8 @@ class TestVectorOperationsSDK:
             assert hasattr(result, 'metrics') and result.metrics.successful_count == len(vector_records)
             
             # Test searching the ingested content
-            query_embedding = np.random.rand(self.MODEL_DIMENSIONS[model]).tolist()
+            from ..embedding_utils import embed_seed
+            query_embedding = embed_seed(999, self.MODEL_DIMENSIONS[model])
             
             # Search with custom metadata filter
             search_results = rest_client.search(

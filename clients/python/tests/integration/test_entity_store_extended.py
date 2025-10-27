@@ -17,6 +17,7 @@ import pytest
 from typing import List
 
 import numpy as np
+from ..embedding_utils import embed_seed
 
 from proximadb import ProximaDBClient, VectorRecord
 
@@ -82,7 +83,7 @@ def test_collection_get_stats(client):
         # Insert some vectors
         records = []
         for i in range(10):
-            vector = np.random.randn(dimension).astype(np.float32)
+            vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             records.append(VectorRecord(
                 id=f"vec_{i}",
@@ -135,7 +136,7 @@ def test_vector_operations_with_ids(client):
         test_ids = [f"custom_id_{i}" for i in range(5)]
         records = []
         for entity_id in test_ids:
-            vector = np.random.randn(dimension).astype(np.float32)
+            vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             records.append(VectorRecord(
                 id=entity_id,
@@ -147,7 +148,7 @@ def test_vector_operations_with_ids(client):
         assert result.success
 
         # Search and verify IDs
-        query_vector = np.random.randn(dimension).astype(np.float32)
+        query_vector = np.array(embed_seed(999, dimension), dtype=np.float32)
         query_vector = query_vector / np.linalg.norm(query_vector)
 
         results = client.search(
@@ -186,7 +187,7 @@ def test_vector_search_with_filter(client):
         categories = ["red", "blue", "green"]
         records = []
         for i in range(30):
-            vector = np.random.randn(dimension).astype(np.float32)
+            vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             records.append(VectorRecord(
                 id=f"item_{i}",
@@ -200,7 +201,7 @@ def test_vector_search_with_filter(client):
         client.insert_vectors(collection_id, records=records)
 
         # Search (metadata filter may be applied server-side if supported)
-        query_vector = np.random.randn(dimension).astype(np.float32)
+        query_vector = np.array(embed_seed(777, dimension), dtype=np.float32)
         query_vector = query_vector / np.linalg.norm(query_vector)
 
         results = client.search(
@@ -236,7 +237,7 @@ def test_empty_collection_search(client):
         client.create_collection(collection_id, dimension=dimension)
 
         # Search without inserting anything
-        query_vector = np.random.randn(dimension).astype(np.float32)
+        query_vector = np.array(embed_seed(555, dimension), dtype=np.float32)
         query_vector = query_vector / np.linalg.norm(query_vector)
 
         results = client.search(
@@ -267,7 +268,8 @@ def test_vector_dimension_mismatch(client):
         client.create_collection(collection_id, dimension=dimension)
 
         # Try to insert vector with wrong dimension
-        wrong_vector = np.random.randn(64).astype(np.float32).tolist()  # Wrong dim
+        from ..embedding_utils import embed_seed
+        wrong_vector = embed_seed(0, 64)  # Wrong dim
         record = VectorRecord(
             id="wrong_dim",
             vector=wrong_vector,
@@ -310,7 +312,7 @@ def test_large_batch_insert(client):
         # Insert large batch
         records = []
         for i in range(batch_size):
-            vector = np.random.randn(dimension).astype(np.float32)
+            vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             records.append(VectorRecord(
                 id=f"item_{i}",
@@ -350,7 +352,7 @@ def test_search_with_different_top_k(client):
         # Insert vectors
         records = []
         for i in range(50):
-            vector = np.random.randn(dimension).astype(np.float32)
+            vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             records.append(VectorRecord(
                 id=f"vec_{i}",
@@ -361,7 +363,7 @@ def test_search_with_different_top_k(client):
         client.insert_vectors(collection_id, records=records)
 
         # Test different top_k values
-        query_vector = np.random.randn(dimension).astype(np.float32)
+        query_vector = np.array(embed_seed(999, dimension), dtype=np.float32)
         query_vector = query_vector / np.linalg.norm(query_vector)
 
         for k in [1, 5, 10, 20]:
@@ -397,7 +399,7 @@ def test_collection_with_different_dimensions(client):
             client.create_collection(collection_id, dimension=dim)
 
             # Insert one vector
-            vector = np.random.randn(dim).astype(np.float32)
+            vector = np.array(embed_seed(i, dim), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
 
             result = client.insert_vectors(collection_id, records=[

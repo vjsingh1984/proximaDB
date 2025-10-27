@@ -906,7 +906,7 @@ Official client libraries available:
 
 == Related Documentation
 
-* link:../guides/quickstart.adoc[Quick Start Guide]
+* link:../01-getting-started/getting_started.adoc[Getting Started Guide]
 * link:grpc-api-specification.adoc[gRPC API Specification]
 * link:../architecture/api-design.adoc[API Design Principles]
 * link:../operations/monitoring.adoc[Monitoring & Metrics]

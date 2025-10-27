@@ -121,30 +121,31 @@ impl MemoryUsage {
 }
 
 /// Graph engine trait for common operations across all engines
+#[async_trait::async_trait]
 pub trait GraphEngine: Send + Sync {
-    /// Insert a node
-    fn insert_node(&self, node: Node) -> Result<Arc<Node>>;
+    /// Insert a node (async for durability - waits for WAL write)
+    async fn insert_node(&self, node: Node) -> Result<Arc<Node>>;
 
     /// Get a node by ID
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>>;
 
-    /// Update a node
-    fn update_node(&self, node: Node) -> Result<Arc<Node>>;
+    /// Update a node (async for durability - waits for WAL write)
+    async fn update_node(&self, node: Node) -> Result<Arc<Node>>;
 
-    /// Delete a node
-    fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>>;
+    /// Delete a node (async for durability - waits for WAL write)
+    async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>>;
 
-    /// Insert an edge
-    fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>>;
+    /// Insert an edge (async for durability - waits for WAL write)
+    async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>>;
 
     /// Get an edge by ID
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>>;
 
-    /// Update an edge
-    fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>>;
+    /// Update an edge (async for durability - waits for WAL write)
+    async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>>;
 
-    /// Delete an edge
-    fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>>;
+    /// Delete an edge (async for durability - waits for WAL write)
+    async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>>;
 
     /// Get outgoing edges from a node
     fn get_outgoing_edges(
@@ -191,39 +192,39 @@ pub trait GraphEngine: Send + Sync {
     // ===== Bulk Operations for Benchmarking =====
 
     /// Bulk insert nodes (optimized for batch operations)
-    fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+    async fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
         // Default implementation delegates to single insert
         let mut results = Vec::with_capacity(nodes.len());
         for node in nodes {
-            results.push(self.insert_node(node)?);
+            results.push(self.insert_node(node).await?);
         }
         Ok(results)
     }
 
     /// Bulk insert edges (optimized for batch operations)
-    fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+    async fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
         // Default implementation delegates to single insert
         let mut results = Vec::with_capacity(edges.len());
         for edge in edges {
-            results.push(self.insert_edge(edge)?);
+            results.push(self.insert_edge(edge).await?);
         }
         Ok(results)
     }
 
     /// Bulk delete nodes
-    fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
+    async fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
         let mut results = Vec::with_capacity(node_ids.len());
         for id in node_ids {
-            results.push(self.delete_node(&id)?);
+            results.push(self.delete_node(&id).await?);
         }
         Ok(results)
     }
 
     /// Bulk delete edges
-    fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
+    async fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
         let mut results = Vec::with_capacity(edge_ids.len());
         for id in edge_ids {
-            results.push(self.delete_edge(&id)?);
+            results.push(self.delete_edge(&id).await?);
         }
         Ok(results)
     }
@@ -249,11 +250,11 @@ pub trait GraphEngine: Send + Sync {
     }
 
     /// Clear all data (useful for benchmarking)
-    fn clear_all(&self) -> Result<()> {
+    async fn clear_all(&self) -> Result<()> {
         // Default implementation: delete all nodes and edges
         let all_nodes = self.get_all_nodes()?;
         for node in all_nodes {
-            self.delete_node(&node.id)?;
+            self.delete_node(&node.id).await?;
         }
         Ok(())
     }
@@ -416,12 +417,17 @@ impl GraphEngineImpl {
 }
 
 // Implement GraphEngine for GraphEngineImpl by delegating to the underlying engine
+#[async_trait::async_trait]
 impl GraphEngine for GraphEngineImpl {
-    fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+    async fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+        tracing::debug!("GraphEngineImpl::insert_node called for node: {}", node.id);
         match self {
-            GraphEngineImpl::Orion(engine) => engine.insert_node(node),
-            GraphEngineImpl::Pulsar(engine) => engine.insert_node(node),
-            GraphEngineImpl::Quasar(engine) => engine.insert_node(node),
+            GraphEngineImpl::Orion(engine) => {
+                tracing::debug!("Delegating to Orion engine");
+                engine.insert_node(node).await
+            }
+            GraphEngineImpl::Pulsar(engine) => engine.insert_node(node).await,
+            GraphEngineImpl::Quasar(engine) => engine.insert_node(node).await,
         }
     }
 
@@ -433,27 +439,27 @@ impl GraphEngine for GraphEngineImpl {
         }
     }
 
-    fn update_node(&self, node: Node) -> Result<Arc<Node>> {
+    async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
         match self {
-            GraphEngineImpl::Orion(engine) => engine.update_node(node),
-            GraphEngineImpl::Pulsar(engine) => engine.update_node(node),
-            GraphEngineImpl::Quasar(engine) => engine.update_node(node),
+            GraphEngineImpl::Orion(engine) => engine.update_node(node).await,
+            GraphEngineImpl::Pulsar(engine) => engine.update_node(node).await,
+            GraphEngineImpl::Quasar(engine) => engine.update_node(node).await,
         }
     }
 
-    fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+    async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         match self {
-            GraphEngineImpl::Orion(engine) => GraphEngine::delete_node(engine, id),
-            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_node(engine, id),
-            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_node(engine, id),
+            GraphEngineImpl::Orion(engine) => GraphEngine::delete_node(engine, id).await,
+            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_node(engine, id).await,
+            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_node(engine, id).await,
         }
     }
 
-    fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+    async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         match self {
-            GraphEngineImpl::Orion(engine) => engine.insert_edge(edge),
-            GraphEngineImpl::Pulsar(engine) => engine.insert_edge(edge),
-            GraphEngineImpl::Quasar(engine) => engine.insert_edge(edge),
+            GraphEngineImpl::Orion(engine) => engine.insert_edge(edge).await,
+            GraphEngineImpl::Pulsar(engine) => engine.insert_edge(edge).await,
+            GraphEngineImpl::Quasar(engine) => engine.insert_edge(edge).await,
         }
     }
 
@@ -465,19 +471,19 @@ impl GraphEngine for GraphEngineImpl {
         }
     }
 
-    fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+    async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         match self {
-            GraphEngineImpl::Orion(engine) => engine.update_edge(edge),
-            GraphEngineImpl::Pulsar(engine) => engine.update_edge(edge),
-            GraphEngineImpl::Quasar(engine) => engine.update_edge(edge),
+            GraphEngineImpl::Orion(engine) => engine.update_edge(edge).await,
+            GraphEngineImpl::Pulsar(engine) => engine.update_edge(edge).await,
+            GraphEngineImpl::Quasar(engine) => engine.update_edge(edge).await,
         }
     }
 
-    fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+    async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         match self {
-            GraphEngineImpl::Orion(engine) => GraphEngine::delete_edge(engine, id),
-            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_edge(engine, id),
-            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_edge(engine, id),
+            GraphEngineImpl::Orion(engine) => GraphEngine::delete_edge(engine, id).await,
+            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_edge(engine, id).await,
+            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_edge(engine, id).await,
         }
     }
 

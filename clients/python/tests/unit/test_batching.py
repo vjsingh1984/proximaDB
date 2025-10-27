@@ -9,6 +9,7 @@ import pytest
 import time
 import asyncio
 import numpy as np
+from ..embedding_utils import embed_seed
 from pathlib import Path
 import sys
 from typing import List, Dict, Any
@@ -79,8 +80,7 @@ class TestRequestBatcher(BaseProximaDBTest):
         # Create test vectors
         vectors = []
         for i in range(100):
-            np.random.seed(i)
-            vector = np.random.randn(384).astype(np.float32)
+            vector = np.array(embed_seed(i, 384), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             
             record = VectorRecord(
@@ -132,8 +132,7 @@ class TestRequestBatcher(BaseProximaDBTest):
         
         # Phase 1: Small batches
         for i in range(30):
-            np.random.seed(i)
-            vector = np.random.randn(384).astype(np.float32)
+            vector = np.array(embed_seed(i, 384), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             
             record = VectorRecord(
@@ -145,8 +144,7 @@ class TestRequestBatcher(BaseProximaDBTest):
         
         # Phase 2: Medium batches 
         for i in range(50):
-            np.random.seed(i + 1000)
-            vector = np.random.randn(384).astype(np.float32)
+            vector = np.array(embed_seed(i + 1000, 384), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             
             record = VectorRecord(
@@ -158,8 +156,7 @@ class TestRequestBatcher(BaseProximaDBTest):
         
         # Phase 3: Large batches
         for i in range(70):
-            np.random.seed(i + 2000)
-            vector = np.random.randn(384).astype(np.float32)
+            vector = np.array(embed_seed(i + 2000, 384), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
             
             record = VectorRecord(
@@ -209,8 +206,7 @@ class TestRequestBatcher(BaseProximaDBTest):
             """Worker thread to insert vectors"""
             vectors = []
             for i in range(count):
-                np.random.seed(worker_id * 1000 + i)
-                vector = np.random.randn(384).astype(np.float32)
+                vector = np.array(embed_seed(worker_id * 1000 + i, 384), dtype=np.float32)
                 vector = vector / np.linalg.norm(vector)
                 
                 record = VectorRecord(
@@ -247,7 +243,7 @@ class TestRequestBatcher(BaseProximaDBTest):
         self.wait_for_indexing()
         
         # Verify with search
-        query_vector = np.random.randn(384).tolist()
+        query_vector = embed_seed(999, 384)
         results = self.rest_client.search(
             collection_id=collection_name,
             vector=query_vector,
@@ -274,8 +270,7 @@ class TestBatchMetrics(BaseProximaDBTest):
         # Create test vectors
         vectors = []
         for i in range(50):
-            np.random.seed(i)
-            vector = np.random.randn(384).tolist()
+            vector = embed_seed(i, 384)
             
             record = VectorRecord(
                 id=f"metric_vec_{i:04d}",
@@ -333,8 +328,7 @@ class TestBatchHelpers(BaseProximaDBTest):
         # Create test vectors
         vectors = []
         for i in range(75):
-            np.random.seed(i)
-            vector = np.random.randn(384).tolist()
+            vector = embed_seed(i, 384)
             
             record = VectorRecord(
                 id=f"helper_vec_{i:04d}",
