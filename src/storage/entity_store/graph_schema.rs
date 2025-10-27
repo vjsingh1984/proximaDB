@@ -308,6 +308,7 @@ impl RelationEdgeMapper {
 // Helper Functions: SqlValue ↔ PropertyValue Conversion
 // ============================================================================
 
+#[allow(dead_code)]
 fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
     let value = match &sql_value.value {
         Some(sql_value::Value::StringValue(s)) => {
@@ -335,6 +336,7 @@ fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
     Ok(PropertyValue { value })
 }
 
+#[allow(dead_code)]
 fn property_value_to_sql_value(prop_value: &PropertyValue) -> Result<SqlValue> {
     let value = match &prop_value.value {
         Some(property_value::Value::StringValue(s)) => {

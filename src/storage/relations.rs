@@ -116,6 +116,7 @@ impl InMemoryRelationsStore {
     }
 
     /// Generate storage key for a relationship
+    #[allow(dead_code)]
     fn relation_key(
         collection_id: &str,
         source_id: &str,
@@ -148,6 +149,7 @@ impl InMemoryRelationsStore {
     }
 
     /// Convert ORION Edge to SKS Relation
+    #[allow(dead_code)]
     fn convert_edge_to_relation(
         &self,
         edge: &crate::proto::proximadb_v1::Edge,
@@ -229,7 +231,8 @@ impl InMemoryRelationsStore {
         Ok(())
     }
 
-    /// Remove a relationship from storage using ORION engine  
+    /// Remove a relationship from storage using ORION engine
+    #[allow(dead_code)]
     async fn remove_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         {
             let graph_engine = &self.storage_engine;

@@ -64,6 +64,7 @@ enum Container {
     /// Bitmap container for dense data (>= 4096 elements)
     Bitmap(BitmapContainer),
     /// Run container for consecutive runs (future optimization)
+    #[allow(dead_code)]
     Run(RunContainer),
 }
 
@@ -360,6 +361,7 @@ struct RunContainer {
 }
 
 impl RunContainer {
+    #[allow(dead_code)]
     fn new() -> Self {
         RunContainer { runs: Vec::new() }
     }

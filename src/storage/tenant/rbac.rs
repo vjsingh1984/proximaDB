@@ -19,6 +19,7 @@ pub struct EnhancedRBACManager {
     collection_permissions: Arc<DashMap<String, CollectionPermissions>>,
 
     /// Domain permissions within tenants
+    #[allow(dead_code)]
     domain_permissions: Arc<DashMap<String, DomainPermissions>>,
 
     /// User role assignments

@@ -81,6 +81,7 @@ pub struct EntityHeader {
 /// ProximaDB implementation of EntityStore
 pub struct ProximaEntityStore {
     /// Storage engine for vectors
+    #[allow(dead_code)]
     vector_engine: Arc<dyn UnifiedStorageEngine>,
 
     /// Relations store (to be implemented)
@@ -700,6 +701,7 @@ impl ProximaEntityStore {
     }
 
     /// Fast header-level filtering with metadata optimization
+    #[allow(dead_code)]
     fn header_matches_filter(&self, header: &EntityHeader, filter: &MetadataFilter) -> bool {
         // Optimized header-level filtering using indexed metadata
 
@@ -962,6 +964,7 @@ impl ProximaEntityStore {
         })
     }
 
+    #[allow(dead_code)]
     async fn list_entities(
         &self,
         collection_id: &str,
