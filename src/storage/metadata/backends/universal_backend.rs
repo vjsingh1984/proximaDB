@@ -1438,8 +1438,9 @@ impl UniversalMetadataBackend {
 
             // Fallback: scan primary memtable if secondary index fails
             // This handles cases where secondary index is inconsistent or corrupted
-            warn!(
-                "🔍 Secondary index lookup failed for '{}', falling back to primary memtable scan",
+            // Normal behavior when index not yet built - not a warning
+            debug!(
+                "Secondary index lookup failed for '{}', using primary scan",
                 identifier
             );
             self.fallback_scan_by_name(identifier)

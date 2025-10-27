@@ -645,10 +645,9 @@ impl GlobalPartitionedMemtable {
         metrics.entry_count += vector_count; // Multiple vectors
         metrics.size_bytes += batch_size;
 
-        tracing::info!(
-            "✅ NATIVE_BATCH_COMPLETE: Added batch {} with sequences {:?} (collection={}, vectors={}, bytes={})",
+        debug!(
+            "Batch added: {} (collection={}, vectors={}, bytes={})",
             batch_id,
-            sequences,
             collection_id,
             vector_count,
             batch_size

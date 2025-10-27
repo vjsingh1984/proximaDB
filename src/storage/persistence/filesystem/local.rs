@@ -540,8 +540,10 @@ impl FileSystem for LocalFileSystem {
                 // Absolute path
                 format!("file://{}", entry_path.display())
             };
-            info!(
-                "📁 DEBUG LocalFileSystem::list entry_url: '{}' for entry_path: {:?}",
+            // Per-file logging removed - too verbose for production
+            // Use trace only if debugging specific file issues
+            trace!(
+                "LocalFileSystem entry: '{}' -> {:?}",
                 entry_url, entry_path
             );
 

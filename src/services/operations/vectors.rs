@@ -1972,8 +1972,8 @@ impl VectorOperationsService {
             index_update_time_us: 0,
         };
 
-        info!(
-            "✅ Batch insert: {} vectors to collection {} in {}μs",
+        debug!(
+            "Batch insert: {} vectors to {} in {}μs",
             vector_ids.len(),
             collection_id,
             metrics.processing_time_us
