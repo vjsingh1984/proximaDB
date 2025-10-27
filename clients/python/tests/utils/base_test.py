@@ -50,6 +50,16 @@ class BaseProximaDBTest:
         """Clean up after all tests"""
         cleanup_test_collections(cls.rest_client)
         cleanup_test_collections(cls.grpc_client)
+
+        # CRITICAL: Close clients to release file descriptors
+        try:
+            cls.rest_client.close()
+        except Exception:
+            pass
+        try:
+            cls.grpc_client.close()
+        except Exception:
+            pass
     
     def setup_method(self):
         """Setup for each test method"""

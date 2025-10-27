@@ -116,11 +116,32 @@ class GrpcChannelFactory(ResourceFactory[grpc.Channel]):
         self.dispose(resource)
     
     def dispose(self, resource: grpc.Channel) -> None:
-        """Close gRPC channel"""
+        """Close gRPC channel gracefully, waiting for background threads"""
         try:
+            # Use threading Event for deterministic wait on channel shutdown
+            shutdown_event = threading.Event()
+
+            def on_state_change(connectivity):
+                """Callback when channel state changes"""
+                if connectivity == grpc.ChannelConnectivity.SHUTDOWN:
+                    shutdown_event.set()
+
+            # Subscribe to state changes before closing
+            try:
+                resource.subscribe(on_state_change)
+            except (AttributeError, TypeError):
+                # Older gRPC API or channel doesn't support subscription
+                pass
+
+            # Close the channel (signals background threads to stop)
             resource.close()
+
+            # Wait deterministically for shutdown (max 2 seconds)
+            # Event will be set by callback when channel reaches SHUTDOWN
+            shutdown_event.wait(timeout=2.0)
+
         except Exception as e:
-            logger.warning(f"Error closing gRPC channel: {e}")
+            logger.debug(f"Error during channel dispose (suppressed): {e}")
 
 
 class GrpcConnectionPool:
@@ -236,12 +257,15 @@ class GrpcConnectionPool:
             logger.warning(f"Pool warm-up failed: {e}")
 
     def close(self) -> None:
-        """Close all channels in the pool"""
+        """Close all channels in the pool
+
+        Uses deterministic cleanup via channel state subscription in dispose().
+        No sleeps - waits for actual channel shutdown state.
+        """
         logger.info(f"Closing gRPC connection pool")
         try:
-            # Give background threads time to finish before closing
-            import time
-            time.sleep(0.1)  # 100ms grace period for background threads
+            # ResourcePool.close() will call dispose() on each channel,
+            # which waits deterministically for background threads to exit
             self._pool.close()
         except Exception as e:
             # Suppress errors during cleanup - pool is closing anyway

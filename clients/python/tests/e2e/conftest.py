@@ -48,20 +48,24 @@ def verify_server_running(test_config):
     """Verify ProximaDB server is running before tests"""
     try:
         rest_client = connect_rest(test_config["rest_endpoint"])
-        
-        # Try to connect and get health status
+
         try:
-            health = rest_client.health()
-            logging.info(f"✅ ProximaDB REST server is healthy: {health}")
-        except Exception as e:
-            logging.warning(f"⚠️ Health check failed, but server appears to be running: {e}")
-        
-        # Try basic operation
-        collections = rest_client.list_collections()
-        logging.info(f"✅ ProximaDB server responding - found {len(collections)} collections")
-        
-        return True
-        
+            # Try to connect and get health status
+            try:
+                health = rest_client.health()
+                logging.info(f"✅ ProximaDB REST server is healthy: {health}")
+            except Exception as e:
+                logging.warning(f"⚠️ Health check failed, but server appears to be running: {e}")
+
+            # Try basic operation
+            collections = rest_client.list_collections()
+            logging.info(f"✅ ProximaDB server responding - found {len(collections)} collections")
+
+            return True
+        finally:
+            # CRITICAL: Close client to release file descriptors
+            rest_client.close()
+
     except Exception as e:
         pytest.fail(f"❌ ProximaDB server not accessible at {test_config['rest_endpoint']}: {e}")
 
