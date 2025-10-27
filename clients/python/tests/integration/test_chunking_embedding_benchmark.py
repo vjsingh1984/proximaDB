@@ -284,7 +284,7 @@ class TestChunkingEmbeddingBenchmark:
             query_embedding = embedding_provider.embed_text(query["text"])
             
             # Vector search
-            search_results = client.search_vectors(
+            search_results = client.search(
                 collection_id=collection_name,
                 query_vector=query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding,
                 top_k=5

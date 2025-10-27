@@ -331,7 +331,7 @@ class TestCompressionIntegrationScenarios:
             compression_aware_routing=True
         )
         
-        results = mock_client.search_vectors(
+        results = mock_client.search(
             collection_id="test_collection",
             query_vector=query_vector,
             top_k=10,

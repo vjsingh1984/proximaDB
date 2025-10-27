@@ -491,7 +491,7 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
         query = "Tell me about ProximaDB vector database"
         query_embedding = provider.embed_text(query)
         
-        results = self.rest_client.search_vectors(
+        results = self.rest_client.search(
             collection_name,
             query_embedding.tolist(),
             top_k=3

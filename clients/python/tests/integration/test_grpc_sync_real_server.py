@@ -109,7 +109,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             
             # Search vectors
             query_vector = embed_seed(999, 64)
-            search_results = client.search_vectors(
+            search_results = client.search(
                 collection_name=collection_name,
                 query_vector=query_vector,
                 k=3
@@ -150,7 +150,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             time.sleep(1)
             
             # Verify with search
-            search_results = client.search_vectors(
+            search_results = client.search(
                 collection_name=collection_name,
                 query_vector=embed_seed(777, 32),
                 k=10
@@ -192,10 +192,10 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             
             # Search with both clients
             query = embed_seed(555, 512)
-            results_compressed = client_compressed.search_vectors(
+            results_compressed = client_compressed.search(
                 collection_name, query, k=1
             )
-            results_uncompressed = client_uncompressed.search_vectors(
+            results_uncompressed = client_uncompressed.search(
                 collection_name, query, k=1
             )
             
@@ -227,7 +227,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             import concurrent.futures
             
             def search_operation(index):
-                return client.search_vectors(
+                return client.search(
                     collection_name,
                     embed_seed(i, 128),
                     k=5
@@ -306,7 +306,7 @@ class TestProximaDBSyncGrpcClient(BaseProximaDBTest):
             time.sleep(1)
             
             # Search with filters
-            results = client.search_vectors(
+            results = client.search(
                 collection_name=collection_name,
                 query_vector=embed_seed(321, 64),
                 k=10,
@@ -359,7 +359,7 @@ class TestGrpcPerformance(BaseProximaDBTest):
             num_searches = 100
             start = time.time()
             for _ in range(num_searches):
-                client.search_vectors(
+                client.search(
                     collection_name,
                     embed_seed(i, 384),
                     k=10

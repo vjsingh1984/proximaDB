@@ -101,7 +101,7 @@ Search for similar vectors:
 
 ```python
 query_vector = [0.1, 0.2, 0.3]
-results = client.search_vectors(
+results = client.search(
     collection="my_collection", 
     vector=query_vector, 
     top_k=10

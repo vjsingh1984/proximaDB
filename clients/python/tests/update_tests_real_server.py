@@ -94,7 +94,7 @@ class TestBatching(BaseProximaDBTest):
         
         # Search to verify
         query_vector = vectors[0].vector
-        results = self.rest_client.search_vectors(
+        results = self.rest_client.search(
             collection_name,
             query_vector,
             top_k=10

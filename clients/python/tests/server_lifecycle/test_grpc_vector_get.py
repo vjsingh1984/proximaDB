@@ -130,7 +130,7 @@ def test_grpc_vector_get():
     
     # Test 3: Search to verify vectors exist
     print("\n🧪 Test 3: Search to verify vectors exist")
-    search_results = grpc_client.search_vectors(
+    search_results = grpc_client.search(
         collection_name,
         query_vector=test_vectors[0]["vector"],
         top_k=5

@@ -51,8 +51,8 @@ def test_v1_imports():
         # Test client instantiation
         client = ProximaDBClientV1(url="http://localhost:5678")
         logger.info("✅ Client v1 instantiation successful")
-        logger.info("   Protocol: {client.protocol}")
-        logger.info("   Base URL: {client.base_url}")
+        logger.info(f"   Protocol: {client.protocol}")
+        logger.info(f"   Base URL: {client.base_url}")
         
         # Test model imports
         from proximadb.models import VectorRecord, SearchResult, Collection, DistanceMetric, StorageEngine
@@ -64,15 +64,15 @@ def test_v1_imports():
             vector=[0.1, 0.2, 0.3, 0.4],
             metadata={"test": "data"}
         )
-        logger.info("✅ VectorRecord creation successful: {vector.id}")
+        logger.info("✅ VectorRecord creation successful: %s", vector.id)
         
         return True
         
     except ImportError as e:
-        logger.error("❌ Import error: {e}")
+        logger.error("❌ Import error: %s", e)
         return False
     except Exception as e:
-        logger.error("❌ General error: {e}")
+        logger.error("❌ General error: %s", e)
         return False
 
 def test_proto_message_creation():
@@ -87,7 +87,7 @@ def test_proto_message_creation():
             id="test_id",
             vector=[1.0, 2.0, 3.0]
         )
-        logger.info("✅ VectorRecord proto created: {vector_proto.id}")
+        logger.info("✅ VectorRecord proto created: %s", vector_proto.id)
         
         # Test CollectionConfig proto creation
         collection_proto = collection_types_pb2.CollectionConfig(
@@ -96,19 +96,19 @@ def test_proto_message_creation():
             distance_metric="COSINE",
             storage_engine="SST"
         )
-        logger.info("✅ CollectionConfig proto created: {collection_proto.name}")
+        logger.info("✅ CollectionConfig proto created: %s", collection_proto.name)
         
         # Test VectorBatchRequest proto creation
         batch_request = vector_types_pb2.VectorBatchRequest(
             collection_id="test_collection",
             vectors=[vector_proto]
         )
-        logger.info("✅ VectorBatchRequest proto created with {len(batch_request.vectors)} vectors")
+        logger.info(f"✅ VectorBatchRequest proto created with {len(batch_request.vectors)} vectors")
         
         return True
         
     except Exception as e:
-        logger.error("❌ Proto message creation error: {e}")
+        logger.error("❌ Proto message creation error: %s", e)
         return False
 
 def main():

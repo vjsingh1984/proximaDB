@@ -87,7 +87,7 @@ class TestIntelligentRouterIntegration:
         
         # Simulate operations and record results
         start_time = time.time()
-        search_result = search_client.search_vectors()
+        search_result = search_client.search()
         search_time = (time.time() - start_time) * 1000
         
         router.record_operation_result(

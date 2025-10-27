@@ -54,7 +54,7 @@ def test_grpc_end_to_end_basic():
         assert ins.success is True
 
         # Search
-        results = client.search_vectors(collection_id=coll, query_vector=[0.1, 0.2, 0.3, 0.4], top_k=2)
+        results = client.search(collection_id=coll, query_vector=[0.1, 0.2, 0.3, 0.4], top_k=2)
         assert isinstance(results, list)
         assert len(results) >= 1
         assert results[0].id

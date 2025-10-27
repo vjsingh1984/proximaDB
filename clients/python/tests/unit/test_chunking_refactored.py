@@ -408,7 +408,7 @@ class TestVectorRecordCreation(BaseProximaDBTest):
         query_text = "What are vector databases used for?"
         query_embedding = provider.embed_text(query_text)
         
-        results = self.rest_client.search_vectors(
+        results = self.rest_client.search(
             collection_name,
             query_embedding.tolist(),
             top_k=3

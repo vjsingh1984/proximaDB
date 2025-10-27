@@ -347,7 +347,7 @@ class TestSemanticChunkingIntegration(BaseProximaDBTest):
         query_text = "How do vector databases handle searching?"
         query_embedding = provider.embed_text(query_text)
         
-        results = self.rest_client.search_vectors(
+        results = self.rest_client.search(
             collection_name,
             query_embedding.tolist(),
             top_k=3
