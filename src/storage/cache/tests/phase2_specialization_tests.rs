@@ -265,7 +265,7 @@ impl QueryCache {
         None // Placeholder
     }
 
-    async fn is_stale(&self, _key: &str, max_age: tokio::time::Duration) -> bool {
+    async fn is_stale(&self, _key: &str, _max_age: tokio::time::Duration) -> bool {
         // Would check actual age
         true
     }

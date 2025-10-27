@@ -751,17 +751,20 @@ fn compute_offsets_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { compute_offsets_neon(values, base_i32) };
+        unsafe { compute_offsets_neon(values, base_i32) }
     }
 
-    // Scalar fallback
-    values
-        .iter()
-        .map(|&v| {
-            let v_bits = v.to_bits() as i32;
-            v_bits.wrapping_sub(base_i32)
-        })
-        .collect()
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        // Scalar fallback
+        values
+            .iter()
+            .map(|&v| {
+                let v_bits = v.to_bits() as i32;
+                v_bits.wrapping_sub(base_i32)
+            })
+            .collect()
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1175,17 +1178,20 @@ fn compute_deltas_pfor_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { compute_deltas_pfor_neon(values, base_i32) };
+        unsafe { compute_deltas_pfor_neon(values, base_i32) }
     }
 
-    // Scalar fallback
-    values
-        .iter()
-        .map(|&v| {
-            let v_bits = v.to_bits() as i32;
-            v_bits.wrapping_sub(base_i32)
-        })
-        .collect()
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        // Scalar fallback
+        values
+            .iter()
+            .map(|&v| {
+                let v_bits = v.to_bits() as i32;
+                v_bits.wrapping_sub(base_i32)
+            })
+            .collect()
+    }
 }
 
 #[cfg(target_arch = "x86_64")]

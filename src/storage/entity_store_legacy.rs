@@ -914,49 +914,51 @@ impl ProximaEntityStore {
                     }
                 }
 
-                return Ok(results);
+                Ok(results)
             }
 
             #[cfg(not(test))]
-            for (entity_id, _header_bytes) in self.headers.read().unwrap().iter().skip(start_idx) {
-                if count >= batch_size {
-                    break;
-                }
+            {
+                for (entity_id, _header_bytes) in self.headers.read().unwrap().iter().skip(start_idx) {
+                    if count >= batch_size {
+                        break;
+                    }
 
-                if entity_id.starts_with(&format!("{}_", collection_id)) {
-                    let mut all_match = true;
+                    if entity_id.starts_with(&format!("{}_", collection_id)) {
+                        let mut all_match = true;
 
-                    // Early exit on first non-matching filter
-                    // TODO: Implement header-level filtering once EntityHeader serialization is resolved
-                    // For now, defer to entity-level filtering
-                    for filter in filters {
-                        if let Ok(Some(entity)) = self
-                            .get_entity(collection_id, entity_id, false, false)
-                            .await
-                        {
-                            if !self.entity_matches_metadata_filter(&entity, filter) {
+                        // Early exit on first non-matching filter
+                        // TODO: Implement header-level filtering once EntityHeader serialization is resolved
+                        // For now, defer to entity-level filtering
+                        for filter in filters {
+                            if let Ok(Some(entity)) = self
+                                .get_entity(collection_id, entity_id, false, false)
+                                .await
+                            {
+                                if !self.entity_matches_metadata_filter(&entity, filter) {
+                                    all_match = false;
+                                    break;
+                                }
+                            } else {
                                 all_match = false;
                                 break;
                             }
-                        } else {
-                            all_match = false;
-                            break;
                         }
-                    }
 
-                    if all_match {
-                        if let Ok(Some(entity)) = self
-                            .get_entity(collection_id, entity_id, false, false)
-                            .await
-                        {
-                            results.push(entity);
-                            count += 1;
+                        if all_match {
+                            if let Ok(Some(entity)) = self
+                                .get_entity(collection_id, entity_id, false, false)
+                                .await
+                            {
+                                results.push(entity);
+                                count += 1;
+                            }
                         }
                     }
                 }
-            }
 
-            Ok(results)
+                Ok(results)
+            }
         })
     }
 

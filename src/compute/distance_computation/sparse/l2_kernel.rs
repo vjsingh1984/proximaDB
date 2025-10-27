@@ -173,16 +173,19 @@ pub fn sparse_l2_distance(a: &[f32], b: &[f32]) -> f32 {
     // Use SIMD if available
     #[cfg(target_arch = "aarch64")]
     {
-        return sparse_l2_distance_neon(a, b);
+        sparse_l2_distance_neon(a, b)
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     {
-        return sparse_l2_distance_avx2(a, b);
+        sparse_l2_distance_avx2(a, b)
     }
 
-    // Fallback to scalar
-    sparse_l2_distance_scalar(a, b)
+    #[cfg(not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "avx2"))))]
+    {
+        // Fallback to scalar
+        sparse_l2_distance_scalar(a, b)
+    }
 }
 
 /// Sparse L2 distance squared (adaptive, avoids sqrt)

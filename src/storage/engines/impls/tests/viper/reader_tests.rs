@@ -1285,8 +1285,8 @@ async fn create_test_parquet_file(
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         "null".to_string()
                     }
-                    _ => "unknown".to_string(),
                     None => String::new(),
+                    _ => "unknown".to_string(),
                 };
                 struct_builder
                     .field_builder::<StringBuilder>(1)
