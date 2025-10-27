@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use super::types::{
     CheckpointCollectionState, GlobalCheckpoint, GlobalLsnAllocator, GlobalManifestEntry,
@@ -319,20 +319,20 @@ impl GlobalManifestService {
     /// Unified approach: Reads all manifest_*.jsonl files (sorted by LSN)
     /// Works consistently for local, S3, Azure, GCS storage
     async fn load_from_disk(&self) -> Result<()> {
-        info!("🔍 DEBUG: Loading manifest from: {}", self.wal_base_url);
+        trace!("🔍 : Loading manifest from: {}", self.wal_base_url);
         let fs = self.filesystem_factory.get_filesystem(&self.wal_base_url)?;
-        info!("🔍 DEBUG: Got filesystem for manifest");
+        trace!("🔍 : Got filesystem for manifest");
 
         // List all manifest segment files: manifest_{min_lsn}_{max_lsn}.jsonl
         let dir_entries = fs.list(&self.wal_base_url).await.unwrap_or_default();
-        info!("🔍 DEBUG: Listed {} directory entries", dir_entries.len());
+        trace!("🔍 : Listed {} directory entries", dir_entries.len());
 
         let mut manifest_files: Vec<String> = dir_entries
             .into_iter()
             .filter(|entry| {
                 let matches = entry.name.contains("manifest_") && entry.name.ends_with(".jsonl");
                 if matches {
-                    info!("🔍 DEBUG: Found manifest file: {}", entry.name);
+                    trace!("🔍 : Found manifest file: {}", entry.name);
                 }
                 matches
             })

@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Json as JsonResponse},
 };
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};

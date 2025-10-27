@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, anyhow};
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 use super::{
     GlobalManifestEntry, GlobalManifestService, GlobalManifestServiceConfig, WalEntryStatus,
@@ -50,7 +50,7 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
         url
     };
 
-    info!("🔍 DEBUG: Final wal_base_url: {}", wal_base_url);
+    trace!("🔍 : Final wal_base_url: {}", wal_base_url);
 
     if config.multi_disk.data_directories.len() > 1 {
         info!(

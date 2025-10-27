@@ -1055,9 +1055,9 @@ impl FilesystemFactory {
 
     /// Cross-storage atomic operations - handles full URLs for source and destination
     pub async fn copy_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
-        info!("📋 [DEBUG] copy_atomic START");
-        info!("    from_url: {}", from_url);
-        info!("    to_url: {}", to_url);
+        trace!("📋 [] copy_atomic START");
+        trace!("from_url: {}", from_url);
+        trace!("to_url: {}", to_url);
         debug!("📋 [DEBUG] copy_atomic START");
         debug!("    from_url: {}", from_url);
         debug!("    to_url: {}", to_url);
@@ -1069,15 +1069,15 @@ impl FilesystemFactory {
         let from_path = Self::resolve_path(from_url)?;
         let to_path = Self::resolve_path(to_url)?;
 
-        info!("    from_path: {}", from_path);
-        info!("    to_path: {}", to_path);
+        trace!("from_path: {}", from_path);
+        trace!("to_path: {}", to_path);
         debug!("    [DEBUG] from_path resolved: {}", from_path);
         debug!("    [DEBUG] to_path resolved: {}", to_path);
 
         // Open source and destination files for streaming
-        info!("    📖 Opening source file for streaming...");
+        trace!("Opening source file for streaming...");
         let mut source_file = from_fs.open_file(&from_path, false).await?;
-        info!("    💾 Opening destination file for streaming...");
+        trace!("Opening destination file for streaming...");
         let mut dest_file = to_fs.open_file(&to_path, true).await?;
 
         // Stream data in chunks
@@ -1094,42 +1094,42 @@ impl FilesystemFactory {
         dest_file.flush().await?;
         dest_file.sync_all().await?;
 
-        info!("    ✅ Streaming copy complete");
+        trace!("Streaming copy complete");
         debug!("    ✅ [DEBUG] Streaming copy complete");
 
-        info!("📋 [DEBUG] copy_atomic COMPLETE");
+        trace!("📋 [] copy_atomic COMPLETE");
         debug!("📋 [DEBUG] copy_atomic COMPLETE");
         Ok(())
     }
 
     /// Move operation with atomic cross-storage support
     pub async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
-        info!("🚚 [DEBUG] move_atomic START");
-        info!("    from_url: {}", from_url);
-        info!("    to_url: {}", to_url);
+        trace!("🚚 [] move_atomic START");
+        trace!("from_url: {}", from_url);
+        trace!("to_url: {}", to_url);
         debug!("🚚 [DEBUG] move_atomic called:");
         debug!("    from_url: {}", from_url);
         debug!("    to_url: {}", to_url);
 
         // Copy first using streaming copy
-        info!("    📋 Copying file atomically (streaming)...");
+        trace!("Copying file atomically (streaming)...");
         debug!("    📋 [DEBUG] Copying file atomically (streaming)...");
         self.copy_atomic(from_url, to_url).await?;
-        info!("    ✅ Streaming copy successful");
+        debug!("Streaming copy successful");
         debug!("    ✅ [DEBUG] Streaming copy successful");
 
         // Delete source after successful copy
-        info!("    🗑️ Deleting source file...");
+        trace!("Deleting source file...");
         debug!("    🗑️ [DEBUG] Deleting source file...");
         let from_fs = self.get_filesystem(from_url)?;
         let from_path = Self::resolve_path(from_url)?;
-        info!("    from_path extracted: {}", from_path);
+        trace!("from_path extracted: {}", from_path);
         debug!("    [DEBUG] from_path extracted: {}", from_path);
         from_fs.delete(&from_path).await?;
-        info!("    ✅ Delete successful");
+        trace!("Delete successful");
         debug!("    ✅ [DEBUG] Delete successful");
 
-        info!("🚚 [DEBUG] move_atomic COMPLETE");
+        trace!("🚚 [] move_atomic COMPLETE");
         debug!("🚚 [DEBUG] move_atomic COMPLETE");
         Ok(())
     }

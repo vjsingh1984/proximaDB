@@ -1706,7 +1706,7 @@ impl WriteAheadLogManager {
                     data
                 }
                 Err(e) => {
-                    info!("🔄 DEBUG ERROR: Serialization failed: {:?}", e);
+                    trace!("🔄  ERROR: Serialization failed: {:?}", e);
                     return Err(e).context("Failed to serialize batch for WAL");
                 }
             };
@@ -1785,12 +1785,12 @@ impl WriteAheadLogManager {
                     trace!("WAL: write_batch_with_sync SUCCESS: {:?}", file_info);
                 }
                 Err(e) => {
-                    info!("🔄 DEBUG ERROR: write_batch_with_sync FAILED: {:?}", e);
-                    info!("🔄 DEBUG ERROR: Error source chain:");
+                    trace!("🔄  ERROR: write_batch_with_sync FAILED: {:?}", e);
+                    trace!("🔄  ERROR: Error source chain:");
                     let mut source = e.source();
                     let mut level = 1;
                     while let Some(err) = source {
-                        info!("🔄 DEBUG ERROR:   Level {}: {}", level, err);
+                        trace!("🔄  ERROR:   Level {}: {}", level, err);
                         source = err.source();
                         level += 1;
                     }

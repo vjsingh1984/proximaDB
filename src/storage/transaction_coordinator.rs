@@ -531,7 +531,7 @@ impl TransactionCoordinator {
 
     /// Finalize atomic operation - move from staging to final location
     pub async fn finalize_atomic_operation(&self, operation_id: &OperationId) -> Result<()> {
-        info!("🔄 [DEBUG] Finalizing atomic operation: {}", operation_id);
+        trace!("🔄 [] Finalizing atomic operation: {}", operation_id);
         debug!("🔄 [DEBUG] Finalizing atomic operation: {}", operation_id);
 
         // Get operation metadata from DashMap
@@ -541,7 +541,7 @@ impl TransactionCoordinator {
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
-        info!("📋 [DEBUG] Operation metadata:");
+        trace!("📋 [] Operation metadata:");
         info!("    operation_id: {}", metadata.operation_id);
         info!("    staging_url: {}", metadata.staging_url);
         info!("    final_url: {}", metadata.final_url);
@@ -624,7 +624,7 @@ impl TransactionCoordinator {
                     entry.name
                 );
 
-                info!("🔄 [DEBUG] Moving file:");
+                trace!("🔄 [] Moving file:");
                 info!("    From (staging): {}", staging_file_url);
                 info!("    To (final):     {}", final_file_url);
                 debug!("🔄 [DEBUG] Moving file:");
@@ -638,8 +638,8 @@ impl TransactionCoordinator {
                     .await
                 {
                     Ok(_) => {
-                        info!("    ✅ [DEBUG] Move successful");
-                        info!("    ✅ [DEBUG] Move successful");
+                        trace!("    ✅ [] Move successful");
+                        trace!("    ✅ [] Move successful");
                         // Verify the file exists at the final location
                         if let Ok(fs) = self.filesystem.get_filesystem(&final_file_url) {
                             if let Ok(exists) = fs.exists(&final_file_url).await {

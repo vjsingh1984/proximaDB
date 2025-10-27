@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::storage::BatchId;
 use crate::storage::persistence::write_ahead_log::{
@@ -163,7 +163,7 @@ impl RecoveryManager {
             .context("Failed to start recovery phase")?;
 
         // Use global manifest for proper LSN ordering
-        info!("🔍 DEBUG: Getting active entries from global manifest...");
+        trace!("🔍 : Getting active entries from global manifest...");
         let all_entries =
             crate::storage::persistence::write_ahead_log::manifest::get_active_entries().await;
         info!(
