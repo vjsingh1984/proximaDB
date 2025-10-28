@@ -74,7 +74,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::core::bloom::BloomFilterStrategy;
 
@@ -1736,26 +1736,51 @@ impl WriteAheadLogManager {
             };
             trace!("WAL: should_sync = {}", should_sync);
 
-            // Get base location for this collection
-            let assigned = self.assigned_collections.read().await;
-            let base_location = assigned
-                .get(collection_id)
-                .map(|assignment| {
-                    info!(
-                        "🔄 DEBUG: Found assignment for collection {}: {}",
-                        collection_id, assignment.base_location
-                    );
-                    assignment.base_location.clone()
-                })
-                .unwrap_or_else(|| {
-                    info!(
-                        "🔄 DEBUG: No assignment found for {}, using default",
-                        collection_id
-                    );
-                    "/tmp/proximadb2/data".to_string()
-                });
-            drop(assigned);
-            trace!("WAL: base_location = {}", base_location);
+            // Get base location for this collection from metadata provider
+            // CRITICAL FIX: Don't use assigned_collections cache (never populated)
+            // Instead, query actual collection metadata for storage_assignment
+            let base_location = {
+                let metadata_provider_lock = self.metadata_provider.read().await;
+                if let Some(provider) = metadata_provider_lock.as_ref() {
+                    // Get collection to find its actual storage assignment
+                    match provider.get_collection(collection_id).await {
+                        Ok(Some(collection)) => {
+                            if let Some(assignment) = collection.storage_assignment {
+                                eprintln!("✅ DEBUG: Found storage assignment from collection: {}", assignment.base_location);
+                                trace!("WAL: base_location = {}", assignment.base_location);
+                                assignment.base_location.clone()
+                            } else {
+                                eprintln!("⚠️ DEBUG: Collection has no storage_assignment!");
+                                warn!("Collection {} has no storage_assignment, using first storage location", collection_id);
+                                // Fallback to first configured storage location
+                                self.config.multi_disk.data_directories.get(0)
+                                    .cloned()
+                                    .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
+                            }
+                        }
+                        Ok(None) => {
+                            eprintln!("⚠️ DEBUG: Collection {} not found in metadata!", collection_id);
+                            warn!("Collection {} not found, using first storage location", collection_id);
+                            self.config.multi_disk.data_directories.get(0)
+                                .cloned()
+                                .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
+                        }
+                        Err(e) => {
+                            eprintln!("❌ DEBUG: Error getting collection {}: {}", collection_id, e);
+                            error!("Failed to get collection {}: {}", collection_id, e);
+                            self.config.multi_disk.data_directories.get(0)
+                                .cloned()
+                                .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
+                        }
+                    }
+                } else {
+                    eprintln!("⚠️ DEBUG: No metadata provider available!");
+                    warn!("No metadata provider, using first storage location");
+                    self.config.multi_disk.data_directories.get(0)
+                        .cloned()
+                        .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
+                }
+            };
 
             // Create disk manager and write batch
             trace!("WAL: Creating FilesystemFactory");
@@ -1897,13 +1922,36 @@ impl WriteAheadLogManager {
                 _ => false,
             };
 
-            // Get base location for this collection
-            let assigned = self.assigned_collections.read().await;
-            let base_location = assigned
-                .get(&collection_id)
-                .map(|assignment| assignment.base_location.clone())
-                .unwrap_or_else(|| "/tmp/proximadb2/data".to_string());
-            drop(assigned);
+            // Get base location for this collection from metadata provider
+            // CRITICAL FIX: Query collection metadata for actual storage_assignment
+            let base_location = {
+                let metadata_provider_lock = self.metadata_provider.read().await;
+                if let Some(provider) = metadata_provider_lock.as_ref() {
+                    match provider.get_collection(&collection_id).await {
+                        Ok(Some(collection)) => {
+                            if let Some(assignment) = collection.storage_assignment {
+                                eprintln!("✅ DEBUG: Found storage assignment: {}", assignment.base_location);
+                                assignment.base_location.clone()
+                            } else {
+                                eprintln!("⚠️ DEBUG: No storage_assignment in collection");
+                                self.config.multi_disk.data_directories.get(0)
+                                    .cloned()
+                                    .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
+                            }
+                        }
+                        _ => {
+                            eprintln!("⚠️ DEBUG: Collection lookup failed, using fallback");
+                            self.config.multi_disk.data_directories.get(0)
+                                .cloned()
+                                .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
+                        }
+                    }
+                } else {
+                    self.config.multi_disk.data_directories.get(0)
+                        .cloned()
+                        .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
+                }
+            };
 
             // Create disk manager and write batch
             let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
