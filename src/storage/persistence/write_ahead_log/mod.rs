@@ -1246,42 +1246,32 @@ impl WriteAheadLogManager {
     }
 
     /// Get recovery manager for WAL recovery operations
-    /// Lazy-initializes if not yet created
+    /// Returns cached recovery manager if available
+    /// Use get_recovery_manager() to create/cache if not exists
     pub fn recovery_manager(&self) -> Option<Arc<RecoveryManager>> {
-        eprintln!("🔍 DEBUG: recovery_manager() called");
+        eprintln!("🔍 DEBUG: recovery_manager() called (returns cached value only)");
 
         // Use try_read to avoid blocking - recovery manager is set once at startup
         match self.recovery_manager_cache.try_read() {
             Ok(cache) => {
                 if cache.is_some() {
-                    eprintln!("🔍 DEBUG: recovery_manager_cache has cached manager");
+                    eprintln!("✅ DEBUG: recovery_manager_cache has cached manager");
                     cache.as_ref().map(|rm| Arc::new(rm.clone()))
                 } else {
-                    eprintln!("⚠️ DEBUG: recovery_manager_cache is None - need lazy init");
-                    // Cache is None - need to initialize
-                    // Drop read lock and initialize
-                    drop(cache);
-                    // Call get_recovery_manager() which will create and cache
-                    // Use blocking call since we're in non-async context
-                    match tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(self.get_recovery_manager())
-                    }) {
-                        Ok(manager) => {
-                            eprintln!("✅ DEBUG: Lazy-initialized recovery manager");
-                            Some(Arc::new(manager))
-                        }
-                        Err(e) => {
-                            eprintln!("❌ DEBUG: Failed to lazy-init recovery manager: {}", e);
-                            None
-                        }
-                    }
+                    eprintln!("⚠️ DEBUG: recovery_manager_cache is None - caller should use get_recovery_manager()");
+                    None
                 }
             }
             Err(_) => {
                 eprintln!("⚠️ DEBUG: Can't acquire read lock, trying blocking read");
                 // If we can't acquire read lock, try blocking read
                 let cache = self.recovery_manager_cache.blocking_read();
-                cache.as_ref().map(|rm| Arc::new(rm.clone()))
+                if cache.is_some() {
+                    cache.as_ref().map(|rm| Arc::new(rm.clone()))
+                } else {
+                    eprintln!("⚠️ DEBUG: blocking_read also returned None");
+                    None
+                }
             }
         }
     }

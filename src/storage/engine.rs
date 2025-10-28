@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Calculate cosine similarity between two vectors
 fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -282,16 +282,19 @@ impl StorageEngine {
         info!("🔄 STORAGE_ENGINE: Starting WAL recovery for all collections...");
 
         // Get recovery manager from WAL manager
-        eprintln!("🔍 DEBUG: Checking recovery_manager...");
-        let recovery_manager = match self.write_ahead_log_manager.recovery_manager() {
-            Some(manager) => {
-                eprintln!("🔍 DEBUG: Recovery manager EXISTS");
-                manager
+        // CRITICAL FIX: Call async get_recovery_manager() to create/cache if not exists
+        eprintln!("🔍 DEBUG: Getting recovery manager (will create if needed)...");
+        let recovery_manager = match self.write_ahead_log_manager.get_recovery_manager().await {
+            Ok(manager) => {
+                eprintln!("✅ DEBUG: Recovery manager obtained successfully");
+                Arc::new(manager)
             }
-            None => {
-                eprintln!("❌ DEBUG: Recovery manager is NONE - THIS IS THE BUG!");
-                warn!("⚠️  STORAGE_ENGINE: No recovery manager available, skipping WAL recovery");
-                return Ok(());
+            Err(e) => {
+                eprintln!("❌ DEBUG: Failed to get recovery manager: {}", e);
+                error!("❌ STORAGE_ENGINE: Failed to get recovery manager: {}", e);
+                return Err(crate::storage::StorageError::WalError(format!(
+                    "Failed to get recovery manager: {}", e
+                )));
             }
         };
 
