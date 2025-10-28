@@ -1246,12 +1246,39 @@ impl WriteAheadLogManager {
     }
 
     /// Get recovery manager for WAL recovery operations
-    /// Returns None if recovery manager is not initialized
+    /// Lazy-initializes if not yet created
     pub fn recovery_manager(&self) -> Option<Arc<RecoveryManager>> {
+        eprintln!("🔍 DEBUG: recovery_manager() called");
+
         // Use try_read to avoid blocking - recovery manager is set once at startup
         match self.recovery_manager_cache.try_read() {
-            Ok(cache) => cache.as_ref().map(|rm| Arc::new(rm.clone())),
+            Ok(cache) => {
+                if cache.is_some() {
+                    eprintln!("🔍 DEBUG: recovery_manager_cache has cached manager");
+                    cache.as_ref().map(|rm| Arc::new(rm.clone()))
+                } else {
+                    eprintln!("⚠️ DEBUG: recovery_manager_cache is None - need lazy init");
+                    // Cache is None - need to initialize
+                    // Drop read lock and initialize
+                    drop(cache);
+                    // Call get_recovery_manager() which will create and cache
+                    // Use blocking call since we're in non-async context
+                    match tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(self.get_recovery_manager())
+                    }) {
+                        Ok(manager) => {
+                            eprintln!("✅ DEBUG: Lazy-initialized recovery manager");
+                            Some(Arc::new(manager))
+                        }
+                        Err(e) => {
+                            eprintln!("❌ DEBUG: Failed to lazy-init recovery manager: {}", e);
+                            None
+                        }
+                    }
+                }
+            }
             Err(_) => {
+                eprintln!("⚠️ DEBUG: Can't acquire read lock, trying blocking read");
                 // If we can't acquire read lock, try blocking read
                 let cache = self.recovery_manager_cache.blocking_read();
                 cache.as_ref().map(|rm| Arc::new(rm.clone()))
@@ -2696,27 +2723,35 @@ impl WriteAheadLogManager {
     /// This allows external code to register storage engines before recovery
     /// IMPORTANT: Returns cached instance to ensure engine registration persists
     pub async fn get_recovery_manager(&self) -> Result<RecoveryManager> {
+        eprintln!("🔍 DEBUG: get_recovery_manager() called");
+
         // Check if we already have a cached instance
         {
             let cache = self.recovery_manager_cache.read().await;
             if let Some(ref manager) = *cache {
+                eprintln!("♻️ DEBUG: Returning cached RecoveryManager");
                 debug!("♻️ Returning cached RecoveryManager instance");
                 return Ok(manager.clone());
             }
+            eprintln!("🆕 DEBUG: No cached manager, creating new one");
         }
 
         // Create new instance if not cached
+        eprintln!("🔨 DEBUG: Creating RecoveryManager with metadata provider");
         debug!("🆕 Creating new RecoveryManager instance with metadata provider");
 
         // Create filesystem factory for recovery
+        eprintln!("🔨 DEBUG: Creating FilesystemFactory for recovery");
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
                 .await?,
         );
+        eprintln!("✅ DEBUG: FilesystemFactory created");
 
         // Create RecoveryManager instance with metadata provider
+        eprintln!("🔨 DEBUG: Creating RecoveryManager instance");
         let recovery_manager = RecoveryManager::new(
             self.config.clone(),
             self.shared_wal_behavior
@@ -2725,14 +2760,17 @@ impl WriteAheadLogManager {
             filesystem,
             self.metadata_provider.clone(),
         );
+        eprintln!("✅ DEBUG: RecoveryManager created successfully");
 
         // Cache for future use
         {
             let mut cache = self.recovery_manager_cache.write().await;
             *cache = Some(recovery_manager.clone());
+            eprintln!("💾 DEBUG: Cached RecoveryManager for future use");
             debug!("💾 Cached RecoveryManager instance for reuse");
         }
 
+        eprintln!("✅ DEBUG: get_recovery_manager() returning new manager");
         Ok(recovery_manager)
     }
 
