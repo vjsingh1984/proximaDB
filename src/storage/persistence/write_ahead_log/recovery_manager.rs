@@ -110,7 +110,10 @@ impl RecoveryManager {
             disk_manager,
             storage_engines: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             flush_coordinator: Arc::new(WALFlushCoordinator::new()), // Flush coordinator is internal to recovery
-            recovery_mode: RecoveryMode::DirectToStorage,
+            // CRITICAL FIX: Use ViaMemtable for startup recovery since storage engines aren't initialized yet
+            // This recovers vectors to memtable where they're immediately searchable
+            // Can be flushed to storage later when engines are ready
+            recovery_mode: RecoveryMode::ViaMemtable,
             stats: Arc::new(tokio::sync::RwLock::new(RecoveryStats::default())),
             metadata_provider,
         }
