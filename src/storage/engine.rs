@@ -220,8 +220,14 @@ impl StorageEngine {
     /// Set the metadata provider - used to inject CollectionService after construction
     pub async fn set_metadata_provider(&self, provider: Arc<dyn InternalCollectionProvider>) {
         let mut lock = self.metadata_provider.write().await;
-        *lock = Some(provider);
+        *lock = Some(provider.clone());
         info!("✅ Metadata provider injected into StorageEngine");
+
+        // CRITICAL: Also set metadata provider on WAL manager so it can query storage assignments
+        self.write_ahead_log_manager
+            .set_metadata_provider(provider)
+            .await;
+        info!("✅ Metadata provider propagated to WAL manager");
     }
 
     /// Get metadata provider - returns None if not yet injected
