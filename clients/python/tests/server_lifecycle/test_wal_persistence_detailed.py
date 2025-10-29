@@ -62,9 +62,20 @@ def start_server():
         stderr=subprocess.PIPE
     )
 
-    time.sleep(5)
-    print("✅ Server started")
-    return True
+    # Wait for server to be ready (poll health endpoint)
+    import requests
+    for i in range(30):  # Try for 30 seconds
+        time.sleep(1)
+        try:
+            response = requests.get("http://localhost:5678/health", timeout=1)
+            if response.status_code == 200:
+                print(f"✅ Server started (ready after {i+1}s)")
+                return True
+        except:
+            continue
+
+    print("❌ Server failed to start after 30s")
+    return False
 
 def stop_server():
     """Stop server"""
