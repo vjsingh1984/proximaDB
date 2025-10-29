@@ -389,6 +389,8 @@ pub struct WriteAheadLogManagerRegistry {
     pool_config: WriteAheadLogManagerPoolConfig,
     /// Next manager ID for creating new instances
     next_manager_id: Arc<tokio::sync::Mutex<u64>>,
+    /// Metadata provider shared across all pool instances
+    metadata_provider: Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>,
 }
 
 /// WriteAheadLogManager pool entry with workload metrics
@@ -588,7 +590,18 @@ impl WriteAheadLogManagerRegistry {
             manager_pool: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             pool_config,
             next_manager_id: Arc::new(tokio::sync::Mutex::new(1)),
+            metadata_provider: Arc::new(tokio::sync::RwLock::new(None)),
         }
+    }
+
+    /// Set metadata provider for all pool instances
+    pub async fn set_metadata_provider(
+        &self,
+        provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
+    ) {
+        let mut lock = self.metadata_provider.write().await;
+        *lock = Some(provider);
+        tracing::info!("📋 Metadata provider set on Registry for all pool instances");
     }
 
     /// Get or assign WriteAheadLogManager for a collection using adaptive pool scaling

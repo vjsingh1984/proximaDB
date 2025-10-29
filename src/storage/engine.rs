@@ -225,9 +225,14 @@ impl StorageEngine {
 
         // CRITICAL: Also set metadata provider on WAL manager so it can query storage assignments
         self.write_ahead_log_manager
-            .set_metadata_provider(provider)
+            .set_metadata_provider(provider.clone())
             .await;
         info!("✅ Metadata provider propagated to WAL manager");
+
+        // CRITICAL: Also set on WAL Registry so ALL pool instances get it
+        let registry = crate::storage::persistence::write_ahead_log::get_write_ahead_log_manager_registry();
+        registry.set_metadata_provider(provider).await;
+        info!("✅ Metadata provider propagated to WAL Registry (pool)");
     }
 
     /// Get metadata provider - returns None if not yet injected
