@@ -943,11 +943,6 @@ static GLOBAL_WRITE_BUFFER_BEHAVIOR: GlobalWriteBufferBehaviorSingleton =
         wal_behavior: std::sync::OnceLock::new(),
     };
 
-/// Global metadata provider - shared across all WAL pool instances for storage assignment lookup
-static GLOBAL_METADATA_PROVIDER: std::sync::OnceLock<
-    Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>
-> = std::sync::OnceLock::new();
-
 /// Global registry instance for WriteAheadLogManager per collection architecture
 static WAL_MANAGER_REGISTRY: std::sync::OnceLock<WriteAheadLogManagerRegistry> =
     std::sync::OnceLock::new();
@@ -1200,7 +1195,7 @@ impl WriteAheadLogManager {
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            metadata_provider: GLOBAL_METADATA_PROVIDER.get_or_init(|| Arc::new(tokio::sync::RwLock::new(None))).clone(),
+            metadata_provider: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -1241,15 +1236,8 @@ impl WriteAheadLogManager {
         provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
     ) {
         let mut metadata_provider = self.metadata_provider.write().await;
-        *metadata_provider = Some(provider.clone());
+        *metadata_provider = Some(provider);
         tracing::info!("📋 Metadata provider attached to WAL manager for recovery");
-
-        // CRITICAL: Also set global so ALL pool instances can access it
-        if let Some(global) = GLOBAL_METADATA_PROVIDER.get() {
-            let mut global_lock = global.write().await;
-            *global_lock = Some(provider);
-            tracing::info!("📋 Metadata provider set on global for pool instances");
-        }
     }
 
     /// Get WAL configuration (read-only access)
