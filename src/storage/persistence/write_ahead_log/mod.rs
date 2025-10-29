@@ -681,6 +681,7 @@ impl WriteAheadLogManagerRegistry {
                     strategy,
                     config.clone(),
                     manager_id.clone(),
+                    None,
                 )
                 .await?,
             );
@@ -822,7 +823,7 @@ impl WriteAheadLogManagerRegistry {
             WALBatchFactory::create_batch_serialization_strategy(strategy_type, config, filesystem)
                 .await?;
         let manager = Arc::new(
-            WriteAheadLogManager::new_pool_manager(strategy, config.clone(), manager_id.clone())
+            WriteAheadLogManager::new_pool_manager(strategy, config.clone(), manager_id.clone(),  None)
                 .await?,
         );
 
@@ -1068,7 +1069,7 @@ impl WriteAheadLogManager {
     /// Create new WriteAheadLogManager
     pub async fn new(strategy: Box<dyn WALBatchStrategy>, config: WALConfig) -> Result<Self> {
         // Use new_pool_manager with a default manager ID for backwards compatibility
-        Self::new_pool_manager(strategy, config, "default_manager".to_string()).await
+        Self::new_pool_manager(strategy, config, "default_manager".to_string(), None).await
     }
 
     /// Create new WriteAheadLogManager for specific collections with shared global memtable
@@ -1141,6 +1142,7 @@ impl WriteAheadLogManager {
         _strategy: Box<dyn WALBatchStrategy>,
         config: WALConfig,
         manager_id: String,
+        parent_metadata_provider: Option<Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>>,
     ) -> Result<Self> {
         tracing::debug!(
             "🏊 Creating pool WriteAheadLogManager {} (shared global memtable)",
@@ -1195,7 +1197,7 @@ impl WriteAheadLogManager {
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            metadata_provider: Arc::new(tokio::sync::RwLock::new(None)),
+            metadata_provider: parent_metadata_provider.unwrap_or_else(|| Arc::new(tokio::sync::RwLock::new(None))),
         })
     }
 
