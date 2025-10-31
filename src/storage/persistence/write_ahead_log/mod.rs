@@ -1799,6 +1799,7 @@ impl WriteAheadLogManager {
 
             // Create disk manager and write batch
             trace!("WAL: Creating FilesystemFactory");
+            eprintln!("📍 DEBUG: base_location being used = {}", base_location);
             let filesystem_factory = match FilesystemFactory::create_default().await {
                 Ok(factory) => {
                     trace!("WAL: FilesystemFactory created successfully");
