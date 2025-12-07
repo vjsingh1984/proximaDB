@@ -15,6 +15,12 @@ Proxima provides unified, high-performance block storage infrastructure with aut
 **Key Benefits:** 50-90% code reduction, consistent optimization, automatic hardware acceleration, zero-copy operations, and integrated cloud caching through UnifiedCachingFilesystem.
 ****
 
+[NOTE]
+====
+- Cloud backends and GPU acceleration are feature-gated/experimental; enable `aws`/`azure`/`gcp` features explicitly and ensure CUDA/Metal toolchains where applicable.
+- WAL pool metadata propagation is currently broken; ensure the WAL fix (see `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md`) is applied before relying on recovery paths that assume correct storage locations.
+====
+
 == Overview
 
 === What is Proxima?

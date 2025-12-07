@@ -86,8 +86,8 @@ class TestGrpcConnectionPool(BaseProximaDBTest):
             assert channel_ctx.channel is not None
             
             # Test actual connection by creating a stub
-            from proximadb import proximadb_pb2_grpc
-            stub = proximadb_pb2_grpc.ProximaDBStub(channel_ctx.channel)
+            from proximadb.v1 import vector_pb2_grpc
+            stub = vector_pb2_grpc.VectorServiceStub(channel_ctx.channel)
             
             # Verify stub is created (actual call would need proper request)
             assert stub is not None
@@ -113,16 +113,16 @@ class TestGrpcConnectionPool(BaseProximaDBTest):
         def use_connection(conn_id):
             with pool.get_connection() as channel_ctx:
                 # Simulate work with real channel
-                from proximadb import proximadb_pb2, proximadb_pb2_grpc
-                stub = proximadb_pb2_grpc.ProximaDBStub(channel_ctx.channel)
-                
+                from proximadb.v1 import collection_pb2_grpc, collection_types_pb2
+                stub = collection_pb2_grpc.CollectionServiceStub(channel_ctx.channel)
+
                 # Create a simple request
-                request = proximadb_pb2.HealthCheckRequest()
-                
+                request = collection_types_pb2.ListCollectionsRequest(limit=1)
+
                 try:
                     # Make actual gRPC call
-                    response = stub.HealthCheck(request)
-                    results.append((conn_id, True, response.healthy))
+                    response = stub.ListCollections(request, timeout=5.0)
+                    results.append((conn_id, True, len(response.collections)))
                 except Exception as e:
                     results.append((conn_id, False, str(e)))
                 

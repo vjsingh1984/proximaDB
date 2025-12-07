@@ -1,7 +1,38 @@
-= Recent Completions (Oct 2024)
+= Recent Completions
 :toc:
 
-== Type-Safe Metadata Filtering (NEW - Not in Dashboard)
+== Security & Enterprise Hardening (Dec 2025)
+
+**Status**: ✅ COMPLETED December 2025
+
+**Security Fixes**:
+- CORS middleware: Whitelist-based origin control (production) vs permissive (dev-only)
+- Rate limiting: Enabled by default (1000 req/min) for DoS protection
+- Request timeouts: 30s default to prevent slow-client attacks
+- Location: `src/network/middleware/cors.rs`, `timeout.rs`, `rate_limit.rs`
+
+**Code Quality**:
+- Fixed panics in quantized distance computation (`src/compute/distance_computation/quantized.rs`)
+- Fixed panics in HELIX engine (compaction, zone_maps)
+- Fixed panics in graph query parser (`src/graph/query/parser.rs`)
+- Replaced `unwrap()` calls with safe alternatives using `total_cmp()` for NaN handling
+
+**Dead Code Removal**:
+- Removed deprecated `sks_extensions.rs` module (~36KB)
+- Removed 10 backup files in viper tests (~180KB)
+- Removed obsolete `_old.rs` and `.orig` files
+
+**Enterprise Integration Patterns** (`src/core/resilience/`):
+- Circuit breaker pattern for cascading failure prevention
+- Exponential backoff retry logic with configurable presets
+- Health aggregator for dependency tracking
+- 24 tests covering all resilience patterns
+
+**Tests**: All 2674 library tests passing
+
+---
+
+== Type-Safe Metadata Filtering (Oct 2024 - Not in Dashboard)
 
 **Status**: ✅ COMPLETED October 2024
 

@@ -687,13 +687,13 @@ class ProximaDBClient:
             4: DistanceMetric.HAMMING,
             5: DistanceMetric.MANHATTAN,
             6: DistanceMetric.JACCARD,
-            7: DistanceMetric.CUSTOM,
+            7: DistanceMetric.ANGULAR,       # Fixed: was CUSTOM
             8: DistanceMetric.CHEBYSHEV,
             9: DistanceMetric.CANBERRA,
             10: DistanceMetric.MINKOWSKI,
-            11: DistanceMetric.ANGULAR,
-            12: DistanceMetric.BRAY_CURTIS,
-            13: DistanceMetric.HELLINGER,
+            11: DistanceMetric.BRAY_CURTIS,  # Fixed: was ANGULAR
+            12: DistanceMetric.HELLINGER,    # Fixed: was BRAY_CURTIS
+            13: DistanceMetric.CUSTOM,       # Fixed: was HELLINGER
         }
         return mapping.get(proto_metric, DistanceMetric.COSINE)
     
@@ -803,53 +803,36 @@ class ProximaDBClient:
         }
         return mapping.get(algo, 1)  # Default to HNSW
     
-    def _pydantic_to_proto_quantization_config(self, config: QuantizationConfig) -> 'pb2.QuantizationConfig':
+    def _pydantic_to_proto_quantization_config(self, config: QuantizationConfig):
         """Convert Pydantic QuantizationConfig to proto QuantizationConfig"""
-        proto_config = pb2.QuantizationConfig(enabled=config.enabled)
-        
-        # For simple quantization config, we need to map to the comprehensive proto structure
+        # Import the actual proto type
+        from .v1 import vector_types_pb2
+
+        proto_config = vector_types_pb2.QuantizationConfig()
+        proto_config.enabled = config.enabled
+
+        # Map quantization type to proto fields
         if config.enabled and config.type != QuantizationType.NONE:
-            # Create a search quantization config based on the simple config
-            search_config = pb2.SearchQuantizationConfig(
-                enabled=True,
-                adaptive_precision=True,
-                accuracy_threshold=config.accuracy_threshold or 0.95,
-                candidate_multiplier=3
-            )
-            
-            # Create the appropriate quantization level
-            level = pb2.QuantizationLevel()
             if config.type == QuantizationType.BINARY:
-                level.binary.CopyFrom(pb2.BinaryQuantization(
-                    threshold=config.threshold or 0.0,
-                    sign_based=True
-                ))
+                proto_config.enable_binary = True
+                if config.threshold is not None:
+                    proto_config.binary_threshold = config.threshold
             elif config.type == QuantizationType.SCALAR:
-                level.scalar.CopyFrom(pb2.ScalarQuantization(
-                    bits=config.bits_per_vector or 8,
-                    scale=1.0,
-                    offset=0.0,
-                    clamp_values=True
-                ))
+                proto_config.enable_int8 = True
+                # int8 is typically scalar quantization in the proto
             elif config.type == QuantizationType.PRODUCT:
-                level.pq.CopyFrom(pb2.ProductQuantization(
-                    bits_per_code=config.bits_per_subvector or 8,
-                    num_subvectors=config.num_subvectors or 8,
-                    adaptive_subvectors=True
-                ))
-            elif config.type == QuantizationType.UNIFORM:
-                level.uniform.CopyFrom(pb2.UniformQuantization(
-                    bits=8,
-                    scale=1.0,
-                    offset=0.0
-                ))
-            
-            search_config.default_level.CopyFrom(level)
-            proto_config.search_quantization.CopyFrom(search_config)
-            
-            if config.compression_ratio_target:
-                proto_config.compression_ratio_target = config.compression_ratio_target
-        
+                proto_config.enable_pq = True
+                if config.num_subvectors:
+                    proto_config.pq_segments = config.num_subvectors
+                if config.bits_per_subvector:
+                    proto_config.pq_bits = config.bits_per_subvector
+
+            # Common settings
+            if config.progressive_quantization:
+                proto_config.enable_progressive_search = True
+            if config.accuracy_threshold:
+                proto_config.quality_threshold = config.accuracy_threshold
+
         return proto_config
     
     def _proto_to_pydantic_health_status(self, proto_health: 'pb2.HealthResponse') -> HealthStatus:

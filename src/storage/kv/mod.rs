@@ -30,7 +30,10 @@ impl StorageKV for FsKV {
     async fn put(&self, key: &str, value: &[u8]) -> Result<()> {
         let path = self.path_for(key);
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
+            // Create parent directories - errors will surface when creating file
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                tracing::debug!("Note: Failed to create parent dirs {:?}: {}", parent, e);
+            }
         }
         let mut f = tokio::fs::File::create(&path).await?;
         use tokio::io::AsyncWriteExt;

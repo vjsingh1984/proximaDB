@@ -21,13 +21,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::decompression::DecompressionLayer;
 use tower_http::trace::TraceLayer;
 
 use super::v1::handlers::{AppState, create_router};
 use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
+use crate::network::middleware::backpressure::{BackpressureConfig, create_concurrency_limit_layer};
+use crate::network::middleware::cors::{CorsConfig, create_cors_layer};
+use crate::network::middleware::timeout::{TimeoutConfig, create_timeout_layer};
 
 /// REST server for ProximaDB
 pub struct RestServer {
@@ -35,14 +37,112 @@ pub struct RestServer {
     bind_addr: SocketAddr,
 }
 
+/// Security configuration for the REST server.
+///
+/// This struct bundles all security-related settings for the REST API.
+/// Defaults are configured for production security.
+#[derive(Debug, Clone)]
+pub struct RestServerSecurityConfig {
+    /// CORS configuration
+    pub cors: CorsConfig,
+    /// Request timeout configuration
+    pub timeout: TimeoutConfig,
+    /// Backpressure configuration for load shedding
+    pub backpressure: BackpressureConfig,
+    /// Whether to run in development mode (relaxed security)
+    pub development_mode: bool,
+}
+
+impl Default for RestServerSecurityConfig {
+    fn default() -> Self {
+        Self {
+            cors: CorsConfig::production(),
+            timeout: TimeoutConfig::default(),
+            backpressure: BackpressureConfig::default(),
+            development_mode: false,
+        }
+    }
+}
+
+impl RestServerSecurityConfig {
+    /// Create a development configuration with relaxed security.
+    ///
+    /// **WARNING**: Only use for local development. Never in production!
+    pub fn development() -> Self {
+        Self {
+            cors: CorsConfig::development(),
+            timeout: TimeoutConfig::default(),
+            backpressure: BackpressureConfig::disabled(),
+            development_mode: true,
+        }
+    }
+
+    /// Create a production configuration with specified allowed origins.
+    pub fn production_with_origins(origins: Vec<String>) -> Self {
+        let mut cors = CorsConfig::production();
+        cors.allowed_origins = origins;
+        Self {
+            cors,
+            timeout: TimeoutConfig::default(),
+            backpressure: BackpressureConfig::default(),
+            development_mode: false,
+        }
+    }
+}
+
 impl RestServer {
-    /// Create new REST server
+    /// Create new REST server with default security configuration.
+    ///
+    /// Uses production-safe defaults:
+    /// - CORS: No cross-origin requests allowed
+    /// - Timeout: 30 second request timeout
+    /// - Compression: Optional based on parameter
     pub fn new(
         bind_addr: SocketAddr,
         unified_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
+    ) -> Self {
+        Self::with_security(
+            bind_addr,
+            unified_handlers,
+            max_request_size_mb,
+            compression,
+            metrics_collector,
+            RestServerSecurityConfig::default(),
+        )
+    }
+
+    /// Create new REST server with development mode (relaxed security).
+    ///
+    /// **WARNING**: Only use for local development and testing!
+    pub fn new_development(
+        bind_addr: SocketAddr,
+        unified_handlers: Arc<UnifiedHandlers>,
+        max_request_size_mb: Option<u64>,
+        compression: bool,
+        metrics_collector: Option<Arc<MetricsCollector>>,
+    ) -> Self {
+        tracing::warn!("🚨 Starting REST server in DEVELOPMENT mode - security is relaxed!");
+        Self::with_security(
+            bind_addr,
+            unified_handlers,
+            max_request_size_mb,
+            compression,
+            metrics_collector,
+            RestServerSecurityConfig::development(),
+        )
+    }
+
+    /// Create new REST server with custom security configuration.
+    pub fn with_security(
+        bind_addr: SocketAddr,
+        unified_handlers: Arc<UnifiedHandlers>,
+        max_request_size_mb: Option<u64>,
+        compression: bool,
+        metrics_collector: Option<Arc<MetricsCollector>>,
+        security_config: RestServerSecurityConfig,
     ) -> Self {
         let state = AppState { unified_handlers };
 
@@ -71,6 +171,42 @@ impl RestServer {
         // Add dashboard route
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
 
+        // Create CORS layer using secure configuration
+        let cors_layer = create_cors_layer(&security_config.cors);
+
+        // Create timeout layer (if enabled)
+        let timeout_layer = create_timeout_layer(&security_config.timeout);
+
+        // Create concurrency limit layer for backpressure (if enabled)
+        let concurrency_layer = create_concurrency_limit_layer(&security_config.backpressure);
+
+        // Log security configuration
+        if security_config.development_mode {
+            tracing::warn!(
+                "⚠️  REST server security: DEVELOPMENT MODE - CORS allows any origin"
+            );
+        } else {
+            tracing::info!(
+                "🔒 REST server security: Production mode - CORS whitelist: {:?}",
+                security_config.cors.allowed_origins
+            );
+        }
+
+        // Log backpressure configuration
+        if security_config.backpressure.enabled {
+            tracing::info!(
+                "🛡️  Backpressure enabled: max {} concurrent requests",
+                security_config.backpressure.max_concurrent_requests
+            );
+        }
+
+        // Apply concurrency limit layer first (if enabled) for early rejection
+        let base_router = if let Some(concurrency) = concurrency_layer {
+            base_router.layer(concurrency)
+        } else {
+            base_router
+        };
+
         let router = if compression {
             // Create compression layer with support for multiple algorithms
             // Priority order (fastest to best compression): deflate, gzip, zstd, brotli
@@ -87,31 +223,31 @@ impl RestServer {
                 .br(true)
                 .zstd(true);
 
-            base_router.layer(
-                ServiceBuilder::new()
-                    .layer(DefaultBodyLimit::max(max_size_bytes as usize))
-                    .layer(decompression_layer) // Handle compressed requests
-                    .layer(compression_layer) // Compress responses
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_origin(Any)
-                            .allow_methods(Any)
-                            .allow_headers(Any),
-                    ),
-            )
+            let service_builder = ServiceBuilder::new()
+                .layer(DefaultBodyLimit::max(max_size_bytes as usize))
+                .layer(decompression_layer) // Handle compressed requests
+                .layer(compression_layer) // Compress responses
+                .layer(TraceLayer::new_for_http())
+                .layer(cors_layer);
+
+            // Add timeout layer if enabled
+            if let Some(timeout) = timeout_layer {
+                base_router.layer(service_builder.layer(timeout))
+            } else {
+                base_router.layer(service_builder)
+            }
         } else {
-            base_router.layer(
-                ServiceBuilder::new()
-                    .layer(DefaultBodyLimit::max(max_size_bytes as usize))
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_origin(Any)
-                            .allow_methods(Any)
-                            .allow_headers(Any),
-                    ),
-            )
+            let service_builder = ServiceBuilder::new()
+                .layer(DefaultBodyLimit::max(max_size_bytes as usize))
+                .layer(TraceLayer::new_for_http())
+                .layer(cors_layer);
+
+            // Add timeout layer if enabled
+            if let Some(timeout) = timeout_layer {
+                base_router.layer(service_builder.layer(timeout))
+            } else {
+                base_router.layer(service_builder)
+            }
         };
 
         Self { router, bind_addr }

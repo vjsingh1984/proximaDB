@@ -28,7 +28,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1},
-    combinator::{map, opt, recognize},
+    combinator::{map, map_res, opt, recognize},
     multi::{many0, separated_list0},
     sequence::{delimited, preceded, separated_pair, tuple},
 };
@@ -90,8 +90,8 @@ fn string_literal(input: &str) -> IResult<&str, String> {
 
 // Helper to parse integer literals
 fn integer_literal(input: &str) -> IResult<&str, i64> {
-    map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
-        s.parse::<i64>().unwrap()
+    map_res(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
+        s.parse::<i64>()
     })(input)
 }
 

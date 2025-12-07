@@ -233,7 +233,8 @@ impl ZoneMapIndex {
             .collect();
 
         // Sort by score (lower is better)
-        block_scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        // Use total_cmp for safe NaN handling
+        block_scores.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         // Select blocks likely to contain top-k results
         let blocks_to_scan = (k as f32 * 1.5).ceil() as usize; // Scan 1.5x blocks

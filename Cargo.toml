@@ -24,6 +24,11 @@ path = "src/bin/server.rs"
 name = "proximadb-bench"
 path = "src/bin/proximadb-bench-consolidated.rs"
 
+# Python embedded library (cdylib for PyO3)
+[lib]
+name = "proximadb"
+crate-type = ["rlib", "cdylib"]
+
 
 
 [dependencies]
@@ -60,7 +65,7 @@ prost = "0.12"
 prost-types = { version = "0.12" }
 hyper = "0.14"  # Used internally by axum and tonic
 tower = "0.4"
-tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full"] }
+tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full", "timeout"] }
 url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
 
@@ -154,6 +159,15 @@ urlencoding = "2.1.3"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
 
+# Language bindings (optional, for embedded mode)
+# Python bindings via PyO3
+pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
+# Java bindings via JNI
+jni = { version = "0.21", optional = true }
+# Node.js bindings via NAPI-RS
+napi = { version = "2.14", features = ["napi9"], optional = true }
+napi-derive = { version = "2.14", optional = true }
+
 # GPU acceleration dependencies (platform-specific)
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 metal = { version = "0.27", optional = true }  # Metal GPU acceleration for Apple Silicon
@@ -204,6 +218,26 @@ metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
 debug-filters = []  # Enable debug filtering for search operations
+
+# ============================================================================
+# EMBEDDED DATABASE MODE FEATURES
+# ============================================================================
+# Enable language-specific bindings for embedded database mode
+
+# Python embedded mode (PyO3 bindings)
+python = ["dep:pyo3"]  # Enable Python bindings for embedded database mode
+
+# Java embedded mode (JNI bindings)
+java = ["dep:jni"]  # Enable Java bindings for embedded database mode
+
+# Node.js embedded mode (NAPI-RS bindings)
+nodejs = ["dep:napi", "dep:napi-derive"]  # Enable Node.js bindings
+
+# C FFI for Go CGO and other C-compatible languages
+c_ffi = []  # Enable C FFI for Go/CGO, C, C++
+
+# All embedded language bindings
+embedded-all = ["python", "java", "nodejs", "c_ffi"]
 
 # CPU optimizations - Disabled Intel MKL on ARM64
 # cpu-optimized = ["intel-mkl"]

@@ -161,6 +161,10 @@ pub mod storage;
 pub mod utils;
 pub mod version;
 
+/// Embedded mode for in-process database usage without network layer
+/// Enable with feature flag: --features python
+pub mod embedded;
+
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {
 //     include!(concat!(env!("OUT_DIR"), "/compiled_schemas.rs"));

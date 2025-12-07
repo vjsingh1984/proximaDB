@@ -10,10 +10,169 @@ Features:
 
 import logging
 from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
 
 from .connection_pools import GrpcConnectionPool, GrpcChannelContext
 from ..models import SearchResult, VectorOperationResponse
 from ..exceptions import ProximaDBError
+
+
+@dataclass
+class HealthCheckResponse:
+    """Health check response with server status"""
+    healthy: bool
+    latency_ms: float
+    status: str
+    server_address: str
+    details: Optional[str] = None
+    version: Optional[str] = None
+
+
+@dataclass
+class DeleteCollectionResponse:
+    """Delete collection response"""
+    success: bool
+    collection_id: str
+    status: str = "deleted"
+
+
+class CollectionWrapper:
+    """
+    Wrapper for protobuf Collection objects to provide convenient attribute access.
+
+    Protobuf Collection objects have the structure:
+    - collection.id (collection ID)
+    - collection.config.name (collection name)
+    - collection.config.dimension (vector dimension)
+
+    This wrapper provides backward-compatible access via:
+    - .name (maps to .config.name)
+    - .dimension (maps to .config.dimension)
+    - .id (maps to .id)
+    - All other attributes are passed through to the underlying protobuf object
+    """
+
+    def __init__(self, proto_collection):
+        """Initialize wrapper with a protobuf Collection object"""
+        self._proto = proto_collection
+
+    @property
+    def name(self):
+        """Get collection name from config.name"""
+        if hasattr(self._proto, 'config') and hasattr(self._proto.config, 'name'):
+            return self._proto.config.name
+        return None
+
+    @property
+    def dimension(self):
+        """Get collection dimension from config.dimension"""
+        if hasattr(self._proto, 'config') and hasattr(self._proto.config, 'dimension'):
+            return self._proto.config.dimension
+        return None
+
+    @property
+    def id(self):
+        """Get collection ID"""
+        return getattr(self._proto, 'id', None)
+
+    @property
+    def config(self):
+        """Get collection config"""
+        return getattr(self._proto, 'config', None)
+
+    @property
+    def stats(self):
+        """Get collection stats if available"""
+        return getattr(self._proto, 'stats', None)
+
+    def __getattr__(self, name):
+        """Pass through any other attribute access to the underlying protobuf object"""
+        return getattr(self._proto, name)
+
+    def __repr__(self):
+        return f"CollectionWrapper(name={self.name}, id={self.id}, dimension={self.dimension})"
+
+
+class SearchResultsWrapper:
+    """
+    Wrapper for search results to provide backward-compatible .results attribute.
+
+    Wraps a list of SearchResult objects to provide:
+    - .results attribute (the list itself)
+    - Direct list access via indexing, iteration, len()
+    """
+
+    def __init__(self, results_list: List[Any]):
+        """Initialize wrapper with a list of SearchResult objects"""
+        self.results = results_list
+
+    def __len__(self):
+        """Support len() operation"""
+        return len(self.results)
+
+    def __iter__(self):
+        """Support iteration"""
+        return iter(self.results)
+
+    def __getitem__(self, index):
+        """Support indexing"""
+        return self.results[index]
+
+    def __repr__(self):
+        return f"SearchResultsWrapper(count={len(self.results)})"
+
+
+class VectorWrapper:
+    """
+    Wrapper for vector dict to provide attribute access.
+
+    Converts a dict like {'id': ..., 'vector': ..., 'metadata': ...}
+    to an object with attribute access: obj.id, obj.vector, obj.metadata
+    """
+
+    def __init__(self, vector_dict: Dict[str, Any]):
+        """Initialize wrapper with a vector dictionary"""
+        self._dict = vector_dict
+        # Set attributes from dict
+        for key, value in vector_dict.items():
+            setattr(self, key, value)
+
+    def __getitem__(self, key):
+        """Support dict-like access"""
+        return self._dict[key]
+
+    def get(self, key, default=None):
+        """Support dict.get() method"""
+        return self._dict.get(key, default)
+
+    def __repr__(self):
+        return f"VectorWrapper(id={getattr(self, 'id', None)})"
+
+
+class DictWrapper:
+    """
+    Generic wrapper to convert any dict to an object with attribute access.
+
+    Used for operation results like delete, update, etc.
+    """
+
+    def __init__(self, data_dict: Dict[str, Any]):
+        """Initialize wrapper with a dictionary"""
+        self._dict = data_dict
+        # Set attributes from dict
+        for key, value in data_dict.items():
+            setattr(self, key, value)
+
+    def __getitem__(self, key):
+        """Support dict-like access"""
+        return self._dict[key]
+
+    def get(self, key, default=None):
+        """Support dict.get() method"""
+        return self._dict.get(key, default)
+
+    def __repr__(self):
+        return f"DictWrapper({self._dict})"
 
 try:
     import grpc
@@ -76,6 +235,9 @@ class ProximaDBSyncGrpcClient:
         # Initialize connection pool instead of single client
         self._connection_pool = None
         self._init_connection_pool()
+
+        # Alias for backward compatibility with tests
+        self._pool = self._connection_pool
         
     def _init_connection_pool(self):
         """Initialize gRPC connection pool for optimal performance"""
@@ -100,7 +262,10 @@ class ProximaDBSyncGrpcClient:
                 use_tls=False,  # TLS configuration can be added via environment variables or config
                 compression=compression
             )
-            
+
+            # Update alias for backward compatibility
+            self._pool = self._connection_pool
+
             logger.info(f"Initialized gRPC connection pool: {self.pool_size} channels to {self.server_address}")
             
         except Exception as e:
@@ -168,6 +333,62 @@ class ProximaDBSyncGrpcClient:
         
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    def health_check(self) -> HealthCheckResponse:
+        """
+        Check server health via gRPC health check
+
+        Returns:
+            HealthCheckResponse with:
+                - healthy: bool
+                - latency_ms: float
+                - status: str
+                - server_address: str
+                - details: Optional[str]
+                - version: Optional[str]
+        """
+        import time
+
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+
+        try:
+            start_time = time.time()
+
+            # Use list_collections as a lightweight health check
+            # This verifies the server is responding and the connection pool works
+            with GrpcChannelContext(self._connection_pool) as channel:
+                stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+
+                # Make a lightweight request
+                req = v1_collection_types_pb2.ListCollectionsRequest(limit=1)
+                response = stub.ListCollections(req, timeout=self.timeout)
+
+                latency_ms = (time.time() - start_time) * 1000
+
+                return HealthCheckResponse(
+                    healthy=True,
+                    latency_ms=latency_ms,
+                    status="connected",
+                    server_address=self.server_address
+                )
+
+        except grpc.RpcError as e:
+            return HealthCheckResponse(
+                healthy=False,
+                latency_ms=-1,
+                status=f"error: {e.code()}",
+                server_address=self.server_address,
+                details=e.details()
+            )
+        except Exception as e:
+            return HealthCheckResponse(
+                healthy=False,
+                latency_ms=-1,
+                status=f"error: {type(e).__name__}",
+                server_address=self.server_address,
+                details=str(e)
+            )
 
     # Health check via REST endpoint (gRPC doesn't have dedicated Health service in v1)
 
@@ -255,12 +476,14 @@ class ProximaDBSyncGrpcClient:
                     req.collection = collection
                 resp = stub.ExecuteSql(req, timeout=self.timeout)
                 # Return as a simple dict for convenience
+                rows = [
+                    {f.key: (f.value.string_value or f.value.number_value or f.value.bool_value)
+                     for f in row.fields}
+                    for row in resp.rows
+                ]
                 return {
-                    "rows": [
-                        {f.key: (f.value.string_value or f.value.number_value or f.value.bool_value)
-                         for f in row.fields}
-                        for row in resp.rows
-                    ],
+                    "rows": rows,
+                    "row_count": len(rows),  # Add row_count for compatibility
                     "rows_scanned": resp.rows_scanned,
                     "rows_returned": resp.rows_returned,
                     "execution_time_ms": resp.execution_time_ms,
@@ -324,7 +547,7 @@ class ProximaDBSyncGrpcClient:
 
         return self._execute_with_pool("delete_collection_v1", _op)
     
-    # Collection Operations - Unified Interface  
+    # Collection Operations - Unified Interface
     def create_collection(
         self,
         name: str,
@@ -332,25 +555,48 @@ class ProximaDBSyncGrpcClient:
         distance_metric: int = None,
         indexing_algorithm: int = None,
         storage_engine: int = None,
+        engine: int = None,  # Alias for storage_engine (backward compatibility)
         filterable_columns: List[Any] = None,
         index_configs: List[Any] = None,
         quantization_config: Any = None
     ) -> Any:
         """Create collection with unified interface
-        
+
         Args:
             name: Collection identifier
             dimension: Vector dimension
             distance_metric: Distance metric enum value
             indexing_algorithm: Indexing algorithm enum value
             storage_engine: Storage engine enum value
+            engine: Alias for storage_engine (for backward compatibility)
             filterable_columns: Fields that can be filtered
             index_configs: Index configuration parameters
             quantization_config: Quantization configuration
-            
+
         Returns:
             Collection creation result
         """
+        # Handle backward compatibility: engine is an alias for storage_engine
+        if engine is not None and storage_engine is None:
+            storage_engine = engine
+
+        # Convert string storage engine names to enum integers if needed
+        if storage_engine is not None and isinstance(storage_engine, str):
+            from proximadb.models import StorageEngineType
+            storage_engine_map = {
+                "viper": StorageEngineType.VIPER,
+                "sst": StorageEngineType.SST,
+                "nova": StorageEngineType.NOVA,
+                "helix": StorageEngineType.HELIX,
+                "swift": StorageEngineType.SWIFT,
+                "raptor": StorageEngineType.RAPTOR,
+            }
+            storage_engine_str = storage_engine.lower()
+            if storage_engine_str in storage_engine_map:
+                storage_engine = int(storage_engine_map[storage_engine_str])
+            else:
+                raise ValueError(f"Unknown storage engine: {storage_engine}. Valid options: {list(storage_engine_map.keys())}")
+
         def _create_collection_operation(stub):
             # Build collection config using v1 types
             config = v1_collection_types_pb2.CollectionConfig(
@@ -382,7 +628,9 @@ class ProximaDBSyncGrpcClient:
             # Use CollectionService.CreateCollection method from v1 API
             # CreateCollection expects CollectionConfig directly, not wrapped in a request
             response = stub.CreateCollection(config, timeout=self.timeout)
-            return response
+
+            # Wrap the protobuf Collection to provide .name and .dimension attributes
+            return CollectionWrapper(response)
 
         return self._execute_collection_with_pool("create_collection", _create_collection_operation)
     
@@ -393,7 +641,9 @@ class ProximaDBSyncGrpcClient:
                 collection_id=name
             )
             response = stub.GetCollection(request, timeout=self.timeout)
-            return response
+
+            # Wrap the protobuf Collection to provide .name and .dimension attributes
+            return CollectionWrapper(response)
 
         return self._execute_collection_with_pool("get_collection", _get_collection_operation)
     
@@ -402,18 +652,29 @@ class ProximaDBSyncGrpcClient:
         def _list_collections_operation(stub):
             request = v1_collection_types_pb2.ListCollectionsRequest()
             response = stub.ListCollections(request, timeout=self.timeout)
-            return list(response.collections)
+
+            # Wrap protobuf Collection objects to provide .name and .dimension attributes
+            collections = []
+            for coll in response.collections:
+                wrapped = CollectionWrapper(coll)
+                collections.append(wrapped)
+
+            return collections
 
         return self._execute_collection_with_pool("list_collections", _list_collections_operation)
     
-    def delete_collection(self, collection_id: str) -> Dict[str, Any]:
+    def delete_collection(self, collection_id: str) -> DeleteCollectionResponse:
         """Delete collection"""
         def _delete_collection_operation(stub):
             request = v1_collection_types_pb2.DeleteCollectionRequest(
                 collection_id=collection_id
             )
             response = stub.DeleteCollection(request, timeout=self.timeout)
-            return {"status": "deleted", "collection_id": collection_id, "success": response.success}
+            return DeleteCollectionResponse(
+                success=response.success,
+                collection_id=collection_id,
+                status="deleted"
+            )
 
         return self._execute_collection_with_pool("delete_collection", _delete_collection_operation)
     
@@ -439,15 +700,26 @@ class ProximaDBSyncGrpcClient:
             # Convert vectors to proto format using v1 VectorRecord
             proto_vectors = []
             for vector_data in vectors:
+                # Handle both VectorRecord objects and dictionaries
+                if hasattr(vector_data, 'model_dump'):
+                    # Pydantic BaseModel (VectorRecord) - convert to dict
+                    vector_dict = vector_data.model_dump(exclude_none=False)
+                elif hasattr(vector_data, '__dict__'):
+                    # Regular object with __dict__
+                    vector_dict = vector_data.__dict__
+                else:
+                    # Already a dictionary
+                    vector_dict = vector_data
+
                 vector_record = v1_vector_types_pb2.VectorRecord()
 
-                if 'id' in vector_data:
-                    vector_record.id = vector_data['id']
-                if 'vector' in vector_data:
-                    vector_record.vector.extend(vector_data['vector'])
-                if 'metadata' in vector_data and vector_data['metadata']:
+                if 'id' in vector_dict and vector_dict['id']:
+                    vector_record.id = vector_dict['id']
+                if 'vector' in vector_dict and vector_dict['vector']:
+                    vector_record.vector.extend(vector_dict['vector'])
+                if 'metadata' in vector_dict and vector_dict['metadata']:
                     # Convert metadata to map<string, SqlValue> format
-                    for key, value in vector_data['metadata'].items():
+                    for key, value in vector_dict['metadata'].items():
                         sql_value = v1_types_pb2.SqlValue()
                         if isinstance(value, bool):
                             # Check bool before int since bool is a subclass of int
@@ -465,30 +737,30 @@ class ProximaDBSyncGrpcClient:
                         vector_record.metadata[key].CopyFrom(sql_value)
 
                 # Add timestamp field (accept both 'timestamp' and 'timestamp_ms')
-                if 'timestamp' in vector_data and vector_data['timestamp'] is not None:
-                    vector_record.timestamp = int(vector_data['timestamp'])
-                elif 'timestamp_ms' in vector_data and vector_data['timestamp_ms'] is not None:
-                    vector_record.timestamp = int(vector_data['timestamp_ms'])
+                if 'timestamp' in vector_dict and vector_dict['timestamp'] is not None:
+                    vector_record.timestamp = int(vector_dict['timestamp'])
+                elif 'timestamp_ms' in vector_dict and vector_dict['timestamp_ms'] is not None:
+                    vector_record.timestamp = int(vector_dict['timestamp_ms'])
 
                 # Add updated_at field (accept both forms)
-                if 'updated_at' in vector_data and vector_data['updated_at'] is not None:
-                    vector_record.updated_at = int(vector_data['updated_at'])
-                elif 'updated_at_ms' in vector_data and vector_data['updated_at_ms'] is not None:
-                    vector_record.updated_at = int(vector_data['updated_at_ms'])
+                if 'updated_at' in vector_dict and vector_dict['updated_at'] is not None:
+                    vector_record.updated_at = int(vector_dict['updated_at'])
+                elif 'updated_at_ms' in vector_dict and vector_dict['updated_at_ms'] is not None:
+                    vector_record.updated_at = int(vector_dict['updated_at_ms'])
 
                 # Add expires_at field (accept both forms)
-                if 'expires_at' in vector_data and vector_data['expires_at'] is not None:
-                    vector_record.expires_at = int(vector_data['expires_at'])
-                elif 'expires_at_ms' in vector_data and vector_data['expires_at_ms'] is not None:
-                    vector_record.expires_at = int(vector_data['expires_at_ms'])
+                if 'expires_at' in vector_dict and vector_dict['expires_at'] is not None:
+                    vector_record.expires_at = int(vector_dict['expires_at'])
+                elif 'expires_at_ms' in vector_dict and vector_dict['expires_at_ms'] is not None:
+                    vector_record.expires_at = int(vector_dict['expires_at_ms'])
 
                 # Add version field
-                if 'version' in vector_data and vector_data['version'] is not None:
-                    vector_record.version = int(vector_data['version'])
+                if 'version' in vector_dict and vector_dict['version'] is not None:
+                    vector_record.version = int(vector_dict['version'])
 
                 # Add source field (original content that generated this vector)
-                if 'source' in vector_data and vector_data['source'] is not None:
-                    vector_record.source = str(vector_data['source'])
+                if 'source' in vector_dict and vector_dict['source'] is not None:
+                    vector_record.source = str(vector_dict['source'])
 
                 proto_vectors.append(vector_record)
 
@@ -682,10 +954,67 @@ class ProximaDBSyncGrpcClient:
                     index_path=result.get('index_path')
                 )
                 search_results.append(search_result)
-            return search_results
-        
+
+            # Wrap results to provide .results attribute for backward compatibility
+            return SearchResultsWrapper(search_results)
+
         return self._execute_with_pool("search_vectors", _search_vectors_operation)
-    
+
+    def search(
+        self,
+        collection_id: str = None,  # Can be positional or keyword
+        query_vector: List[float] = None,  # Can be positional
+        query_vectors: List[List[float]] = None,
+        top_k: int = None,
+        k: int = None,  # Backward compatibility alias for top_k
+        collection_name: str = None,  # Backward compatibility alias
+        metadata_filters: Optional[Dict[str, Any]] = None,
+        include_vectors: bool = False,
+        include_metadata: bool = True,
+        search_hints: Optional[Dict[str, Any]] = None
+    ) -> SearchResult:
+        """
+        Alias for search_vectors() for backward compatibility and convenience
+
+        This method provides the same functionality as search_vectors() but with
+        a shorter, more intuitive name commonly expected by users.
+
+        Args:
+            collection_id: Target collection ID (can use collection_name instead)
+            query_vector: Single query vector (convenience param)
+            query_vectors: Multiple query vectors (batch search)
+            top_k: Number of results to return per query
+            k: Alias for top_k (backward compatibility)
+            collection_name: Alias for collection_id (backward compatibility)
+            metadata_filters: Metadata filter conditions
+            include_vectors: Include vector data in results
+            include_metadata: Include metadata in results
+            search_hints: Optional search optimization hints
+
+        Returns:
+            SearchResult with found vectors
+        """
+        # Handle backward compatibility aliases
+        if collection_name is not None and collection_id is None:
+            collection_id = collection_name
+        if collection_id is None:
+            raise ValueError("Either collection_id or collection_name must be provided")
+        if k is not None and top_k is None:
+            top_k = k
+        if top_k is None:
+            top_k = 10  # Default value
+
+        return self.search_vectors(
+            collection_id=collection_id,
+            query_vector=query_vector,
+            query_vectors=query_vectors,
+            top_k=top_k,
+            metadata_filters=metadata_filters,
+            include_vectors=include_vectors,
+            include_metadata=include_metadata,
+            search_hints=search_hints
+        )
+
     def get_vector(
         self,
         collection_id: str,
@@ -746,7 +1075,8 @@ class ProximaDBSyncGrpcClient:
                 # NOTE: SearchVectorRecord does NOT have updated_at or expires_at fields
                 # Those fields only exist in the insert VectorRecord proto
 
-                return result
+                # Wrap result to provide attribute access
+                return VectorWrapper(result)
             else:
                 raise ProximaDBError(f"Vector {vector_id} not found")
 
@@ -795,7 +1125,7 @@ class ProximaDBSyncGrpcClient:
             response = stub.VectorBatch(request, timeout=self.timeout)
             # If we got a response without error, the delete succeeded
             # The status field should reflect success regardless of response.success value
-            return {"status": "deleted", "vector_id": vector_id, "success": True}
+            return DictWrapper({"status": "deleted", "vector_id": vector_id, "success": True})
 
         return self._execute_with_pool("delete_vector", _delete_vector_operation)
     
@@ -1198,39 +1528,6 @@ class ProximaDBSyncGrpcClient:
             logger.error(f"gRPC query_nodes failed: {e}")
             raise ProximaDBError(f"query_nodes failed: {e}")
 
-    def health_check(self):
-        """Check server health status
-
-        Returns:
-            Proto health status object (for compatibility with unified_client)
-        """
-        import time
-        try:
-            # Get a channel from the pool
-            channel = self._connection_pool.get_channel()
-            try:
-                # Simple connection test - attempt to list collections
-                collection_stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
-                request = v1_collection_types_pb2.ListCollectionsRequest()
-                response = collection_stub.ListCollections(request, timeout=self.timeout)
-                # Return a simple object with all required attributes
-                class HealthStatus:
-                    status = "healthy"
-                    version = "0.1.4"
-                    uptime_seconds = 0
-                    timestamp_ms = int(time.time() * 1000)
-                return HealthStatus()
-            finally:
-                # Return channel to pool
-                self._connection_pool.return_channel(channel, success=True)
-        except Exception as e:
-            logger.warning(f"Health check failed: {e}")
-            class HealthStatus:
-                status = "unhealthy"
-                version = "0.1.4"
-                uptime_seconds = 0
-                timestamp_ms = int(time.time() * 1000)
-            return HealthStatus()
 
 
 # Alias for consistency

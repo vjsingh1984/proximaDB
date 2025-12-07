@@ -277,6 +277,7 @@ graph TD
 - **6-stage recovery process**: Collections → Vectors → Graphs → Assignments → Buffers → Services
 - **Zero configuration required**: Persistence enabled by default with graceful failure handling
 - **Unified architecture**: Graph-first design means entity store and SKS data persist automatically via graph WAL
+- **Known issue**: WAL pool metadata propagation bug can direct WAL files to incorrect paths, impacting recovery until fixed (see `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md`); validate with `RECOVERY_TEST_FRESH.sh` after applying the fix.
 
 **In Progress**:
 - Multi-node clustering

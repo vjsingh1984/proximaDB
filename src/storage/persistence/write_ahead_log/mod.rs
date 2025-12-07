@@ -590,7 +590,8 @@ impl WriteAheadLogManagerRegistry {
             manager_pool: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             pool_config,
             next_manager_id: Arc::new(tokio::sync::Mutex::new(1)),
-            metadata_provider: Arc::new(tokio::sync::RwLock::new(None)),
+            // CRITICAL FIX: Use global metadata provider for all pool instances
+            metadata_provider: get_global_metadata_provider(),
         }
     }
 
@@ -599,9 +600,23 @@ impl WriteAheadLogManagerRegistry {
         &self,
         provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
     ) {
-        let mut lock = self.metadata_provider.write().await;
-        *lock = Some(provider);
+        // Update shared registry-level provider
+        {
+            let mut lock = self.metadata_provider.write().await;
+            *lock = Some(provider.clone());
+        }
         tracing::info!("📋 Metadata provider set on Registry for all pool instances");
+
+        // Propagate to existing managers (they share the Arc when created, but update defensively)
+        let managers: Vec<_> = {
+            let pool = self.manager_pool.read().await;
+            pool.values().map(|entry| entry.manager.clone()).collect()
+        };
+        for manager in managers {
+            manager
+                .set_metadata_provider(provider.clone())
+                .await;
+        }
     }
 
     /// Get or assign WriteAheadLogManager for a collection using adaptive pool scaling
@@ -694,7 +709,7 @@ impl WriteAheadLogManagerRegistry {
                     strategy,
                     config.clone(),
                     manager_id.clone(),
-                    None,
+                    Some(self.metadata_provider.clone()),
                 )
                 .await?,
             );
@@ -836,8 +851,13 @@ impl WriteAheadLogManagerRegistry {
             WALBatchFactory::create_batch_serialization_strategy(strategy_type, config, filesystem)
                 .await?;
         let manager = Arc::new(
-            WriteAheadLogManager::new_pool_manager(strategy, config.clone(), manager_id.clone(),  None)
-                .await?,
+            WriteAheadLogManager::new_pool_manager(
+                strategy,
+                config.clone(),
+                manager_id.clone(),
+                Some(self.metadata_provider.clone()),
+            )
+            .await?,
         );
 
         let entry = WriteAheadLogManagerPoolEntry {
@@ -960,6 +980,20 @@ static GLOBAL_WRITE_BUFFER_BEHAVIOR: GlobalWriteBufferBehaviorSingleton =
 /// Global registry instance for WriteAheadLogManager per collection architecture
 static WAL_MANAGER_REGISTRY: std::sync::OnceLock<WriteAheadLogManagerRegistry> =
     std::sync::OnceLock::new();
+
+/// Global metadata provider singleton - shared across ALL WriteAheadLogManager instances
+/// This ensures that pool instances created after set_metadata_provider() can still access
+/// the provider. Without this, pool instances would have their own empty Arc<RwLock<None>>.
+static GLOBAL_METADATA_PROVIDER: std::sync::OnceLock<
+    Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>
+> = std::sync::OnceLock::new();
+
+/// Get or initialize the global metadata provider
+fn get_global_metadata_provider() -> Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>> {
+    GLOBAL_METADATA_PROVIDER.get_or_init(|| {
+        Arc::new(tokio::sync::RwLock::new(None))
+    }).clone()
+}
 
 /// Get the global WriteAheadLogManager registry
 pub fn get_write_ahead_log_manager_registry() -> &'static WriteAheadLogManagerRegistry {
@@ -1146,7 +1180,8 @@ impl WriteAheadLogManager {
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            metadata_provider: Arc::new(tokio::sync::RwLock::new(None)),
+            // CRITICAL FIX: Use global metadata provider for shared access
+            metadata_provider: get_global_metadata_provider(),
         })
     }
 
@@ -1210,7 +1245,9 @@ impl WriteAheadLogManager {
             shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
             strategy_type,
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            metadata_provider: parent_metadata_provider.unwrap_or_else(|| Arc::new(tokio::sync::RwLock::new(None))),
+            // CRITICAL FIX: Use global metadata provider instead of creating new empty one
+            // This ensures ALL pool instances share the same metadata provider
+            metadata_provider: parent_metadata_provider.unwrap_or_else(get_global_metadata_provider),
         })
     }
 

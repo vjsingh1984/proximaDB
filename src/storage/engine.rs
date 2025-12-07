@@ -17,51 +17,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-/// Calculate cosine similarity between two vectors
-fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
-    }
-
-    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-
-    dot_product / (norm_a * norm_b)
-}
-
-/// Calculate Euclidean distance between two vectors
-fn calculate_euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return f32::MAX;
-    }
-
-    let sum_squared_diff: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
-
-    sum_squared_diff.sqrt()
-}
-
-/// Calculate Manhattan (L1) distance between two vectors  
-fn calculate_manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return f32::MAX;
-    }
-
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
-}
-
-/// Calculate dot product similarity between two vectors
-fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
-    }
-
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
-}
+// Note: Distance computation is handled by the unified compute module
+// at src/compute/distance_computation/ which provides SIMD-accelerated
+// implementations. Use self.distance_compute for all distance calculations.
 
 pub struct StorageEngine {
     config: StorageConfig,
@@ -289,19 +247,16 @@ impl StorageEngine {
     /// Recover all vectors from WAL files for all collections
     /// This method should be called during server startup after collections are recovered from metadata
     pub async fn recover_from_wal(&self) -> crate::storage::Result<()> {
-        eprintln!("🔍 DEBUG: recover_from_wal() CALLED");
         info!("🔄 STORAGE_ENGINE: Starting WAL recovery for all collections...");
 
         // Get recovery manager from WAL manager
         // CRITICAL FIX: Call async get_recovery_manager() to create/cache if not exists
-        eprintln!("🔍 DEBUG: Getting recovery manager (will create if needed)...");
         let recovery_manager = match self.write_ahead_log_manager.get_recovery_manager().await {
             Ok(manager) => {
-                eprintln!("✅ DEBUG: Recovery manager obtained successfully");
+                tracing::debug!("Recovery manager obtained successfully");
                 Arc::new(manager)
             }
             Err(e) => {
-                eprintln!("❌ DEBUG: Failed to get recovery manager: {}", e);
                 error!("❌ STORAGE_ENGINE: Failed to get recovery manager: {}", e);
                 return Err(crate::storage::StorageError::WalError(format!(
                     "Failed to get recovery manager: {}", e
@@ -310,30 +265,22 @@ impl StorageEngine {
         };
 
         // Get all collections from metadata provider
-        eprintln!("🔍 DEBUG: Checking metadata_provider...");
         let metadata_provider = self.metadata_provider.read().await;
         let provider = match metadata_provider.as_ref() {
-            Some(p) => {
-                eprintln!("🔍 DEBUG: Metadata provider EXISTS");
-                p
-            }
+            Some(p) => p,
             None => {
-                eprintln!("❌ DEBUG: Metadata provider is NONE - THIS IS THE BUG!");
                 warn!("⚠️  STORAGE_ENGINE: No metadata provider set, cannot recover collections");
                 return Ok(());
             }
         };
 
-        eprintln!("🔍 DEBUG: Listing collections for recovery...");
         let collections = provider.list_collections().await.map_err(|e| {
-            eprintln!("❌ DEBUG: Failed to list collections: {}", e);
             crate::storage::StorageError::WalError(format!(
                 "Failed to list collections during WAL recovery: {}",
                 e
             ))
         })?;
 
-        eprintln!("🔍 DEBUG: Found {} collections to recover", collections.len());
         info!(
             "📋 STORAGE_ENGINE: Found {} collections to recover",
             collections.len()
@@ -341,18 +288,11 @@ impl StorageEngine {
 
         // Recover each collection
         let mut total_vectors_recovered = 0u64;
-        eprintln!("🔍 DEBUG: Starting per-collection recovery loop...");
         for collection in collections {
-            eprintln!("🔍 DEBUG: Recovering collection: {}", collection.id);
-            info!(
-                "🔍 STORAGE_ENGINE: Recovering collection: {}",
-                collection.id
-            );
+            tracing::debug!("Recovering collection: {}", collection.id);
 
             match recovery_manager.recover_collection(&collection.id).await {
                 Ok(stats) => {
-                    eprintln!("✅ DEBUG: Collection {} recovered: {} vectors from {} files",
-                        collection.id, stats.total_vectors_recovered, stats.total_files_recovered);
                     total_vectors_recovered += stats.total_vectors_recovered;
                     info!(
                         "✅ STORAGE_ENGINE: Collection {} recovered: {} vectors from {} files",
@@ -360,8 +300,6 @@ impl StorageEngine {
                     );
                 }
                 Err(e) => {
-                    eprintln!("❌ DEBUG: Failed to recover collection {}: {}", collection.id, e);
-                    eprintln!("❌ DEBUG: Error details: {:?}", e);
                     warn!(
                         "⚠️  STORAGE_ENGINE: Failed to recover collection {}: {}",
                         collection.id, e
@@ -371,7 +309,6 @@ impl StorageEngine {
             }
         }
 
-        eprintln!("🔍 DEBUG: Recovery loop complete. Total vectors: {}", total_vectors_recovered);
         info!(
             "🎉 STORAGE_ENGINE: WAL recovery complete: {} total vectors recovered",
             total_vectors_recovered

@@ -27,6 +27,7 @@ except ImportError:
 
 from ..config import ClientConfig
 from ..resource_pool import ResourcePool, ResourceFactory
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -134,10 +135,56 @@ class GrpcChannelFactory(ResourceFactory[grpc.Channel]):
             logger.debug(f"Error during channel dispose (suppressed): {e}")
 
 
+class GrpcChannelContext:
+    """Context manager for gRPC channel acquired from pool
+
+    Can be initialized with either a pool (acquires channel on enter)
+    or a channel directly (for pre-acquired channels)
+    """
+    def __init__(self, pool_or_channel):
+        # Support both patterns: pool or channel
+        if hasattr(pool_or_channel, 'get_channel'):
+            # It's a pool - acquire channel in __enter__
+            self.pool = pool_or_channel
+            self.channel = None
+            self._owns_channel = True  # We need to return it
+        else:
+            # It's a channel - use it directly
+            self.pool = None
+            self.channel = pool_or_channel
+            self._owns_channel = False  # Caller manages it
+
+    def __enter__(self):
+        # Get a channel from the pool if we don't have one yet
+        if self.pool is not None and self.channel is None:
+            self.channel = self.pool.get_channel()
+        return self.channel
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Only return channel to pool if we acquired it
+        if self._owns_channel and self.channel is not None and self.pool is not None:
+            success = exc_type is None
+            self.pool.return_channel(self.channel, success=success)
+        return False
+
+
+class RestClientContext:
+    """Context manager for REST client acquired from pool"""
+    def __init__(self, client: httpx.Client):
+        self.client = client
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Client is returned to pool by the pool's context manager
+        return False
+
+
 class GrpcConnectionPool:
     """
     Load-balanced gRPC connection pool using unified ResourcePool
-    
+
     Features:
     - Round-robin channel distribution
     - Health monitoring per channel
@@ -153,11 +200,13 @@ class GrpcConnectionPool:
         keepalive_time_ms: int = 10000,
         keepalive_timeout_ms: int = 5000,
         use_tls: bool = False,
-        compression: Optional[grpc.Compression] = None
+        compression: Optional[grpc.Compression] = None,
+        **kwargs  # Accept additional parameters for backward compatibility
     ):
         self.endpoint = endpoint
         self.pool_size = pool_size
         self.max_message_size = max_message_size
+        self.compression = compression  # Store compression setting
         
         # Create resource pool with factory
         factory = GrpcChannelFactory(
@@ -198,7 +247,29 @@ class GrpcConnectionPool:
             logger.warning("Marking gRPC channel as unhealthy")
             # ResourcePool will validate on next acquisition
         self._pool.release(channel)
-    
+
+    @contextmanager
+    def get_connection(self):
+        """Get a gRPC channel from the pool as a context manager
+
+        Yields:
+            GrpcChannelContext: Context containing the channel
+        """
+        channel = self.get_channel()
+        try:
+            yield GrpcChannelContext(channel)
+        finally:
+            self.return_channel(channel)
+
+    def get_active_connections(self) -> int:
+        """Get the number of currently active connections
+
+        Returns:
+            int: Number of active (in-use) connections
+        """
+        stats = self._pool.get_stats()
+        return stats.get('active', 0)
+
     def get_metrics(self) -> PoolMetrics:
         """Get current pool performance metrics"""
         pool_stats = self._pool.get_stats()
@@ -265,20 +336,62 @@ class GrpcConnectionPool:
 class RestConnectionPool:
     """
     Per-operation REST connection pool
-    
+
     Features:
     - Specialized pools for read/write/search operations
     - Optimized timeouts and limits per operation type
     - Connection reuse and lifecycle management
     """
-    
-    def __init__(self, config: ClientConfig):
-        self.config = config
+
+    def __init__(
+        self,
+        config: Optional[ClientConfig] = None,
+        base_url: Optional[str] = None,
+        pool_size: int = 5,
+        timeout: float = 30.0,
+        max_connections: int = 10,
+        max_keepalive_connections: int = 5,
+        keepalive_expiry: float = 300.0,
+        compression: bool = True,
+        **kwargs  # Accept additional parameters for backward compatibility
+    ):
+        # Support both config object and individual parameters
+        if config is not None:
+            self.config = config
+            self.base_url = config.url
+            self.pool_size = config.connection.pool_size
+            self.timeout = config.timeout
+            self.compression = compression
+        elif base_url is not None:
+            # Create a minimal config from parameters
+            from ..config import ConnectionConfig, TLSConfig
+            connection_config = ConnectionConfig(
+                pool_size=pool_size,
+                pool_maxsize=max_connections,
+                keepalive_timeout=keepalive_expiry,
+                connect_timeout=5.0,
+                read_timeout=timeout,
+                total_timeout=timeout
+            )
+            tls_config = TLSConfig(verify=True)
+            self.config = ClientConfig(
+                url=base_url,
+                connection=connection_config,
+                tls=tls_config,
+                timeout=timeout
+            )
+            self.base_url = base_url
+            self.pool_size = pool_size
+            self.timeout = timeout
+            self.compression = compression
+        else:
+            raise ValueError("Either config or base_url must be provided")
+
         self._pools: Dict[str, httpx.Client] = {}
         self._lock = threading.RLock()
         self.metrics = PoolMetrics()
         self._request_times: List[float] = []
-        
+
         self._initialize_pools()
     
     def _initialize_pools(self) -> None:
@@ -390,12 +503,30 @@ class RestConnectionPool:
                 if len(self._request_times) > 100:  # Keep last 100 measurements
                     self._request_times.pop(0)
                 self.metrics.avg_response_time_ms = sum(self._request_times) / len(self._request_times)
-            
+
             # Update connection counts
             if self.metrics.active_connections > 0:
                 self.metrics.active_connections -= 1
             self.metrics.idle_connections += 1
-    
+
+    @contextmanager
+    def get_connection(self, operation_type: str = 'read'):
+        """Get a REST client from the pool as a context manager
+
+        Args:
+            operation_type: Type of operation (read, write, search)
+
+        Yields:
+            RestClientContext: Context containing the HTTP client
+        """
+        start_time = time.time()
+        client = self.get_client(operation_type)
+        try:
+            yield RestClientContext(client)
+        finally:
+            response_time_ms = (time.time() - start_time) * 1000
+            self.return_client(client, success=True, response_time_ms=response_time_ms)
+
     def _map_operation_to_pool(self, operation_type: str) -> str:
         """Map operation type to appropriate pool"""
         operation_mapping = {
@@ -443,43 +574,4 @@ class RestConnectionPool:
             self._pools.clear()
 
 
-# Context managers for pool usage
-class GrpcChannelContext:
-    """Context manager for gRPC channel usage with automatic return"""
-    
-    def __init__(self, pool: GrpcConnectionPool):
-        self.pool = pool
-        self.channel = None
-        self.start_time = None
-    
-    def __enter__(self) -> grpc.Channel:
-        self.channel = self.pool.get_channel()
-        self.start_time = time.time()
-        return self.channel
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.channel is not None:
-            success = exc_type is None
-            response_time_ms = (time.time() - self.start_time) * 1000 if self.start_time else 0.0
-            self.pool.return_channel(self.channel, success, response_time_ms)
-
-
-class RestClientContext:
-    """Context manager for REST client usage with automatic return"""
-    
-    def __init__(self, pool: RestConnectionPool, operation_type: str = 'read'):
-        self.pool = pool
-        self.operation_type = operation_type
-        self.client = None
-        self.start_time = None
-    
-    def __enter__(self) -> httpx.Client:
-        self.client = self.pool.get_client(self.operation_type)
-        self.start_time = time.time()
-        return self.client
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.client is not None:
-            success = exc_type is None
-            response_time_ms = (time.time() - self.start_time) * 1000 if self.start_time else 0.0
-            self.pool.return_client(self.client, success, response_time_ms)
+# Note: Context manager classes (GrpcChannelContext, RestClientContext) are defined earlier in the file

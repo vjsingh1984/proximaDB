@@ -8,10 +8,10 @@ use tracing::{debug, error, info};
 fn test_rate_limit_config_defaults() {
     let config = RateLimitConfig::default();
 
-    // Check that rate limiting is disabled by default
+    // Check that rate limiting is ENABLED by default (secure by default)
     assert!(
-        !config.enabled,
-        "Rate limiting should be disabled by default"
+        config.enabled,
+        "Rate limiting should be ENABLED by default for security"
     );
     assert_eq!(config.requests_per_minute, 1000);
     assert_eq!(config.burst_size, 100);

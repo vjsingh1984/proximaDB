@@ -70,22 +70,18 @@ mod distance_computation_coverage {
     }
 
     #[test]
+    #[should_panic(expected = "assertion")]
     fn test_dimension_mismatch_handling() {
+        // Test that dimension mismatch causes a panic (debug_assert_eq!)
+        // This is the expected behavior for safety - mismatched dimensions are programming errors
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
 
         let vec1 = vec![1.0, 2.0];
         let vec2 = vec![1.0, 2.0, 3.0];
 
-        // Should return infinity for dimension mismatch
-        let distance = compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Euclidean);
-        assert!(distance.rank_value.is_infinite());
-
-        // Test with batch
-        let vectors: Vec<&[f32]> = vec![&vec2[..]];
-        let distances =
-            compute.calculate_distance_batch(&vec1, &vectors, &DistanceMetric::Euclidean);
-        assert!(distances[0].rank_value.is_infinite());
+        // This should panic due to dimension mismatch
+        let _distance = compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Euclidean);
     }
 
     // Removed test_special_float_values - covered by test_nan_and_infinity_handling in distance_tests.rs

@@ -905,7 +905,10 @@ impl QuantizedDistanceCalculator {
         } else if vector.binary.is_some() {
             SelectedFormat::Binary
         } else {
-            panic!("No quantized data available")
+            // Default to FP32 if no quantized data available
+            // This allows graceful fallback instead of panicking
+            tracing::warn!("No quantized data available, falling back to FP32 format");
+            SelectedFormat::FP32
         }
     }
 
@@ -914,7 +917,8 @@ impl QuantizedDistanceCalculator {
         // Simplified binary quantization - use median threshold
         let median = {
             let mut sorted = query.to_vec();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            // Use total_cmp for safe NaN handling instead of partial_cmp().unwrap()
+            sorted.sort_by(|a, b| a.total_cmp(b));
             sorted[sorted.len() / 2]
         };
 

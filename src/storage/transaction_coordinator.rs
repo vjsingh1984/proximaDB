@@ -682,8 +682,11 @@ impl TransactionCoordinator {
                 debug!("🚀 [DEBUG] ZeroCopyFilesystem will handle its own cleanup if needed");
             } else {
                 // Cleanup staging directory for traditional operations
-                self.filesystem.delete(&metadata.staging_url).await.ok();
-                debug!("🧹 Cleaned up staging directory after abort");
+                if let Err(e) = self.filesystem.delete(&metadata.staging_url).await {
+                    warn!("Failed to cleanup staging directory during abort: {}", e);
+                } else {
+                    debug!("🧹 Cleaned up staging directory after abort");
+                }
             }
 
             // Remove from active operations using DashMap

@@ -97,3 +97,97 @@ cert_file = "/etc/proximadb/tls/server.crt"
 key_file = "/etc/proximadb/tls/server.key"
 ca_file = "/etc/proximadb/tls/ca.crt"
 ----
+
+== HTTP Security Middleware
+
+ProximaDB includes comprehensive HTTP security middleware that is enabled by default in production mode.
+
+=== CORS (Cross-Origin Resource Sharing)
+
+CORS is configured using a whitelist-based approach for security. By default, no cross-origin requests are allowed.
+
+[source,toml]
+----
+[network.cors]
+enabled = true
+development_mode = false  # WARNING: Only set true for local development
+allowed_origins = ["https://app.example.com", "https://admin.example.com"]
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+allowed_headers = ["Content-Type", "Authorization", "Accept"]
+max_age_secs = 3600
+allow_credentials = false
+----
+
+IMPORTANT: Never enable `development_mode` in production. This allows any origin to make requests.
+
+=== Rate Limiting
+
+Rate limiting is enabled by default to protect against abuse and DoS attacks.
+
+[source,toml]
+----
+[network.rate_limit]
+enabled = true  # Enabled by default
+requests_per_minute = 1000
+burst_size = 100
+by_ip = true
+limit_health_endpoints = false
+global_requests_per_minute = 10000  # Optional global limit
+----
+
+Configuration options:
+
+* `requests_per_minute`: Maximum requests per minute per IP
+* `burst_size`: Allowed burst above the limit for short spikes
+* `by_ip`: Track limits per IP address
+* `global_requests_per_minute`: Optional global limit across all IPs
+
+=== Request Timeouts
+
+Request timeouts prevent slow-client attacks and ensure predictable resource usage.
+
+[source,toml]
+----
+[network.timeout]
+enabled = true  # Strongly recommended
+request_timeout_secs = 30
+streaming_timeout_secs = 60
+health_timeout_secs = 5
+----
+
+For batch/bulk operations, consider using longer timeouts:
+
+[source,toml]
+----
+[network.timeout]
+request_timeout_secs = 300  # 5 minutes for large imports
+streaming_timeout_secs = 600  # 10 minutes for streaming
+----
+
+=== Development Mode
+
+For local development and testing, you can enable relaxed security settings. These should NEVER be used in production.
+
+[source,rust]
+----
+// Rust SDK - Development mode
+let server = RestServer::new_development(
+    bind_addr,
+    unified_handlers,
+    None,
+    true,
+    None,
+);
+----
+
+[source,toml]
+----
+# config.toml - Development mode
+[network.cors]
+development_mode = true  # DANGEROUS - allows any origin
+
+[network.rate_limit]
+enabled = false  # DANGEROUS - no rate limiting
+----
+
+WARNING: Using development mode in production exposes your database to CSRF attacks, DoS attacks, and data theft.

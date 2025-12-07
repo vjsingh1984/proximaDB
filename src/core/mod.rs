@@ -104,6 +104,10 @@ pub mod utils;
 /// Strongly-typed metadata structures for performance optimization
 pub mod metadata_types;
 
+/// Resilience patterns for enterprise-grade reliability
+/// Includes: Circuit Breaker, Retry with Exponential Backoff
+pub mod resilience;
+
 #[cfg(test)]
 mod config_tests;
 

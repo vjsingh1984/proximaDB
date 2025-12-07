@@ -175,14 +175,20 @@ class BaseProximaDBTest:
         
         if check_scores and len(results) > 1:
             # Verify scores are in descending order
-            scores = [r.get("score", 0) for r in results]
+            scores = [r.score if hasattr(r, 'score') else r.get("score", 0) for r in results]
             assert scores == sorted(scores, reverse=True), "Scores not in descending order"
-        
+
         # Verify each result has required fields
         for result in results:
-            assert "id" in result
-            assert "score" in result
-            assert isinstance(result["score"], (int, float))
+            # Handle both Pydantic models and dicts
+            if hasattr(result, 'id'):
+                assert result.id is not None
+                assert result.score is not None
+                assert isinstance(result.score, (int, float))
+            else:
+                assert "id" in result
+                assert "score" in result
+                assert isinstance(result["score"], (int, float))
     
     def wait_for_indexing(self, duration: float = 1.0):
         """Wait for vectors to be indexed"""

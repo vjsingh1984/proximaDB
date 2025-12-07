@@ -2,7 +2,7 @@
 
 **Version**: 0.1.4
 **Last Updated**: 2025-10-23
-**Purpose**: Complete guide to all ProximaDB documentation with quick-find navigation
+**Purpose**: Complete guide to all ProximaDB documentation with quick-find navigation (see `AGENTS.md` for authoritative commands/standards)
 
 ---
 
@@ -19,9 +19,9 @@
 - [Configuration](#configuration) - Server and storage settings
 
 **Need deep technical details?**
-- [Storage Engines](#storage-engines) - 6 specialized engines
-- [Technical Guides](#technical-guides) - Architecture, compression, GPU
-- [Performance Benchmarks](#performance) - Validated measurements
+- [Storage Engines](#storage-engines) - 6 specialized engines (feature-gated cloud/GPU paths)
+- [Technical Guides](#technical-guides) - Architecture, compression, GPU (feature-gated/experimental noted)
+- [Performance Benchmarks](#performance) - Validated measurements (see WAL caveat below)
 
 ---
 
@@ -81,8 +81,8 @@ python3 demo/quickstart/basic_demo.py
 ## Demos
 
 **Location**: `demo/`
-**Status**: ✅ 100% SDK-based demos passing (6/6)
-**Last Validated**: 2025-10-23
+**Status**: ✅ SDK-based demos passing except WAL-path-sensitive flows; `wal_search.py` depends on WAL metadata propagation fix (see `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md`)
+**Last Validated**: 2025-10-23 (pending WAL pool fix revalidation)
 
 ### Demo Documentation
 
@@ -104,7 +104,7 @@ python3 demo/quickstart/basic_demo.py
 - `chunking_demo.py` - 6 text chunking strategies (~8s) ✅
 - `metadata_filtering.py` - Server-side filtering via gRPC (~12s) ✅
 - `quantization_demo.py` - Vector compression benchmarks (~45s) ✅
-- `wal_search.py` - WAL operations and recovery (~6s) ✅
+- `wal_search.py` - WAL operations and recovery (~6s) ⚠️ depends on WAL metadata propagation fix
 
 **Industry Use Cases** (`demo/showcases/industry/`):
 - `ecommerce_demo.py` - E-commerce product search

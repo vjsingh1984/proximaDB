@@ -1221,6 +1221,11 @@ class VectorOperationResponse(BaseModel):
     error_message: Optional[str] = None
     error_code: Optional[str] = None
 
+    @property
+    def count(self) -> int:
+        """Backward compatibility: return successful count from metrics"""
+        return self.metrics.successful_count if self.metrics else 0
+
 
 class ApiError(BaseModel):
     """API error details"""

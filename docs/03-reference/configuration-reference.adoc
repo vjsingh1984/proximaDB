@@ -6,6 +6,13 @@
 [abstract]
 Complete reference for ProximaDB configuration options in `config/config.toml`. This document describes all available settings, their defaults, and usage guidelines.
 
+[NOTE]
+====
+- WAL recovery: Pool metadata propagation is currently broken; WAL files may land in incorrect paths. Apply the WAL fix from `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md` and validate with `RECOVERY_TEST_FRESH.sh` to ensure recovery paths align with configured storage locations.
+- Feature flags: Cloud backends (`aws`/`azure`/`gcp`) and GPU/CUDA/Metal support are disabled by default and experimental; enable explicitly only with the required toolchains/credentials.
+- For authoritative build/test commands and coding standards, refer to `AGENTS.md`.
+====
+
 == Overview
 
 ProximaDB uses TOML format for configuration. The configuration file is typically located at:

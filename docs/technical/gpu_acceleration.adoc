@@ -21,9 +21,10 @@ All operations currently fallback to CPU/SIMD implementations. Full GPU support 
 2. Enable Metal shader compilation
 3. Add GPU memory pool integration
 4. Runtime GPU kernel execution instead of CPU fallback
+5. Enable the relevant feature flags explicitly (`aws`/`azure`/`gcp` are separate; GPU backends are build-time/off by default)
 
 **Status**: Foundation built, production GPU support pending.
-====
+==== 
 
 == Architecture
 

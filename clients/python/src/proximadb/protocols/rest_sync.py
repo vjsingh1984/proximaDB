@@ -2716,6 +2716,74 @@ class ProximaDBClient:
 
     # ==================== End Graph Collection Management ====================
 
+    # ==================== SQL Query API ====================
+
+    def execute_sql(
+        self,
+        query: str,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Execute SQL query against the database.
+
+        Args:
+            query: SQL query string
+            parameters: Optional list of parameter values for prepared statements
+            collection: Optional collection name to use as default context
+
+        Returns:
+            Dictionary containing:
+                - rows: List of row dictionaries
+                - row_count: Number of rows returned
+                - rows_scanned: Number of rows scanned
+                - rows_returned: Number of rows returned
+                - execution_time_ms: Query execution time in milliseconds
+                - columns: List of column names
+                - column_types: List of column types
+
+        Example:
+            >>> result = client.execute_sql(
+            ...     "SELECT id, metadata FROM my_collection WHERE metadata.price > 100 LIMIT 10"
+            ... )
+            >>> for row in result['rows']:
+            ...     print(row)
+        """
+        payload: Dict[str, Any] = {"query": query}
+
+        if parameters:
+            payload["parameters"] = parameters
+
+        if collection:
+            payload["collection"] = collection
+
+        try:
+            response = self._http_client.post(
+                "/api/v1/sql/execute",
+                json=payload
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # Ensure consistent response format
+            if "data" in result:
+                # Unwrap if response is wrapped
+                result = result["data"]
+
+            # Ensure row_count is present for consistency
+            if "rows" in result and "row_count" not in result:
+                result["row_count"] = len(result["rows"])
+
+            return result
+
+        except httpx.HTTPStatusError as e:
+            raise map_http_error(e)
+        except httpx.TimeoutException as e:
+            raise TimeoutError(f"SQL query timed out: {e}")
+        except httpx.RequestError as e:
+            raise NetworkError(f"Network error executing SQL: {e}")
+
+    # ==================== End SQL Query API ====================
+
     def __enter__(self):
         """Context manager entry"""
         return self

@@ -7,7 +7,7 @@
 :verified: true
 
 [.lead]
-**Central index of all 121 features with accurate implementation status based on codebase verification**
+**Central index of all 126 features with accurate implementation status based on codebase verification**
 
 [WARNING]
 ====
@@ -24,12 +24,12 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | Index & Search | 9 | 9 | 100%
 | Quantization & Performance | 10 | 5 | 50%
 | Graph Database | 4 | 4 | 100%
-| Enterprise Security | 12 | 3 | 25%
+| Enterprise Security | 15 | 8 | 53%
 | AI & Intelligence | 10 | 0 | 4%
 | Platform Features | 8 | 3 | 38%
 | Developer Tools | 12 | 1 | 8%
 | Documentation | 35 | 5 | 14%
-| **TOTAL** | **121** | **46** | **38%**
+| **TOTAL** | **126** | **51** | **40%**
 |===
 
 == 📊 Quick Navigation Index
@@ -97,7 +97,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | 043 | Enterprise SSO | Security | ❌ | Not implemented
 | 044 | Audit Logging | Security | ⚠️ Partial | Basic logging
 | 045 | Multi-Tenancy | Security | ✅ | Basic implementation
-| 046 | Rate Limiting | Security | ❌ | Not found
+| 046 | Rate Limiting | Security | ✅ | Enabled by default; `src/network/middleware/rate_limit.rs`
 | 047 | IP Access Control | Security | ❌ | Not found
 | 048 | Field-Level Encryption | Security | ❌ | Not implemented
 | 049 | Row-Level Security | Security | ❌ | Not implemented
@@ -185,6 +185,12 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | 119 | Node.js SDK | Developer | ❌ | Client library
 | 120 | Ruby SDK | Developer | ❌ | Client library
 | 121 | Swift SDK | Developer | ❌ | Client library
+
+| 122 | CORS Middleware | Security | ✅ | Whitelist-based; `src/network/middleware/cors.rs`
+| 123 | Request Timeouts | Security | ✅ | 30s default; `src/network/middleware/timeout.rs`
+| 124 | Circuit Breaker | Enterprise | ✅ | `src/core/resilience/circuit_breaker.rs`
+| 125 | Retry with Backoff | Enterprise | ✅ | `src/core/resilience/retry.rs`
+| 126 | Health Aggregator | Enterprise | ✅ | `src/core/resilience/health_aggregator.rs`
 |===
 
 [[category-index]]

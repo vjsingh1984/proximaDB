@@ -116,7 +116,6 @@ pub mod ast;
 pub mod execution; // New unified execution engine
 pub mod explain;
 pub mod semantic_analysis;
-pub mod sks_extensions;
 pub mod sql_frontend;
 pub mod unified_query_optimizer;
 pub mod vector_search;

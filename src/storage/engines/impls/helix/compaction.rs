@@ -545,10 +545,11 @@ impl LeveledCompactor {
                 path: file_path,
                 level: level + 1,
                 hilbert_range: if !chunk_keys.is_empty() {
-                    Some((
-                        *chunk_keys.iter().min().unwrap(),
-                        *chunk_keys.iter().max().unwrap(),
-                    ))
+                    // Safe min/max - we already checked chunk_keys is not empty
+                    match (chunk_keys.iter().min(), chunk_keys.iter().max()) {
+                        (Some(&min), Some(&max)) => Some((min, max)),
+                        _ => None, // Should not happen but handle gracefully
+                    }
                 } else {
                     None
                 },

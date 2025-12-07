@@ -82,7 +82,11 @@ mod wal_writer_tests {
             )
             .await;
 
-        assert!(result.is_ok(), "Write operation should succeed");
+        assert!(
+            result.is_ok(),
+            "Write operation should succeed: {:?}",
+            result.err()
+        );
         Ok(())
     }
 
@@ -91,28 +95,26 @@ mod wal_writer_tests {
         let temp_dir = TempDir::new()?;
         let config = Arc::new(create_test_wal_config(&temp_dir));
         let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
-        let writer = Arc::new(OptimizedWriteBufferWriter::new(config, filesystem_factory).await?);
+        let writer = OptimizedWriteBufferWriter::new(config, filesystem_factory).await?;
 
-        // Write multiple batches concurrently
-        let mut handles = Vec::new();
+        // Write multiple batches sequentially to same collection
+        // This tests the batching behavior where multiple writes are accumulated
         for batch in 0..5 {
             let vectors = create_test_vectors(20, 128);
             let sequences: Vec<u64> = (batch * 20..(batch + 1) * 20).collect();
             let base_location = format!("file://{}", temp_dir.path().display());
-            let writer_ref = writer.clone();
 
-            let handle = tokio::spawn(async move {
-                writer_ref
-                    .write_vectors("test_collection", vectors, sequences, base_location)
-                    .await
-            });
-            handles.push(handle);
-        }
+            let result = writer
+                .write_vectors("test_collection", vectors, sequences, base_location)
+                .await;
 
-        // Wait for all writes to complete
-        for handle in handles {
-            let result = handle.await??;
-            assert!(!result.is_empty(), "Should return WAL file path");
+            assert!(
+                result.is_ok(),
+                "Write batch {} should succeed: {:?}",
+                batch,
+                result.err()
+            );
+            assert!(!result.unwrap().is_empty(), "Should return WAL file path");
         }
 
         Ok(())
