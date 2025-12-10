@@ -256,7 +256,15 @@ impl ProximaDB {
             storage::persistence::write_ahead_log::manifest::init(&wal_config).await?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
-        // Step 4: Create StorageEngine using the CollectionService from SharedServices
+        // Step 4: Set global metadata provider BEFORE creating StorageEngine
+        // This ensures WAL pool instances can resolve collection paths correctly
+        tracing::debug!("🔧 ProximaDB::new - Setting global metadata provider for WAL path resolution...");
+        storage::persistence::write_ahead_log::set_global_metadata_provider(
+            collection_service.metadata_backend().clone()
+        ).await;
+        tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
+
+        // Step 5: Create StorageEngine using the CollectionService from SharedServices
         tracing::debug!(
             "🔧 ProximaDB::new - Creating storage engine with injected CollectionService..."
         );
@@ -438,6 +446,31 @@ impl ProximaDB {
     }
 
     pub async fn stop(&mut self) -> Result<()> {
+        // Flush graph WAL for all graphs before shutdown
+        tracing::info!("Flushing graph WAL for all graphs...");
+        if let Some(ref multi_server) = self.multi_server {
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                async {
+                    let graphs = multi_server.shared_services.graph_service.list_graphs().await?;
+                    let mut flushed = 0;
+                    for graph_id in graphs {
+                        if let Err(e) = multi_server.shared_services.graph_service.flush_wal(&graph_id).await {
+                            tracing::warn!("Failed to flush WAL for graph {}: {}", graph_id, e);
+                        } else {
+                            flushed += 1;
+                        }
+                    }
+                    tracing::debug!("Flushed WAL for {} graphs", flushed);
+                    Ok::<_, crate::core::error::ProximaDBError>(())
+                }
+            ).await {
+                Ok(Ok(())) => tracing::debug!("Graph WAL flush complete"),
+                Ok(Err(e)) => tracing::warn!("Graph WAL flush error: {}", e),
+                Err(_) => tracing::warn!("Graph WAL flush timeout - forcing continuation"),
+            }
+        }
+
         // Shutdown global WAL manifest (flush pending writes) with timeout
         tracing::info!("Shutting down global WAL manifest...");
         match tokio::time::timeout(
@@ -511,6 +544,281 @@ impl ProximaDB {
             status.grpc_address
         } else {
             None
+        }
+    }
+
+    // =========================================================================
+    // Graph Database API - High-level graph operations
+    // =========================================================================
+
+    /// Create a new graph collection
+    ///
+    /// # Arguments
+    /// * `graph_id` - Unique identifier for the graph
+    /// * `schema` - Optional schema definition for the graph
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err` if the graph already exists or creation fails
+    pub async fn create_graph(
+        &self,
+        graph_id: &str,
+        schema: Option<proto::proximadb_v1::GraphSchema>,
+    ) -> Result<()> {
+        if let Some(ref multi_server) = self.multi_server {
+            let request = proto::proximadb_v1::CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: Some(graph_id.to_string()),
+                description: None,
+                schema,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            };
+            multi_server
+                .shared_services
+                .graph_service
+                .create_graph_collection(request)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            Ok(())
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// List all graphs in the database
+    ///
+    /// # Returns
+    /// * `Vec<String>` - List of graph IDs
+    pub async fn list_graphs(&self) -> Result<Vec<String>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .list_graphs()
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Create a node in a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to add the node to
+    /// * `node` - The node to create
+    ///
+    /// # Returns
+    /// * `Ok(Arc<Node>)` - The created node
+    pub async fn create_node(
+        &self,
+        graph_id: &str,
+        node: graph::Node,
+    ) -> Result<std::sync::Arc<graph::Node>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .create_node(graph_id, node)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Get a node by ID from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the node
+    /// * `node_id` - The ID of the node to retrieve
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Node>))` if found, `Ok(None)` if not found
+    pub async fn get_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Node>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .get_node(graph_id, &node_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Update a node in a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the node
+    /// * `node` - The updated node (must have same ID as existing node)
+    ///
+    /// # Returns
+    /// * `Ok(Arc<Node>)` - The updated node
+    pub async fn update_node(
+        &self,
+        graph_id: &str,
+        node: graph::Node,
+    ) -> Result<std::sync::Arc<graph::Node>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .update_node(graph_id, node)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Delete a node from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the node
+    /// * `node_id` - The ID of the node to delete
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Node>))` if deleted, `Ok(None)` if not found
+    pub async fn delete_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Node>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .delete_node(graph_id, &node_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Create an edge between two nodes in a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to add the edge to
+    /// * `edge` - The edge to create
+    ///
+    /// # Returns
+    /// * `Ok(Arc<Edge>)` - The created edge
+    pub async fn create_edge(
+        &self,
+        graph_id: &str,
+        edge: graph::Edge,
+    ) -> Result<std::sync::Arc<graph::Edge>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .create_edge(graph_id, edge)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Get an edge by ID from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the edge
+    /// * `edge_id` - The ID of the edge to retrieve
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Edge>))` if found, `Ok(None)` if not found
+    pub async fn get_edge(
+        &self,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Edge>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .get_edge(graph_id, &edge_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Delete an edge from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the edge
+    /// * `edge_id` - The ID of the edge to delete
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Edge>))` if deleted, `Ok(None)` if not found
+    pub async fn delete_edge(
+        &self,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Edge>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .delete_edge(graph_id, &edge_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Get graph statistics
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to get stats for
+    ///
+    /// # Returns
+    /// * `Ok(GraphStats)` - Statistics about the graph
+    pub async fn get_graph_stats(
+        &self,
+        graph_id: &str,
+    ) -> Result<proto::proximadb_v1::GraphStats> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .get_stats(graph_id)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Flush the WAL for a specific graph to ensure durability
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to flush
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    pub async fn flush_graph_wal(&self, graph_id: &str) -> Result<()> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .flush_wal(graph_id)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
         }
     }
 }

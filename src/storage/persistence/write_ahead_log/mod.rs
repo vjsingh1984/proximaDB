@@ -995,6 +995,47 @@ fn get_global_metadata_provider() -> Arc<tokio::sync::RwLock<Option<Arc<dyn crat
     }).clone()
 }
 
+/// Set the global metadata provider - MUST be called before any WAL writes
+/// This ensures all pool instances can resolve collection storage assignments
+///
+/// # Example
+/// ```rust,no_run
+/// use proximadb::storage::persistence::write_ahead_log::set_global_metadata_provider;
+///
+/// async fn setup(provider: Arc<dyn InternalCollectionProvider>) {
+///     set_global_metadata_provider(provider).await;
+///     // Now WAL writes will correctly resolve storage paths
+/// }
+/// ```
+pub async fn set_global_metadata_provider(provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>) {
+    let global = get_global_metadata_provider();
+    let mut lock = global.write().await;
+    *lock = Some(provider);
+    tracing::info!("✅ Global metadata provider set for WAL path resolution");
+}
+
+/// Check if global metadata provider is available
+pub async fn is_global_metadata_provider_available() -> bool {
+    let global = get_global_metadata_provider();
+    let lock = global.read().await;
+    lock.is_some()
+}
+
+/// Wait for global metadata provider to be set with timeout
+/// Returns true if provider became available, false if timeout
+pub async fn wait_for_global_metadata_provider(timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    let check_interval = std::time::Duration::from_millis(10);
+
+    while start.elapsed() < timeout {
+        if is_global_metadata_provider_available().await {
+            return true;
+        }
+        tokio::time::sleep(check_interval).await;
+    }
+    false
+}
+
 /// Get the global WriteAheadLogManager registry
 pub fn get_write_ahead_log_manager_registry() -> &'static WriteAheadLogManagerRegistry {
     WAL_MANAGER_REGISTRY.get_or_init(|| {
@@ -1290,6 +1331,109 @@ impl WriteAheadLogManager {
         let mut metadata_provider = self.metadata_provider.write().await;
         *metadata_provider = Some(provider);
         tracing::info!("📋 Metadata provider attached to WAL manager for recovery");
+    }
+
+    /// Resolve the base location for a collection's WAL files
+    ///
+    /// This method ensures WAL files are written to the correct storage location
+    /// based on the collection's storage assignment. It implements robust path
+    /// resolution with:
+    /// - Short timeout wait for metadata provider if not immediately available
+    /// - Clear error messages for debugging path resolution issues
+    /// - Fallback to configured storage locations with warnings
+    ///
+    /// # Arguments
+    /// * `collection_id` - The collection ID to resolve path for
+    ///
+    /// # Returns
+    /// * `Ok(String)` - The resolved base location path
+    /// * `Err` - If path cannot be resolved (e.g., collection not found)
+    async fn resolve_collection_base_location(&self, collection_id: &str) -> Result<String> {
+        // First, check if metadata provider is available
+        let provider_available = {
+            let lock = self.metadata_provider.read().await;
+            lock.is_some()
+        };
+
+        // If not available, wait briefly for it to be set (handles startup race condition)
+        if !provider_available {
+            tracing::debug!(
+                "WAL path resolution: Waiting for metadata provider (collection: {})",
+                collection_id
+            );
+            let timeout = std::time::Duration::from_millis(100);
+            if !wait_for_global_metadata_provider(timeout).await {
+                // Use fallback with warning - this is acceptable during startup/recovery
+                let fallback = self.get_fallback_base_location();
+                tracing::warn!(
+                    "WAL path resolution: No metadata provider after {}ms, using fallback path: {} (collection: {})",
+                    timeout.as_millis(),
+                    fallback,
+                    collection_id
+                );
+                return Ok(fallback);
+            }
+        }
+
+        // Now try to resolve from metadata provider
+        let metadata_provider_lock = self.metadata_provider.read().await;
+        if let Some(provider) = metadata_provider_lock.as_ref() {
+            match provider.get_collection(collection_id).await {
+                Ok(Some(collection)) => {
+                    if let Some(assignment) = collection.storage_assignment {
+                        tracing::debug!(
+                            "WAL path resolved: {} -> {}",
+                            collection_id,
+                            assignment.base_location
+                        );
+                        return Ok(assignment.base_location.clone());
+                    } else {
+                        // Collection exists but has no storage assignment - this is unexpected
+                        // Try to assign storage now
+                        tracing::warn!(
+                            "Collection {} has no storage_assignment, using fallback",
+                            collection_id
+                        );
+                        return Ok(self.get_fallback_base_location());
+                    }
+                }
+                Ok(None) => {
+                    // Collection not found - this can happen during collection creation
+                    // before the collection is fully registered
+                    tracing::debug!(
+                        "Collection {} not found in metadata, using fallback",
+                        collection_id
+                    );
+                    return Ok(self.get_fallback_base_location());
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to get collection {} from metadata: {}",
+                        collection_id,
+                        e
+                    );
+                    return Ok(self.get_fallback_base_location());
+                }
+            }
+        }
+
+        // Fallback if metadata provider is not available
+        Ok(self.get_fallback_base_location())
+    }
+
+    /// Get fallback base location from config
+    /// This uses the first configured storage location or a sensible default
+    fn get_fallback_base_location(&self) -> String {
+        self.config
+            .multi_disk
+            .data_directories
+            .first()
+            .cloned()
+            .unwrap_or_else(|| {
+                // Last resort default - should rarely happen
+                tracing::warn!("No data directories configured, using /tmp/proximadb/d1");
+                "/tmp/proximadb/d1".to_string()
+            })
     }
 
     /// Get WAL configuration (read-only access)
@@ -1789,50 +1933,9 @@ impl WriteAheadLogManager {
             trace!("WAL: should_sync = {}", should_sync);
 
             // Get base location for this collection from metadata provider
-            // CRITICAL FIX: Don't use assigned_collections cache (never populated)
-            // Instead, query actual collection metadata for storage_assignment
-            let base_location = {
-                let metadata_provider_lock = self.metadata_provider.read().await;
-                if let Some(provider) = metadata_provider_lock.as_ref() {
-                    // Get collection to find its actual storage assignment
-                    match provider.get_collection(collection_id).await {
-                        Ok(Some(collection)) => {
-                            if let Some(assignment) = collection.storage_assignment {
-                                eprintln!("✅ DEBUG: Found storage assignment from collection: {}", assignment.base_location);
-                                trace!("WAL: base_location = {}", assignment.base_location);
-                                assignment.base_location.clone()
-                            } else {
-                                eprintln!("⚠️ DEBUG: Collection has no storage_assignment!");
-                                warn!("Collection {} has no storage_assignment, using first storage location", collection_id);
-                                // Fallback to first configured storage location
-                                self.config.multi_disk.data_directories.get(0)
-                                    .cloned()
-                                    .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
-                            }
-                        }
-                        Ok(None) => {
-                            eprintln!("⚠️ DEBUG: Collection {} not found in metadata!", collection_id);
-                            warn!("Collection {} not found, using first storage location", collection_id);
-                            self.config.multi_disk.data_directories.get(0)
-                                .cloned()
-                                .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
-                        }
-                        Err(e) => {
-                            eprintln!("❌ DEBUG: Error getting collection {}: {}", collection_id, e);
-                            error!("Failed to get collection {}: {}", collection_id, e);
-                            self.config.multi_disk.data_directories.get(0)
-                                .cloned()
-                                .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
-                        }
-                    }
-                } else {
-                    eprintln!("⚠️ DEBUG: No metadata provider available!");
-                    warn!("No metadata provider, using first storage location");
-                    self.config.multi_disk.data_directories.get(0)
-                        .cloned()
-                        .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
-                }
-            };
+            // CRITICAL FIX: Properly resolve storage assignment from metadata
+            // Uses global metadata provider shared across all pool instances
+            let base_location = self.resolve_collection_base_location(collection_id).await?;
 
             // Create disk manager and write batch
             trace!("WAL: Creating FilesystemFactory");

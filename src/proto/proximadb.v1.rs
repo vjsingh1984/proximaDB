@@ -2398,7 +2398,7 @@ pub struct VectorOperationResponse {
     pub error_code: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Quantization configuration
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuantizationConfig {

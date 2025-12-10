@@ -12,6 +12,7 @@ from .paragraph import ParagraphStrategy
 from .semantic import SemanticStrategy
 from .recursive import RecursiveStrategy
 from .fixed_size import FixedSizeStrategy
+from .code import CodeChunkingStrategy
 
 
 class ChunkingStrategyFactory:
@@ -25,6 +26,7 @@ class ChunkingStrategyFactory:
         ChunkingStrategy.SEMANTIC: SemanticStrategy,
         ChunkingStrategy.RECURSIVE: RecursiveStrategy,
         ChunkingStrategy.FIXED_SIZE: FixedSizeStrategy,
+        ChunkingStrategy.CODE: CodeChunkingStrategy,
     }
     
     @classmethod

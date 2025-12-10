@@ -423,8 +423,18 @@ impl GraphEngine for OrionGraphEngine {
     }
 
     async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
-        // TODO: Add WAL support for update_node
         let node_id = node.id.clone();
+        tracing::debug!("update_node called for node: {}", node_id);
+
+        // Write to WAL SYNCHRONOUSLY if persistence is enabled
+        // This ensures durability - method only returns after WAL write completes
+        if let Some(persistence) = &self.persistence {
+            tracing::debug!("Persistence is enabled, calling write_update_node_operation");
+            persistence.write_update_node_operation(node.clone()).await?;
+            tracing::debug!("write_update_node_operation completed successfully");
+        } else {
+            tracing::warn!("Persistence is None - WAL writes disabled for node update {}", node_id);
+        }
 
         // Remove old node from indexes
         if let Some(old_node) = self.memory_pool.remove_node(&node_id) {
@@ -447,7 +457,18 @@ impl GraphEngine for OrionGraphEngine {
     }
 
     async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        // TODO: Add WAL support for delete_node
+        tracing::debug!("delete_node called for node: {}", id);
+
+        // Write to WAL SYNCHRONOUSLY if persistence is enabled
+        // This ensures durability - method only returns after WAL write completes
+        if let Some(persistence) = &self.persistence {
+            tracing::debug!("Persistence is enabled, calling write_delete_node_operation");
+            persistence.write_delete_node_operation(id).await?;
+            tracing::debug!("write_delete_node_operation completed successfully");
+        } else {
+            tracing::warn!("Persistence is None - WAL writes disabled for node delete {}", id);
+        }
+
         let removed = self.memory_pool.remove_node(id);
 
         if removed.is_some() {
@@ -532,8 +553,10 @@ impl GraphEngine for OrionGraphEngine {
     }
 
     async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        // TODO: Add WAL support for update_edge
+        // WAL is handled by insert_edge() which is called at the end of this method
+        // The insert_edge() call writes the updated edge with CreateEdge operation
         let edge_id = edge.id.clone();
+        tracing::debug!("update_edge called for edge: {}", edge_id);
 
         // Remove old edge
         if let Some(old_edge) = self.memory_pool.remove_edge(&edge_id) {
@@ -565,7 +588,18 @@ impl GraphEngine for OrionGraphEngine {
     }
 
     async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        // TODO: Add WAL support for delete_edge
+        tracing::debug!("delete_edge called for edge: {}", id);
+
+        // Write to WAL SYNCHRONOUSLY if persistence is enabled
+        // This ensures durability - method only returns after WAL write completes
+        if let Some(persistence) = &self.persistence {
+            tracing::debug!("Persistence is enabled, calling write_delete_edge_operation");
+            persistence.write_delete_edge_operation(id).await?;
+            tracing::debug!("write_delete_edge_operation completed successfully");
+        } else {
+            tracing::warn!("Persistence is None - WAL writes disabled for edge delete {}", id);
+        }
+
         let removed = self.memory_pool.remove_edge(id);
 
         if let Some(ref edge) = removed {

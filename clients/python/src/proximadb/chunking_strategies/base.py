@@ -18,6 +18,7 @@ class ChunkingStrategy(Enum):
     SEMANTIC = "semantic"
     RECURSIVE = "recursive"
     FIXED_SIZE = "fixed_size"
+    CODE = "code"  # AST-aware code chunking using tree-sitter
 
 
 @dataclass

@@ -1,8 +1,163 @@
-// Custom serde implementations for protobuf oneof types ONLY
+// Custom serde implementations for protobuf types
+// Handles oneof types and SDK compatibility for complex types like QuantizationConfig
 use crate::proto::proximadb_v1::{PropertyValue, property_value::Value as PropertyValueVariant};
 use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlValueVariant};
+use crate::proto::proximadb_v1::{QuantizationConfig, QuantizationLevel};
 use crate::utils::encoding::{base64_decode, base64_encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+// ============================================================================
+// QuantizationConfig - SDK Compatibility Shim
+// ============================================================================
+//
+// The Python SDK sends flat quantization config:
+// {
+//   "enabled": true,
+//   "type": "product",  // or "binary", "scalar"
+//   "bits": 16,
+//   "num_subvectors": 16,
+//   "bits_per_subvector": 8,
+//   "bits_per_vector": 128
+// }
+//
+// But the proto expects nested custom_levels:
+// {
+//   "enabled": true,
+//   "strategy": 2,
+//   "custom_levels": [
+//     {"level_id": "...", "type": 1, "bits": 16, "num_subvectors": 16}
+//   ]
+// }
+//
+// This custom deserializer accepts BOTH formats for backward compatibility.
+
+impl<'de> Deserialize<'de> for QuantizationConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use crate::proto::proximadb_v1::quantization_config::Strategy;
+        use crate::proto::proximadb_v1::quantization_level::QuantizationType;
+
+        // Helper struct that accepts both proto and SDK fields
+        #[derive(serde::Deserialize)]
+        struct QuantizationConfigHelper {
+            // Standard proto fields
+            enabled: Option<bool>,
+            strategy: Option<i32>,
+            #[serde(default)]
+            custom_levels: Vec<QuantizationLevel>,
+            enable_progressive_search: Option<bool>,
+            binary_filter_selectivity: Option<f32>,
+            int8_ranking_selectivity: Option<f32>,
+            pq_ranking_selectivity: Option<f32>,
+            training_sample_size: Option<u32>,
+            quality_threshold: Option<f32>,
+            enable_adaptive_training: Option<bool>,
+            optimize_for_storage: Option<bool>,
+            optimize_for_memory: Option<bool>,
+            enable_simd_acceleration: Option<bool>,
+            enable_binary: Option<bool>,
+            enable_int8: Option<bool>,
+            enable_pq: Option<bool>,
+            pq_segments: Option<u32>,
+            pq_bits: Option<u32>,
+            pq_codebooks: Option<u32>,
+            binary_threshold: Option<f32>,
+            int8_threshold: Option<f32>,
+            pq_threshold: Option<f32>,
+
+            // SDK compatibility fields (flat structure)
+            #[serde(alias = "type")]
+            quantization_type: Option<String>,
+            bits: Option<u32>,
+            num_subvectors: Option<u32>,
+            bits_per_subvector: Option<u32>,
+            bits_per_vector: Option<u32>,
+        }
+
+        let helper = QuantizationConfigHelper::deserialize(deserializer)?;
+
+        // Determine custom_levels: use proto format if provided, else construct from SDK fields
+        let custom_levels = if !helper.custom_levels.is_empty() {
+            // Proto format - use as-is
+            helper.custom_levels
+        } else if helper.quantization_type.is_some() || helper.bits.is_some() || helper.num_subvectors.is_some() {
+            // SDK format - construct custom_levels from flat fields
+            let quant_type_str = helper.quantization_type.as_deref().unwrap_or("none");
+            let quant_type = match quant_type_str.to_lowercase().as_str() {
+                "binary" => QuantizationType::Binary as i32,
+                "int8" | "scalar" => QuantizationType::Scalar as i32,
+                "product" | "pq" => QuantizationType::Product as i32,
+                "uniform" => QuantizationType::Uniform as i32,
+                "none" => QuantizationType::None as i32,
+                _ => QuantizationType::None as i32,
+            };
+
+            let bits = helper.bits
+                .or(helper.bits_per_subvector)
+                .or(helper.bits_per_vector)
+                .unwrap_or(8);
+
+            let num_subvectors = helper.num_subvectors.unwrap_or(if quant_type == QuantizationType::Product as i32 { 16 } else { 1 });
+
+            vec![QuantizationLevel {
+                level_id: format!("sdk_level_{}", quant_type_str),
+                r#type: quant_type,
+                bits,
+                num_subvectors,
+                adaptive_subvectors: false,
+                scale: 1.0,
+                offset: 0.0,
+                clamp_values: true,
+                threshold: 0.0,
+                sign_based: false,
+                enable_in_storage: true,
+                enable_in_index: true,
+                search_priority: 0,
+                min_recall: 0.95,
+                enable_validation: true,
+            }]
+        } else {
+            // No quantization levels specified
+            vec![]
+        };
+
+        // Determine strategy based on custom_levels or explicit strategy
+        let strategy = helper.strategy.or_else(|| {
+            if !custom_levels.is_empty() {
+                Some(Strategy::CustomLevels as i32)
+            } else {
+                Some(Strategy::SmartDefaults as i32)
+            }
+        });
+
+        Ok(QuantizationConfig {
+            enabled: helper.enabled,
+            strategy,
+            custom_levels,
+            enable_progressive_search: helper.enable_progressive_search,
+            binary_filter_selectivity: helper.binary_filter_selectivity,
+            int8_ranking_selectivity: helper.int8_ranking_selectivity,
+            pq_ranking_selectivity: helper.pq_ranking_selectivity,
+            training_sample_size: helper.training_sample_size,
+            quality_threshold: helper.quality_threshold,
+            enable_adaptive_training: helper.enable_adaptive_training,
+            optimize_for_storage: helper.optimize_for_storage,
+            optimize_for_memory: helper.optimize_for_memory,
+            enable_simd_acceleration: helper.enable_simd_acceleration,
+            enable_binary: helper.enable_binary,
+            enable_int8: helper.enable_int8,
+            enable_pq: helper.enable_pq,
+            pq_segments: helper.pq_segments,
+            pq_bits: helper.pq_bits,
+            pq_codebooks: helper.pq_codebooks,
+            binary_threshold: helper.binary_threshold,
+            int8_threshold: helper.int8_threshold,
+            pq_threshold: helper.pq_threshold,
+        })
+    }
+}
 impl Serialize for SqlValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

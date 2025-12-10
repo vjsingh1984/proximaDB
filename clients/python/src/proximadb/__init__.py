@@ -190,6 +190,37 @@ try:
 except ImportError:
     _chunking_available = False
 
+# Code-aware chunking and knowledge builder (if available)
+try:
+    from .chunking_strategies import (
+        CodeChunkingStrategy,
+        CodeChunkingConfig,
+        CodeSymbol,
+        CodeSymbolType,
+        CodeRelation,
+        CodeRelationType,
+        create_code_chunker,
+        get_supported_languages,
+        get_supported_extensions,
+        register_language_parser,
+    )
+    _code_chunking_available = True
+except ImportError:
+    _code_chunking_available = False
+
+# Code knowledge builder (if available)
+try:
+    from .code_knowledge import (
+        CodeKnowledgeBuilder,
+        CodeIndexConfig,
+        CodeSearchResult,
+        IndexingResult,
+        create_code_knowledge_store,
+    )
+    _code_knowledge_available = True
+except ImportError:
+    _code_knowledge_available = False
+
 # Additional config classes
 try:
     from .config import RetryConfig, CompressionConfig
@@ -314,6 +345,31 @@ if _chunking_available:
         "prepare_vector_records",
     ])
 
+# Add code chunking exports if available
+if _code_chunking_available:
+    __all__.extend([
+        "CodeChunkingStrategy",
+        "CodeChunkingConfig",
+        "CodeSymbol",
+        "CodeSymbolType",
+        "CodeRelation",
+        "CodeRelationType",
+        "create_code_chunker",
+        "get_supported_languages",
+        "get_supported_extensions",
+        "register_language_parser",
+    ])
+
+# Add code knowledge builder exports if available
+if _code_knowledge_available:
+    __all__.extend([
+        "CodeKnowledgeBuilder",
+        "CodeIndexConfig",
+        "CodeSearchResult",
+        "IndexingResult",
+        "create_code_knowledge_store",
+    ])
+
 # Advanced features (batching, streaming, cache, circuit breaker)
 try:
     from .batching import (
@@ -411,3 +467,47 @@ __all__.extend([
     "IndexConfig",
     "Vector",
 ])
+
+# Embedded mode and embedding models
+try:
+    from .embedded import (
+        # Core embedded classes
+        EmbeddedProximaDB,
+        EmbeddedCollection,
+        EmbeddedConfig,
+        connect_embedded,
+        # Embedding model classes
+        BaseEmbeddingModel,
+        SentenceTransformerModel,
+        OllamaEmbeddingModel,
+        OpenAIEmbeddingModel,
+        FunctionEmbeddingModel,
+        create_embedding_model,
+        # Protocols
+        EmbeddingFunction,
+        AsyncEmbeddingFunction,
+        BatchEmbeddingFunction,
+    )
+    _embedded_available = True
+except ImportError:
+    _embedded_available = False
+
+if _embedded_available:
+    __all__.extend([
+        # Embedded mode
+        "EmbeddedProximaDB",
+        "EmbeddedCollection",
+        "EmbeddedConfig",
+        "connect_embedded",
+        # Embedding models
+        "BaseEmbeddingModel",
+        "SentenceTransformerModel",
+        "OllamaEmbeddingModel",
+        "OpenAIEmbeddingModel",
+        "FunctionEmbeddingModel",
+        "create_embedding_model",
+        # Protocols
+        "EmbeddingFunction",
+        "AsyncEmbeddingFunction",
+        "BatchEmbeddingFunction",
+    ])

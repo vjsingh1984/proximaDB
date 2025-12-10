@@ -555,9 +555,9 @@ fn python_to_json(value: &PyAny) -> PyResult<serde_json::Value> {
     }
 }
 
-/// Python module definition
+/// Python module definition - must match crate name "proximadb"
 #[pymodule]
-fn proximadb_embedded(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn proximadb(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyProximaDB>()?;
     m.add_class::<PyDiskConfig>()?;
     m.add_class::<PySearchResult>()?;

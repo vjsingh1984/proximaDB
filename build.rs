@@ -91,9 +91,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "IndexConfig",
             "#[derive(serde::Serialize, serde::Deserialize)]",
         )
+        // QuantizationConfig: Only derive Serialize - custom Deserialize in serde_impls.rs
+        // handles SDK compatibility (flat fields) and proto format (custom_levels)
         .type_attribute(
             "QuantizationConfig",
-            "#[derive(serde::Serialize, serde::Deserialize)]",
+            "#[derive(serde::Serialize)]",
         )
         // Add serde to specific config types used by IndexConfig
         .type_attribute(
