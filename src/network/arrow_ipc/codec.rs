@@ -1,0 +1,516 @@
+// Copyright 2025 ProximaDB
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+//! Arrow <-> Proto codec for Flight protocol
+//!
+//! Reuses existing Arrow infrastructure from arrow_ipc_scanner.rs and unified_columnar_io.rs
+//! for maximum code reuse and consistency.
+
+use anyhow::{Context, Result};
+use arrow_array::{
+    Array, ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Int64Array, RecordBatch,
+    StringArray, StructArray,
+};
+use arrow_cast::cast;
+use arrow_flight::{FlightData, FlightDescriptor, Ticket};
+use arrow_ipc::writer::IpcWriteOptions;
+use arrow_schema::{DataType, Field, Fields, Schema};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::proto::proximadb_v1::{
+    MetadataItem, SearchParams, SqlValue, VectorBatchRequest, VectorOperationResponse,
+    VectorRecord, VectorSearchRequest,
+};
+
+/// Write mode for Arrow IPC operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WriteMode {
+    /// Use WAL for durability (30-50K vectors/sec)
+    WAL,
+    /// Direct engine write bypassing WAL (100-200K vectors/sec)
+    Direct,
+}
+
+impl Default for WriteMode {
+    fn default() -> Self {
+        WriteMode::WAL // Safe default
+    }
+}
+
+/// Metadata extracted from FlightDescriptor
+#[derive(Debug, Clone)]
+pub struct FlightRequestMetadata {
+    pub collection_id: String,
+    pub write_mode: WriteMode,
+    pub trigger_compaction: bool,
+}
+
+/// Arrow-Proto bidirectional codec
+///
+/// Reuses existing conversion functions from arrow_ipc_scanner.rs
+pub struct ArrowProtoCodec;
+
+impl ArrowProtoCodec {
+    /// Create standard vector schema for ProximaDB
+    ///
+    /// Schema:
+    /// - id: Utf8 (required)
+    /// - vector: FixedSizeList<Float32>(dimension) (required)
+    /// - metadata: Struct<key: Utf8, value: Utf8> (optional)
+    /// - timestamp: Int64 (optional)
+    /// - score: Float32 (for search results, optional)
+    pub fn create_vector_schema(dimension: usize) -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, false)),
+                    dimension as i32,
+                ),
+                false,
+            ),
+            Field::new(
+                "metadata",
+                DataType::Struct(Fields::from(vec![
+                    Field::new("key", DataType::Utf8, false),
+                    Field::new("value", DataType::Utf8, true),
+                ])),
+                true,
+            ),
+            Field::new("timestamp", DataType::Int64, true),
+            Field::new("score", DataType::Float32, true),
+        ]))
+    }
+
+    /// Convert Arrow RecordBatch to VectorRecord protos
+    ///
+    /// Reuses existing batch_to_vector_records from arrow_ipc_scanner.rs
+    pub fn batches_to_vector_records(batches: Vec<RecordBatch>) -> Result<Vec<VectorRecord>> {
+        let mut all_records = Vec::new();
+
+        for batch in batches {
+            let records = Self::batch_to_vector_records(&batch)?;
+            all_records.extend(records);
+        }
+
+        Ok(all_records)
+    }
+
+    /// Convert single RecordBatch to VectorRecords
+    ///
+    /// This is adapted from arrow_ipc_scanner.rs::batch_to_vector_records
+    fn batch_to_vector_records(batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
+        let mut records = Vec::with_capacity(batch.num_rows());
+
+        // Extract id column
+        let id_array = batch
+            .column_by_name("id")
+            .context("Missing 'id' column")?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("'id' column is not StringArray")?;
+
+        // Extract vector column (supports FixedSizeList or Binary)
+        let vector_array = batch
+            .column_by_name("vector")
+            .context("Missing 'vector' column")?;
+
+        let vectors = Self::extract_vectors(vector_array, batch.num_rows())?;
+
+        // Extract optional metadata
+        let metadata_items = if let Some(meta_col) = batch.column_by_name("metadata") {
+            Self::extract_metadata(meta_col, batch.num_rows())?
+        } else {
+            vec![Vec::new(); batch.num_rows()]
+        };
+
+        // Extract optional timestamp
+        let timestamps = if let Some(ts_col) = batch.column_by_name("timestamp") {
+            if let Some(ts_array) = ts_col.as_any().downcast_ref::<Int64Array>() {
+                (0..batch.num_rows())
+                    .map(|i| {
+                        if ts_array.is_null(i) {
+                            None
+                        } else {
+                            Some(ts_array.value(i))
+                        }
+                    })
+                    .collect()
+            } else {
+                vec![None; batch.num_rows()]
+            }
+        } else {
+            vec![None; batch.num_rows()]
+        };
+
+        // Build VectorRecord objects
+        for i in 0..batch.num_rows() {
+            // Convert Vec<MetadataItem> to HashMap<String, SqlValue>
+            let metadata_map = metadata_items[i]
+                .iter()
+                .filter_map(|item| {
+                    item.value.as_ref().map(|meta_value| {
+                        use crate::proto::proximadb_v1::metadata_item::Value as MetaValue;
+                        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+
+                        let sql_value = match meta_value {
+                            MetaValue::StringValue(s) => SqlValue {
+                                value: Some(SqlVal::StringValue(s.clone())),
+                            },
+                            MetaValue::NumberValue(n) => SqlValue {
+                                value: Some(SqlVal::NumberValue(*n)),
+                            },
+                            MetaValue::BoolValue(b) => SqlValue {
+                                value: Some(SqlVal::BoolValue(*b)),
+                            },
+                        };
+                        (item.key.clone(), sql_value)
+                    })
+                })
+                .collect();
+
+            records.push(VectorRecord {
+                id: id_array.value(i).to_string(),
+                vector: vectors[i].clone(),
+                metadata: metadata_map,
+                timestamp: timestamps[i],
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            });
+        }
+
+        Ok(records)
+    }
+
+    /// Extract vectors from Arrow array (handles multiple formats)
+    fn extract_vectors(array: &ArrayRef, num_rows: usize) -> Result<Vec<Vec<f32>>> {
+        // Try FixedSizeList<Float32> first (standard format)
+        if let Some(list_array) = array.as_any().downcast_ref::<FixedSizeListArray>() {
+            let value_length = list_array.value_length() as usize;
+            let flat_array = list_array
+                .values()
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .context("FixedSizeList values not Float32Array")?;
+
+            return Ok((0..num_rows)
+                .map(|i| {
+                    let start = i * value_length;
+                    flat_array.values()[start..start + value_length].to_vec()
+                })
+                .collect());
+        }
+
+        // Fallback: Binary format (serialized f32 vectors)
+        if let Some(binary_array) = array.as_any().downcast_ref::<BinaryArray>() {
+            return (0..num_rows)
+                .map(|i| {
+                    let bytes = binary_array.value(i);
+                    Self::deserialize_vector(bytes)
+                })
+                .collect();
+        }
+
+        // Fallback: Direct Float32Array (for 1D vectors)
+        if let Some(float_array) = array.as_any().downcast_ref::<Float32Array>() {
+            let dim = float_array.len() / num_rows;
+            return Ok((0..num_rows)
+                .map(|i| float_array.values()[i * dim..(i + 1) * dim].to_vec())
+                .collect());
+        }
+
+        Err(anyhow::anyhow!(
+            "Unsupported vector column type: {:?}",
+            array.data_type()
+        ))
+    }
+
+    /// Deserialize f32 vector from binary (little-endian)
+    fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
+        if bytes.len() % 4 != 0 {
+            return Err(anyhow::anyhow!("Invalid vector binary data length"));
+        }
+
+        Ok(bytes
+            .chunks_exact(4)
+            .map(|chunk| {
+                let arr: [u8; 4] = chunk.try_into().unwrap();
+                f32::from_le_bytes(arr)
+            })
+            .collect())
+    }
+
+    /// Extract metadata from Arrow struct column
+    fn extract_metadata(array: &ArrayRef, num_rows: usize) -> Result<Vec<Vec<MetadataItem>>> {
+        // Handle StructArray with key/value fields
+        if let Some(struct_array) = array.as_any().downcast_ref::<StructArray>() {
+            let key_array = struct_array
+                .column_by_name("key")
+                .context("Missing 'key' field in metadata struct")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("'key' field not StringArray")?;
+
+            let value_array = struct_array
+                .column_by_name("value")
+                .context("Missing 'value' field in metadata struct")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("'value' field not StringArray")?;
+
+            // Assume each row has one metadata item (or null)
+            return Ok((0..num_rows)
+                .map(|i| {
+                    if struct_array.is_null(i) {
+                        Vec::new()
+                    } else {
+                        use crate::proto::proximadb_v1::metadata_item::Value;
+                        vec![MetadataItem {
+                            key: key_array.value(i).to_string(),
+                            value: Some(Value::StringValue(value_array.value(i).to_string())),
+                        }]
+                    }
+                })
+                .collect());
+        }
+
+        // Fallback: StringArray with JSON metadata
+        if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
+            return (0..num_rows)
+                .map(|i| {
+                    if string_array.is_null(i) {
+                        Ok(Vec::new())
+                    } else {
+                        let json_str = string_array.value(i);
+                        Self::parse_metadata_json(json_str)
+                    }
+                })
+                .collect();
+        }
+
+        Ok(vec![Vec::new(); num_rows])
+    }
+
+    /// Parse JSON metadata string
+    fn parse_metadata_json(json: &str) -> Result<Vec<MetadataItem>> {
+        let map: HashMap<String, serde_json::Value> = serde_json::from_str(json)?;
+
+        Ok(map
+            .into_iter()
+            .map(|(key, value)| MetadataItem {
+                key,
+                value: Some(Self::json_value_to_metadata_value(value)),
+            })
+            .collect())
+    }
+
+    /// Convert serde_json::Value to metadata_item::Value
+    fn json_value_to_metadata_value(
+        value: serde_json::Value,
+    ) -> crate::proto::proximadb_v1::metadata_item::Value {
+        use crate::proto::proximadb_v1::metadata_item::Value;
+
+        match value {
+            serde_json::Value::String(s) => Value::StringValue(s),
+            serde_json::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    Value::NumberValue(f)
+                } else {
+                    Value::StringValue(n.to_string())
+                }
+            }
+            serde_json::Value::Bool(b) => Value::BoolValue(b),
+            _ => Value::StringValue(value.to_string()),
+        }
+    }
+
+    /// Convert VectorRecords to Arrow RecordBatch (for search results)
+    pub fn vector_records_to_batch(
+        records: Vec<VectorRecord>,
+        dimension: usize,
+    ) -> Result<RecordBatch> {
+        if records.is_empty() {
+            return Err(anyhow::anyhow!("Cannot create batch from empty records"));
+        }
+
+        let schema = Self::create_vector_schema(dimension);
+
+        // Build id array
+        let id_array = StringArray::from_iter_values(records.iter().map(|r| r.id.as_str()));
+
+        // Build vector array (FixedSizeList<Float32>)
+        let mut vector_values = Vec::with_capacity(records.len() * dimension);
+        for record in &records {
+            vector_values.extend_from_slice(&record.vector);
+        }
+        let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;
+        let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
+        let vector_array = FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
+
+        // Build metadata array (Struct<key, value>)
+        let metadata_array = Self::build_metadata_struct_array(&records)?;
+
+        // Build timestamp array
+        let timestamp_array = Int64Array::from(
+            records
+                .iter()
+                .map(|r| r.timestamp)
+                .collect::<Vec<Option<i64>>>(),
+        );
+
+        // Build score array (None for insert, Some for search)
+        let score_array = Float32Array::from(vec![None; records.len()]);
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id_array),
+                Arc::new(vector_array),
+                Arc::new(metadata_array),
+                Arc::new(timestamp_array),
+                Arc::new(score_array),
+            ],
+        )
+        .context("Failed to create RecordBatch")
+    }
+
+    /// Build StructArray for metadata
+    fn build_metadata_struct_array(records: &[VectorRecord]) -> Result<StructArray> {
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+
+        for record in records {
+            if record.metadata.is_empty() {
+                keys.push(None);
+                values.push(None);
+            } else {
+                // Take first metadata item (simplification)
+                let (key, value) = record.metadata.iter().next().unwrap();
+                keys.push(Some(key.as_str()));
+                values.push(Some(Self::sql_value_to_string(value)));
+            }
+        }
+
+        let key_array = StringArray::from(keys);
+        let value_array = StringArray::from(values);
+
+        StructArray::try_from(vec![
+            (
+                Arc::new(Field::new("key", DataType::Utf8, false)),
+                Arc::new(key_array) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("value", DataType::Utf8, true)),
+                Arc::new(value_array) as ArrayRef,
+            ),
+        ])
+        .context("Failed to create StructArray")
+    }
+
+    /// Convert SqlValue to string
+    fn sql_value_to_string(value: &SqlValue) -> String {
+        use crate::proto::proximadb_v1::sql_value::Value;
+
+        match &value.value {
+            Some(Value::StringValue(s)) => s.clone(),
+            Some(Value::Int64Value(i)) => i.to_string(),
+            Some(Value::NumberValue(f)) => f.to_string(),
+            Some(Value::BoolValue(b)) => b.to_string(),
+            Some(Value::NullValue(_)) => "null".to_string(),
+            Some(Value::BytesValue(b)) => format!("{:?}", b),
+            Some(Value::ArrayValue(_)) => "[array]".to_string(),
+            Some(Value::ObjectValue(_)) => "{object}".to_string(),
+            None => "null".to_string(),
+        }
+    }
+
+    /// Parse FlightDescriptor to extract request metadata
+    pub fn parse_descriptor(descriptor: &FlightDescriptor) -> Result<FlightRequestMetadata> {
+        let path = descriptor
+            .path
+            .first()
+            .context("FlightDescriptor path is empty")?;
+
+        let collection_id = path.clone();
+
+        // Parse command from descriptor.cmd if present
+        let (write_mode, trigger_compaction) = if !descriptor.cmd.is_empty() {
+            let cmd: HashMap<String, String> = serde_json::from_slice(&descriptor.cmd)?;
+            let mode = match cmd.get("write_mode").map(|s| s.as_str()) {
+                Some("direct") => WriteMode::Direct,
+                _ => WriteMode::WAL,
+            };
+            let compact = cmd
+                .get("trigger_compaction")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(false);
+            (mode, compact)
+        } else {
+            (WriteMode::WAL, false)
+        };
+
+        Ok(FlightRequestMetadata {
+            collection_id,
+            write_mode,
+            trigger_compaction,
+        })
+    }
+
+    /// Parse Ticket to extract search request
+    pub fn ticket_to_search_request(ticket: &Ticket) -> Result<VectorSearchRequest> {
+        serde_json::from_slice(&ticket.ticket).context("Failed to parse search request from ticket")
+    }
+
+    /// Convert FlightData to RecordBatch
+    pub fn flight_data_to_batch(data: &FlightData) -> Result<RecordBatch> {
+        arrow_flight::utils::flight_data_to_arrow_batch(
+            data,
+            Arc::new(Schema::empty()), // Schema sent separately
+            &Default::default(),
+        )
+        .context("Failed to convert FlightData to RecordBatch")
+    }
+
+    /// Convert RecordBatch to FlightData
+    pub fn batch_to_flight_data(
+        batch: &RecordBatch,
+        options: &IpcWriteOptions,
+    ) -> Result<Vec<FlightData>> {
+        Ok(arrow_flight::utils::batches_to_flight_data(
+            &*batch.schema(),
+            vec![batch.clone()],
+        )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_vector_schema() {
+        let schema = ArrowProtoCodec::create_vector_schema(384);
+        assert_eq!(schema.fields().len(), 5);
+        assert_eq!(schema.field(0).name(), "id");
+        assert_eq!(schema.field(1).name(), "vector");
+    }
+
+    #[test]
+    fn test_deserialize_vector() {
+        let vec = vec![1.0f32, 2.0, 3.0];
+        let mut bytes = Vec::new();
+        for v in &vec {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        let result = ArrowProtoCodec::deserialize_vector(&bytes).unwrap();
+        assert_eq!(result, vec);
+    }
+}

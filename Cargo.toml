@@ -59,12 +59,12 @@ once_cell = "1.19"
 lazy_static = "1.5"
 
 # Networking & gRPC
-tonic = { version = "0.10", features = ["gzip"] }
-# tonic-reflection = "0.10"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
-prost = "0.12"
-prost-types = { version = "0.12" }
+tonic = { version = "0.13", features = ["gzip"] }
+# tonic-reflection = "0.13"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
+prost = "0.13"
+prost-types = { version = "0.13" }
 hyper = "0.14"  # Used internally by axum and tonic
-tower = "0.4"
+tower = { version = "0.4", features = ["limit"] }
 tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full", "timeout"] }
 url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
@@ -85,6 +85,8 @@ arrow-data = { version = "56.1", default-features = false }
 arrow-ipc = { version = "56.1", default-features = false }
 arrow-select = { version = "56.1", default-features = false }
 arrow-ord = { version = "56.1", default-features = false }
+arrow-flight = { version = "56.1", features = ["flight-sql-experimental"] }
+arrow-cast = { version = "56.1", default-features = false }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
@@ -117,7 +119,7 @@ num_cpus = "1.16"
 raw-cpuid = "11.0"  # CPU feature detection for x86_64
 
 # Random number generation
-rand = "0.8"
+rand = { version = "0.8", features = ["small_rng"] }
 rand_chacha = "0.3"
 rand_distr = "0.4"  # For generating realistic probability distributions
 
@@ -174,7 +176,7 @@ metal = { version = "0.27", optional = true }  # Metal GPU acceleration for Appl
 
 # Build dependencies
 [build-dependencies]
-tonic-build = "0.10"
+tonic-build = "0.13"
 apache-avro = "0.16"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

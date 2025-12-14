@@ -32,11 +32,12 @@
 //!
 //! ## Key Features
 //!
-//! ### 1. **Dual Protocol Support**
+//! ### 1. **Multi-Protocol Support**
 //! Concurrent servers with protocol-specific benefits:
-//! - **REST API**: HTTP/JSON for web clients, curl, browsers
-//! - **gRPC API**: Binary protocol for high performance
-//! - **Unified Logic**: Single handler implementation for both
+//! - **REST API**: HTTP/JSON for web clients, curl, browsers (port 5678)
+//! - **gRPC API**: Binary protocol for high performance (port 5679)
+//! - **Arrow IPC API**: Bulk ingestion via Apache Arrow Flight (port 5680)
+//! - **Unified Logic**: Single handler implementation for all protocols
 //!
 //! ### 2. **Zero-Copy Architecture**
 //! Proto-first design eliminates serialization overhead:
@@ -173,6 +174,7 @@
 //! - **Request Tracing**: OpenTelemetry support
 //! - **Access Logs**: Structured JSON logging
 
+pub mod arrow_ipc;
 pub mod auth;
 pub mod grpc;
 pub mod metrics_service;
@@ -189,10 +191,13 @@ mod tests;
 pub use metrics_service::*;
 pub use middleware::*;
 pub use multi_server::{
-    GrpcHttpServerConfig, MultiServer, MultiServerConfig, RestHttpServerConfig,
+    ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServer, MultiServerConfig,
+    RestHttpServerConfig,
 };
 use serde::{Deserialize, Serialize};
-pub use server_builder::{GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder};
+pub use server_builder::{
+    ArrowIpcServerBuilder, GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder,
+};
 
 /// Network server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

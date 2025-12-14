@@ -475,7 +475,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         // oneof types (SqlValue, PropertyValue, etc.) get custom serde from serde_impls.rs
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
-        .compile(
+        .compile_protos(
             &[
                 "proto/proximadb/v1/entity.proto",
                 "proto/proximadb/v1/relations.proto",
