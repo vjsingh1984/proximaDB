@@ -14,10 +14,10 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use crate::core::hardware_capabilities::{HardwareCapabilities, GpuBackend};
+use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 #[cfg(feature = "gpu")]

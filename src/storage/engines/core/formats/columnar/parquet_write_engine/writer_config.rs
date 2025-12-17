@@ -7,7 +7,7 @@ use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::storage::engines::core::formats::columnar::constants::{
     DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
 };
-use parquet::basic::{Compression, Encoding};
+use parquet::basic::Compression;
 
 /// Comprehensive configuration for Parquet writers
 #[derive(Debug, Clone)]

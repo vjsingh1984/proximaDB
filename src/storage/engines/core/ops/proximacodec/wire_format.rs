@@ -13,7 +13,7 @@
 
 use super::types::{ProximaScheme, TypeId};
 use anyhow::Result;
-use tracing::{debug, trace};
+use tracing::trace;
 
 /// Wire format version
 pub const WIRE_FORMAT_VERSION: u8 = 0x01;

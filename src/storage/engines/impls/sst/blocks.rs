@@ -27,7 +27,6 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::debug;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::sst::SstConfig;

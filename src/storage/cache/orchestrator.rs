@@ -30,9 +30,9 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, info, warn};
 
 use crate::metrics::collectors::AccessPatternMetricsCollector;
-use crate::storage::cache::eviction::{CacheEvictionConfig, CacheEvictor, EvictionPolicy};
+use crate::storage::cache::eviction::{CacheEvictionConfig, CacheEvictor};
 use crate::storage::cache::metrics::CacheMetrics;
-use crate::storage::cache::warming::{CacheWarmer, CacheWarmingConfig, WarmingStrategy};
+use crate::storage::cache::warming::{CacheWarmer, CacheWarmingConfig};
 use crate::storage::cache::{
     BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache,
 };

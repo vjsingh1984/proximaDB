@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::auth::{EnterpriseAuthManager, EnterpriseUserContext, SSOToken};
 use crate::storage::tenant::{
-    BusinessContext, DomainKnowledgeGraph, DomainManager, ResourceLimits, TenantAwareEntityStore,
+    BusinessContext, DomainKnowledgeGraph, DomainManager, TenantAwareEntityStore,
     TenantConfig, TenantManager, knowledge_graph::CollectionBridgeConfig,
 };
 

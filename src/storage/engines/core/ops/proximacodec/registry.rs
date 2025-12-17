@@ -16,7 +16,7 @@ use super::types::ProximaScheme;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{debug, trace, warn};
+use tracing::{trace, warn};
 
 /// Registry of available encoders/decoders with hardware-aware routing
 pub struct ImplementationRegistry {

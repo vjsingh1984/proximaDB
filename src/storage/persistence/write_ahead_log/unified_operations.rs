@@ -24,7 +24,6 @@ use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 /// Unified WAL operation supporting both vector and graph operations
 #[derive(Debug, Clone, Serialize, Deserialize)]

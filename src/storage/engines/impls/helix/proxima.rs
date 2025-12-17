@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // Reuse existing Proxima structures
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
@@ -339,7 +339,7 @@ pub async fn write_helix_sstable(
 
         // Create SIMD-optimized block
         let block_start_time = std::time::Instant::now();
-        let (mut simd_block, simd_metadata) = simd_writer
+        let (simd_block, simd_metadata) = simd_writer
             .create_simd_block(chunk, block_hilbert_keys, block_idx as u32)
             .await?;
 

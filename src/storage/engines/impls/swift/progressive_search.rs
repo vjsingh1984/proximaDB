@@ -9,7 +9,6 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 use super::{MetadataFilter, SwiftFile};
-use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };

@@ -19,7 +19,6 @@ use crate::index::axis::clustering::{
 };
 use crate::proto::proximadb_v1::VectorRecord;
 // ProximaCodec is now used in writer.rs for encoding
-use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 

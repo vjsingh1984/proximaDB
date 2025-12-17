@@ -23,7 +23,7 @@
 //! - Vector existence checking with bloom filters
 //! - Collection scanning and enumeration
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -286,7 +286,7 @@ impl SstEngine {
         // 3. Apply offset and limit across all files
         // 4. Return paginated results
 
-        let mut results = Vec::new();
+        let results = Vec::new();
         let effective_limit = limit.unwrap_or(1000); // Default limit
 
         // For now, return empty results as this is a complex operation

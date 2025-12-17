@@ -1213,9 +1213,9 @@ impl ProximaDataBlock {
 
     /// Serialize directly to a buffer (avoids intermediate allocations)
     fn serialize_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
-        use crate::core::compression::CompressionAlgorithm;
-        use crate::core::compression::{CompressionContext, compress};
-        use std::collections::{HashMap, HashSet};
+        
+        
+        
         use std::io::Write;
 
         trace!("[ENCODE] Starting optimized serialization");
@@ -1313,7 +1313,7 @@ impl ProximaDataBlock {
 
     /// Serialize with bloom filter generation in parallel (sync)
     pub fn serialize_with_bloom_sync(&self) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
-        use rayon::prelude::*;
+        
 
         let (serialized_block, bloom_filter) = rayon::join(
             || self.serialize_with_config(&self.compression_config),
@@ -2918,7 +2918,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+        
         use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
@@ -3097,7 +3097,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+        
         use crate::core::compression::{CompressionContext, compress};
 
         const GROUP_SIZE: usize = 32;
@@ -3315,7 +3315,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+        
         use crate::core::compression::{CompressionContext, compress};
 
         const GROUP_SIZE: usize = 32;
@@ -3500,7 +3500,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+        
         use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
@@ -3661,7 +3661,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
-        use super::engine_profile::EngineProfile;
+        
         use crate::core::compression::{CompressionContext, compress};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
         use crate::storage::engines::core::ops::proximacodec::{

@@ -13,7 +13,6 @@ use arrow_schema::{DataType, Field, Schema};
 // Currently using direct ArrowWriter for test data generation
 use parquet::arrow::ArrowWriter;
 // Also import columnar exports for future migration
-use crate::storage::engines::core::formats::columnar::{BatchParquetWriter, ParquetWriterConfig};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::fs::File;

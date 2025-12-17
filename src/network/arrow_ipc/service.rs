@@ -11,7 +11,7 @@
 //! Note: This uses tonic 0.13 (via arrow-flight), which is different from
 //! the main codebase's tonic 0.10. Types are carefully managed to avoid conflicts.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use arrow_flight::{
     flight_service_server::FlightService, Action, ActionType, Criteria, Empty, FlightData,
     FlightDescriptor, FlightInfo, HandshakeRequest, HandshakeResponse, PutResult, SchemaResult,
@@ -20,7 +20,7 @@ use arrow_flight::{
 use futures::{stream, Stream, StreamExt};
 use std::pin::Pin;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::api_handlers::unified_handlers::UnifiedHandlers;
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};

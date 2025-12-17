@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::unified::{
-    BinaryQuantization, InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata,
+    InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata,
     QuantizedVector, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};

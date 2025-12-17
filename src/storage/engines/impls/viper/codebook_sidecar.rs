@@ -13,7 +13,6 @@ use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, QuantizationCodebookMetadata,
 };
 use crate::storage::persistence::filesystem::FileSystem;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// VIPER-specific codebook sidecar manager
 pub struct ViperCodebookSidecarManager {

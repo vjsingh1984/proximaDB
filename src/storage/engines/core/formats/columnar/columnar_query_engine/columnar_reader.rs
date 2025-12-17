@@ -11,17 +11,15 @@ use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fs::File;
-use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::constants::{
     FIELD_EXPIRES_AT, FIELD_ID, FIELD_IS_DELETED, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
-use crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarReader;
 
-use super::unified_reader::{ReaderConfig, UnifiedParquetReader};
+use super::unified_reader::UnifiedParquetReader;
 use super::{QueryConfig, QueryStatistics};
 
 /// Core Parquet reader implementation

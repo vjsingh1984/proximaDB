@@ -29,7 +29,6 @@ use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
 use super::operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 use super::optimized_operations::OptimizedNovaOperations;
-use crate::core::compression::CompressionAlgorithm;
 // Arrow schema handled by parquet reader
 
 // Performance optimization handled internally
@@ -875,9 +874,7 @@ impl NovaEngine {
         schema: &Arc<arrow_schema::Schema>,
     ) -> Result<arrow_array::RecordBatch> {
         use arrow_array::builder::{FixedSizeBinaryBuilder, FixedSizeListBuilder, Int8Builder};
-        use arrow_array::{
-            BooleanArray, Float32Array, Float64Array, Int64Array, StringArray, builder::*,
-        };
+        use arrow_array::builder::*;
         use std::sync::Arc;
 
         // Build arrays for each field

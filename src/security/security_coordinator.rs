@@ -4,7 +4,7 @@
 //! authentication, authorization, audit, and security policy enforcement.
 
 use super::unified_auth::{
-    AuthenticationConfig, AuthenticationData, AuthenticationMethod, JwtConfig, SSOConfig,
+    AuthenticationConfig, AuthenticationData,
     UnifiedAuthService,
 };
 use super::unified_rbac::{
@@ -16,7 +16,6 @@ use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
 
 /// Security coordinator configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

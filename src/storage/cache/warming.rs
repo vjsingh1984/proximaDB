@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::time::{Duration, interval};
 use tracing::{debug, info, warn};
 
-use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
+use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 

@@ -219,8 +219,7 @@
 //! 4. Background threads handle compaction asynchronously
 
 // bloom_filter now in core module for unified implementation
-use crate::core::bloom::factory::BloomFilterFactory;
-use crate::core::bloom::{self as bloom_filter, BloomFilterConfig, BloomFilterStrategy};
+use crate::core::bloom::{self as bloom_filter, BloomFilterStrategy};
 pub mod compaction;
 pub mod decompression_cache;
 pub mod error;
@@ -277,45 +276,23 @@ use crate::core::{SstConfig, VectorRecord};
 // SearchResult is now proto type, not in core::search
 use crate::core::search::json_value_serde;
 // use crate::core::serialization::VectorSerializationConfig;  // Not needed
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::{
-    CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine,
-};
 use crate::core::compression::CompressionAlgorithm;
-use crate::proto::proximadb_v1::Collection;
-use crate::storage::common::compaction_orchestrator::FilenameCodec;
-use crate::utils::StoragePath;
 // Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 // SortingStats now comes from utils module
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
-};
-use crate::storage::transaction_coordinator::TransactionCoordinator;
+use crate::storage::persistence::filesystem::FileSystem;
 // Unified search engine removed - using direct search methods
 // MetadataItem is part of VectorRecord proto
-use anyhow::Context;
-use async_trait::async_trait;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
-use std::sync::Arc;
-use tracing::{debug, error, info, trace, warn};
+use std::collections::HashMap;
+use tracing::debug;
 
 use self::error::{Result, SstError};
 
 // Performance optimization - import what we need
-use crate::storage::engines::core::ops::{
-    UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
-};
 
 // Import search optimization components
-use crate::core::search::smart_execution_strategy::ExecutionStrategy;
 
 // Import Proxima common structures (shared with SWIFT)
-use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, BlockStatistics, ColumnStatistics, ProximaBlockMetadata,
     ProximaDataBlock,

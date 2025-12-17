@@ -23,10 +23,9 @@
 //! - Component initialization and coordination
 //! - Core trait implementations
 
-use anyhow::{Context, Result};
-use std::collections::HashMap;
+use anyhow::Result;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::{

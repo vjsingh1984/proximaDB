@@ -158,7 +158,7 @@ impl UnifiedNOVAReader {
 
     /// Cached read with zone map pruning (for selective queries)
     async fn read_with_zone_maps(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        use crate::core::search::FilterExpression;
+        
 
         // Create reader with cached filesystem for metadata caching
         let dimension = 128; // TODO: Get from collection config

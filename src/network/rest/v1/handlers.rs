@@ -11,14 +11,13 @@ use axum::{
     response::{IntoResponse, Json as JsonResponse},
 };
 use std::sync::Arc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 #[cfg(any(feature = "ai_endpoints", feature = "sales_endpoints"))]
 use tracing::warn;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::health;
-use crate::network::rest::proto_json::ProtoApiResponse;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
@@ -706,7 +705,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         entities::configure_routes().with_state(entity_state)
     };
 
-    let mut router = axum::Router::new()
+    let router = axum::Router::new()
         // Vector operations
         .route("/api/v1/search", post(vector_search))
         .route("/api/v1/vectors/batch", post(vector_batch))

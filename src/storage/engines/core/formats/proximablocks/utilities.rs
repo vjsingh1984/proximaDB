@@ -4,12 +4,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::block_structures::BlockStatistics;
-use super::{BlockCompressionConfig, ProximaBlockMetadata, ProximaDataBlock, RowBasedConfig};
-use crate::core::compression::CompressionAlgorithm;
+use super::{ProximaDataBlock, RowBasedConfig};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::common::compaction_orchestrator::FilenameCodec;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;

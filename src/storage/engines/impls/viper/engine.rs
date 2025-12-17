@@ -31,7 +31,7 @@ use crate::compute::quantization::types::UnifiedQuantizationLevel;
 
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::{
-    FIELD_EXPIRES_AT, FIELD_ID, FIELD_IS_DELETED, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
+    FIELD_EXPIRES_AT, FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
 
 // Universal performance optimization imports

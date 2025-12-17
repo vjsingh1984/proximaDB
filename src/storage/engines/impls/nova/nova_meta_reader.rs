@@ -18,11 +18,10 @@
 //! - Loading/processing sidecar adds overhead without pruning benefit
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::hierarchical_stats::{BasicZoneMaps, EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use super::nova_meta_collector::NovaMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 

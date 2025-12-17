@@ -23,7 +23,7 @@
 //! - Batch processing optimizations
 
 mod common;
-use common::benchmark_utils::{STANDARD_BATCH_SIZES, STANDARD_DIMENSIONS, print_system_info};
+use common::benchmark_utils::print_system_info;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::core::search::results::OptimizedSearchRecord;

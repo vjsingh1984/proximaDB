@@ -8,9 +8,9 @@ use anyhow::Result;
 use dashmap::DashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use super::unified::{Codebook, CodebookStore, UnifiedQuantizationLevel};
+use super::unified::{Codebook, CodebookStore};
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::utils::hash::XxHash64;
 

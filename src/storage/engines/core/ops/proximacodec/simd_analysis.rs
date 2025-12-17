@@ -4,7 +4,6 @@
 // operations used in encoding scheme selection. Falls back to scalar operations
 // when SIMD is unavailable.
 
-use std::arch::is_x86_feature_detected;
 
 /// SIMD-accelerated min/max detection for f32 slices
 ///
@@ -122,7 +121,7 @@ unsafe fn horizontal_max_f32_avx2(vec: std::arch::x86_64::__m256) -> f32 {
 /// NEON implementation for ARM64
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn simd_min_max_f32_neon(data: &[f32]) -> (f32, f32) {
+unsafe fn simd_min_max_f32_neon(data: &[f32]) -> (f32, f32) { unsafe {
     use std::arch::aarch64::*;
 
     if data.is_empty() {
@@ -150,7 +149,7 @@ unsafe fn simd_min_max_f32_neon(data: &[f32]) -> (f32, f32) {
     remainder.iter().fold((min, max), |(a_min, a_max), &b| {
         (a_min.min(b), a_max.max(b))
     })
-}
+}}
 
 /// SIMD-accelerated zero counting for f32 slices
 ///
@@ -220,7 +219,7 @@ unsafe fn simd_zero_count_f32_avx2(data: &[f32], threshold: f32) -> usize {
 /// NEON implementation for zero counting
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn simd_zero_count_f32_neon(data: &[f32], threshold: f32) -> usize {
+unsafe fn simd_zero_count_f32_neon(data: &[f32], threshold: f32) -> usize { unsafe {
     use std::arch::aarch64::*;
 
     let threshold_vec = vdupq_n_f32(threshold);
@@ -252,7 +251,7 @@ unsafe fn simd_zero_count_f32_neon(data: &[f32], threshold: f32) -> usize {
     }
 
     count + remainder.iter().filter(|&&v| v.abs() < threshold).count()
-}
+}}
 
 #[cfg(test)]
 mod tests {

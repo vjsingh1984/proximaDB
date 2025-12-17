@@ -4,7 +4,6 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, SuperBlock};
 
 /// Metadata index for efficient filtering

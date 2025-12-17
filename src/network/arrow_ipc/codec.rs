@@ -13,7 +13,6 @@ use arrow_array::{
     Array, ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Int64Array, RecordBatch,
     StringArray, StructArray,
 };
-use arrow_cast::cast;
 use arrow_flight::{FlightData, FlightDescriptor, Ticket};
 use arrow_ipc::writer::IpcWriteOptions;
 use arrow_schema::{DataType, Field, Fields, Schema};
@@ -22,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::proto::proximadb_v1::{
-    MetadataItem, SearchParams, SqlValue, VectorBatchRequest, VectorOperationResponse,
+    MetadataItem, SqlValue,
     VectorRecord, VectorSearchRequest,
 };
 

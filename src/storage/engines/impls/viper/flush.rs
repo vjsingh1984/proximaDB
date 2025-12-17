@@ -9,13 +9,7 @@
 //! with dynamic schema generation and metadata separation.
 
 use anyhow::{Context, Result};
-use uuid::Uuid;
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
-use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, StreamingParquetWriter,
-    constants::{FIELD_ID, FIELD_VECTOR_FP32},
-};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -23,8 +17,6 @@ use tracing::{debug, error, info, warn};
 // Use core compression directly instead of adapter
 use crate::core::compression::StandardCompression;
 // Use unified quantization engine
-use crate::compute::distance_computation::UnifiedDistanceCompute;
-use crate::compute::quantization::{UnifiedQuantizationEngine, unified::InMemoryCodebookStore};
 
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::persistence::filesystem::FilesystemFactory;

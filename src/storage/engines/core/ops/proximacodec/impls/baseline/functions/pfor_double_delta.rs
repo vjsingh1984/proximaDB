@@ -31,7 +31,6 @@ use anyhow::Result;
 
 use super::bitpack;
 use super::helpers;
-use super::helpers::ToWireFormat;
 
 // ===== Core wire format encoding functions =====
 

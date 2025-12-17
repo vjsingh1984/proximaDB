@@ -15,9 +15,7 @@ use std::collections::HashMap;
 
 use crate::storage::engines::core::formats::columnar::constants::*;
 use crate::storage::engines::core::formats::common_quantization::QuantizationLevel;
-use crate::storage::engines::core::formats::common_quantization::{
-    QuantizationFileConfig, QuantizedVectorData,
-};
+use crate::storage::engines::core::formats::common_quantization::QuantizationFileConfig;
 
 /// Schema definition for quantized vector storage
 ///

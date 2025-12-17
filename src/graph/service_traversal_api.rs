@@ -6,7 +6,7 @@
 
 use super::Result;
 use crate::core::error::ProximaDBError;
-use crate::graph::{Node, NodeId};
+use crate::graph::NodeId;
 use tracing::debug;
 
 impl super::GraphOperationsService {

@@ -9,10 +9,9 @@ use super::providers::{
     LLMClient, OllamaClient, OpenAIClient, VLLMClient,
 };
 use super::types::{
-    FinishReason, LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse,
+    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse,
     TokenUsage,
 };
-use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

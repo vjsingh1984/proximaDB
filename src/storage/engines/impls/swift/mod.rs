@@ -174,12 +174,11 @@ use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
-use crate::core::bloom::SstableBloomFilter;
 // Proxima encoding for columnar vector optimization
 
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
-use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import Proxima common structures (SWIFT uses hierarchical structure)
@@ -753,8 +752,8 @@ impl SwiftFile {
     /// Serialize SwiftFile to bytes for disk persistence
     /// Uses Proxima block serialization similar to SST for optimal performance
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        use crate::core::compression::CompressionAlgorithm;
-        use crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig;
+        
+        
         use bytes::BytesMut;
 
         let mut buffer = BytesMut::new();
@@ -1011,7 +1010,7 @@ impl SwiftFile {
     /// PROXIMA: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
     fn finalize_superblock_encoding(&mut self) {
-        use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaMetadata;
+        
         // use crate::core::hardware_capabilities::HardwareCapabilities; // Unused import
 
         let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();

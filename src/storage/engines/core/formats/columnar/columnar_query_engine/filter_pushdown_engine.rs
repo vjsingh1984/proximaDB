@@ -4,14 +4,10 @@
 //! for Parquet filter pushdown, enabling efficient query execution.
 
 use anyhow::{Result, anyhow};
-use arrow::compute::SortColumn;
-use arrow::datatypes::{DataType, Field, Schema};
-use parquet::arrow::arrow_reader::RowSelection;
+use arrow::datatypes::Schema;
 use parquet::file::metadata::RowGroupMetaData;
-use parquet::file::statistics::Statistics;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 
 // Use the columnar module's MetadataFilter, not the proto one
 use crate::storage::engines::core::formats::columnar::{FilterCondition, MetadataFilter};

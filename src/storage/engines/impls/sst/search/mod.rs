@@ -32,9 +32,8 @@ pub mod coordinator;
 pub mod operations;
 pub mod optimizer;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;

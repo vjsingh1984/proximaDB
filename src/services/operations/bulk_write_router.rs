@@ -41,7 +41,6 @@
 //! 500 vectors @ 512D = ~2MB → Direct write (at threshold)
 //! ```
 
-use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
 

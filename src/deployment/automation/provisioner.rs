@@ -4,10 +4,7 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{
-    BackupStrategy, CapacityEstimate, ComplianceFramework, DeploymentRecommendation,
-    DeploymentStrategy, DetectedEnvironment, EncryptionRequirements, MonitoringConfig,
-    NetworkConfig, OptimalConfig, PerformanceProfile, PlatformType, ResourceAvailability,
-    ScalingConfig, SecurityConstraints,
+    DetectedEnvironment, PlatformType,
 };
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};

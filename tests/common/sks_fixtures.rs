@@ -7,7 +7,6 @@
 
 use proximadb::proto::proximadb_v1::{
     EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
-    TemporalInfo,
 };
 use rand::Rng;
 use std::collections::HashMap;

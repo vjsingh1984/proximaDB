@@ -9,7 +9,7 @@
 //!
 //! The ProximaCodec layer handles header management.
 
-use super::types::{Decodable, Encodable, ProximaScheme};
+use super::types::ProximaScheme;
 use anyhow::Result;
 
 /// Raw encoder trait - compresses data WITHOUT adding headers

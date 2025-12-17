@@ -14,7 +14,7 @@ use tokio::sync::{RwLock, mpsc};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
-use crate::metrics::{CollectionMetrics, GlobalMetrics, UnifiedMetricsCollector};
+use crate::metrics::{CollectionMetrics, UnifiedMetricsCollector};
 
 /// AutoML Service Configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,7 +283,7 @@ impl AutoMLService {
 
     /// Identify collections that need optimization
     async fn identify_optimization_candidates(&self) -> Result<Vec<(String, OptimizationUrgency)>> {
-        let mut candidates = Vec::new();
+        let candidates = Vec::new();
 
         // TODO: Get metrics for all collections from UnifiedMetricsCollector
         // For now, return empty list as placeholder

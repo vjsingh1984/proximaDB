@@ -24,8 +24,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::FilterExpression;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::impls::sst::SstEngine;

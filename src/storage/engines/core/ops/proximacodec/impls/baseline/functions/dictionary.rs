@@ -12,7 +12,6 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use super::helpers;
-use super::helpers::ToWireFormat;
 
 // ===== Core wire format encoding functions =====
 

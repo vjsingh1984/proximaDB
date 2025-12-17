@@ -3,15 +3,12 @@
 //! This module implements the branched filtering strategy for efficient
 //! query execution with fast path (column projection) and slow path (full scan).
 
-use anyhow::{Result, anyhow};
-use arrow::record_batch::RecordBatch;
-use std::collections::HashSet;
-use tracing::{debug, info, warn};
+use anyhow::Result;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     FilterCondition, MetadataFilter,
-    metadata_filter_strategy::{MetadataFilterAnalyzer, MetadataFilterStrategy},
+    metadata_filter_strategy::MetadataFilterAnalyzer,
     unified_columnar_io::UnifiedColumnarReader,
 };
 

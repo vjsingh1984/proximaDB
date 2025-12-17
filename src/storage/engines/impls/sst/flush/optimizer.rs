@@ -20,7 +20,6 @@
 //! Includes multi-batch sorting strategies and compression optimization.
 
 use anyhow::Result;
-use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use tracing::{debug, info};
 

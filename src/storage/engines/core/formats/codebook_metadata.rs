@@ -16,11 +16,10 @@ use crate::compute::quantization::{
     global_cache::{GlobalQuantizationCache, QuantizationCacheKey},
     storage_engine::StorageQuantizationEngine,
     unified::{
-        Codebook, CodebookData, CodebookStore, InMemoryCodebookStore, QuantizationLevel,
+        Codebook, CodebookData, CodebookStore, QuantizationLevel,
         UnifiedQuantizationEngine,
     },
 };
-use crate::storage::engines::core::formats::columnar::constants::*;
 
 /// Codebook metadata stored at file level
 #[derive(Debug, Clone, Serialize, Deserialize)]

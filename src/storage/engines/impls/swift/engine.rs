@@ -35,7 +35,7 @@ use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
 use crate::core::compression::StandardCompression;
 
-use super::{SwiftFile, optimized_operations::OptimizedSwiftOperations, progressive_search};
+use super::{SwiftFile, optimized_operations::OptimizedSwiftOperations};
 
 // Import Proxima structures for SWIFT's hierarchical operations
 use crate::storage::engines::core::formats::proximablocks::SuperBlock;

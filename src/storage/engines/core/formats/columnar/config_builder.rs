@@ -17,7 +17,6 @@ use parquet::basic::Compression;
 use std::time::Duration;
 
 // Import CompressionAlgorithm for the compression method
-use crate::core::compression::CompressionAlgorithm;
 
 /// Builder for Parquet writer configuration with all optimizations enabled by default
 pub struct ParquetConfigBuilder {
@@ -99,14 +98,14 @@ impl ParquetConfigBuilder {
     }
 
     /// Disable PQ sorting (not recommended if compression is important)
-    pub fn disable_pq_sorting(mut self) -> Self {
+    pub fn disable_pq_sorting(self) -> Self {
         // Note: enable_pq_sorting doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self
     }
 
     /// Disable native metadata types (not recommended for complex metadata)
-    pub fn disable_native_metadata(mut self) -> Self {
+    pub fn disable_native_metadata(self) -> Self {
         // Note: enable_native_metadata doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self
@@ -152,21 +151,21 @@ impl ParquetConfigBuilder {
     }
 
     /// Set specific columns for bloom filters
-    pub fn bloom_filter_columns(mut self, _columns: Vec<String>) -> Self {
+    pub fn bloom_filter_columns(self, _columns: Vec<String>) -> Self {
         // Note: bloom_filter_columns doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self
     }
 
     /// Configure PQ sorting parameters
-    pub fn pq_sorting_config(mut self, _segments: usize, _codebook_size: usize) -> Self {
+    pub fn pq_sorting_config(self, _segments: usize, _codebook_size: usize) -> Self {
         // Note: pq_sorting fields don't exist in ParquetWriterConfig
         // This is a no-op for now
         self
     }
 
     /// Set metadata inference sample size
-    pub fn metadata_inference_samples(mut self, _samples: usize) -> Self {
+    pub fn metadata_inference_samples(self, _samples: usize) -> Self {
         // Note: metadata_inference_samples doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self

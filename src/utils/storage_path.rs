@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Storage path utilities for consistent path construction across all engines
 pub struct StoragePath;

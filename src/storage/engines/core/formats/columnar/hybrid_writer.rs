@@ -10,7 +10,7 @@
 //! - Concurrent write support with lock-free coordination
 //! - Metrics and monitoring for mode transitions
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,8 +24,6 @@ use crate::storage::engines::core::formats::columnar::parquet_write_engine::{
     batch_writer::BatchParquetWriter, streaming_writer::StreamingParquetWriter,
     writer_config::ParquetWriterConfig, writer_statistics::StreamingParquetWriterStats,
 };
-use crate::storage::persistence::filesystem::FilesystemFactory;
-use uuid::Uuid;
 
 /// Hybrid writer mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -254,7 +252,7 @@ impl HybridParquetWriter {
             avg_flush_latency_ms: AtomicU64::new(0),
         });
 
-        let mut writer = Self {
+        let writer = Self {
             config: config.clone(),
             current_mode: Arc::new(RwLock::new(config.initial_mode)),
             streaming_writer: Arc::new(Mutex::new(streaming_writer)),
@@ -312,7 +310,7 @@ impl HybridParquetWriter {
             avg_flush_latency_ms: AtomicU64::new(0),
         });
 
-        let mut writer = Self {
+        let writer = Self {
             config: config.clone(),
             current_mode: Arc::new(RwLock::new(config.initial_mode)),
             streaming_writer: Arc::new(Mutex::new(streaming_writer)),

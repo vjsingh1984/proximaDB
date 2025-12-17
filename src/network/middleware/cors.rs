@@ -44,7 +44,7 @@
 //! let layer = create_cors_layer(&config);
 //! ```
 
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{header, Method};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};

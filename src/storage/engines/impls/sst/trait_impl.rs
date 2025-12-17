@@ -25,8 +25,6 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::sst::SstError;
 use crate::storage::engines::impls::sst::core::SstEngine;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,

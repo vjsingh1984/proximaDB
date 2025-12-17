@@ -24,7 +24,7 @@ use std::time::{Duration, SystemTime};
 use tokio::time::{Instant, interval};
 use tracing::{debug, info, warn};
 
-use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
+use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 
 /// Cache eviction policies for different memory management strategies

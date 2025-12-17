@@ -4,12 +4,11 @@
 // without unnecessary conversions to/from VectorRecord
 
 use anyhow::{Context, Result};
-use arrow_array::{Array, ArrayRef, Int64Array, RecordBatch, StringArray, UInt32Array};
+use arrow_array::{Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_ord::sort::{SortOptions, sort_to_indices};
 use arrow_schema::Schema;
 use arrow_select::concat::concat_batches;
 use arrow_select::take::take;
-use chrono::Utc;
 use parquet::arrow::ArrowWriter;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::Compression;
@@ -265,7 +264,7 @@ impl UnifiedColumnarCompaction {
         use crate::core::memory::pool::VectorMemoryPool;
         use crate::storage::engines::core::formats::columnar::constants;
         use arrow::array::ArrayRef;
-        use arrow_array::{BinaryArray, FixedSizeListArray, Float32Array, builder::BinaryBuilder};
+        use arrow_array::{FixedSizeListArray, Float32Array, builder::BinaryBuilder};
         use std::sync::Arc;
 
         // Extract vector column from batch

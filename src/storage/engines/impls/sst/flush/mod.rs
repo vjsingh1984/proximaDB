@@ -32,7 +32,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
@@ -225,7 +225,7 @@ impl SstEngine {
             .and_then(|cfg| cfg.storage_config.as_ref())
             .and_then(|sc| {
                 // Convert storage_config.compression to CompressionConfig
-                use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig};
+                use crate::proto::proximadb_v1::CompressionConfig;
                 sc.compression.map(|compression_algo| {
                     CompressionConfig {
                         algorithm: compression_algo,

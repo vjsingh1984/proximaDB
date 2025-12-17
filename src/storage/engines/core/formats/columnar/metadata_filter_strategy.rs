@@ -12,12 +12,12 @@
 
 use anyhow::{Result, anyhow};
 use arrow_array::{ArrayRef, RecordBatch, UInt32Array};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use super::{FilterCondition, FilterLogic, MetadataFilter};
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
+use super::{FilterCondition, MetadataFilter};
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Strategy for handling metadata filters based on column types
 #[derive(Debug, Clone)]

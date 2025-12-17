@@ -26,9 +26,6 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
 // Also import columnar exports for future migration
-use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, StreamingParquetWriter, map_core_to_parquet_compression,
-};
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

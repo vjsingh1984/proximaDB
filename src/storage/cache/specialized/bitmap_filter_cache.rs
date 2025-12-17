@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::storage::cache::base::BaseCacheImpl;
-use crate::storage::cache::metrics::CacheMetrics;
 use crate::storage::cache::traits::{BaseCache, CacheValue};
 
 /// Cached filter result with bitmap

@@ -42,14 +42,13 @@ use tracing::{debug, error, info, trace, warn};
 
 // Performance optimizations: import commonly used types and functions for zero-cost abstractions
 // use std::hint::likely; // Unstable feature - removed for compilation
-use std::ptr;
 
 use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+use crate::core::search::{FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{

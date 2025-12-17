@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::proto::proximadb_v1::{FilterableColumnSpec, VectorRecord};
 use crate::storage::engines::core::formats::columnar::metadata_collector::MetadataCollector;

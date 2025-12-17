@@ -22,9 +22,7 @@
 //! | Nova | NOVA | Advanced analytics | Enhanced columnar |
 //! | Helix | HELIX | PCA+Hilbert | Dimension-reduced |
 
-use crate::storage::engines::impls::raptor;
-use crate::storage::engines::impls::sst::error::SstError;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{info, warn};
 

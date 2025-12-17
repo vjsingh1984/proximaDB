@@ -19,7 +19,6 @@
 //! - Predictive cache optimization recommendations
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::interval;

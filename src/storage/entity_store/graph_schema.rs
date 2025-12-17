@@ -34,10 +34,10 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
-use crate::graph::{Edge, EdgeId, Node, NodeId, PropertyValue, Value as PropertyValueEnum};
+use crate::graph::{Edge, Node, PropertyValue};
 use crate::proto::proximadb_v1::{
-    property_value, sql_value, typed_field, EmbeddingVersion, Entity, Modality, Provenance,
-    Relation, SqlValue, TemporalInfo, TypedField, TypedMetadata,
+    property_value, sql_value, EmbeddingVersion, Entity,
+    Relation, SqlValue,
 };
 
 /// Special property keys for storing SKS metadata in Orion nodes

@@ -646,9 +646,7 @@ impl UnifiedParquetReader {
         filter_expression: Option<&crate::core::search::FilterExpression>,
         quantization_enabled: bool,
     ) -> Result<(Vec<VectorRecord>, usize)> {
-        use arrow_array::{
-            FixedSizeListArray, Float32Array, Int64Array, ListArray, MapArray, StringArray,
-        };
+        
         use bytes::Bytes;
         use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -916,8 +914,8 @@ impl UnifiedParquetReader {
         needs_metadata: bool,
     ) -> Result<Vec<VectorRecord>> {
         use arrow_array::{
-            BinaryArray, FixedSizeListArray, Float32Array, Int64Array, ListArray, MapArray,
-            StringArray, UInt8Array,
+            BinaryArray, FixedSizeListArray, Int64Array, ListArray, MapArray,
+            StringArray,
         };
 
         // Check if we have quantized vectors for pre-filtering

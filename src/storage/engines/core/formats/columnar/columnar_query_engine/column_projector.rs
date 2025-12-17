@@ -6,9 +6,8 @@
 use anyhow::{Context, Result};
 use arrow::datatypes::Schema;
 use parquet::arrow::ProjectionMask;
-use parquet::schema::types::{SchemaDescriptor, Type};
+use parquet::schema::types::Type;
 use std::collections::HashSet;
-use std::sync::Arc;
 
 /// Column projection builder
 pub struct ProjectionBuilder {

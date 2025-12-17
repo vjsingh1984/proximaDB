@@ -7,7 +7,6 @@
 use anyhow::Result;
 use arrow_array::RecordBatch;
 use parquet::file::metadata::RowGroupMetaData;
-use std::sync::Arc;
 
 /// Trait for collecting engine-specific metadata during Parquet writes
 ///

@@ -58,7 +58,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::{debug, error, info, info_span};
 
 /// Global request counter for generating unique request IDs
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);

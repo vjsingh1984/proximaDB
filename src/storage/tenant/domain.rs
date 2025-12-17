@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::info;
 
-use super::{BusinessContext, DataSensitivityLevel};
+use super::BusinessContext;
 use crate::storage::tenant::entity_store::UserContext;
 
 /// Domain manager for business context separation

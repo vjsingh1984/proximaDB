@@ -8,7 +8,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Health status for a dependency
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

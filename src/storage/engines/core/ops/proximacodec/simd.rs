@@ -109,7 +109,7 @@ use anyhow::Result;
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, trace};
 
-use crate::core::hardware_capabilities::{HardwareBackend, get_hardware_capabilities};
+use crate::core::hardware_capabilities::HardwareBackend;
 use crate::core::memory::pool::{PoolConfig, VectorMemoryPool};
 
 // Platform-specific SIMD imports
@@ -849,7 +849,7 @@ unsafe fn compute_offsets_sse2(values: &[f32], base_i32: i32) -> Vec<i32> {
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn compute_offsets_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
+unsafe fn compute_offsets_neon(values: &[f32], base_i32: i32) -> Vec<i32> { unsafe {
     use std::arch::aarch64::*;
     let mut offsets = Vec::with_capacity(values.len());
     let base_vec = vdupq_n_s32(base_i32);
@@ -872,7 +872,7 @@ unsafe fn compute_offsets_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
     }
 
     offsets
-}
+}}
 
 // ===== FrameOfReference Decode Helpers (SIMD Reconstruction) =====
 
@@ -934,7 +934,7 @@ unsafe fn reconstruct_for_decode_avx2(offsets: &[i32], base_i32: i32) -> Result<
 /// - Processes 4 values per iteration (NEON 128-bit)
 /// - Expected speedup: 2-4x vs scalar
 #[cfg(target_arch = "aarch64")]
-unsafe fn reconstruct_for_decode_neon(offsets: &[i32], base_i32: i32) -> Result<Vec<f32>> {
+unsafe fn reconstruct_for_decode_neon(offsets: &[i32], base_i32: i32) -> Result<Vec<f32>> { unsafe {
     use std::arch::aarch64::*;
 
     let mut result = Vec::with_capacity(offsets.len());
@@ -966,7 +966,7 @@ unsafe fn reconstruct_for_decode_neon(offsets: &[i32], base_i32: i32) -> Result<
     }
 
     Ok(result)
-}
+}}
 
 /// SIMD-accelerated Frame of Reference decoding for f32
 ///
@@ -1276,7 +1276,7 @@ unsafe fn compute_deltas_pfor_sse2(values: &[f32], base_i32: i32) -> Vec<i32> {
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn compute_deltas_pfor_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
+unsafe fn compute_deltas_pfor_neon(values: &[f32], base_i32: i32) -> Vec<i32> { unsafe {
     use std::arch::aarch64::*;
     let mut deltas = Vec::with_capacity(values.len());
     let base_vec = vdupq_n_s32(base_i32);
@@ -1299,7 +1299,7 @@ unsafe fn compute_deltas_pfor_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
     }
 
     deltas
-}
+}}
 
 /// Bit-pack i32 values (helper for Frame of Reference and PForDelta)
 /// Helper: Pack i32 values into bits (delegates to baseline)
@@ -1428,7 +1428,7 @@ unsafe fn reconstruct_pfor_decode_avx2(deltas: &[i64], base_i32: i32) -> Result<
 /// # Note
 /// Using i64 arithmetic prevents overflow when base and delta are large i32 values
 #[cfg(target_arch = "aarch64")]
-unsafe fn reconstruct_pfor_decode_neon(deltas: &[i64], base_i32: i32) -> Result<Vec<f32>> {
+unsafe fn reconstruct_pfor_decode_neon(deltas: &[i64], base_i32: i32) -> Result<Vec<f32>> { unsafe {
     use std::arch::aarch64::*;
 
     let mut result = Vec::with_capacity(deltas.len());
@@ -1463,7 +1463,7 @@ unsafe fn reconstruct_pfor_decode_neon(deltas: &[i64], base_i32: i32) -> Result<
     }
 
     Ok(result)
-}
+}}
 
 // ===== DoubleDelta SIMD Functions =====
 

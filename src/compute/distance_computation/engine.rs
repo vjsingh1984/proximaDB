@@ -51,7 +51,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
-use tracing::{debug, info, trace};
+use tracing::{info, trace};
 
 // Use proto enum as the single source of truth for DistanceMetric
 pub use crate::proto::proximadb_v1::DistanceMetric;

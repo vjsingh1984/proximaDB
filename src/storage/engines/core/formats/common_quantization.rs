@@ -9,7 +9,6 @@
 //! - Memory-efficient storage of quantized representations
 //! - Integration with existing quantization infrastructure
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -25,7 +24,6 @@ pub enum QuantizationLevel {
     PQ16,
     PQ32,
 }
-use crate::core::VectorRecord;
 
 /// Unified quantized file structure for all storage engines
 ///

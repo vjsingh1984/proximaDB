@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::info;
 
 use super::prediction::{FeatureVector, PerformancePredictor};
 use super::service::AutoMLConfig;

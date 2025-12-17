@@ -3,7 +3,6 @@
 //! This module provides caching strategies for Parquet queries
 //! to improve performance for repeated reads.
 
-use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 

@@ -271,11 +271,11 @@ impl StorageEngine {
     /// vector data is persisted to SST files before the database closes.
     /// This enables fast recovery on restart without needing to replay WAL.
     pub async fn flush_memtable_to_storage(&self) -> crate::storage::Result<crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult> {
-        use crate::storage::persistence::write_ahead_log::flush_coordinator::{WALFlushCoordinator, FlushAllResult};
-        use crate::storage::traits::UnifiedStorageEngine;
+        use crate::storage::persistence::write_ahead_log::flush_coordinator::WALFlushCoordinator;
+        
 
         // Create a temporary flush coordinator for shutdown
-        let mut flush_coordinator = WALFlushCoordinator::new();
+        let flush_coordinator = WALFlushCoordinator::new();
 
         // Register all SST engines from our storage map
         // Each SST engine implements UnifiedStorageEngine

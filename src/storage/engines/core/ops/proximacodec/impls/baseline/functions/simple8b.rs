@@ -11,7 +11,6 @@
 use anyhow::Result;
 
 use super::helpers;
-use super::helpers::ToWireFormat;
 
 /// Simple8b selector modes
 /// Each mode packs different number of values with different bit widths

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, trace};
+use tracing::debug;
 // Migrated to filesystem API - no longer using std::fs::File directly
 
 use super::consolidated_compactor::RaptorCompactor;
@@ -47,7 +47,7 @@ use crate::storage::engines::core::ops::performance_optimization::{
 // VectorMemoryPool now managed by universal optimizer
 
 // Unified metrics framework for AutoML integration
-use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
+use crate::metrics::collectors::EngineMetricsCollector;
 
 /// Vector search result for compatibility - using OptimizedSearchRecord
 type VectorSearchResult = OptimizedSearchRecord;
@@ -1037,7 +1037,7 @@ impl RaptorEngine {
                                         let id = ids.get(idx).cloned().unwrap_or_default();
                                         let vector = vectors.get(idx).cloned().unwrap_or_default();
 
-                                        let mut record = OptimizedSearchRecord::new(
+                                        let record = OptimizedSearchRecord::new(
                                             id,
                                             sim_result.normalized_score,
                                         )
@@ -1393,9 +1393,7 @@ impl RaptorEngine {
     }
 
     fn deserialize_proxima_batch(&self, data: &[u8], marker: u8) -> Result<RecordBatch> {
-        use crate::storage::engines::core::ops::proximacodec::{
-            ProximaCodec, types::ProximaScheme,
-        };
+        use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
         use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
         use std::io::Read;
 

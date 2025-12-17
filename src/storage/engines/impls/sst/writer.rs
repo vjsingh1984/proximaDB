@@ -104,9 +104,7 @@ use crate::core::compression::{CompressionContext, CompressionProvider, Standard
 
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
-use crate::storage::engines::core::ops::proximacodec::{
-    ProximaCodec, analysis, types::ProximaScheme,
-};
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 /// Proxima encoding markers as constants
 mod encoding_markers {
@@ -506,7 +504,7 @@ impl SstableWriter {
         // Create bloom filter using the factory with proper configuration
         let combined_bloom_filter = {
             use crate::core::bloom::{
-                BloomFilterBuilder, BloomFilterConfig, BloomStrategy, HashAlgorithm,
+                BloomFilterBuilder, HashAlgorithm,
             };
 
             // Use XXHash for speed - configured in bloom config

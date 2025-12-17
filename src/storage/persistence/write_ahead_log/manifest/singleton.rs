@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock};
 use tracing::{debug, info, trace, warn};
 
 use super::{
-    GlobalManifestEntry, GlobalManifestService, GlobalManifestServiceConfig, WalEntryStatus,
+    GlobalManifestEntry, GlobalManifestService, GlobalManifestServiceConfig,
 };
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
 

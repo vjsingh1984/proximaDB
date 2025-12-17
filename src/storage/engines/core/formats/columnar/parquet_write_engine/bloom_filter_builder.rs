@@ -87,7 +87,7 @@ impl BloomFilterBuilder {
             };
 
             // Use core bloom filter builder
-            let mut builder = CoreBloomBuilder::new(core_config);
+            let builder = CoreBloomBuilder::new(core_config);
             let filter = builder.build();
 
             // Check memory usage (approximate)
@@ -151,7 +151,7 @@ impl BloomFilterBuilder {
                 hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
             };
 
-            let mut builder = CoreBloomBuilder::new(core_config);
+            let builder = CoreBloomBuilder::new(core_config);
             let filter = builder.build();
 
             self.bloom_filters.insert(row_group, filter);

@@ -73,22 +73,18 @@ pub(super) use service_helpers::*;
 
 use crate::core::error::ProximaDBError;
 use crate::graph::{
-    Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, NodeId, NodeQuery, OperationMode,
+    Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
     engines::{
         GraphEngine,
-        orion::{OrionGraphEngine, traversal::TraversalConfig},
+        orion::OrionGraphEngine,
     },
 };
-use crate::metrics::updater::OperationMetricsUpdate;
 use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
-use tracing::debug;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 

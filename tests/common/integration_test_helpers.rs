@@ -14,7 +14,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 // Core ProximaDB imports

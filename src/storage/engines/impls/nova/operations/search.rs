@@ -1,25 +1,16 @@
 //! Search operations module for NOVA engine
 //! Handles all search-related logic including hierarchical pruning and progressive refinement
 
-use anyhow::{Context, Result};
-use std::collections::HashMap;
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::unified_interface::SearchPlan;
-use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
-use crate::storage::engines::core::search::search_common::SearchConfig;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
-use crate::storage::engines::impls::nova::progressive_search::{
-    ProgressiveColumnarSearch, ProgressiveSearchConfig,
-};
-use crate::storage::engines::impls::nova::streaming_search::{
-    StreamingSearchConfig, StreamingSearchEngine,
-};
 
 /// Handles all search operations for NOVA engine
 pub struct NovaSearchOperations {
@@ -104,8 +95,8 @@ impl NovaSearchOperations {
         use crate::core::search::results::OptimizedSearchRecord;
         use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
         use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-        use std::cmp::Reverse;
-        use std::collections::BinaryHeap;
+        
+        
 
         // Get search parameters from context
         let query_vector = ctx

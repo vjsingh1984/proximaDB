@@ -196,7 +196,7 @@ impl RecoveryManager {
         }
 
         // Group by collection for organized recovery
-        let mut collections_to_recover: std::collections::HashSet<String> = all_entries
+        let collections_to_recover: std::collections::HashSet<String> = all_entries
             .iter()
             .map(|e| e.collection_id.clone())
             .collect();
@@ -468,7 +468,7 @@ impl RecoveryManager {
             };
             eprintln!("🔍 DEBUG: Format: {:?}", format);
 
-            let mut file_info = WalFileInfo {
+            let file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
                 batch_id: BatchId::from_base62(&e.batch_id).unwrap_or(BatchId::new()),
                 file_url: file_url.clone(),

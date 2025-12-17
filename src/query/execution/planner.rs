@@ -915,7 +915,7 @@ impl ExecutionPlanner {
     }
 
     fn generate_projections(&self, select: &Select) -> Vec<ProjectionTransform> {
-        let mut transforms = Vec::new();
+        let transforms = Vec::new();
         // Note: We no longer need ExtractMetadata transformations because
         // the executor already creates fields with "metadata." prefix
         // matching the SELECT clause column names.

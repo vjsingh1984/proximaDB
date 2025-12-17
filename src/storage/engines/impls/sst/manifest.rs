@@ -15,15 +15,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::transaction_coordinator::{
-    StagingConfig, TransactionCoordinator, TransactionStageType,
-};
+use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 /// SSTable file metadata in the manifest
 #[derive(Debug, Clone, Serialize, Deserialize)]

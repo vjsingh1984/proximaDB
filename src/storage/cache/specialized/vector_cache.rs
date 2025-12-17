@@ -7,8 +7,6 @@
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
-use async_trait::async_trait;
-use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Simple string key for vector caching
