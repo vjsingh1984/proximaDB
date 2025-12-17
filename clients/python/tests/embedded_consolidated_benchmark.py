@@ -2011,7 +2011,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     if "lancedb" in selected_engines:
         try:
             import lancedb
-            print(f"  Benchmarking LanceDB...", end="", flush=True)
+
+            logger = BenchmarkLogger()
+            phase_start = logger.log_start("LanceDB", "Insert + Flush + Search")
 
             lance_dir = tempfile.mkdtemp()
             db = lancedb.connect(lance_dir)
@@ -2058,6 +2060,18 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
+            logger.log_end(
+                "LanceDB",
+                phase_start,
+                {
+                    "insert_ms": insert_time,
+                    "search_ms": avg_search,
+                    "qps": qps,
+                    "disk_mb": disk_size_mb,
+                    "recall": f"{avg_recall:.1f}%"
+                }
+            )
+
             results.append(BenchmarkResult("sift_insert", "lancedb", insert_time,
                 throughput=len(base_vectors) / (insert_time / 1000),
                 metadata={"disk_based": True}))
@@ -2065,12 +2079,14 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
                 metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
 
-                            # print(f" Insert: {insert_time:.0f}ms ({len(base_vectors)/(insert_time/1000):,.0f}/s), "
-                            #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms, Recall@{k}: {avg_recall:.1f}%, Disk: {disk_size_mb:.1f}MB")            shutil.rmtree(lance_dir, ignore_errors=True)
+            shutil.rmtree(lance_dir, ignore_errors=True)
+
         except ImportError:
-            print(f"  LanceDB - SKIPPED (not installed)")
+            print(f"  LanceDB - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            print(f"  LanceDB - ERROR: {str(e)[:50]}")
+            logger = BenchmarkLogger()
+            logger.log_error("LanceDB", e)
+            results.append(BenchmarkResult("sift_ops", "lancedb", 0, error=str(e)))
 
         gc.collect()
 
@@ -2079,7 +2095,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         try:
             from qdrant_client import QdrantClient
             from qdrant_client.models import Distance, VectorParams, PointStruct
-            print(f"  Benchmarking Qdrant...", end="", flush=True)
+
+            logger = BenchmarkLogger()
+            phase_start = logger.log_start("Qdrant", "Insert + Flush + Search")
 
             qdrant_dir = tempfile.mkdtemp()
             client = QdrantClient(path=qdrant_dir)
@@ -2143,6 +2161,18 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
+            logger.log_end(
+                "Qdrant",
+                phase_start,
+                {
+                    "insert_ms": insert_time,
+                    "search_ms": avg_search,
+                    "qps": qps,
+                    "disk_mb": disk_size_mb,
+                    "recall": f"{avg_recall:.1f}%"
+                }
+            )
+
             results.append(BenchmarkResult("sift_insert", "qdrant", insert_time,
                 throughput=len(base_vectors) / (insert_time / 1000),
                 metadata={"disk_based": True}))
@@ -2150,13 +2180,15 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
                 metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
 
-                            # print(f" Insert: {insert_time:.0f}ms ({len(base_vectors)/(insert_time/1000):,.0f}/s), "
-                            #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms, Recall@{k}: {avg_recall:.1f}%, Disk: {disk_size_mb:.1f}MB")            del client
+            del client
             shutil.rmtree(qdrant_dir, ignore_errors=True)
+
         except ImportError:
-            print(f"  Qdrant - SKIPPED (not installed)")
+            print(f"  Qdrant - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            print(f"  Qdrant - ERROR: {str(e)[:50]}")
+            logger = BenchmarkLogger()
+            logger.log_error("Qdrant", e)
+            results.append(BenchmarkResult("sift_ops", "qdrant", 0, error=str(e)))
 
         gc.collect()
 
@@ -2164,7 +2196,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     if "usearch" in selected_engines:
         try:
             from usearch.index import Index as USearchIndex
-            print(f"  Benchmarking USearch...", end="", flush=True)
+
+            logger = BenchmarkLogger()
+            phase_start = logger.log_start("USearch", "Insert + Save + Search")
 
             usearch_dir = tempfile.mkdtemp()
             usearch_file = os.path.join(usearch_dir, "usearch.index")
@@ -2204,6 +2238,18 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
+            logger.log_end(
+                "USearch",
+                phase_start,
+                {
+                    "insert_ms": insert_time,
+                    "search_ms": avg_search,
+                    "qps": qps,
+                    "disk_mb": disk_size_mb,
+                    "recall": f"{avg_recall:.1f}%"
+                }
+            )
+
             results.append(BenchmarkResult("sift_insert", "usearch", insert_time,
                 throughput=len(base_vectors) / (insert_time / 1000),
                 metadata={"disk_based": True}))
@@ -2211,13 +2257,15 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
                 metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
 
-                            # print(f" Insert: {insert_time:.0f}ms ({len(base_vectors)/(insert_time/1000):,.0f}/s), "
-                            #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms, Recall@{k}: {avg_recall:.1f}%, Disk: {disk_size_mb:.1f}MB")            del index
+            del index
             shutil.rmtree(usearch_dir, ignore_errors=True)
+
         except ImportError:
-            print(f"  USearch - SKIPPED (not installed)")
+            print(f"  USearch - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            print(f"  USearch - ERROR: {str(e)[:50]}")
+            logger = BenchmarkLogger()
+            logger.log_error("USearch", e)
+            results.append(BenchmarkResult("sift_ops", "usearch", 0, error=str(e)))
 
         gc.collect()
 
@@ -2225,7 +2273,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     if "annoy" in selected_engines:
         try:
             from annoy import AnnoyIndex
-            print(f"  Benchmarking Annoy...", end="", flush=True)
+
+            logger = BenchmarkLogger()
+            phase_start = logger.log_start("Annoy", "Insert + Build + Search")
 
             annoy_dir = tempfile.mkdtemp()
             annoy_file = os.path.join(annoy_dir, "annoy.index")
@@ -2265,6 +2315,18 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
+            logger.log_end(
+                "Annoy",
+                phase_start,
+                {
+                    "insert_ms": insert_time,
+                    "search_ms": avg_search,
+                    "qps": qps,
+                    "disk_mb": disk_size_mb,
+                    "recall": f"{avg_recall:.1f}%"
+                }
+            )
+
             results.append(BenchmarkResult("sift_insert", "annoy", insert_time,
                 throughput=len(base_vectors) / (insert_time / 1000),
                 metadata={"disk_based": True, "approximate": True}))
@@ -2272,13 +2334,15 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
                 metadata={"disk_based": True, "approximate": True, "disk_size_mb": disk_size_mb}))
 
-                            # print(f" Insert: {insert_time:.0f}ms ({len(base_vectors)/(insert_time/1000):,.0f}/s), "
-                            #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms, Recall@{k}: {avg_recall:.1f}%, Disk: {disk_size_mb:.1f}MB")            del index
+            del index
             shutil.rmtree(annoy_dir, ignore_errors=True)
+
         except ImportError:
-            print(f"  Annoy - SKIPPED (not installed)")
+            print(f"  Annoy - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            print(f"  Annoy - ERROR: {str(e)[:50]}")
+            logger = BenchmarkLogger()
+            logger.log_error("Annoy", e)
+            results.append(BenchmarkResult("sift_ops", "annoy", 0, error=str(e)))
 
         gc.collect()
 
