@@ -1888,13 +1888,63 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             try:
                 import chromadb
                 from chromadb.config import Settings
-                print(f"  Benchmarking ChromaDB...")
+
+                logger = BenchmarkLogger()
+                phase_start = logger.log_start("ChromaDB", "Insert + Search")
+
+                chroma_dir = tempfile.mkdtemp()
+                client = chromadb.PersistentClient(path=chroma_dir)
+                collection = client.create_collection("sift", metadata={"hnsw:space": "l2"})
+
+                # Insert
+                ids = [f"sift_{i}" for i in range(len(base_vectors))]
+                start = time.perf_counter()
+                collection.add(ids=ids, embeddings=base_vectors.tolist())
+                insert_time = (time.perf_counter() - start) * 1000
+
+                # Search
+                search_times = []
+                recalls = []
+                num_queries = min(len(query_vectors), 1000)
+                for i in range(num_queries):
+                    start = time.perf_counter()
+                    search_results = collection.query(query_embeddings=[query_vectors[i].tolist()], n_results=k)
+                    search_times.append((time.perf_counter() - start) * 1000)
+
+                    # Compute recall
+                    result_ids = search_results['ids'][0] if search_results['ids'] else []
+                    recalls.append(compute_recall_at_k(ground_truth[i], result_ids, k))
+
+                avg_search = float(np.mean(search_times))
+                p99_search = float(np.percentile(search_times, 99))
+                qps = 1000 / avg_search
+                avg_recall = float(np.mean(recalls)) * 100
+
+                logger.log_end(
+                    "ChromaDB",
+                    phase_start,
+                    {
+                        "insert_ms": insert_time,
+                        "search_ms": avg_search,
+                        "qps": qps,
+                        "recall": f"{avg_recall:.1f}%"
+                    }
+                )
+
+                results.append(BenchmarkResult("sift_insert", "chromadb", insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000)))
+                results.append(BenchmarkResult("sift_search", "chromadb", avg_search,
+                    throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall))
+
                 del client
                 shutil.rmtree(chroma_dir, ignore_errors=True)
+
             except ImportError:
-                print(f"  ChromaDB - SKIPPED (not installed)")
+                print(f"  ChromaDB - SKIPPED (not installed)", flush=True)
             except Exception as e:
-                print(f"  ChromaDB - ERROR: {str(e)[:50]}")
+                logger = BenchmarkLogger()
+                logger.log_error("ChromaDB", e)
+                results.append(BenchmarkResult("sift_ops", "chromadb", 0, error=str(e)))
 
             gc.collect()
 
@@ -1902,7 +1952,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     if "faiss" in selected_engines:
         try:
             import faiss
-            print(f"  Benchmarking FAISS*...", end="", flush=True)
+
+            logger = BenchmarkLogger()
+            phase_start = logger.log_start("FAISS* (in-memory)", "Insert + Search")
 
             # Create flat index for exact search (fair comparison)
             index = faiss.IndexFlatL2(metadata['dimension'])
@@ -1926,6 +1978,17 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
+            logger.log_end(
+                "FAISS* (in-memory)",
+                phase_start,
+                {
+                    "insert_ms": insert_time,
+                    "search_ms": avg_search,
+                    "qps": qps,
+                    "recall": f"{avg_recall:.1f}%"
+                }
+            )
+
             results.append(BenchmarkResult("sift_insert", "faiss*", insert_time,
                 throughput=len(base_vectors) / (insert_time / 1000),
                 metadata={"in_memory": True}))
@@ -1933,13 +1996,14 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
                 metadata={"in_memory": True}))
 
-            # print(f" Insert: {insert_time:.0f}ms ({len(base_vectors)/(insert_time/1000):,.0f}/s), "
-            #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms, Recall@{k}: {avg_recall:.1f}% [IN-MEMORY*]")
             del index
+
         except ImportError:
-            print(f"  FAISS* - SKIPPED (not installed)")
+            print(f"  FAISS* - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            print(f"  FAISS* - ERROR: {str(e)[:50]}")
+            logger = BenchmarkLogger()
+            logger.log_error("FAISS*", e)
+            results.append(BenchmarkResult("sift_ops", "faiss*", 0, error=str(e)))
 
         gc.collect()
 
