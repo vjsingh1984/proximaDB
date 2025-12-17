@@ -2350,7 +2350,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     if "milvus" in selected_engines:
         try:
             from pymilvus import MilvusClient
-            print(f"  Benchmarking Milvus...", end="", flush=True)
+
+            logger = BenchmarkLogger()
+            phase_start = logger.log_start("Milvus Lite", "Insert + Search")
 
             milvus_dir = tempfile.mkdtemp()
             milvus_file = os.path.join(milvus_dir, "milvus.db")
@@ -2401,6 +2403,18 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
+            logger.log_end(
+                "Milvus Lite",
+                phase_start,
+                {
+                    "insert_ms": insert_time,
+                    "search_ms": avg_search,
+                    "qps": qps,
+                    "disk_mb": disk_size_mb,
+                    "recall": f"{avg_recall:.1f}%"
+                }
+            )
+
             results.append(BenchmarkResult("sift_insert", "milvus", insert_time,
                 throughput=len(base_vectors) / (insert_time / 1000),
                 metadata={"disk_based": True}))
@@ -2408,13 +2422,15 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
                 metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
 
-                            # print(f" Insert: {insert_time:.0f}ms ({len(base_vectors)/(insert_time/1000):,.0f}/s), "
-                            #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms, Recall@{k}: {avg_recall:.1f}%, Disk: {disk_size_mb:.1f}MB")            client.close()
+            client.close()
             shutil.rmtree(milvus_dir, ignore_errors=True)
+
         except ImportError:
-            print(f"  Milvus - SKIPPED (not installed)")
+            print(f"  Milvus - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            print(f"  Milvus - ERROR: {str(e)[:50]}")
+            logger = BenchmarkLogger()
+            logger.log_error("Milvus Lite", e)
+            results.append(BenchmarkResult("sift_ops", "milvus", 0, error=str(e)))
 
         gc.collect()
 
