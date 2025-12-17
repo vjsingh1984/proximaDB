@@ -27,6 +27,7 @@ Quick links
 - Demos: `demo/showcases/business/*` (hybrid, e‑commerce, fraud, customer360)
 - Docs index: `docs/INDEX.adoc` • REST API: `docs/03-reference/rest-api-specification.adoc`
 - Performance hub: `docs/performance/README.adoc`
+- Feature toggles: `docs/feature_toggles.md` (AI/sales/tenant/executive/experimental SIMD are opt-in)
 
 ---
 
@@ -35,6 +36,7 @@ Quick links
 - Practitioners who want a clean API for inserting/querying vectors with metadata
 - Architects who want the right engine per workload (OLTP/OLAP/Graph) without gluing systems
 - SRE/DevOps who need predictable, benchmarked behavior with CSV reporters
+- Builders who want optional surfaces (AI dashboards, sales demo APIs, tenant access, exec intel) to stay off by default but available via feature flags
 
 == Why ProximaDB?
 
@@ -271,23 +273,30 @@ graph TD
 - SIMD acceleration (AVX2/AVX512/NEON)
 - Multi-level quantization (Binary, INT8, PQ)
 - Single binary deployment
+- Optional surfaces (AI dashboards, sales APIs, tenant access, executive intel) are opt-in via feature flags to keep the default binary lean.
 
 **Data Persistence (v0.1.4+)**:
 - **Automatic WAL-based persistence**: All data (vectors, graphs, entities) automatically persists across server restarts
 - **6-stage recovery process**: Collections → Vectors → Graphs → Assignments → Buffers → Services
 - **Zero configuration required**: Persistence enabled by default with graceful failure handling
 - **Unified architecture**: Graph-first design means entity store and SKS data persist automatically via graph WAL
-- **Known issue**: WAL pool metadata propagation bug can direct WAL files to incorrect paths, impacting recovery until fixed (see `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md`); validate with `RECOVERY_TEST_FRESH.sh` after applying the fix.
+- **WAL Persistence & Recovery**: Previously documented critical issues with WAL persistence (fire-and-forget writes and metadata propagation leading to incorrect file paths) have been **resolved** through significant architectural refactoring. The graph engine now ensures durability by `await`ing WAL writes, and the WAL path resolution system has been simplified by storing paths directly in collection metadata, eliminating the propagation bug.
 
 **In Progress**:
 - Multi-node clustering
 - JavaScript/TypeScript SDK
-- Monitoring dashboard
+- Monitoring/dashboard hardening and Prometheus export (`/metrics/prometheus`)
 
 **Roadmap 2025**:
 - GPU acceleration (feature-gated backends)
 - Enhanced AutoML features
 - Distributed graph consensus
+
+== Getting Involved
+
+- We actively welcome contributors—start with `docs/08-development/README.adoc` and `docs/08-development/CONTRIBUTING.adoc`.
+- High-value areas: AXIS index for SKS vector+graph search, observability/Prometheus export, SKS metadata filter coverage, and client/server parity for filters.
+- Open issues/PRs with small, test-backed changes; include `make test-rust`/`make test-python` notes in PRs.
 
 ---
 

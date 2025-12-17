@@ -352,6 +352,7 @@ clean_*.sh
 !build.sh
 !install.sh
 !setup.sh
+dead_code_inventory.md
 
 # Build artifacts
 target/*

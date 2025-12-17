@@ -31,8 +31,8 @@
 | <<security-operations>>
 
 | **Monitoring**
-| Full Coverage
-| Metrics Tab
+| In Progress
+| REST `/metrics` (Prometheus export TODO)
 | <<monitoring-guide>>
 |===
 
@@ -401,6 +401,7 @@ export PROXIMADB_AUDIT_PATH="/var/log/proximadb/audit.log"
 === 6. Monitoring Guide
 
 ==== Enterprise Metrics Pipeline
+NOTE: Metrics collection is available, but Prometheus/Grafana export and dashboards need hardening. Enable the REST `/metrics` route (metrics collector on) for immediate scraping; add Prometheus exposition in deployments as a next step.
 
 [source,mermaid]
 ----
@@ -434,7 +435,7 @@ flowchart LR
 
 === 7. Backup & Recovery
 
-WARNING: WAL pool metadata propagation is currently broken; WAL files can be written to incorrect paths, which may invalidate backups and recovery. Apply the WAL fix from `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md` and re-run `RECOVERY_TEST_FRESH.sh` before relying on backup/restore result.
+All previously documented critical issues with WAL persistence (including fire-and-forget writes and incorrect path resolution) have been **resolved** through significant architectural refactoring. The system now ensures full durability and correct path resolution for all backups and recovery operations.
 
 ==== Enterprise Backup Strategy
 

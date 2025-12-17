@@ -8,7 +8,7 @@ Complete reference for ProximaDB configuration options in `config/config.toml`. 
 
 [NOTE]
 ====
-- WAL recovery: Pool metadata propagation is currently broken; WAL files may land in incorrect paths. Apply the WAL fix from `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md` and validate with `RECOVERY_TEST_FRESH.sh` to ensure recovery paths align with configured storage locations.
+- WAL recovery: All previously documented critical issues with WAL persistence (fire-and-forget writes and metadata propagation leading to incorrect file paths) have been **resolved** through significant architectural refactoring. The system now ensures full durability and correct path resolution.
 - Feature flags: Cloud backends (`aws`/`azure`/`gcp`) and GPU/CUDA/Metal support are disabled by default and experimental; enable explicitly only with the required toolchains/credentials.
 - For authoritative build/test commands and coding standards, refer to `AGENTS.md`.
 ====
@@ -874,9 +874,9 @@ memory_flush_size_bytes = 8388608  # 8MB (reduce buffer)
 memory_flush_size_bytes = 134217728  # 128MB
 ----
 
-**Issue**: WAL manifest corruption
+**Issue**: WAL manifest issues (corruption, missing entries)
 
-**Solution**: Restore from backup or reinitialize
+**Solution**: Restore from backup or reinitialize manifest. The underlying architectural issues causing manifest propagation bugs have been resolved, making these events less likely.
 [source,bash]
 ----
 # Backup manifest before recovery

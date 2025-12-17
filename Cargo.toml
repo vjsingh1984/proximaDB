@@ -164,6 +164,9 @@ moka = { version = "0.12", features = ["future"] }
 # Language bindings (optional, for embedded mode)
 # Python bindings via PyO3
 pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
+# Zero-copy NumPy array access (matches PyO3 0.20 version)
+# Provides direct buffer access to numpy arrays without Python .tolist() conversion
+numpy = { version = "0.20", optional = true }
 # Java bindings via JNI
 jni = { version = "0.21", optional = true }
 # Node.js bindings via NAPI-RS
@@ -192,6 +195,13 @@ env_logger = "0.10"
 
 [features]
 default = ["sql_frontend", "graph-first-sks"]
+# Optional surfaces; keep off by default to minimize binary size and public API surface
+ai_endpoints = []
+sales_endpoints = []
+tenant_access = []
+executive_intel = []
+# Experimental SIMD path; not enabled by default
+simd-experimental = []
 distributed = []
 standalone = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
@@ -226,8 +236,8 @@ debug-filters = []  # Enable debug filtering for search operations
 # ============================================================================
 # Enable language-specific bindings for embedded database mode
 
-# Python embedded mode (PyO3 bindings)
-python = ["dep:pyo3"]  # Enable Python bindings for embedded database mode
+# Python embedded mode (PyO3 bindings with zero-copy numpy support)
+python = ["dep:pyo3", "dep:numpy"]  # Enable Python bindings with zero-copy numpy support
 
 # Java embedded mode (JNI bindings)
 java = ["dep:jni"]  # Enable Java bindings for embedded database mode

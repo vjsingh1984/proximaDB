@@ -18,7 +18,7 @@ Proxima provides unified, high-performance block storage infrastructure with aut
 [NOTE]
 ====
 - Cloud backends and GPU acceleration are feature-gated/experimental; enable `aws`/`azure`/`gcp` features explicitly and ensure CUDA/Metal toolchains where applicable.
-- WAL pool metadata propagation is currently broken; ensure the WAL fix (see `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md`) is applied before relying on recovery paths that assume correct storage locations.
+- WAL persistence: All previously documented critical issues with WAL persistence (fire-and-forget writes and metadata propagation leading to incorrect file paths) have been **resolved** through significant architectural refactoring. The system now ensures full durability and correct path resolution.
 ====
 
 == Overview

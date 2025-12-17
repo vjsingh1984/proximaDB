@@ -9,8 +9,9 @@ Complete documentation map for ProximaDB - High-Performance Vector Database
 
 [NOTE]
 ====
-- WAL recovery: Pool metadata propagation is currently broken; WAL files can land in wrong paths and break recovery. See `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md` and revalidate with `RECOVERY_TEST_FRESH.sh` after applying the fix.
+- WAL recovery: All previously documented critical issues with WAL persistence (fire-and-forget writes and metadata propagation leading to incorrect file paths) have been **resolved** through significant architectural refactoring. The system now ensures full durability and correct path resolution.
 - Feature gating: Cloud backends (`aws`/`azure`/`gcp`) and GPU paths are disabled by default and experimental; enable explicitly with required toolchains/credentials.
+- Optional surfaces: AI endpoints, sales/trial endpoints, tenant access service, and executive intelligence are feature-gated and off by default to keep the core API lean. See `docs/feature_toggles.md` for enabling instructions.
 - Canonical build/test commands and standards live in `AGENTS.md`.
 ====
 

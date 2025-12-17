@@ -336,14 +336,15 @@ All engines use the unified caching filesystem:
 
 === Write-Ahead Log (WAL)
 
-Global WAL manifest coordinates recovery:
+The Write-Ahead Log (WAL) system ensures data durability and enables robust crash recovery. All previously documented critical issues with WAL persistence (including fire-and-forget writes and incorrect path resolution) have been **resolved** through significant architectural refactoring. The current WAL system is highly optimized and features:
 
-- **Cloud-optimized**: S3, Azure Blob, GCS
-- **LSN tracking**: Global log sequence numbers
-- **Parallel recovery**: Multi-threaded startup
-- **Direct-to-storage**: Bypass memtable on recovery
+- Cloud-optimized: S3, Azure Blob, GCS
+- LSN tracking: Global log sequence numbers
+- Parallel recovery: Multi-threaded startup
+- Direct-to-storage: Bypass memtable on recovery
+- Enhanced Path Resolution: WAL file paths are now reliably determined from collection metadata, eliminating metadata propagation bugs.
 
-**Documentation**: `src/storage/persistence/write_ahead_log/`
+Documentation: `src/storage/persistence/write_ahead_log/`
 
 === Cache Orchestrator
 

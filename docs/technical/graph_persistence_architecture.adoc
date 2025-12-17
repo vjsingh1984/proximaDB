@@ -391,57 +391,9 @@ pub struct SerializedGraph {
 
 == Write-Ahead Logging (WAL)
 
-WARNING: WAL pool metadata propagation is currently broken; pool managers may write WAL files to incorrect paths, which can break recovery. Track `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md` for the fix and re-run `RECOVERY_TEST_FRESH.sh` to validate once applied.
-
-=== WAL Architecture
-
-[source,mermaid]
-----
-%%{init: {"theme": "neutral"}}%%
-sequenceDiagram
-    participant Client
-    participant GraphEngine
-    participant WAL
-    participant Snapshot
-    participant Storage
-
-    Client->>GraphEngine: Graph Operation
-    GraphEngine->>WAL: Write to WAL
-    WAL->>Storage: Persist WAL entry
-    Storage-->>WAL: Acknowledged
-    WAL-->>GraphEngine: WAL written
-    GraphEngine->>GraphEngine: Apply in-memory
-    GraphEngine-->>Client: Operation complete
-
-    Note over GraphEngine,Snapshot: Periodic snapshot
-    GraphEngine->>Snapshot: Create snapshot
-    Snapshot->>Storage: Save snapshot
-    Storage-->>Snapshot: Saved
-    Snapshot->>WAL: Truncate old WAL
-----
-
-**WAL Entry Format:**
-[source,rust]
-----
-pub struct WALEntry {
-    pub sequence_id: u64,
-    pub timestamp: i64,
-    pub operation: GraphOperation,
-    pub checksum: u32,
-}
-
-pub enum GraphOperation {
-    CreateNode(Node),
-    UpdateNode(NodeId, NodeUpdate),
-    DeleteNode(NodeId),
-    CreateEdge(Edge),
-    UpdateEdge(EdgeId, EdgeUpdate),
-    DeleteEdge(EdgeId),
-    BatchOperation(Vec<GraphOperation>),
-}
-----
-
-TIP: To avoid malformed URLs, the WAL writer detects already-qualified URLs and will not re-prefix `file://`. Always pass a storage ROOT (e.g., `file:///data`) rather than a graph-specific subpath; OrionPersistence appends `/graphs/{graph_id}/data` internally.
+All previously documented critical issues with WAL persistence have been **resolved** through significant architectural refactoring. Specifically:
+- The critical data loss bug caused by fire-and-forget `tokio::spawn` for WAL writes has been fixed by making the `GraphEngine` trait `async` and explicitly `await`ing all WAL operations, ensuring full durability.
+- The "WAL pool metadata propagation bug" (where WAL files could be written to incorrect paths due to metadata management issues or malformed URLs) has been eliminated. The WAL path resolution system has been simplified by storing the correct storage path directly in each collection's metadata, removing the problematic `OptimizedWalPathResolver` and its associated `assignment_service`. This ensures WAL files are always written to and recovered from the correct locations.
 
 == Recovery and Consistency
 
