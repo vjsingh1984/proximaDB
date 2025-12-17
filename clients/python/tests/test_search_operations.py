@@ -10,9 +10,9 @@ import numpy as np
 from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 
-from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb import CollectionConfig, DistanceMetric, QuantizationConfig, QuantizationType
-from proximadb import ProximaDBError
+from proximadb_sdk import ProximaDBClient, Protocol, connect_rest, connect_grpc
+from proximadb_sdk import CollectionConfig, DistanceMetric, QuantizationConfig, QuantizationType
+from proximadb_sdk import ProximaDBError
 from .test_helpers import ensure_collection, cleanup_collection, COLLECTION_NAMES
 
 

@@ -67,7 +67,7 @@ class TestDockerDemoContainer:
         collection_name = f"test_demo_collection_{int(time.time())}"
 
         # Use SDK instead of raw REST calls for proper API handling
-        from proximadb import ProximaDBClient
+        from proximadb_sdk import ProximaDBClient
         client = ProximaDBClient(url=base_url, force_protocol='rest')
 
         try:
@@ -123,8 +123,8 @@ class TestDockerDemoContainer:
         collection_name = f"vector_test_collection_{int(time.time())}"
         
         # Use SDK instead of raw REST calls for proper metadata handling
-        from proximadb import ProximaDBClient
-        from proximadb import VectorRecord
+        from proximadb_sdk import ProximaDBClient
+        from proximadb_sdk import VectorRecord
         client = ProximaDBClient(url=base_url, force_protocol='rest')
         
         try:

@@ -8,7 +8,7 @@ and provides appropriate warnings about fallbacks.
 import pytest
 import warnings
 from pydantic import ValidationError
-from proximadb.models import (
+from proximadb_sdk.models import (
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm,
     ServerCapabilities
 )

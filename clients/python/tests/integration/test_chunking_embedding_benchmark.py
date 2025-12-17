@@ -12,15 +12,15 @@ from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 import json
 
-from proximadb import ProximaDBClient
-from proximadb.chunking import (
+from proximadb_sdk import ProximaDBClient
+from proximadb_sdk.chunking import (
     TextChunker,
     ChunkingConfig,
     ChunkingStrategy,
     chunk_and_embed_text
 )
-from proximadb.embedding_providers import get_embedding_provider
-from proximadb.models import (
+from proximadb_sdk.embedding_providers import get_embedding_provider
+from proximadb_sdk.models import (
     CollectionConfig,
     DistanceMetric,
     StorageEngine,

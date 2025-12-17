@@ -139,6 +139,45 @@ impl IntoApiError for serde_json::Error {
     }
 }
 
+/// Convert ProtocolError to ApiError for unified error handling
+impl From<crate::core::error::ProtocolError> for ApiError {
+    fn from(err: crate::core::error::ProtocolError) -> Self {
+        use crate::core::error::ProtocolError;
+        match err {
+            ProtocolError::InvalidArgument { msg, field } => {
+                let message = if let Some(f) = field {
+                    format!("{} (field: {})", msg, f)
+                } else {
+                    msg
+                };
+                ApiError::InvalidArgument(message)
+            }
+            ProtocolError::NotFound { resource, id } => {
+                if resource.to_lowercase() == "collection" {
+                    ApiError::CollectionNotFound(id)
+                } else {
+                    ApiError::InvalidArgument(format!("{} not found: {}", resource, id))
+                }
+            }
+            ProtocolError::AlreadyExists { resource, id } => {
+                ApiError::AlreadyExists(format!("{}: {}", resource, id))
+            }
+            ProtocolError::Internal { details } => ApiError::Internal(details),
+            ProtocolError::PermissionDenied { action } => {
+                ApiError::Unauthorized(format!("Permission denied: {}", action))
+            }
+            ProtocolError::Timeout { operation, duration_ms } => {
+                ApiError::DeadlineExceeded(format!(
+                    "Operation '{}' timed out after {}ms",
+                    operation, duration_ms
+                ))
+            }
+            ProtocolError::ResourceExhausted { details } => ApiError::ResourceExhausted(details),
+            ProtocolError::PreconditionFailed { details } => ApiError::InvalidArgument(details),
+        }
+    }
+}
+
 /// Helper function to convert Result<T, ApiError> to Response
 pub fn result_into_response<T>(result: Result<T, ApiError>) -> Response
 where

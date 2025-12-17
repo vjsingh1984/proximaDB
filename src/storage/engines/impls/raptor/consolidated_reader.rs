@@ -2533,7 +2533,18 @@ impl RaptorReader {
         );
 
         // STEP 3: Local graph traversal within selected clusters
-        let max_clusters_to_search = (cluster_distances.len().min(3)).max(1); // Search top 1-3 clusters
+        // Use sqrt(k) for cluster selection - IVF standard for ~95% recall with O(sqrt(k)) complexity
+        let total_clusters = cluster_distances.len();
+        let max_clusters_to_search = if total_clusters == 0 {
+            1
+        } else {
+            ((total_clusters as f64).sqrt().ceil() as usize).max(1).min(total_clusters)
+        };
+        tracing::debug!(
+            "RAPTOR similarity: Using nprobe={} (sqrt of {} clusters)",
+            max_clusters_to_search,
+            total_clusters
+        );
         let mut all_candidates = Vec::new();
 
         for (rg_id, centroid_dist) in cluster_distances.into_iter().take(max_clusters_to_search) {

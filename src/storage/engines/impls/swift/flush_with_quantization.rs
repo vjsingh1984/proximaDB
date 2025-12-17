@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use tracing::{info, debug};
 
 use crate::storage::engines::impls::swift::SwiftEngine;
-use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, quantization_trait::ProximaBlockQuantization};
+use crate::storage::engines::core::formats::proximablocks::{
+    quantization_trait::ProximaBlockQuantization, utils::recommend_block_size_for_dimension,
+    ProximaDataBlock,
+};
 use crate::storage::engines::core::ops::unified_proxima_simd::EngineProfile;
 use crate::storage::traits::{FlushParameters, FlushResult};
 
@@ -153,12 +156,16 @@ impl SwiftEngine {
 
     fn get_block_layout(&self) -> crate::storage::engines::core::formats::proximablocks::BlockLayout {
         use crate::storage::engines::core::formats::proximablocks::{BlockLayout, LayoutType, PaddingStrategy};
+        // Derive a balanced block size; prefer configured value when set
+        let configured = (self.config.block_size_kb as u64).saturating_mul(1024);
+        let recommended = recommend_block_size_for_dimension(384, 200) as u64;
+        let target_block_size_bytes = if configured > 0 { configured } else { recommended };
 
         BlockLayout {
             layout_type: LayoutType::Sequential, // SWIFT uses sequential for speed
             blocks_per_superblock: self.config.blocks_per_superblock as u32,
             records_per_block: self.config.records_per_block as u32,
-            target_block_size_bytes: (self.config.block_size_kb * 1024) as u64,
+            target_block_size_bytes,
             block_alignment_bytes: 64, // Cache line alignment
             enable_padding: true,
             padding_strategy: PaddingStrategy::BlockAlign,

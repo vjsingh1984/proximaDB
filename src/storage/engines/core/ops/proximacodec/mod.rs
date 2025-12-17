@@ -59,6 +59,9 @@ pub mod wire_format;
 
 // Hardware-accelerated implementations (SIMD + GPU)
 pub mod simd;
+// Experimental SIMD prototype lives under archive; opt-in only.
+#[cfg(feature = "simd-experimental")]
+pub mod simd_experimental;
 
 // Hardware-aware batching framework (common across SIMD, GPU, Scalar)
 pub mod batching;

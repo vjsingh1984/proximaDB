@@ -8,18 +8,18 @@ import pytest
 import numpy as np
 from unittest.mock import Mock, patch, MagicMock
 
-from proximadb.embedding_providers.core import (
+from proximadb_sdk.embedding_providers.core import (
     BaseEmbeddingProvider as EmbeddingProvider,
     ProviderConfig as EmbeddingConfig,
     ProviderRegistry
 )
-from proximadb.embedding_providers.providers.testing.simulated import SimulatedEmbeddingProvider
+from proximadb_sdk.embedding_providers.providers.testing.simulated import SimulatedEmbeddingProvider
 
 # For backward compatibility with old tests, alias get_provider as factory
 class EmbeddingProviderFactory:
     @staticmethod
     def create(provider_name, **kwargs):
-        from proximadb.embedding_providers import get_provider
+        from proximadb_sdk.embedding_providers import get_provider
         return get_provider(provider_name, **kwargs)
 
 
@@ -28,7 +28,7 @@ class TestEmbeddingConfig:
 
     def test_basic_config(self):
         """Test basic configuration creation"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
 
         model = ModelMetadata(
             name="test-model",
@@ -46,7 +46,7 @@ class TestEmbeddingConfig:
 
     def test_custom_config(self):
         """Test configuration with custom values"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
 
         model = ModelMetadata(
             name="custom-model",
@@ -82,7 +82,7 @@ class TestEmbeddingProviderBase:
 
     def test_concrete_implementation(self):
         """Test that concrete implementation works"""
-        from proximadb.embedding_providers.core import ModelMetadata, ProviderConfig
+        from proximadb_sdk.embedding_providers.core import ModelMetadata, ProviderConfig
 
         class ConcreteProvider(EmbeddingProvider):
             def __init__(self, config: EmbeddingConfig = None):
@@ -107,7 +107,7 @@ class TestEmbeddingProviderBase:
 
     def test_optional_methods(self):
         """Test lifecycle methods work correctly"""
-        from proximadb.embedding_providers.core import ModelMetadata, ProviderConfig
+        from proximadb_sdk.embedding_providers.core import ModelMetadata, ProviderConfig
 
         class MinimalProvider(EmbeddingProvider):
             def __init__(self, config: EmbeddingConfig = None):
@@ -152,7 +152,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_initialization_custom_config(self):
         """Test provider initializes with custom config"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
 
         model = ModelMetadata(name="test-simulated", dimension=128)
         config = EmbeddingConfig(
@@ -168,7 +168,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_embed_texts_hash_based(self):
         """Test hash-based embedding generation"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
 
         model = ModelMetadata(name="simulated", dimension=128)
         config = EmbeddingConfig(
@@ -195,7 +195,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_embed_texts_different_seeds(self):
         """Test different seeds produce different results"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
         texts = ["test text"]
 
         # Seed 42
@@ -229,7 +229,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_get_dimension(self):
         """Test dimension property"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
         model = ModelMetadata(name="sim", dimension=256)
         config = EmbeddingConfig(model=model)
         provider = SimulatedEmbeddingProvider(config)
@@ -237,7 +237,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_get_model_info(self):
         """Test configuration access"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
         model = ModelMetadata(name="test-simulated", dimension=64)
         config = EmbeddingConfig(
             model=model,
@@ -252,7 +252,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_similarity_calculation(self):
         """Test similarity between embeddings"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
         model = ModelMetadata(name="sim", dimension=64)
         config = EmbeddingConfig(
             model=model,
@@ -275,7 +275,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_normalization_flag(self):
         """Test normalization can be disabled"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
 
         # With normalization
         model1 = ModelMetadata(name="sim", dimension=64)
@@ -301,7 +301,7 @@ class TestSimulatedEmbeddingProvider:
 
     def test_seed_determinism(self):
         """Test that same seed produces same embeddings"""
-        from proximadb.embedding_providers.core import ModelMetadata
+        from proximadb_sdk.embedding_providers.core import ModelMetadata
 
         # Provider with seed 42
         model1 = ModelMetadata(name="sim", dimension=64)

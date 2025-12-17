@@ -1,120 +1,39 @@
 """
-Utilities for testing with real ProximaDB server
+Utilities for testing with ProximaDB
 
-Provides helper functions to ensure ProximaDB server is running
-and accessible for tests.
+With embedded mode, most functions are no-ops since no external server is needed.
 """
 
 import time
-import requests
-import subprocess
-import os
-from typing import Optional, Tuple
-from pathlib import Path
+from typing import Tuple
 
 
 def check_server_health(rest_url: str = "http://localhost:5678", grpc_url: str = "http://localhost:5679") -> Tuple[bool, bool]:
     """
-    Check if ProximaDB servers are healthy
-    
-    Returns:
-        Tuple of (rest_healthy, grpc_healthy)
+    Check if ProximaDB servers are healthy.
+
+    With embedded mode, always returns (True, True) since no external server is needed.
     """
-    rest_healthy = False
-    grpc_healthy = False
-    
-    # Check REST server
-    try:
-        response = requests.get(f"{rest_url}/health", timeout=2)
-        rest_healthy = response.status_code == 200
-    except:
-        pass
-    
-    # Check gRPC server by trying to list collections
-    if rest_healthy:
-        # Use ProximaDB client to check gRPC
-        try:
-            from proximadb import ProximaDBClient
-            grpc_client = ProximaDBClient(url=f"grpc://localhost:5679")
-            # Try to list collections
-            grpc_client.list_collections()
-            grpc_healthy = True
-        except:
-            # If that fails, gRPC is still considered healthy if REST is up
-            grpc_healthy = True
-    
-    return rest_healthy, grpc_healthy
+    return True, True
 
 
 def wait_for_server(timeout: int = 30) -> bool:
     """
-    Wait for ProximaDB server to be ready
-    
-    Args:
-        timeout: Maximum seconds to wait
-        
-    Returns:
-        True if server is ready, False if timeout
+    Wait for ProximaDB server to be ready.
+
+    With embedded mode, always returns True immediately.
     """
-    start_time = time.time()
-    
-    while time.time() - start_time < timeout:
-        rest_healthy, grpc_healthy = check_server_health()
-        # For now, only require REST server to be healthy
-        if rest_healthy:
-            return True
-        time.sleep(1)
-    
-    return False
+    return True
 
 
 def ensure_server_running():
     """
-    Ensure ProximaDB server is running, start it if necessary
-    
-    Raises:
-        RuntimeError: If server cannot be started or is not accessible
+    No-op for embedded mode - server not needed.
+
+    Previously this function would check for a running ProximaDB server.
+    With embedded mode, the database runs in-process.
     """
-    # First check if server is already running
-    rest_healthy, grpc_healthy = check_server_health()
-    # For now, only require REST server to be healthy
-    if rest_healthy:
-        return
-    
-    # Try to start the server
-    proximadb_root = Path(__file__).parent.parent.parent.parent.parent
-    server_binary = proximadb_root / "target/release/proximadb-server"
-    
-    if not server_binary.exists():
-        raise RuntimeError(
-            f"ProximaDB server binary not found at {server_binary}. "
-            "Please build the server with: cargo build --release"
-        )
-    
-    # Start server in background
-    config_path = proximadb_root / "demo/docker-config.toml"
-    if not config_path.exists():
-        config_path = proximadb_root / "demo/local-demo-config.toml"
-    
-    env = os.environ.copy()
-    env["RUST_LOG"] = "info"
-    
-    process = subprocess.Popen(
-        [str(server_binary), "--config", str(config_path)],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    
-    # Wait for server to be ready
-    if wait_for_server():
-        print("✅ ProximaDB server started successfully")
-    else:
-        process.terminate()
-        raise RuntimeError(
-            "Failed to start ProximaDB server. Please start it manually with:\n"
-            f"RUST_LOG=info {server_binary} --config {config_path}"
-        )
+    pass
 
 
 def create_test_collection(client, name: str, dimension: int = 384, engine: str = "viper"):

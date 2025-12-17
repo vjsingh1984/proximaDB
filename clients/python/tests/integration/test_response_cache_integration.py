@@ -7,10 +7,10 @@ import time
 import threading
 from unittest.mock import Mock, patch, MagicMock
 
-from proximadb.protocols.rest_sync import ProximaDBClient
-from proximadb.cache import CacheStrategy, CacheLevel, ResponseCache
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
+from proximadb_sdk.cache import CacheStrategy, CacheLevel, ResponseCache
 from typing import Dict, Any
-from proximadb.config import ClientConfig
+from proximadb_sdk.config import ClientConfig
 
 
 class TestResponseCacheIntegration:

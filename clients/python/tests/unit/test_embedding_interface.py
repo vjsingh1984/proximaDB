@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.embedding_interface import (
+from proximadb_sdk.embedding_interface import (
     EmbeddingProvider,
     EmbeddingConfig,
     BERTEmbeddingProvider,
@@ -411,7 +411,7 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
     def test_semantic_chunking_with_real_embeddings(self):
         """Test semantic chunking with real embedding providers"""
         # Note: Enhanced semantic chunking consolidated - using standard semantic strategy
-        from proximadb.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
+        from proximadb_sdk.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
         
         # Get default provider (BERT or simulated)
         provider = get_default_embedding_provider()
@@ -465,7 +465,7 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
         embeddings = provider.embed_texts(texts)
         
         # Create vector records
-        from proximadb.models import VectorRecord
+        from proximadb_sdk.models import VectorRecord
         
         records = []
         for i, (text, embedding) in enumerate(zip(texts, embeddings)):
@@ -505,7 +505,7 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
     def test_topic_boundary_with_real_embeddings(self):
         """Test topic boundary detection with real embeddings"""
         # Note: Enhanced semantic chunking consolidated - using standard semantic strategy
-        from proximadb.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
+        from proximadb_sdk.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
         
         # Use BERT if available, otherwise simulated
         provider = get_default_embedding_provider()

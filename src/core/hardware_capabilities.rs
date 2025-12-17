@@ -1454,6 +1454,148 @@ pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
     try_get_hardware_capabilities().unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
 }
 
+/// Log hardware capabilities summary - call this once when ProximaDB opens
+/// Returns a formatted summary string for display
+pub fn log_hardware_capabilities_summary() -> String {
+    let caps = get_hardware_capabilities();
+
+    // Determine the best SIMD backend
+    let simd_backend = get_best_simd_backend();
+    let backend_str = match simd_backend {
+        HardwareBackend::AVX512 => "AVX-512",
+        HardwareBackend::AVX2 => "AVX2",
+        HardwareBackend::SSE => "SSE",
+        HardwareBackend::NEON => "NEON",
+        HardwareBackend::CUDA => "CUDA",
+        HardwareBackend::ROCm => "ROCm",
+        HardwareBackend::MPS => "MPS",
+        HardwareBackend::OpenCL => "OpenCL",
+        HardwareBackend::Scalar => "Scalar",
+    };
+
+    // Format memory in GB
+    let total_mem_gb = caps.memory.total_memory as f64 / (1024.0 * 1024.0 * 1024.0);
+    let avail_mem_gb = caps.memory.available_memory as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    // Build summary
+    let summary = format!(
+        "Hardware: {} cores, {} SIMD, {:.1}GB/{:.1}GB RAM",
+        caps.cpu.physical_cores,
+        backend_str,
+        avail_mem_gb,
+        total_mem_gb
+    );
+
+    info!(
+        "🖥️  ProximaDB Hardware: {} ({} cores), {} SIMD, {:.1}GB available",
+        caps.cpu.model_name,
+        caps.cpu.physical_cores,
+        backend_str,
+        avail_mem_gb
+    );
+
+    summary
+}
+
+/// Get the best compute backend for distance calculations based on workload characteristics.
+///
+/// This considers:
+/// - Available GPU backend and its characteristics (unified vs discrete memory)
+/// - Batch size (larger batches benefit more from GPU)
+/// - Vector dimension (higher dimensions benefit from GPU parallelism)
+///
+/// # Arguments
+/// * `batch_size` - Number of vectors to process
+/// * `dimension` - Dimension of each vector
+///
+/// # Returns
+/// The optimal `HardwareBackend` for this workload
+pub fn get_best_distance_backend(batch_size: usize, dimension: usize) -> HardwareBackend {
+    let caps = get_hardware_capabilities();
+
+    // GPU is beneficial for larger batches or high dimensions
+    // The memory transfer overhead makes GPU less beneficial for small batches
+    let use_gpu = if caps.has_gpu() {
+        match caps.gpu.backend {
+            GpuBackend::MPS => {
+                // Apple Silicon has unified memory - lower threshold for GPU usage
+                // No PCIe transfer overhead
+                batch_size >= 500 || (batch_size >= 100 && dimension >= 512)
+            }
+            GpuBackend::CUDA | GpuBackend::ROCm => {
+                // Discrete GPU needs larger batches to overcome PCIe transfer
+                batch_size >= 1000 || (batch_size >= 500 && dimension >= 768)
+            }
+            GpuBackend::OpenCL => {
+                // OpenCL has higher overhead, need even larger batches
+                batch_size >= 2000 || (batch_size >= 1000 && dimension >= 1024)
+            }
+            GpuBackend::None => false,
+        }
+    } else {
+        false
+    };
+
+    if use_gpu {
+        match caps.gpu.backend {
+            GpuBackend::MPS => HardwareBackend::MPS,
+            GpuBackend::CUDA => HardwareBackend::CUDA,
+            GpuBackend::ROCm => HardwareBackend::ROCm,
+            GpuBackend::OpenCL => HardwareBackend::OpenCL,
+            GpuBackend::None => get_best_simd_backend(),
+        }
+    } else {
+        get_best_simd_backend()
+    }
+}
+
+/// Get the best SIMD backend for the current platform.
+///
+/// Priority order:
+/// 1. AVX-512 (x86_64 with AVX-512 support)
+/// 2. AVX2 (x86_64 with AVX2 support)
+/// 3. SSE (x86_64 fallback)
+/// 4. NEON (ARM64/aarch64)
+/// 5. Scalar (no SIMD available)
+pub fn get_best_simd_backend() -> HardwareBackend {
+    let simd = SimdCapabilities::detect();
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if simd.has_avx512 {
+            return HardwareBackend::AVX512;
+        }
+        if simd.has_avx2 {
+            return HardwareBackend::AVX2;
+        }
+        if simd.has_sse {
+            return HardwareBackend::SSE;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if simd.has_neon {
+            return HardwareBackend::NEON;
+        }
+    }
+
+    HardwareBackend::Scalar
+}
+
+/// Check if GPU acceleration is available and recommended for this workload.
+///
+/// # Arguments
+/// * `batch_size` - Number of vectors to process
+/// * `dimension` - Dimension of each vector
+///
+/// # Returns
+/// `true` if GPU should be used for this workload, `false` otherwise
+pub fn should_use_gpu_for_workload(batch_size: usize, dimension: usize) -> bool {
+    let best_backend = get_best_distance_backend(batch_size, dimension);
+    best_backend.is_gpu()
+}
+
 /// Hardware capability queries for easy access
 pub struct HardwareQuery;
 

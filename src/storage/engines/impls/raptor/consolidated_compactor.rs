@@ -10,6 +10,7 @@ use tracing::{debug, info};
 // DIRECT use of unified components - no wrappers
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
 use super::config::RaptorConfig;
+use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
 use super::consolidated_reader::RaptorReader;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::clustering::{
@@ -96,13 +97,29 @@ impl RaptorCompactor {
         // Step 3: Apply MVCC resolution - keep only latest versions
         let deduplicated = self.apply_mvcc_resolution(all_vectors);
 
-        // Step 4: Group into row groups (10K vectors each)
-        let row_groups = self.create_row_groups(deduplicated, 10000);
+        // Step 4: Calculate optimal row group size using Matrix Trinity balanced sizing
+        // This uses p = k = √N for optimal query complexity
+        let sizing = BalancedMatrixTrinitySizing::calculate(deduplicated.len(), self.config.dimension);
+        let group_size = self
+            .config
+            .target_rowgroup_size
+            .unwrap_or(sizing.vectors_per_rowgroup);
 
-        // Step 5: Write compacted file - DIRECT filesystem operations
+        debug!(
+            "Standard compaction: {} vectors -> {} rowgroups of ~{} vectors (speedup: {:.1}x)",
+            deduplicated.len(),
+            sizing.num_rowgroups,
+            group_size,
+            sizing.speedup_vs_naive
+        );
+
+        // Step 5: Group into row groups with balanced sizing
+        let row_groups = self.create_row_groups(deduplicated, group_size);
+
+        // Step 6: Write compacted file - DIRECT filesystem operations
         self.write_compacted_file(output_file, row_groups).await?;
 
-        // Step 6: Clean up input files
+        // Step 7: Clean up input files
         for file_path in input_files {
             self.filesystem.delete(&file_path).await?;
         }
@@ -141,20 +158,20 @@ impl RaptorCompactor {
             return Ok(());
         }
 
-        // Step 2: Calculate k using same logic as writer's build_ivf_clusters
-        // k = sqrt(n) for optimal complexity k² + p×(k+p)
-        let sqrt_n = (n as f64).sqrt() as usize;
-        let k = self.config.num_clusters.unwrap_or(sqrt_n.max(1));
+        // Step 2: Calculate optimal k and p using Matrix Trinity balanced sizing
+        // This uses p = k = √N for optimal complexity: k² + nprobe*p + k ≈ O(√N) per query
+        let sizing = BalancedMatrixTrinitySizing::calculate(n, self.config.dimension);
 
-        // p = rowgroup size (from config or auto-calculated based on L3 cache)
+        // Allow config overrides if specified, otherwise use optimal values
+        let k = self.config.num_clusters.unwrap_or(sizing.num_rowgroups);
         let p = self
             .config
             .target_rowgroup_size
-            .unwrap_or(self.config.rowgroup_size);
+            .unwrap_or(sizing.vectors_per_rowgroup);
 
         info!(
-            "Compacting {} vectors: k={} clusters (sqrt(n)), p={} vectors/rowgroup",
-            n, k, p
+            "Compacting {} vectors: k={} clusters, p={} vectors/rowgroup (speedup: {:.1}x vs naive)",
+            n, k, p, sizing.speedup_vs_naive
         );
 
         // Step 3: Run clustering to assign vectors to k clusters (same as writer)

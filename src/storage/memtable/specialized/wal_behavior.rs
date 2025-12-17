@@ -168,6 +168,15 @@ impl BatchCoordinator {
         ))
     }
 
+    /// List all collections that have unflushed data (for shutdown flush)
+    fn list_collections_with_unflushed_data(&self) -> Vec<String> {
+        self.batches
+            .iter()
+            .filter(|(_, batches)| batches.values().any(|batch| !batch.is_flushed))
+            .map(|(collection_id, _)| collection_id.clone())
+            .collect()
+    }
+
     /// Clear flushed batches from coordinator
     fn clear_flushed_batches(&mut self, collection_id: &str) -> Result<usize> {
         let mut cleared_count = 0;
@@ -661,6 +670,13 @@ impl WALBehaviorWrapper {
         // Clear data from GlobalPartitionedMemtable after successful storage engine flush
         // This prevents memory explosion and ensures data consistency
         self.inner.clear_flushed_batches(collection_id).await
+    }
+
+    /// List all collections that have unflushed data in memtable
+    /// Used for graceful shutdown to flush all pending data to storage engines
+    pub async fn list_collections_with_unflushed_data(&self) -> Vec<String> {
+        let coordinator = self.batch_coordinator.read().await;
+        coordinator.list_collections_with_unflushed_data()
     }
 
     /// Get statistics for WAL collection management (MODERN)

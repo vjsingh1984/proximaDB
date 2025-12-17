@@ -267,6 +267,7 @@ impl NovaFlushOperations {
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: params.batch_ids.clone(),
         })
     }

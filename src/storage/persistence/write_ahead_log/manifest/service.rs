@@ -549,6 +549,79 @@ impl GlobalManifestService {
         Ok(())
     }
 
+    /// Mark entries as flushed AND delete the actual WAL files from disk
+    ///
+    /// This is the safe pattern: mark as flushed first, then delete files.
+    /// If deletion fails, the entry is already marked as flushed so we won't
+    /// try to recover it again on restart.
+    pub async fn mark_flushed_and_delete_files(&self, batch_ids: &[String]) -> Result<usize> {
+        if batch_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Collect file URLs before marking as flushed (need Active status entries)
+        let file_urls: Vec<String> = {
+            let entries = self.entries.read().await;
+            entries
+                .iter()
+                .filter(|e| batch_ids.contains(&e.batch_id) && e.status == WalEntryStatus::Active)
+                .map(|e| {
+                    // Construct full file URL from storage_url + file_path
+                    format!("{}/{}", e.storage_url.trim_end_matches('/'), e.file_path)
+                })
+                .collect()
+        };
+
+        if file_urls.is_empty() {
+            debug!(
+                "🔍 No active WAL files found for batch IDs: {:?}",
+                batch_ids
+            );
+            return Ok(0);
+        }
+
+        // Mark as flushed first (CRITICAL: must happen before file deletion)
+        self.mark_flushed(batch_ids).await?;
+
+        // Now delete the actual WAL files
+        let mut deleted_count = 0;
+        for file_url in &file_urls {
+            match self.filesystem_factory.get_filesystem(file_url) {
+                Ok(fs) => {
+                    match fs.delete(file_url).await {
+                        Ok(_) => {
+                            debug!("🗑️ Deleted WAL file: {}", file_url);
+                            deleted_count += 1;
+                        }
+                        Err(e) => {
+                            // File deletion failed, but entry is already marked as flushed
+                            // This is safe - file will be orphaned but won't be recovered
+                            warn!(
+                                "⚠️ Failed to delete WAL file {} (already marked flushed): {}",
+                                file_url, e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ Failed to get filesystem for WAL file {}: {}",
+                        file_url, e
+                    );
+                }
+            }
+        }
+
+        info!(
+            "🧹 Deleted {}/{} WAL files after flush (batch IDs: {})",
+            deleted_count,
+            file_urls.len(),
+            batch_ids.len()
+        );
+
+        Ok(deleted_count)
+    }
+
     /// Rewrite the entire manifest (used after status updates)
     async fn rewrite_manifest(&self) -> Result<()> {
         let entries = self.entries.read().await;

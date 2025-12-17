@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.chunking import (
+from proximadb_sdk.chunking import (
     TextChunker,
     ChunkingStrategy,
     ChunkingConfig,
@@ -24,7 +24,7 @@ from proximadb.chunking import (
     create_vector_records,
     chunk_and_embed_text,
 )
-from proximadb.chunking_strategies import (
+from proximadb_sdk.chunking_strategies import (
     SlidingWindowStrategy,
     SentenceStrategy,
     ParagraphStrategy,
@@ -32,8 +32,8 @@ from proximadb.chunking_strategies import (
     RecursiveStrategy,
     get_chunking_strategy,
 )
-from proximadb.embedding_interface import get_default_embedding_provider
-from proximadb.models import VectorRecord
+from proximadb_sdk.embedding_interface import get_default_embedding_provider
+from proximadb_sdk.models import VectorRecord
 
 
 class TestChunkingStrategies:
@@ -215,22 +215,33 @@ class TestTextChunker:
     
     def test_chunk_text_all_strategies(self):
         """Test chunking with all available strategies"""
+        # Use Python code sample for CODE strategy compatibility
         text = """
-        This is a test document with multiple paragraphs.
-        
-        Each paragraph contains several sentences. These sentences are used to test
-        the different chunking strategies. Some strategies preserve sentence boundaries.
-        
-        Other strategies focus on semantic meaning. They try to keep related content
-        together while respecting size constraints.
-        """
-        
+def hello_world():
+    '''A simple hello world function.'''
+    print("Hello, World!")
+
+def add_numbers(a, b):
+    '''Add two numbers together.'''
+    return a + b
+
+class Calculator:
+    '''A simple calculator class.'''
+
+    def __init__(self):
+        self.result = 0
+
+    def add(self, x):
+        self.result += x
+        return self.result
+"""
+
         for strategy in ChunkingStrategy:
             config = ChunkingConfig(strategy=strategy, chunk_size=200)
             chunker = TextChunker(config)
-            
-            chunks = chunker.chunk_text(text, f"test_{strategy.value}")
-            
+
+            chunks = chunker.chunk_text(text, f"test_{strategy.value}.py")
+
             assert len(chunks) > 0
             assert all(isinstance(c, TextChunk) for c in chunks)
             assert all(c.metadata["chunking_strategy"] == strategy.value for c in chunks)

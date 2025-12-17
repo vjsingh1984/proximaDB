@@ -6,7 +6,7 @@
 
 This document provides a quick reference to ProximaDB's current roadmap status and implementation plans. For detailed quarterly plans and historical context, see the subdirectories.
 
-**Last Updated**: October 2025
+**Last Updated**: December 2025
 
 == Roadmap Organization
 

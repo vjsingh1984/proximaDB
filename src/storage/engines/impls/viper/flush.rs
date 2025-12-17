@@ -216,6 +216,7 @@ impl Flush {
                 duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: Vec::new(), // ✅ Empty for empty flush
                 engine_metrics: {
                     let mut metrics = std::collections::HashMap::new();
@@ -615,6 +616,7 @@ impl Flush {
                 metrics
             },
             compaction_triggered,
+            compaction_error: None,
         })
     }
 

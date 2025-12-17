@@ -289,7 +289,12 @@ impl SstEngine {
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
             .context("Failed to commit atomic flush operation")?;
-        tracing::debug!(final_url = %atomic_op.final_url, "Atomic operation committed");
+        tracing::debug!(
+            final_url = %atomic_op.final_url,
+            filename = %filename,
+            bytes = bytes_written,
+            "SST flush atomic commit done"
+        );
 
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
@@ -316,6 +321,7 @@ impl SstEngine {
                 metrics
             },
             compaction_triggered: should_trigger_compaction,
+            compaction_error: None,
             flushed_batch_ids: params.batch_ids.clone(),
         })
     }

@@ -1,4 +1,4 @@
-from proximadb.protocols.rest_sync import ProximaDBClient
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 
 
 class FakeResponse:

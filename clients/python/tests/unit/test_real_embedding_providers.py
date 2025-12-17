@@ -26,12 +26,12 @@ try:
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
-from proximadb.embedding_providers.core import ProviderConfig, ModelMetadata
-from proximadb.embedding_providers.providers.local.gte_qwen import GTEQwenProvider, GTE_QWEN_MODELS
-from proximadb.embedding_providers.providers.local.sfr import SFRProvider, SFR_MODELS
-from proximadb.embedding_providers.providers.local.bge import BGEProvider, BGE_MODELS
-from proximadb.embedding_providers.providers.local.e5 import E5Provider, E5_MODELS
-from proximadb.embedding_providers.providers.local.sentence_transformer import (
+from proximadb_sdk.embedding_providers.core import ProviderConfig, ModelMetadata
+from proximadb_sdk.embedding_providers.providers.local.gte_qwen import GTEQwenProvider, GTE_QWEN_MODELS
+from proximadb_sdk.embedding_providers.providers.local.sfr import SFRProvider, SFR_MODELS
+from proximadb_sdk.embedding_providers.providers.local.bge import BGEProvider, BGE_MODELS
+from proximadb_sdk.embedding_providers.providers.local.e5 import E5Provider, E5_MODELS
+from proximadb_sdk.embedding_providers.providers.local.sentence_transformer import (
     SentenceTransformerProvider,
     SENTENCE_TRANSFORMER_MODELS
 )

@@ -201,10 +201,19 @@ impl SstEngine {
 
         let mut all_candidates = Vec::new();
 
-        // Discover SSTable files for this collection
+        // Discover SSTable files for this collection with optional centroid pruning
+        // When SearchMode is Approximate, uses centroid-based IVF-style optimization
         tracing::debug!(storage_url = %storage_url, "Discovering SSTable files");
-        let sstable_files = self.discover_sstable_files(storage_url).await?;
-        tracing::debug!("[SST] Discovered {} SSTable files", sstable_files.len());
+        let search_mode = &ctx.search_params.search_mode;
+        let sstable_files = self
+            .discover_sstable_files_with_centroid_pruning(
+                storage_url,
+                query_vector,
+                distance_metric,
+                search_mode,
+            )
+            .await?;
+        tracing::debug!("[SST] Discovered {} SSTable files (search_mode={:?})", sstable_files.len(), search_mode);
         for (i, file) in sstable_files.iter().enumerate() {
             tracing::trace!(index = i, file = %file, "Discovered SSTable file");
         }
@@ -266,6 +275,188 @@ impl SstEngine {
         );
 
         Ok(all_candidates)
+    }
+
+    /// Discover SSTable files with optional centroid-based pruning (LanceDB-inspired IVF optimization)
+    ///
+    /// When `search_mode` is Approximate, this method:
+    /// 1. Loads headers from all SST files to get centroids
+    /// 2. Computes distance from query to each centroid
+    /// 3. Returns only the top nprobe files (closest centroids to query)
+    /// 4. This can skip 80-90% of files for large datasets
+    async fn discover_sstable_files_with_centroid_pruning(
+        &self,
+        storage_url: &str,
+        query_vector: &[f32],
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        search_mode: &crate::core::search::SearchMode,
+    ) -> Result<Vec<String>> {
+        use crate::core::search::SearchMode;
+
+        // First get all files
+        let all_files = self.discover_sstable_files(storage_url).await?;
+
+        // For exact mode or small datasets, search all files
+        if matches!(search_mode, SearchMode::Exact) || all_files.len() <= 3 {
+            return Ok(all_files);
+        }
+
+        // For adaptive mode with small datasets, search all files
+        if let SearchMode::Adaptive { threshold } = search_mode {
+            if all_files.len() <= 3 {
+                return Ok(all_files);
+            }
+        }
+
+        // Calculate effective nprobe based on search mode and number of files
+        let nprobe = search_mode.effective_nprobe(all_files.len(), all_files.len() * 1000); // Estimate 1000 vectors per file
+
+        // If nprobe >= number of files, search all
+        if nprobe >= all_files.len() {
+            return Ok(all_files);
+        }
+
+        // Load headers and compute centroid distances
+        let mut file_distances: Vec<(String, f32)> = Vec::new();
+
+        for file_path in &all_files {
+            match self.load_sst_header_centroid(file_path).await {
+                Ok(Some((centroid, max_distance_to_centroid))) => {
+                    if centroid.len() == query_vector.len() {
+                        // Compute distance from query to file centroid
+                        let distance = self.compute_centroid_distance(
+                            query_vector,
+                            &centroid,
+                            distance_metric,
+                        );
+                        file_distances.push((file_path.clone(), distance));
+                    } else {
+                        // Dimension mismatch - include file anyway
+                        file_distances.push((file_path.clone(), 0.0));
+                    }
+                }
+                Ok(None) => {
+                    // No centroid - include file anyway (for backwards compatibility)
+                    file_distances.push((file_path.clone(), 0.0));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to load centroid from {}: {}, including anyway",
+                        file_path,
+                        e
+                    );
+                    file_distances.push((file_path.clone(), 0.0));
+                }
+            }
+        }
+
+        // Sort by distance (ascending - closest first for similarity search)
+        file_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Return top nprobe files
+        let selected_files: Vec<String> = file_distances
+            .into_iter()
+            .take(nprobe)
+            .map(|(path, _)| path)
+            .collect();
+
+        debug!(
+            "🎯 SST Centroid pruning: selected {}/{} files (nprobe={})",
+            selected_files.len(),
+            all_files.len(),
+            nprobe
+        );
+
+        Ok(selected_files)
+    }
+
+    /// Load centroid from SST header for partition-aware search
+    async fn load_sst_header_centroid(
+        &self,
+        file_path: &str,
+    ) -> Result<Option<(Vec<f32>, f32)>> {
+        use crate::storage::engines::impls::sst::SstableHeader;
+
+        let fs = self.filesystem().get_filesystem(file_path)?;
+
+        // Read just the first part of the file to get header
+        // Format: SST1 (4 bytes) + header_len (4 bytes) + header data
+        let header_prefix = fs.read_range(file_path, 0, 8).await?;
+
+        // Verify magic
+        if &header_prefix[0..4] != b"SST1" {
+            return Err(anyhow::anyhow!("Invalid SST file format"));
+        }
+
+        let header_len = u32::from_le_bytes([
+            header_prefix[4],
+            header_prefix[5],
+            header_prefix[6],
+            header_prefix[7],
+        ]) as usize;
+
+        // Read header data
+        let header_data = fs.read_range(file_path, 8, header_len as u64).await?;
+
+        // Deserialize header
+        let header: SstableHeader = bincode::deserialize(&header_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize SST header: {}", e))?;
+
+        // Return centroid and max_distance if available
+        if let Some(centroid) = header.centroid {
+            let max_dist = header.max_distance_to_centroid.unwrap_or(f32::MAX);
+            Ok(Some((centroid, max_dist)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Compute distance from query to centroid
+    fn compute_centroid_distance(
+        &self,
+        query: &[f32],
+        centroid: &[f32],
+        metric: crate::compute::distance_computation::DistanceMetric,
+    ) -> f32 {
+        use crate::compute::distance_computation::DistanceMetric;
+
+        match metric {
+            DistanceMetric::Euclidean => {
+                let mut sum = 0.0f32;
+                for i in 0..query.len().min(centroid.len()) {
+                    let diff = query[i] - centroid[i];
+                    sum += diff * diff;
+                }
+                sum.sqrt()
+            }
+            DistanceMetric::Cosine | DistanceMetric::DotProduct => {
+                // For cosine/IP, we want to maximize similarity
+                // Return 1 - cosine_similarity as "distance"
+                let mut dot = 0.0f32;
+                let mut norm_q = 0.0f32;
+                let mut norm_c = 0.0f32;
+                for i in 0..query.len().min(centroid.len()) {
+                    dot += query[i] * centroid[i];
+                    norm_q += query[i] * query[i];
+                    norm_c += centroid[i] * centroid[i];
+                }
+                let denom = (norm_q * norm_c).sqrt();
+                if denom > 0.0 {
+                    1.0 - (dot / denom)
+                } else {
+                    1.0
+                }
+            }
+            _ => {
+                // Default to Euclidean for other metrics
+                let mut sum = 0.0f32;
+                for i in 0..query.len().min(centroid.len()) {
+                    let diff = query[i] - centroid[i];
+                    sum += diff * diff;
+                }
+                sum.sqrt()
+            }
+        }
     }
 
     /// Discover SSTable files for a collection

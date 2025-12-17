@@ -26,6 +26,32 @@ pub struct ColumnarUtilities {
     metrics_cache: Arc<RwLock<HashMap<String, PerformanceMetrics>>>,
 }
 
+/// Recommend a Parquet page size given row group sizing and vector characteristics.
+///
+/// Targets 2–8 pages per row group to balance skip granularity and I/O overhead.
+/// Returns a size clamped to 64KB–512KB to avoid tiny or oversized pages.
+pub fn recommend_page_size_for_dimension(
+    row_group_rows: usize,
+    dimension: usize,
+    metadata_overhead_bytes: usize,
+) -> usize {
+    // Estimate bytes per row (FP32 vectors + metadata/ID)
+    let row_bytes = dimension
+        .saturating_mul(4)
+        .saturating_add(metadata_overhead_bytes);
+    let total_bytes = row_bytes.saturating_mul(row_group_rows.max(1));
+
+    // Target around 4 pages per row group, but clamp to 2–8 pages.
+    let target_pages = 4;
+    let candidate = (total_bytes / target_pages.max(1)).max(1);
+    let min_for_eight_pages = (total_bytes + 7) / 8; // ensure ≤8 pages
+    let max_for_two_pages = (total_bytes + 1) / 2; // ensure ≥2 pages
+    let bounded = candidate.clamp(min_for_eight_pages, max_for_two_pages);
+
+    // Global clamps to keep pages practical
+    bounded.clamp(64 * 1024, 512 * 1024)
+}
+
 impl ColumnarUtilities {
     /// Create new columnar utilities
     pub fn new(

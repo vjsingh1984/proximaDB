@@ -1,4 +1,6 @@
-//! Executive Intelligence module for C-level strategic analytics
+//! Executive Intelligence module for C-level strategic analytics.
+//! NOTE: No network or service wiring currently references this module; it is effectively
+//! a standalone stub until integrated into the API layer.
 
 pub mod intelligence_platform;
 

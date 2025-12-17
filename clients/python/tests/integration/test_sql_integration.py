@@ -6,8 +6,8 @@ import pytest
 import numpy as np
 import time
 import json
-from proximadb import connect_rest, ProximaDBError
-from proximadb import CollectionConfig, StorageEngine, VectorRecord, FilterableColumn, FilterableDataType
+from proximadb_sdk import connect_rest, ProximaDBError
+from proximadb_sdk import CollectionConfig, StorageEngine, VectorRecord, FilterableColumn, FilterableDataType
 
 
 @pytest.mark.integration
@@ -35,7 +35,7 @@ class TestSqlIntegration:
     def client(self):
         """Create client connected to actual ProximaDB server"""
         # SQL is only supported over REST, not gRPC
-        from proximadb import connect_rest
+        from proximadb_sdk import connect_rest
         client = connect_rest(url="http://localhost:5678")
         yield client
         client.close()

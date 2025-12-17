@@ -49,6 +49,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, info, trace};
 
@@ -99,6 +100,12 @@ static PREFERRED_BACKEND: OnceLock<HardwareBackend> = OnceLock::new();
 /// so we cache the result. Currently GPU support is experimental.
 static GPU_ENABLED_CACHE: OnceLock<bool> = OnceLock::new();
 
+/// Flag to track if we've logged the search backend (first-time-only logging)
+///
+/// This ensures we only log the search backend once to avoid spamming logs
+/// during searches, while still providing visibility into which backend is used.
+static SEARCH_BACKEND_LOGGED: AtomicBool = AtomicBool::new(false);
+
 /// Get cached preferred backend - avoids repeated hardware detection
 ///
 /// ## Performance Impact:
@@ -123,6 +130,35 @@ fn is_gpu_enabled_cached() -> bool {
         let caps = get_hardware_capabilities();
         caps.has_gpu()
     })
+}
+
+/// Log the search backend being used (first time only)
+///
+/// This function logs the SIMD backend being used for distance computation
+/// only on the first call, avoiding log spam during searches.
+fn log_search_backend_first_time(platform: PlatformCapability) {
+    // Use compare_exchange to ensure we only log once, even with concurrent access
+    if SEARCH_BACKEND_LOGGED
+        .compare_exchange(false, true, AtomicOrdering::SeqCst, AtomicOrdering::Relaxed)
+        .is_ok()
+    {
+        let backend_name = match platform {
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx512 => "AVX-512",
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx2 => "AVX2+FMA",
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Avx => "AVX",
+            #[cfg(target_arch = "x86_64")]
+            PlatformCapability::X86Sse2 => "SSE2",
+            #[cfg(target_arch = "aarch64")]
+            PlatformCapability::ArmNeon => "ARM NEON",
+            #[cfg(target_arch = "aarch64")]
+            PlatformCapability::ArmSve => "ARM SVE",
+            PlatformCapability::Scalar => "Scalar",
+        };
+        info!("🔍 Search backend: {} SIMD", backend_name);
+    }
 }
 
 /// Initialize hardware backend caching
@@ -656,6 +692,9 @@ impl UnifiedDistanceCompute {
     #[inline(always)]
     fn compute_distance_simd(&self, vec_a: &[f32], vec_b: &[f32], metric: &DistanceMetric) -> f32 {
         debug_assert_eq!(vec_a.len(), vec_b.len(), "Vectors must have same dimension");
+
+        // Log search backend on first search only
+        log_search_backend_first_time(self.platform_capability);
 
         match metric {
             DistanceMetric::Cosine => self.compute_cosine_simd(vec_a, vec_b),

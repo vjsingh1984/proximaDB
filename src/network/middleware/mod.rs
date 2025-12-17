@@ -43,6 +43,7 @@ pub mod auth;
 pub mod backpressure;
 pub mod cors;
 pub mod rate_limit;
+pub mod request_id;
 pub mod timeout;
 
 #[cfg(test)]
@@ -52,4 +53,5 @@ pub use auth::{AuthConfig, AuthLayer};
 pub use backpressure::{BackpressureConfig, create_concurrency_limit_layer};
 pub use cors::{CorsConfig, CorsConfigError, create_cors_layer};
 pub use rate_limit::{RateLimitConfig, RateLimitLayer};
+pub use request_id::{request_id_middleware, RequestId, RequestIdExt, RequestIdLayer, X_REQUEST_ID};
 pub use timeout::{TimeoutConfig, create_timeout_layer};

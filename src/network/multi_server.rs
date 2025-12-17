@@ -538,7 +538,32 @@ impl SharedServices {
         // 🚀 Create VectorOperationsService directly for 40-60% performance improvement
         // Use WAL config from TOML configuration
         debug!("🔧 SharedServices::new - Converting WAL config from TOML...");
-        let wal_config = Self::convert_toml_to_wal_config(&storage_config.wal_config);
+        let mut wal_config = Self::convert_toml_to_wal_config(&storage_config.wal_config);
+
+        // Override data_directories with storage_locations if available
+        // This ensures embedded mode and config-specified storage locations are honored
+        if !storage_config.storage_locations.is_empty() {
+            wal_config.multi_disk.data_directories = storage_config
+                .storage_locations
+                .iter()
+                .map(|loc| {
+                    // Ensure proper file:// URL format
+                    let url = if loc.url.starts_with("file://") {
+                        loc.url.clone()
+                    } else if loc.url.starts_with("/") {
+                        format!("file://{}", loc.url)
+                    } else {
+                        loc.url.clone()
+                    };
+                    debug!("🔧 SharedServices: WAL directory URL from storage_locations: {}", url);
+                    url
+                })
+                .collect();
+            info!(
+                "📂 SharedServices: WAL data directories set from storage_locations: {:?}",
+                wal_config.multi_disk.data_directories
+            );
+        }
         debug!("✅ SharedServices::new - WAL config converted successfully from TOML");
 
         // Create filesystem factory for engines
@@ -595,6 +620,9 @@ impl SharedServices {
         let axis_manager =
             Arc::new(crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?);
         debug!("✅ SharedServices::new - AxisManager created successfully");
+
+        // Make AXIS manager available to graph-first entity store by default
+        crate::storage::entity_store::orion_backend::set_global_axis_manager(axis_manager.clone());
 
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(

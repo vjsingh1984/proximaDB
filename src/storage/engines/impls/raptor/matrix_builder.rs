@@ -2,16 +2,26 @@
 //!
 //! Consolidates all matrix building logic for the Matrix Trinity architecture:
 //! - P² Matrix: Intra-rowgroup pairwise distances
-//! - K² Matrix: Inter-centroid distances  
+//! - K² Matrix: Inter-centroid distances
 //! - P×K Matrix: Vector-to-centroid distances (adaptive coverage)
+//!
+//! ## GPU Acceleration
+//!
+//! On macOS with Metal feature enabled, P² matrix building can be accelerated
+//! using GPU MPS (Metal Performance Shaders). The GPU path computes all N×N
+//! pairwise distances in a single dispatch, providing significant speedup
+//! over the CPU SIMD path for large rowgroups.
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::hardware_capabilities::{HardwareCapabilities, GpuBackend};
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+
+#[cfg(feature = "gpu")]
+use crate::compute::gpu::distance::GpuDistanceCompute;
 
 use super::common::{
     CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,
@@ -20,27 +30,77 @@ use super::common::{
 };
 
 /// Matrix builder for RAPTOR's Matrix Trinity architecture
+///
+/// Supports both CPU SIMD and GPU MPS paths for P² matrix building.
+/// GPU acceleration is automatically used when:
+/// - The `gpu` feature is enabled
+/// - Metal MPS is available (macOS with Apple Silicon)
+/// - The rowgroup has >= 100 vectors (GPU overhead worthwhile)
 pub struct MatrixBuilder {
     distance_compute: Arc<UnifiedDistanceCompute>,
     hardware: Arc<HardwareCapabilities>,
     distance_metric: DistanceMetric,
+    /// Optional GPU compute for accelerated pairwise distance
+    #[cfg(feature = "gpu")]
+    gpu_compute: Option<Arc<GpuDistanceCompute>>,
 }
 
 impl MatrixBuilder {
+    /// Create a new MatrixBuilder with optional GPU acceleration
+    ///
+    /// GPU acceleration is automatically enabled when:
+    /// - The `gpu` feature is compiled in
+    /// - Metal MPS devices are detected (macOS)
     pub fn new(
         distance_compute: Arc<UnifiedDistanceCompute>,
         hardware: Arc<HardwareCapabilities>,
         distance_metric: DistanceMetric,
     ) -> Self {
+        #[cfg(feature = "gpu")]
+        let gpu_compute = {
+            match GpuDistanceCompute::new() {
+                Ok(gpu) => {
+                    if gpu.is_available() && gpu.backend() == GpuBackend::MPS {
+                        info!("🚀 RAPTOR MatrixBuilder: GPU MPS acceleration enabled for P² matrix");
+                        Some(Arc::new(gpu))
+                    } else {
+                        debug!("GPU available but not MPS, using CPU SIMD for P² matrix");
+                        None
+                    }
+                }
+                Err(e) => {
+                    debug!("GPU not available for P² matrix: {}, using CPU SIMD", e);
+                    None
+                }
+            }
+        };
+
         Self {
             distance_compute,
             hardware,
             distance_metric,
+            #[cfg(feature = "gpu")]
+            gpu_compute,
         }
+    }
+
+    /// Check if GPU acceleration is available for this builder
+    #[cfg(feature = "gpu")]
+    pub fn has_gpu(&self) -> bool {
+        self.gpu_compute.is_some()
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    pub fn has_gpu(&self) -> bool {
+        false
     }
 
     /// Build P² matrix for intra-rowgroup navigation
     /// This matrix stores pairwise distances between all vectors in a rowgroup
+    ///
+    /// Uses GPU acceleration (Metal MPS) when available for significant speedup
+    /// on large rowgroups. Falls back to CPU SIMD for small rowgroups or when
+    /// GPU is not available.
     pub fn build_p2_matrix(&self, vectors: &[Vec<f32>], dimension: usize) -> Result<P2Matrix> {
         let num_vectors = vectors.len();
         if num_vectors == 0 {
@@ -54,7 +114,28 @@ impl MatrixBuilder {
             });
         }
 
-        info!("Building P² matrix for {} vectors", num_vectors);
+        // Try GPU path first for rowgroups >= 100 vectors (GPU overhead worthwhile)
+        #[cfg(feature = "gpu")]
+        if num_vectors >= 100 {
+            if let Some(ref gpu) = self.gpu_compute {
+                match self.build_p2_matrix_gpu(vectors, dimension, gpu.clone()) {
+                    Ok(matrix) => {
+                        info!(
+                            "🚀 P² matrix built on GPU: {} vectors, {}×{} = {} distances",
+                            num_vectors, num_vectors, num_vectors, num_vectors * num_vectors
+                        );
+                        return Ok(matrix);
+                    }
+                    Err(e) => {
+                        warn!("GPU P² matrix failed, falling back to CPU SIMD: {}", e);
+                        // Fall through to CPU path
+                    }
+                }
+            }
+        }
+
+        // CPU SIMD path (fallback or for small rowgroups)
+        info!("Building P² matrix for {} vectors (CPU SIMD)", num_vectors);
 
         // Calculate all pairwise distances
         let mut distances = Vec::with_capacity(num_vectors * num_vectors);
@@ -109,6 +190,105 @@ impl MatrixBuilder {
 
         debug!(
             "P² matrix compressed: {} -> {} bytes ({:.1}% reduction)",
+            distances.len() * 4,
+            compressed_bytes.len(),
+            (1.0 - compressed_bytes.len() as f32 / (distances.len() * 4) as f32) * 100.0
+        );
+
+        let compressed_size = compressed_bytes.len() as u32;
+        Ok(P2Matrix {
+            num_vectors: num_vectors as u32,
+            distances: compressed_bytes,
+            min_distance: min_dist,
+            max_distance: max_dist,
+            compression: ProximaScheme::BitPacked { bits: 16 },
+            compressed_size,
+        })
+    }
+
+    /// Build P² matrix using GPU MPS acceleration
+    /// Computes all N×N pairwise distances in a single GPU dispatch
+    #[cfg(feature = "gpu")]
+    fn build_p2_matrix_gpu(
+        &self,
+        vectors: &[Vec<f32>],
+        _dimension: usize,
+        gpu: Arc<GpuDistanceCompute>,
+    ) -> Result<P2Matrix> {
+        use tokio::runtime::Handle;
+
+        let num_vectors = vectors.len();
+
+        // Convert internal DistanceMetric to proto DistanceMetric for GPU API
+        let proto_metric = match self.distance_metric {
+            DistanceMetric::Euclidean => crate::proto::proximadb_v1::DistanceMetric::Euclidean,
+            DistanceMetric::Cosine => crate::proto::proximadb_v1::DistanceMetric::Cosine,
+            DistanceMetric::DotProduct => crate::proto::proximadb_v1::DistanceMetric::DotProduct,
+            DistanceMetric::Manhattan => crate::proto::proximadb_v1::DistanceMetric::Manhattan,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported metric for GPU P² matrix: {:?}",
+                    self.distance_metric
+                ))
+            }
+        };
+
+        // Execute GPU computation - block on async call
+        let distances = Handle::current().block_on(async {
+            gpu.calculate_pairwise_matrix_mps(vectors, proto_metric).await
+        })?;
+
+        // Find min/max for compression
+        let mut min_dist = f32::MAX;
+        let mut max_dist = f32::MIN;
+        for (i, &dist) in distances.iter().enumerate() {
+            let row = i / num_vectors;
+            let col = i % num_vectors;
+            if row != col && dist > 0.0 {
+                min_dist = min_dist.min(dist);
+                max_dist = max_dist.max(dist);
+            }
+        }
+
+        // Handle edge case where all distances are 0
+        if min_dist == f32::MAX {
+            min_dist = 0.0;
+        }
+        if max_dist == f32::MIN {
+            max_dist = 1.0;
+        }
+
+        // Compress distances using 16-bit quantization
+        let scale = if max_dist > min_dist {
+            65535.0 / (max_dist - min_dist)
+        } else {
+            1.0
+        };
+
+        let compressed: Vec<u16> = distances
+            .iter()
+            .enumerate()
+            .map(|(i, &d)| {
+                let row = i / num_vectors;
+                let col = i % num_vectors;
+                if row == col || d == 0.0 {
+                    0
+                } else {
+                    ((d - min_dist) * scale) as u16
+                }
+            })
+            .collect();
+
+        // Convert to bytes for storage
+        let mut compressed_bytes = Vec::with_capacity(compressed.len() * 2);
+        for val in compressed {
+            compressed_bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        debug!(
+            "P² matrix (GPU): {} vectors, {} distances, {} -> {} bytes ({:.1}% reduction)",
+            num_vectors,
+            distances.len(),
             distances.len() * 4,
             compressed_bytes.len(),
             (1.0 - compressed_bytes.len() as f32 / (distances.len() * 4) as f32) * 100.0

@@ -58,14 +58,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb import ProximaDBClient
-from proximadb.config import ClientConfig
-from proximadb.models import VectorRecord, Protocol
+from proximadb_sdk import ProximaDBClient
+from proximadb_sdk.config import ClientConfig
+from proximadb_sdk.models import VectorRecord, Protocol
 
 '''
 
     templates = {
-        "batching": base_template + '''from proximadb.batching import (
+        "batching": base_template + '''from proximadb_sdk.batching import (
     BatchStrategy,
     BatchOperationType, 
     BatchConfig,
@@ -104,7 +104,7 @@ class TestBatching(BaseProximaDBTest):
         assert results[0]["id"] == vectors[0].id
 ''',
 
-        "connection_pool": base_template + '''from proximadb.connection_pool import (
+        "connection_pool": base_template + '''from proximadb_sdk.connection_pool import (
     ConnectionPool,
     GrpcConnectionPool,
     RestConnectionPool,
@@ -136,13 +136,13 @@ class TestConnectionPool(BaseProximaDBTest):
         assert metrics.connections_reused >= 5
 ''',
 
-        "semantic_chunking": base_template + '''from proximadb.semantic_chunking import (
+        "semantic_chunking": base_template + '''from proximadb_sdk.semantic_chunking import (
     EnhancedSemanticChunker,
     SemanticChunkingConfig,
     create_enhanced_semantic_chunker
 )
-from proximadb.chunking import TextChunk, ChunkingConfig
-from proximadb.embedding_interface import create_embedding_provider
+from proximadb_sdk.chunking import TextChunk, ChunkingConfig
+from proximadb_sdk.embedding_interface import create_embedding_provider
 
 
 class TestSemanticChunking(BaseProximaDBTest):

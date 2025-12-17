@@ -646,7 +646,7 @@ impl QuantizedVectorSchemaBuilder {
                     column_mapping,
                     compression_mapping,
                     row_group_strategy: RowGroupStrategy::Unified {
-                        target_row_group_size: 10000,
+                        target_row_group_size: DEFAULT_ROW_GROUP_SIZE,
                     },
                 })
             }

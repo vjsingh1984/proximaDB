@@ -2,7 +2,7 @@
 Test suite for ProximaDB exception classes
 """
 import pytest
-from proximadb import (
+from proximadb_sdk import (
     ProximaDBError,
     AuthenticationError,
     AuthorizationError,

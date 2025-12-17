@@ -160,6 +160,7 @@ pub mod sst_io_layer; // Low-level I/O operations (formerly sst_io_layer)
 pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
 pub mod swift_metadata;
 pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
+pub mod constants;
 
 // Re-exports for common use
 pub use block_structures::{
@@ -437,6 +438,38 @@ impl Default for PerformanceConfiguration {
 /// Utility functions for row-based engines
 pub mod utils {
     use super::*;
+    use crate::storage::engines::core::formats::proximablocks::constants::{
+        DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES,
+        MAX_TARGET_BLOCK_SIZE_BYTES, MIN_TARGET_BLOCK_SIZE_BYTES,
+    };
+
+    /// Recommend a block size for SST/Swift/Helix based on vector dimension and metadata overhead.
+    ///
+    /// Mirrors the existing SST defaults (target ~3MB, clamp 2–4MB) while centralizing the logic.
+    /// This keeps behavior stable but avoids duplicating the calculation per engine.
+    pub fn recommend_block_size_for_dimension(
+        dimension: usize,
+        metadata_overhead_bytes: usize,
+    ) -> usize {
+        let overhead = if metadata_overhead_bytes == 0 {
+            DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES
+        } else {
+            metadata_overhead_bytes
+        };
+        let _estimated_row_bytes = dimension.saturating_mul(4).saturating_add(overhead);
+
+        // Prior defaults targeted ~3MB, with a slight tweak for very large dimensions.
+        let target_block_size = match dimension {
+            0..=384 => DEFAULT_TARGET_BLOCK_SIZE_BYTES,   // Small vectors
+            385..=1536 => DEFAULT_TARGET_BLOCK_SIZE_BYTES, // Medium/large vectors
+            _ => (2.5 * 1024.0 * 1024.0) as usize,        // XL vectors (network-friendly)
+        };
+
+        // Clamp to practical I/O bounds
+        target_block_size
+            .max(MIN_TARGET_BLOCK_SIZE_BYTES) // 2MB min
+            .min(MAX_TARGET_BLOCK_SIZE_BYTES) // 4MB max
+    }
 
     /// Calculate optimal block size based on dimension and record count
     pub fn calculate_optimal_block_size(

@@ -48,5 +48,8 @@ pub mod test_threshold_triggers;
 // MVCC resolution tests
 pub mod mvcc_resolution_tests;
 
+// SST flush and recovery TDD tests - moved to src/storage/engines/impls/sst/tests/
+// pub mod sst_flush_recovery_tdd_test;
+
 // Assignment service recovery tests
 // pub mod assignment_service_recovery_test; // File not found - commented for now

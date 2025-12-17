@@ -60,10 +60,10 @@ pub mod viper {
     pub const VERSION: u32 = 2;
 
     /// Default row group size for Parquet
-    pub const DEFAULT_ROW_GROUP_SIZE: usize = 10000;
+    pub const DEFAULT_ROW_GROUP_SIZE: usize = 2048;
 
     /// Default page size for Parquet (1MB)
-    pub const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
+    pub const DEFAULT_PAGE_SIZE: usize = 256 * 1024; // 256KB default pages (balanced for embeddings)
 }
 
 /// NOVA engine specific constants

@@ -18,6 +18,10 @@
 
 pub mod enterprise;
 pub mod unified_handlers;
+#[cfg(feature = "ai_endpoints")]
+pub mod ai_endpoints;
+#[cfg(feature = "sales_endpoints")]
+pub mod sales_endpoints;
 
 #[cfg(test)]
 mod unified_handlers_tests;

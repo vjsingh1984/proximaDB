@@ -2,8 +2,8 @@
 Test prepare_vector_records metadata handling with filterable/extra separation
 """
 import pytest
-from proximadb.chunking import prepare_vector_records
-from proximadb import VectorRecord
+from proximadb_sdk.chunking import prepare_vector_records
+from proximadb_sdk import VectorRecord
 
 
 class TestPrepareVectorRecords:

@@ -314,6 +314,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: Vec::new(),
             });
         }
@@ -394,6 +395,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
+            compaction_error: None,
             flushed_batch_ids: flush_result.flushed_batch_ids.clone(),
         })
     }
@@ -608,6 +610,7 @@ impl ProtoSerializationStrategy {
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: Vec::new(),
         })
     }

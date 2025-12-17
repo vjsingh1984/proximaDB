@@ -7,16 +7,14 @@ Shared fixtures and configuration for all test modules
 import pytest
 import logging
 import time
-import sys
+# import sys  # Removed - using editable install
 import os
 from typing import Generator, Dict, Any
 
-# Add the SDK source to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb import CollectionConfig, DistanceMetric
-from proximadb import ProximaDBError
+from proximadb_sdk import ProximaDBClient, connect_rest, connect_grpc
+from proximadb_sdk import CollectionConfig, DistanceMetric
+from proximadb_sdk import ProximaDBError
 
 
 # Configure logging for tests

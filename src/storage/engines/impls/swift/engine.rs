@@ -746,29 +746,20 @@ impl UnifiedStorageEngine for SwiftEngine {
             .build_blocks_from_records_with_compression(records.clone(), compression_config)?;
 
         // Get storage path from collection config (always present)
-        // UnifiedCachingFilesystem will handle cloud storage transparently
-        let storage_path = params
-            .collection_config
-            .as_ref()
-            .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
-            .ok_or_else(|| {
-                anyhow!(
-                    "SWIFT: Collection '{}' has no storage assignment",
-                    collection_id
-                )
-            })?;
+        // Use standard trait method to get data directory (consistent with HELIX pattern)
+        let data_dir = self.get_data_dir_from_flush_params(params)?;
 
-        // Storage path already includes collection ID
-        let collection_path = storage_path.clone();
-        let fs = self.filesystem.get_filesystem("file://")?;
-        fs.create_dir_all(&collection_path).await?;
+        // Create directory using tokio::fs for async compatibility
+        // This handles local paths correctly without requiring URL scheme
+        tokio::fs::create_dir_all(&data_dir).await.map_err(|e| {
+            anyhow!("SWIFT: Failed to create data directory '{}': {}", data_dir, e)
+        })?;
 
         // Generate filename using FilenameCodec for consistency with compaction framework
         use crate::storage::common::compaction_orchestrator::FilenameCodec;
         let codec = FilenameCodec::new();
         let swift_filename = codec.generate(0, "swift"); // Level 0 for flush
-        let filename = format!("{}/{}", collection_path, swift_filename);
+        let filename = format!("{}/{}", data_dir, swift_filename);
 
         // Actually write the SWIFT file to disk using filesystem factory (SST pattern)
         let bytes_written = swift_file
@@ -781,7 +772,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         );
 
         // Update global statistics file
-        self.update_global_stats(&collection_id, collection_path.as_str())
+        self.update_global_stats(&collection_id, data_dir.as_str())
             .await?;
 
         // Notify EventLog service about the flush
@@ -833,6 +824,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: vec![], // TODO: Track batch IDs when integrating with WAL
         })
     }

@@ -1036,6 +1036,15 @@ pub async fn wait_for_global_metadata_provider(timeout: std::time::Duration) -> 
     false
 }
 
+/// Get the global write buffer behavior singleton if it has been initialized
+/// Returns None if the singleton has not been initialized yet
+///
+/// This is used during graceful shutdown to access unflushed data and flush
+/// all collections to their respective storage engines.
+pub fn get_global_write_buffer_behavior() -> Option<Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>> {
+    GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.get().cloned()
+}
+
 /// Get the global WriteAheadLogManager registry
 pub fn get_write_ahead_log_manager_registry() -> &'static WriteAheadLogManagerRegistry {
     WAL_MANAGER_REGISTRY.get_or_init(|| {
@@ -1938,8 +1947,7 @@ impl WriteAheadLogManager {
             let base_location = self.resolve_collection_base_location(collection_id).await?;
 
             // Create disk manager and write batch
-            trace!("WAL: Creating FilesystemFactory");
-            eprintln!("📍 DEBUG: base_location being used = {}", base_location);
+            trace!("WAL: Creating FilesystemFactory (base_location={})", base_location);
             let filesystem_factory = match FilesystemFactory::create_default().await {
                 Ok(factory) => {
                     trace!("WAL: FilesystemFactory created successfully");

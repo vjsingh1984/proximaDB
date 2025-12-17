@@ -4,7 +4,7 @@ Test suite for ProximaDB configuration
 import os
 import pytest
 from pydantic import ValidationError
-from proximadb import (
+from proximadb_sdk import (
     Protocol,
     LogLevel,
     RetryConfig,

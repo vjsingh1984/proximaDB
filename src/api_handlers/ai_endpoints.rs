@@ -1,6 +1,8 @@
 //! AI-Powered Business Intelligence API Endpoints
 //!
-//! REST and gRPC endpoints for natural language querying and executive dashboards
+//! REST and gRPC endpoints for natural language querying and executive dashboards.
+//! NOTE: This module is not currently registered in `api_handlers::mod` or any router,
+//! so the routes here are unreachable until wiring is added to the network layer.
 
 use crate::ai::{AIExecutiveDashboard, ExecutiveDashboardRequest, AIExecutiveDashboardResponse};
 use crate::ai::natural_language::{NLQueryTranslator, UserContext, TranslationResult};

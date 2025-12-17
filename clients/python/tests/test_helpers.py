@@ -51,7 +51,7 @@ def ensure_collection(client, collection_name: str, dimension: int = 128, distan
     logger.debug(f"Creating collection '{collection_name}'...")
     try:
         # Try with config object first
-        from proximadb import CollectionConfig
+        from proximadb_sdk import CollectionConfig
         config = CollectionConfig(
             name=collection_name,
             dimension=dimension,

@@ -28,7 +28,7 @@ except ImportError:
 
 import httpx
 
-from proximadb.protocols.connection_pools import (
+from proximadb_sdk.protocols.connection_pools import (
     GrpcConnectionPool,
     RestConnectionPool,
     GrpcChannelContext,
@@ -36,7 +36,7 @@ from proximadb.protocols.connection_pools import (
     PoolHealth,
     PoolMetrics
 )
-from proximadb.config import ClientConfig, load_config
+from proximadb_sdk.config import ClientConfig, load_config
 
 
 class TestGrpcConnectionPool(BaseProximaDBTest):
@@ -86,7 +86,7 @@ class TestGrpcConnectionPool(BaseProximaDBTest):
             assert channel_ctx.channel is not None
             
             # Test actual connection by creating a stub
-            from proximadb.v1 import vector_pb2_grpc
+            from proximadb_sdk.v1 import vector_pb2_grpc
             stub = vector_pb2_grpc.VectorServiceStub(channel_ctx.channel)
             
             # Verify stub is created (actual call would need proper request)
@@ -113,7 +113,7 @@ class TestGrpcConnectionPool(BaseProximaDBTest):
         def use_connection(conn_id):
             with pool.get_connection() as channel_ctx:
                 # Simulate work with real channel
-                from proximadb.v1 import collection_pb2_grpc, collection_types_pb2
+                from proximadb_sdk.v1 import collection_pb2_grpc, collection_types_pb2
                 stub = collection_pb2_grpc.CollectionServiceStub(channel_ctx.channel)
 
                 # Create a simple request
@@ -357,7 +357,7 @@ class TestConnectionPoolIntegration(BaseProximaDBTest):
         collection_name = self.create_collection(self.grpc_client)
         
         with pool.get_connection() as channel_ctx:
-            from proximadb import proximadb_pb2, proximadb_pb2_grpc
+            from proximadb_sdk import proximadb_pb2, proximadb_pb2_grpc
             stub = proximadb_pb2_grpc.ProximaDBStub(channel_ctx.channel)
             
             # Insert vector

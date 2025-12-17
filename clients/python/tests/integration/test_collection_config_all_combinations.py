@@ -12,7 +12,7 @@ import time
 import logging
 from typing import List, Dict, Any, Optional
 
-from proximadb import (
+from proximadb_sdk import (
     connect_rest, connect_grpc,
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm,
     FilterableColumn, FilterableDataType, IndexConfiguration,

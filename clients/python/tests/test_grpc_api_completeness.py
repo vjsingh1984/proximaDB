@@ -10,9 +10,9 @@ import numpy as np
 import asyncio
 from typing import List, Dict, Any
 
-from proximadb import connect_grpc
-from proximadb import CollectionConfig, DistanceMetric
-from proximadb import ProximaDBError, CollectionNotFoundError
+from proximadb_sdk import connect_grpc
+from proximadb_sdk import CollectionConfig, DistanceMetric
+from proximadb_sdk import ProximaDBError, CollectionNotFoundError
 
 
 class TestGRPCAPICompleteness:

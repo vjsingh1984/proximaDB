@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import numpy as np
 
 # Embedding models
-from proximadb.embedded import SentenceTransformerModel
+from proximadb_sdk.embedded import SentenceTransformerModel
 
 # Vector databases
 import chromadb
@@ -389,7 +389,7 @@ class ProximaDBEmbeddedBenchmark:
         self.client = None
 
     def setup(self):
-        from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+        from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
         self.client = ProximaDBSyncGrpcClient(self.grpc_url)
 
         # Create collection with cosine distance

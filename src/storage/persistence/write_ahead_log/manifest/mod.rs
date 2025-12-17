@@ -43,6 +43,8 @@ pub use singleton::{
     get_service,
     init,
     mark_flushed,
+    mark_flushed_and_delete_files,
+    reset,
     shutdown,
 };
 pub use types::{

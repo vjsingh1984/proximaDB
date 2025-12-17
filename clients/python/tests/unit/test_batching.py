@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.batching_unified import (
+from proximadb_sdk.batching_unified import (
     BatchStrategy,
     BatchOperationType, 
     BatchConfig,
@@ -33,9 +33,9 @@ from proximadb.batching_unified import (
     batch_insert_vectors
 )
 # Backward compatibility import
-from proximadb.batching import RequestBatcher
-from proximadb.models import VectorRecord
-from proximadb import ProximaDBClient
+from proximadb_sdk.batching import RequestBatcher
+from proximadb_sdk.models import VectorRecord
+from proximadb_sdk import ProximaDBClient
 
 
 class TestBatchConfig(BaseProximaDBTest):
@@ -71,8 +71,8 @@ class TestBatchConfig(BaseProximaDBTest):
 
 
 class TestRequestBatcher(BaseProximaDBTest):
-    """Test request batching with real server"""
-    
+    """Test request batching with embedded database"""
+
     def test_batch_vector_insertion(self):
         """Test batching vector insertions with real server"""
         collection_name = self.create_collection()
@@ -107,18 +107,15 @@ class TestRequestBatcher(BaseProximaDBTest):
         
         # Verify vectors in collection
         self.wait_for_indexing()
-        
-        # Search for inserted vectors
+
+        # Search for inserted vectors using embedded client
         query_vector = vectors[0].vector
-        
-        # Force REST client for search to work around gRPC issue
-        rest_only_client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        results = rest_only_client.search(
+        results = self.rest_client.search(
             collection_id=collection_name,
             vector=query_vector,
             top_k=10
         )
-        
+
         assert len(results) == 10
         # Check that top result is from our batch (ID starts with "batch_vec_")
         assert results[0].id.startswith("batch_vec_"), f"Expected batch_vec_* but got {results[0].id}"
@@ -190,8 +187,7 @@ class TestRequestBatcher(BaseProximaDBTest):
         
         # Verify insertion worked
         self.wait_for_indexing()
-        rest_only_client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        results = rest_only_client.search(
+        results = self.rest_client.search(
             collection_id=collection_name,
             vector=all_vectors[0].vector,
             top_k=1
@@ -351,14 +347,13 @@ class TestBatchHelpers(BaseProximaDBTest):
         
         # Verify insertion
         self.wait_for_indexing()
-        
-        rest_only_client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        search_results = rest_only_client.search(
+
+        search_results = self.rest_client.search(
             collection_id=collection_name,
             vector=vectors[0].vector,
             top_k=5
         )
-        
+
         assert len(search_results) == 5
         # Check that top result is from our batch (ID starts with "helper_vec_")
         assert search_results[0].id.startswith("helper_vec_"), f"Expected helper_vec_* but got {search_results[0].id}"

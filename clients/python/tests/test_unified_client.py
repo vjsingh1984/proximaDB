@@ -13,8 +13,8 @@ This test checks that:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/test_unified_client.py
 
 import pytest
-from proximadb import ProximaDBClient, Protocol
-from proximadb import (
+from proximadb_sdk import ProximaDBClient, Protocol
+from proximadb_sdk import (
     CollectionConfig, 
     DistanceMetric, 
     StorageEngine, 
@@ -127,7 +127,7 @@ def test_type_conversion_helpers():
     
     # Test reverse conversion (only if gRPC is available)
     try:
-        from proximadb import proximadb_pb2 as pb2
+        from proximadb_sdk import proximadb_pb2 as pb2
         
         assert client._pydantic_to_proto_distance_metric("cosine") == pb2.COSINE
         assert client._pydantic_to_proto_storage_engine(StorageEngine.VIPER) == pb2.StorageEngine.VIPER
@@ -191,7 +191,7 @@ def test_client_interface_consistency():
 def test_convenience_functions():
     """Test convenience connection functions"""
     
-    from proximadb import connect, connect_grpc, connect_rest
+    from proximadb_sdk import connect, connect_grpc, connect_rest
     
     # Test generic connect
     client = connect(url="http://localhost:5678")

@@ -6,13 +6,13 @@ import pytest
 import time
 from typing import List, Dict, Any
 
-from proximadb.chunking import (
+from proximadb_sdk.chunking import (
     TextChunker, ChunkingConfig, ChunkingStrategy, TextChunk,
     create_enhanced_semantic_chunker  # Alias for semantic chunker
 )
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
 # This test needs to be updated for the new architecture
-from proximadb.chunking_strategies import SemanticStrategy
+from proximadb_sdk.chunking_strategies import SemanticStrategy
 
 
 @pytest.mark.skip(reason="Tests require unimplemented features: enable_topic_detection, enable_content_analysis, enable_caching")
@@ -42,7 +42,7 @@ pip install proximadb
 Here's a simple example of how to use ProximaDB:
 
 ```python
-from proximadb import ProximaDBClient
+from proximadb_sdk import ProximaDBClient
 
 client = ProximaDBClient(url="http://localhost:5678")
 collection = client.create_collection("my_vectors", dimension=768)
@@ -224,7 +224,7 @@ French cuisine emphasizes technique and high-quality ingredients. Sauces are fun
             topic_threshold=0.2  # More sensitive to topic changes
         )
         
-        from proximadb.chunking import ChunkingConfig
+        from proximadb_sdk.chunking import ChunkingConfig
         chunking_config = ChunkingConfig(chunk_size=400, min_chunk_size=100)
         
         chunks = chunker.chunk_semantically(
@@ -305,7 +305,7 @@ Each encounter taught her something valuable about life.
             enable_topic_detection=True
         )
         
-        from proximadb.chunking import ChunkingConfig
+        from proximadb_sdk.chunking import ChunkingConfig
         config = ChunkingConfig(chunk_size=300, min_chunk_size=80)
         
         results = {}
@@ -342,7 +342,7 @@ This is a comprehensive document designed to test caching performance.
         # Test without caching
         chunker_no_cache = create_enhanced_semantic_chunker(enable_caching=False)
         
-        from proximadb.chunking import ChunkingConfig
+        from proximadb_sdk.chunking import ChunkingConfig
         config = ChunkingConfig(chunk_size=500, min_chunk_size=100)
         
         # First run without cache
@@ -493,7 +493,7 @@ class TestSemanticChunkingPerformance:
             enable_caching=True
         )
         
-        from proximadb.chunking import ChunkingConfig
+        from proximadb_sdk.chunking import ChunkingConfig
         config = ChunkingConfig(chunk_size=800, min_chunk_size=200)
         
         start_time = time.time()
@@ -528,7 +528,7 @@ class TestSemanticChunkingPerformance:
         
         chunker = create_enhanced_semantic_chunker(enable_caching=True)
         
-        from proximadb.chunking import ChunkingConfig
+        from proximadb_sdk.chunking import ChunkingConfig
         config = ChunkingConfig(chunk_size=400, min_chunk_size=100)
         
         results = queue.Queue()

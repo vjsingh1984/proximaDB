@@ -333,6 +333,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: Vec::new(),
             });
         }
@@ -399,6 +400,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
+            compaction_error: None,
             flushed_batch_ids: batch_ids,
         })
     }
@@ -618,6 +620,7 @@ impl AvroSerializationStrategy {
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: Vec::new(),
         })
     }

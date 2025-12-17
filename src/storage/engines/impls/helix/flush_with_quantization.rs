@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use tracing::{info, debug};
 
 use crate::storage::engines::impls::helix::HelixEngine;
-use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, quantization_trait::ProximaBlockQuantization};
+use crate::storage::engines::core::formats::proximablocks::{
+    quantization_trait::ProximaBlockQuantization, utils::recommend_block_size_for_dimension,
+    ProximaDataBlock,
+};
 use crate::storage::engines::core::ops::unified_proxima_simd::EngineProfile;
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::compute::clustering::hilbert_curve::{HilbertCurve, HilbertPoint};
@@ -17,8 +20,13 @@ impl ProximaBlockQuantization for HelixEngine {
     }
 
     fn block_size_kb(&self) -> usize {
-        // HELIX uses adaptive block sizes based on clustering
-        self.config.base_block_size_kb
+        // HELIX uses adaptive block sizes based on clustering; prefer configured value, fall back to a dimension-aware baseline
+        let configured = self.config.base_block_size_kb;
+        if configured > 0 {
+            configured
+        } else {
+            recommend_block_size_for_dimension(384, 200) / 1024
+        }
     }
 
     fn engine_name(&self) -> &str {

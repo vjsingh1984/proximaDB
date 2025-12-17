@@ -136,7 +136,8 @@ pub mod sales_enablement;
 /// License management and tier enforcement for all deployment models
 pub mod licensing;
 
-/// Executive intelligence platform for C-level strategic analytics
+/// Executive intelligence platform for C-level strategic analytics (opt-in)
+#[cfg(feature = "executive_intel")]
 pub mod executive;
 
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
@@ -164,6 +165,10 @@ pub mod version;
 /// Embedded mode for in-process database usage without network layer
 /// Enable with feature flag: --features python
 pub mod embedded;
+
+/// Distributed cluster coordination for multi-node deployments
+/// Provides consensus, metadata management, shard routing, and node registry
+pub mod cluster;
 
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {

@@ -721,6 +721,7 @@ impl QueryExecutor {
             include_vectors: false,   // Don't return vectors unless explicitly requested
             include_metadata: true,   // Include metadata for filtering
             scenario: Some("query_execution".to_string()),
+            search_mode: crate::core::search::SearchMode::default(),
         };
 
         // Execute with VOS - this will use HashMap metadata filtering internally

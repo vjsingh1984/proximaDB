@@ -526,9 +526,9 @@ impl FileSystem for LocalFileSystem {
             // Create full URL for entry (stateless design)
             let entry_url = if path.starts_with("file://./") || path.starts_with("./") {
                 // For relative URLs, preserve the relative nature
-                if self.config.root_dir.is_some() {
+                if let Some(root_dir) = &self.config.root_dir {
                     let relative_from_root = entry_path
-                        .strip_prefix(&self.config.root_dir.as_ref().unwrap())
+                        .strip_prefix(root_dir)
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|_| entry_path.display().to_string());
                     format!("file://./{}", relative_from_root)

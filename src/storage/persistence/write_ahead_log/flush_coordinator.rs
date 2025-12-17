@@ -237,6 +237,7 @@ impl WALFlushCoordinator {
                     completed_at: chrono::Utc::now(),
                     engine_metrics: std::collections::HashMap::new(),
                     compaction_triggered: false,
+                    compaction_error: None,
                     flushed_batch_ids: vec![],
                 },
                 Vec::new(),
@@ -652,19 +653,36 @@ impl WALFlushCoordinator {
     }
 
     /// Filter WAL files that are fully flushed and can be safely deleted
-    /// This is a placeholder - actual implementation should be provided by the WAL strategy
+    /// After a successful flush, all WAL files containing the flushed sequences
+    /// can be safely deleted since their data is now persisted in SST files
     async fn filter_fully_flushed_files(
         &self,
         collection_id: &str,
         wal_files: &[String],
         flushed_sequences: &[u64],
     ) -> Result<Vec<String>> {
-        // Placeholder implementation - to be overridden by strategy-specific logic
-        warn!(
-            "🔍 filter_fully_flushed_files not implemented for collection {} (files: {:?}, sequences: {:?})",
-            collection_id, wal_files, flushed_sequences
+        // If no sequences were flushed or no WAL files provided, nothing to cleanup
+        if flushed_sequences.is_empty() || wal_files.is_empty() {
+            debug!(
+                "🔍 No WAL files to cleanup for collection {} (sequences: {}, files: {})",
+                collection_id,
+                flushed_sequences.len(),
+                wal_files.len()
+            );
+            return Ok(Vec::new());
+        }
+
+        // After a successful flush, all WAL files that were part of the flush operation
+        // can be safely deleted since their data is now durably stored in SST files.
+        // The flush operation ensures atomicity: either all data is persisted or none.
+        info!(
+            "🧹 Marking {} WAL files for deletion after successful flush of {} sequences for collection {}",
+            wal_files.len(),
+            flushed_sequences.len(),
+            collection_id
         );
-        Ok(Vec::new())
+
+        Ok(wal_files.to_vec())
     }
 
     /// Extract vectors from disk WAL files for recovery and flushing
@@ -767,6 +785,170 @@ impl WALFlushCoordinator {
 
         Ok(vectors)
     }
+
+    /// Flush all collections with unflushed data to their respective storage engines
+    ///
+    /// This method is called during graceful shutdown to ensure all memtable data
+    /// is persisted to storage engines before the database closes. It:
+    /// 1. Gets list of collections with unflushed data from the global write buffer
+    /// 2. For each collection, retrieves unflushed batches
+    /// 3. Routes flush to the appropriate storage engine via the registered engines
+    ///
+    /// # Returns
+    /// - `Ok(FlushAllResult)` with summary of flushed collections and vectors
+    /// - `Err` if critical flush failures occur
+    pub async fn flush_all_collections(&self) -> Result<FlushAllResult> {
+        info!("🛑 FlushCoordinator: Starting graceful shutdown flush for all collections");
+
+        // Get the global write buffer behavior singleton
+        let write_buffer = match super::get_global_write_buffer_behavior() {
+            Some(wb) => wb,
+            None => {
+                info!("📋 FlushCoordinator: No global write buffer initialized, nothing to flush");
+                return Ok(FlushAllResult {
+                    collections_flushed: 0,
+                    total_vectors_flushed: 0,
+                    total_bytes_written: 0,
+                    failed_collections: vec![],
+                });
+            }
+        };
+
+        // Get list of collections with unflushed data
+        let collections_to_flush = write_buffer.list_collections_with_unflushed_data().await;
+
+        if collections_to_flush.is_empty() {
+            info!("📋 FlushCoordinator: No collections have unflushed data, shutdown flush complete");
+            return Ok(FlushAllResult {
+                collections_flushed: 0,
+                total_vectors_flushed: 0,
+                total_bytes_written: 0,
+                failed_collections: vec![],
+            });
+        }
+
+        info!(
+            "🔄 FlushCoordinator: Found {} collections with unflushed data: {:?}",
+            collections_to_flush.len(),
+            collections_to_flush
+        );
+
+        let mut total_vectors_flushed = 0u64;
+        let mut total_bytes_written = 0u64;
+        let mut collections_flushed = 0usize;
+        let mut failed_collections = Vec::new();
+
+        // Flush each collection
+        for collection_id in &collections_to_flush {
+            info!("🔄 FlushCoordinator: Flushing collection '{}'", collection_id);
+
+            // Get unflushed batches for this collection
+            match write_buffer.get_unflushed_batches(collection_id).await {
+                Ok(batches) => {
+                    if batches.is_empty() {
+                        debug!(
+                            "📋 FlushCoordinator: Collection '{}' has no unflushed batches",
+                            collection_id
+                        );
+                        continue;
+                    }
+
+                    // Combine all vector records from unflushed batches
+                    let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = batches
+                        .iter()
+                        .flat_map(|batch| batch.vector_records.iter().cloned())
+                        .collect();
+
+                    let vector_count = vector_records.len();
+                    info!(
+                        "📋 FlushCoordinator: Collection '{}' has {} vectors to flush from {} batches",
+                        collection_id,
+                        vector_count,
+                        batches.len()
+                    );
+
+                    // Execute coordinated flush via storage engine
+                    match self
+                        .execute_coordinated_flush(
+                            collection_id,
+                            FlushDataSource::VectorRecords(vector_records),
+                            None, // Let coordinator determine engine from collection metadata
+                            None, // No flush context during shutdown
+                        )
+                        .await
+                    {
+                        Ok(result) => {
+                            let entries = result.base.entries_flushed.unwrap_or(0) as u64;
+                            let bytes = result.base.bytes_written.unwrap_or(0) as u64;
+
+                            total_vectors_flushed += entries;
+                            total_bytes_written += bytes;
+                            collections_flushed += 1;
+
+                            // Mark batches as flushed and clear from memtable
+                            if let Err(e) = write_buffer.clear_flushed(collection_id).await {
+                                warn!(
+                                    "⚠️ FlushCoordinator: Failed to clear flushed batches for '{}': {}",
+                                    collection_id, e
+                                );
+                            }
+
+                            info!(
+                                "✅ FlushCoordinator: Flushed collection '{}': {} vectors, {} bytes",
+                                collection_id, entries, bytes
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "❌ FlushCoordinator: Failed to flush collection '{}': {}",
+                                collection_id, e
+                            );
+                            failed_collections.push((collection_id.clone(), e.to_string()));
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "❌ FlushCoordinator: Failed to get unflushed batches for '{}': {}",
+                        collection_id, e
+                    );
+                    failed_collections.push((collection_id.clone(), e.to_string()));
+                }
+            }
+        }
+
+        info!(
+            "🛑 FlushCoordinator: Graceful shutdown flush complete - {} collections, {} vectors, {} bytes{}",
+            collections_flushed,
+            total_vectors_flushed,
+            total_bytes_written,
+            if failed_collections.is_empty() {
+                String::new()
+            } else {
+                format!(", {} failures", failed_collections.len())
+            }
+        );
+
+        Ok(FlushAllResult {
+            collections_flushed,
+            total_vectors_flushed,
+            total_bytes_written,
+            failed_collections,
+        })
+    }
+}
+
+/// Result of flushing all collections during graceful shutdown
+#[derive(Debug, Clone)]
+pub struct FlushAllResult {
+    /// Number of collections successfully flushed
+    pub collections_flushed: usize,
+    /// Total number of vectors flushed across all collections
+    pub total_vectors_flushed: u64,
+    /// Total bytes written to storage
+    pub total_bytes_written: u64,
+    /// Collections that failed to flush with error messages
+    pub failed_collections: Vec<(String, String)>,
 }
 
 /// Instructions for cleaning up WAL data after successful flush

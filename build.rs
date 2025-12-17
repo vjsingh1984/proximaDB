@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compile v1 protobuf schemas with zero-copy support and serde derives
     tracing::debug!("Compiling v1 protobuf schemas - legacy migration complete!");
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
         .out_dir("src/proto")

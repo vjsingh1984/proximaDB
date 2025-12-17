@@ -811,9 +811,9 @@ impl UnifiedColumnarCompaction {
         }
 
         let bytes_written = metadata
-            .row_groups
+            .row_groups()
             .iter()
-            .map(|rg| rg.total_byte_size)
+            .map(|rg| rg.total_byte_size())
             .sum::<i64>() as u64;
 
         Ok(bytes_written)

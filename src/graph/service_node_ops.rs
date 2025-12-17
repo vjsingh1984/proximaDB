@@ -59,7 +59,11 @@ impl super::GraphOperationsService {
                     // Look up index for this property
                     if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key)
                     {
-                        let key = super::index_key_for_value(filter.value.as_ref().unwrap());
+                        // Safely handle missing filter value
+                        let Some(filter_val) = filter.value.as_ref() else {
+                            continue; // Skip filter if value is missing
+                        };
+                        let key = super::index_key_for_value(filter_val);
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
                             candidates = candidates
@@ -77,13 +81,19 @@ impl super::GraphOperationsService {
                     }
                 }
                 Op::StartsWith => {
-                    if let Some(prefix) =
-                        super::extract_string_from_value(filter.value.as_ref().unwrap())
-                    {
+                    // Safely handle missing filter value
+                    let Some(filter_val) = filter.value.as_ref() else {
+                        continue; // Skip filter if value is missing
+                    };
+                    if let Some(prefix) = super::extract_string_from_value(filter_val) {
                         if let Some(map_lock) =
                             self.memory_pool.node_property_str_ordered.get(&filter.key)
                         {
-                            let map = map_lock.read().unwrap();
+                            // Handle poisoned lock gracefully
+                            let Ok(map) = map_lock.read() else {
+                                tracing::warn!("Poisoned lock in node_property_str_ordered for key {}", filter.key);
+                                continue;
+                            };
                             let mut matched = HashSet::new();
                             for (k, ids) in map
                                 .range(prefix.to_string()..)
@@ -99,14 +109,20 @@ impl super::GraphOperationsService {
                     }
                 }
                 Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
+                    // Safely handle missing filter value
+                    let Some(filter_val) = filter.value.as_ref() else {
+                        continue; // Skip filter if value is missing
+                    };
                     // Prefer numeric range if value numeric, else fallback to string ordered
-                    if let Some(num) =
-                        super::extract_number_from_value(filter.value.as_ref().unwrap())
-                    {
+                    if let Some(num) = super::extract_number_from_value(filter_val) {
                         if let Some(map_lock) =
                             self.memory_pool.node_property_num_indexes.get(&filter.key)
                         {
-                            let map = map_lock.read().unwrap();
+                            // Handle poisoned lock gracefully
+                            let Ok(map) = map_lock.read() else {
+                                tracing::warn!("Poisoned lock in node_property_num_indexes for key {}", filter.key);
+                                continue;
+                            };
                             let mut matched = HashSet::new();
                             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                                 Op::GreaterThan => {
@@ -147,9 +163,14 @@ impl super::GraphOperationsService {
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        let map = map_lock.read().unwrap();
+                        // Handle poisoned lock gracefully
+                        let Ok(map) = map_lock.read() else {
+                            tracing::warn!("Poisoned lock in node_property_str_ordered for key {} (string fallback)", filter.key);
+                            continue;
+                        };
                         let mut matched = HashSet::new();
-                        let s = super::extract_string_from_value(filter.value.as_ref().unwrap())
+                        // filter_val was already validated at the start of this Op branch
+                        let s = super::extract_string_from_value(filter_val)
                             .unwrap_or("");
                         match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::GreaterThan => {
@@ -206,33 +227,40 @@ impl super::GraphOperationsService {
                     for filter in &query.filters {
                         use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                         let prop_val_opt = node.properties.get(&filter.key);
+
+                        // Safely get filter value - if missing, filter fails
+                        let Some(filter_val) = filter.value.as_ref() else {
+                            pass_all = false;
+                            break;
+                        };
+
                         let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::Equals => match prop_val_opt {
-                                Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                                Some(v) => v.value == filter_val.value,
                                 None => false,
                             },
                             Op::NotEquals => match prop_val_opt {
-                                Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                                Some(v) => v.value != filter_val.value,
                                 None => true,
                             },
                             Op::GreaterThan => {
-                                super::cmp_prop_gt(prop_val_opt, filter.value.as_ref().unwrap())
+                                super::cmp_prop_gt(prop_val_opt, filter_val)
                             }
                             Op::GreaterEqual => {
-                                super::cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
+                                super::cmp_prop_ge(prop_val_opt, filter_val)
                             }
                             Op::LessThan => {
-                                super::cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap())
+                                super::cmp_prop_lt(prop_val_opt, filter_val)
                             }
                             Op::LessEqual => {
-                                super::cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap())
+                                super::cmp_prop_le(prop_val_opt, filter_val)
                             }
                             Op::StartsWith => super::prop_starts_with(
                                 prop_val_opt,
-                                filter.value.as_ref().unwrap(),
+                                filter_val,
                             ),
                             Op::Contains => {
-                                super::prop_contains(prop_val_opt, filter.value.as_ref().unwrap())
+                                super::prop_contains(prop_val_opt, filter_val)
                             }
                             _ => false,
                         };

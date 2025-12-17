@@ -9,9 +9,9 @@ for E2E test suites.
 import pytest
 from unittest.mock import Mock, patch
 
-from proximadb.protocols.rest_sync import ProximaDBClient
-from proximadb.batching_unified import BatchConfig, BatchStrategy, BatchMetrics, ThreadedBatchProcessor
-from proximadb.config import ClientConfig
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
+from proximadb_sdk.batching_unified import BatchConfig, BatchStrategy, BatchMetrics, ThreadedBatchProcessor
+from proximadb_sdk.config import ClientConfig
 
 
 class TestRestBatchingConfiguration:

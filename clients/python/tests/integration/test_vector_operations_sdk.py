@@ -12,9 +12,9 @@ import uuid
 import logging
 from typing import List, Dict, Any
 
-from proximadb import ProximaDBClient, VectorRecord, Collection
-from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
-from proximadb.chunking import (
+from proximadb_sdk import ProximaDBClient, VectorRecord, Collection
+from proximadb_sdk.models import CollectionConfig, DistanceMetric, StorageEngine
+from proximadb_sdk.chunking import (
     TextChunker, ChunkingConfig, ChunkingStrategy,
     prepare_vector_records
 )
@@ -523,7 +523,7 @@ class TestVectorOperationsSDK:
             
             # Mock the ingest_text function behavior since we can't use real embedding service
             # In real usage, this would call the embedding service
-            from proximadb.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
+            from proximadb_sdk.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
             
             # Create chunker
             chunker_config = ChunkingConfig(

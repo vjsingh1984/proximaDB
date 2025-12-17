@@ -65,6 +65,9 @@ pub mod c_ffi;
 #[cfg(feature = "nodejs")]
 pub mod nodejs;
 
+// Import VectorRecord for get_vector and vector_exists operations
+use crate::proto::proximadb_v1::VectorRecord;
+
 /// Embedded database configuration for multi-disk support
 #[derive(Debug, Clone)]
 pub struct EmbeddedConfig {
@@ -172,6 +175,8 @@ pub struct CollectionInfo {
     pub vector_count: u64,
     /// Storage engine type
     pub engine: String,
+    /// Disk usage in bytes for this collection
+    pub disk_usage_bytes: u64,
 }
 
 /// Storage statistics
@@ -185,6 +190,231 @@ pub struct StorageStats {
     pub disk_usage_bytes: u64,
     /// Cache hit rate (0.0 to 1.0)
     pub cache_hit_rate: f64,
+}
+
+// ============================================================================
+// Generic Graph Database Types - Tool Agnostic API
+// ============================================================================
+//
+// These types provide a generic, flexible graph API that can be used for
+// any domain: social graphs, knowledge graphs, code graphs, etc.
+// Domain-specific fields (like code's "signature", "docstring", "line")
+// should be stored in the `properties` map.
+//
+// For code intelligence use cases, the consuming application (e.g., Victor)
+// should build an adapter layer that maps its domain types to these generic types.
+
+/// Generic graph node with flexible property storage
+///
+/// This is a domain-agnostic node type. All domain-specific attributes
+/// should be stored in the `properties` map.
+///
+/// # Example
+/// ```rust,ignore
+/// // For a code symbol:
+/// let node = GraphNode::new("fn_main")
+///     .with_label("function")
+///     .with_property("name", "main")
+///     .with_property("file", "main.py")
+///     .with_property("line", "42");
+///
+/// // For a social network:
+/// let node = GraphNode::new("user_123")
+///     .with_label("Person")
+///     .with_property("name", "Alice")
+///     .with_property("email", "alice@example.com");
+/// ```
+#[derive(Debug, Clone)]
+pub struct GraphNode {
+    /// Unique node identifier
+    pub id: String,
+    /// Node labels/types (e.g., "Person", "function", "Document")
+    pub labels: Vec<String>,
+    /// Flexible property storage for domain-specific attributes
+    pub properties: std::collections::HashMap<String, String>,
+}
+
+impl GraphNode {
+    /// Create a new node with the given ID
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            labels: Vec::new(),
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Add a label to this node
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.labels.push(label.into());
+        self
+    }
+
+    /// Add a property to this node
+    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.properties.insert(key.into(), value.into());
+        self
+    }
+
+    /// Convert to proto Node for storage
+    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Node {
+        use crate::proto::proximadb_v1::{Node, PropertyValue, property_value::Value};
+
+        let properties: std::collections::HashMap<String, PropertyValue> = self.properties
+            .iter()
+            .map(|(k, v)| {
+                (k.clone(), PropertyValue {
+                    value: Some(Value::StringValue(v.clone()))
+                })
+            })
+            .collect();
+
+        Node {
+            id: self.id.clone(),
+            labels: self.labels.clone(),
+            properties,
+            embedding: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+
+    /// Create from proto Node
+    pub fn from_proto(node: &crate::proto::proximadb_v1::Node) -> Self {
+        use crate::proto::proximadb_v1::property_value::Value;
+
+        let properties: std::collections::HashMap<String, String> = node.properties.iter()
+            .filter_map(|(k, v)| {
+                match &v.value {
+                    Some(Value::StringValue(s)) => Some((k.clone(), s.clone())),
+                    Some(Value::IntValue(i)) => Some((k.clone(), i.to_string())),
+                    Some(Value::DoubleValue(d)) => Some((k.clone(), d.to_string())),
+                    Some(Value::BoolValue(b)) => Some((k.clone(), b.to_string())),
+                    _ => None
+                }
+            })
+            .collect();
+
+        Self {
+            id: node.id.clone(),
+            labels: node.labels.clone(),
+            properties,
+        }
+    }
+}
+
+/// Generic graph edge with flexible property storage
+#[derive(Debug, Clone)]
+pub struct GraphEdge {
+    /// Optional edge ID (auto-generated if not provided)
+    pub id: Option<String>,
+    /// Source node ID
+    pub from_node_id: String,
+    /// Destination node ID
+    pub to_node_id: String,
+    /// Edge type/relationship name
+    pub edge_type: String,
+    /// Optional weight for weighted traversal
+    pub weight: Option<f64>,
+    /// Flexible property storage
+    pub properties: std::collections::HashMap<String, String>,
+}
+
+impl GraphEdge {
+    /// Create a new edge
+    pub fn new(from_node_id: impl Into<String>, to_node_id: impl Into<String>, edge_type: impl Into<String>) -> Self {
+        Self {
+            id: None,
+            from_node_id: from_node_id.into(),
+            to_node_id: to_node_id.into(),
+            edge_type: edge_type.into(),
+            weight: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set edge ID explicitly
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// Set edge weight
+    pub fn with_weight(mut self, weight: f64) -> Self {
+        self.weight = Some(weight);
+        self
+    }
+
+    /// Add a property
+    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.properties.insert(key.into(), value.into());
+        self
+    }
+
+    /// Generate edge ID from components
+    fn generated_id(&self) -> String {
+        format!("{}->{}:{}", self.from_node_id, self.to_node_id, self.edge_type)
+    }
+
+    /// Convert to proto Edge
+    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Edge {
+        use crate::proto::proximadb_v1::{Edge, PropertyValue, property_value::Value};
+
+        let properties: std::collections::HashMap<String, PropertyValue> = self.properties
+            .iter()
+            .map(|(k, v)| {
+                (k.clone(), PropertyValue {
+                    value: Some(Value::StringValue(v.clone()))
+                })
+            })
+            .collect();
+
+        Edge {
+            id: self.id.clone().unwrap_or_else(|| self.generated_id()),
+            from_node_id: self.from_node_id.clone(),
+            to_node_id: self.to_node_id.clone(),
+            edge_type: self.edge_type.clone(),
+            properties,
+            weight: self.weight,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+
+    /// Create from proto Edge
+    pub fn from_proto(edge: &crate::proto::proximadb_v1::Edge) -> Self {
+        use crate::proto::proximadb_v1::property_value::Value;
+
+        let properties: std::collections::HashMap<String, String> = edge.properties.iter()
+            .filter_map(|(k, v)| {
+                match &v.value {
+                    Some(Value::StringValue(s)) => Some((k.clone(), s.clone())),
+                    Some(Value::IntValue(i)) => Some((k.clone(), i.to_string())),
+                    Some(Value::DoubleValue(d)) => Some((k.clone(), d.to_string())),
+                    Some(Value::BoolValue(b)) => Some((k.clone(), b.to_string())),
+                    _ => None
+                }
+            })
+            .collect();
+
+        Self {
+            id: Some(edge.id.clone()),
+            from_node_id: edge.from_node_id.clone(),
+            to_node_id: edge.to_node_id.clone(),
+            edge_type: edge.edge_type.clone(),
+            weight: edge.weight,
+            properties,
+        }
+    }
+}
+
+/// Graph statistics
+#[derive(Debug, Clone)]
+pub struct GraphStats {
+    /// Total number of nodes
+    pub total_nodes: u64,
+    /// Total number of edges
+    pub total_edges: u64,
 }
 
 /// Embedded ProximaDB instance without network layer
@@ -302,6 +532,18 @@ impl EmbeddedProximaDB {
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
         use std::sync::Arc;
 
+        // Initialize hardware capabilities first
+        if let Err(e) = crate::core::hardware_capabilities::initialize_hardware_capabilities_default() {
+            tracing::warn!("Failed to initialize hardware capabilities: {}", e);
+        }
+
+        // Log hardware capabilities summary
+        let _hw_summary = crate::core::hardware_capabilities::log_hardware_capabilities_summary();
+
+        // Initialize global WAL manifest for proper WAL file cleanup
+        // This is critical for embedded mode to avoid duplicate data
+        Self::init_global_manifest(&storage_config).await?;
+
         // Create cache orchestrator
         let cache_budget_bytes = (storage_config.cache_size_mb * 1024 * 1024) as usize;
         let orchestrator = Arc::new(CrossCacheOrchestrator::new(cache_budget_bytes));
@@ -322,6 +564,49 @@ impl EmbeddedProximaDB {
         Ok((shared_services, collection_service))
     }
 
+    /// Initialize the global WAL manifest for proper WAL file cleanup
+    async fn init_global_manifest(
+        storage_config: &crate::core::config::StorageConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use crate::storage::persistence::write_ahead_log::config::WALConfig;
+        use crate::storage::persistence::write_ahead_log::manifest;
+
+        // In embedded mode, always reset the manifest to support multiple database instances
+        // with different storage locations in the same process
+        if let Err(e) = manifest::reset().await {
+            tracing::debug!("Note: manifest reset returned error (may not have been initialized): {}", e);
+        }
+
+        // Build WAL config from storage config
+        let mut wal_config = WALConfig::default();
+
+        // Set up data directories from storage locations
+        wal_config.multi_disk.data_directories = storage_config
+            .storage_locations
+            .iter()
+            .map(|loc| loc.url.clone())
+            .collect();
+
+        // Set the manifest URL to the first storage location + /manifest
+        if let Some(first_loc) = storage_config.storage_locations.first() {
+            let base_url = first_loc.url.trim_end_matches('/');
+            wal_config.global_manifest_url = Some(format!("{}/manifest", base_url));
+        }
+
+        // Initialize the global manifest
+        match manifest::init(&wal_config).await {
+            Ok(_) => {
+                tracing::info!("🗂️  Initialized global WAL manifest for embedded mode");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("⚠️  Failed to initialize global WAL manifest: {}. WAL files may not be cleaned up after flush.", e);
+                // Don't fail - embedded mode can still work, just with duplicate data
+                Ok(())
+            }
+        }
+    }
+
     /// Create a new collection
     pub fn create_collection(
         &self,
@@ -329,7 +614,10 @@ impl EmbeddedProximaDB {
         dimension: u32,
         engine: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine as ProtoStorageEngine};
+        use crate::proto::proximadb_v1::{
+            CollectionConfig, CompressionAlgorithm, StorageConfig,
+            StorageEngine as ProtoStorageEngine,
+        };
 
         // Parse storage engine
         let storage_engine = match engine.unwrap_or(&self.config.default_engine).to_lowercase().as_str() {
@@ -342,22 +630,49 @@ impl EmbeddedProximaDB {
             _ => ProtoStorageEngine::Sst, // Default to SST
         };
 
+        // Engine-specific compression defaults:
+        // - LZ4: Fast compression for low-latency row-group formats (SST, Swift, HELIX)
+        // - ZSTD: Better compression ratio for columnar/analytics formats (VIPER, Nova, RAPTOR)
+        let compression = match storage_engine {
+            ProtoStorageEngine::Sst | ProtoStorageEngine::Swift | ProtoStorageEngine::Helix => {
+                CompressionAlgorithm::CompressionLz4
+            }
+            ProtoStorageEngine::Viper | ProtoStorageEngine::Nova | ProtoStorageEngine::Raptor => {
+                CompressionAlgorithm::CompressionZstd
+            }
+            _ => CompressionAlgorithm::CompressionLz4, // Default to LZ4
+        };
+
+        let storage_config = StorageConfig {
+            compression: Some(compression as i32),
+            ..Default::default()
+        };
+
         let config = CollectionConfig {
             name: name.to_string(),
             dimension,
             storage_engine: Some(storage_engine as i32),
+            storage_config: Some(storage_config),
             distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
             ..Default::default()
         };
 
         self.runtime.block_on(async {
-            self.collection_service
-                .create_collection(&config)
-                .await
-                .map(|_| ())
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                })
+            let response = match self.collection_service.create_collection(&config).await {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                        as Box<dyn std::error::Error + Send + Sync>);
+                }
+            };
+
+            // Check if the operation actually succeeded (CollectionService returns Ok with success=false for validation errors)
+            if !response.success {
+                let error_msg = response.error_code.unwrap_or_else(|| "Unknown collection creation error".to_string());
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_msg))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
+            Ok(())
         })
     }
 
@@ -449,12 +764,75 @@ impl EmbeddedProximaDB {
         top_k: usize,
         _filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+        self.search_with_mode(collection, query_vector, top_k, _filter, None)
+    }
+
+    /// Search for similar vectors with explicit search mode
+    ///
+    /// # Arguments
+    /// * `collection` - Name of the collection to search
+    /// * `query_vector` - Query vector
+    /// * `top_k` - Number of results to return
+    /// * `filter` - Optional filter expression
+    /// * `search_mode` - Search mode: "exact", "approximate", or "adaptive"
+    ///   - "exact": 100% recall, searches all partitions (default)
+    ///   - "approximate": Faster search using IVF-style partition pruning
+    ///   - "approximate:N": Approximate with explicit nprobe value
+    ///   - "adaptive": Auto-select based on dataset size
+    ///   - "adaptive:N": Adaptive with explicit threshold
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Exact search (100% recall)
+    /// let results = db.search_with_mode("my_collection", vec![0.1; 768], 10, None, Some("exact"))?;
+    ///
+    /// // Approximate search (faster, ~95% recall)
+    /// let results = db.search_with_mode("my_collection", vec![0.1; 768], 10, None, Some("approximate"))?;
+    ///
+    /// // Approximate with custom nprobe
+    /// let results = db.search_with_mode("my_collection", vec![0.1; 768], 10, None, Some("approximate:5"))?;
+    /// ```
+    pub fn search_with_mode(
+        &self,
+        collection: &str,
+        query_vector: Vec<f32>,
+        top_k: usize,
+        _filter: Option<&str>,
+        search_mode: Option<&str>,
+    ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::core::search::SearchMode;
+        use crate::services::operations::vectors::UnifiedSearchConfig;
+
+        // Parse search mode string into SearchMode enum
+        let mode = match search_mode {
+            None | Some("exact") => SearchMode::Exact,
+            Some("approximate") => SearchMode::Approximate { nprobe: None },
+            Some(s) if s.starts_with("approximate:") => {
+                let nprobe_str = s.strip_prefix("approximate:").unwrap_or("0");
+                let nprobe = nprobe_str.parse::<usize>().ok();
+                SearchMode::Approximate { nprobe }
+            }
+            Some("adaptive") => SearchMode::Adaptive { threshold: 10000 }, // Default threshold
+            Some(s) if s.starts_with("adaptive:") => {
+                let threshold_str = s.strip_prefix("adaptive:").unwrap_or("10000");
+                let threshold = threshold_str.parse::<usize>().unwrap_or(10000);
+                SearchMode::Adaptive { threshold }
+            }
+            Some(_) => SearchMode::Exact, // Default fallback
+        };
+
+        // Create config with the search mode
+        let config = UnifiedSearchConfig {
+            search_mode: mode,
+            ..Default::default()
+        };
+
         self.runtime.block_on(async {
             // For now, don't support filter expressions in embedded mode
             // TODO: Parse filter string into FilterExpression
             let results = self
                 .shared_services.vector_operations_service
-                .unified_search_native(collection, query_vector, top_k, None, None)
+                .unified_search_native(collection, query_vector, top_k, None, Some(config))
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
@@ -506,6 +884,7 @@ impl EmbeddedProximaDB {
                     dimension: config.dimension,
                     vector_count: c.stats.map(|s| s.vector_count as u64).unwrap_or(0),
                     engine: format!("{:?}", config.storage_engine.unwrap_or(0)),
+                    disk_usage_bytes: 0, // TODO: Calculate actual disk usage
                 }
             }))
         })
@@ -533,6 +912,7 @@ impl EmbeddedProximaDB {
                         dimension: config.dimension,
                         vector_count: c.stats.map(|s| s.vector_count as u64).unwrap_or(0),
                         engine: format!("{:?}", config.storage_engine.unwrap_or(0)),
+                        disk_usage_bytes: 0, // TODO: Calculate actual disk usage
                     }
                 })
                 .collect())
@@ -540,9 +920,528 @@ impl EmbeddedProximaDB {
     }
 
     /// Flush all pending writes to disk
+    ///
+    /// This forces all in-memory data (memtable/WAL) to be persisted to storage engine files.
+    /// It also triggers compaction to consolidate data into SST files for durability.
     pub fn flush(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Flush is automatic in ProximaDB - WAL ensures durability
-        Ok(())
+        self.runtime.block_on(async {
+            use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
+            use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+            use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment};
+
+            tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");
+
+            // Get the base storage URL from our embedded config
+            let base_storage_url = if let Some(loc) = self.config.storage_locations.first() {
+                loc.to_url()
+            } else {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "No storage locations configured",
+                )) as Box<dyn std::error::Error + Send + Sync>);
+            };
+            tracing::debug!("EMBEDDED: Using base storage URL: {}", base_storage_url);
+
+            // Get the global write buffer to access unflushed data
+            let write_buffer = match get_global_write_buffer_behavior() {
+                Some(wb) => wb,
+                None => {
+                    tracing::info!("📋 EMBEDDED: No global write buffer initialized, nothing to flush");
+                    return Ok(());
+                }
+            };
+
+            // Get list of collections with unflushed data
+            let collections_to_flush = write_buffer.list_collections_with_unflushed_data().await;
+            if collections_to_flush.is_empty() {
+                tracing::info!("📋 EMBEDDED: No collections have unflushed data");
+                return Ok(());
+            }
+
+            tracing::info!(
+                "🔄 EMBEDDED: Found {} collections with unflushed data: {:?}",
+                collections_to_flush.len(),
+                collections_to_flush
+            );
+
+            let mut total_vectors_flushed = 0u64;
+            let mut total_bytes_written = 0u64;
+            let mut collections_flushed = 0usize;
+            let mut failed_collections: Vec<(String, String)> = Vec::new();
+
+            // Flush each collection directly using its configured storage engine
+            // Idempotency is handled at the batch level by get_unflushed_batches() and clear_flushed()
+            for collection_id in &collections_to_flush {
+                tracing::info!("🔄 EMBEDDED: Flushing collection '{}'", collection_id);
+
+                // Get the collection's metadata to find its configured storage engine
+                let collection_metadata = self.collection_service
+                    .get_collection_with_tenant_context(collection_id, None)
+                    .await;
+
+                // Extract the storage engine type and dimension from collection config
+                let (storage_engine_type, collection_dimension) = match &collection_metadata {
+                    Ok(Some(coll)) => {
+                        if let Some(config) = &coll.config {
+                            (
+                                config.storage_engine.unwrap_or(
+                                    crate::proto::proximadb_v1::StorageEngine::Sst as i32
+                                ),
+                                config.dimension,
+                            )
+                        } else {
+                            (crate::proto::proximadb_v1::StorageEngine::Sst as i32, 0)
+                        }
+                    }
+                    _ => (crate::proto::proximadb_v1::StorageEngine::Sst as i32, 0),
+                };
+
+                // Create the correct storage engine for this collection
+                let proto_engine = crate::proto::proximadb_v1::StorageEngine::try_from(storage_engine_type)
+                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst);
+
+                let engine_name = format!("{:?}", proto_engine);
+                tracing::info!(
+                    "🔧 EMBEDDED: Collection '{}' uses {} engine",
+                    collection_id, engine_name
+                );
+
+                let storage_engine = match crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(proto_engine).await {
+                    Ok(engine) => engine,
+                    Err(e) => {
+                        tracing::warn!(
+                            "❌ EMBEDDED: Failed to create {} engine for '{}': {}, falling back to SST",
+                            engine_name, collection_id, e
+                        );
+                        // Fallback to unified SST engine
+                        self.shared_services.vector_operations_service.unified_engine()
+                    }
+                };
+
+                // Get unflushed batches for this collection
+                match write_buffer.get_unflushed_batches(collection_id).await {
+                    Ok(batches) => {
+                        if batches.is_empty() {
+                            tracing::debug!("📋 EMBEDDED: Collection '{}' has no unflushed batches", collection_id);
+                            continue;
+                        }
+
+                        // Combine all vector records from unflushed batches
+                        let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = batches
+                            .iter()
+                            .flat_map(|batch| batch.vector_records.iter().cloned())
+                            .collect();
+
+                        let vector_count = vector_records.len();
+                        tracing::info!(
+                            "📋 EMBEDDED: Collection '{}' has {} vectors to flush from {} batches using {} engine",
+                            collection_id, vector_count, batches.len(), engine_name
+                        );
+
+                        // Create a collection config with the correct storage assignment, engine type, and dimension
+                        // This ensures the flush writes to our embedded data directory with correct format
+                        // IMPORTANT: dimension is required for VIPER/NOVA flush to work properly
+                        let collection_config = Collection {
+                            id: collection_id.clone(),
+                            storage_assignment: Some(StorageAssignment {
+                                base_location: base_storage_url.clone(),
+                                engine: storage_engine_type, // Pass the correct engine type
+                                ..Default::default()
+                            }),
+                            config: Some(CollectionConfig {
+                                name: collection_id.clone(),
+                                storage_engine: Some(storage_engine_type), // Set engine in config too
+                                dimension: collection_dimension, // CRITICAL: VIPER/NOVA require dimension for flush
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        };
+
+                        // Create flush parameters with the correct storage path
+                        let flush_params = FlushParameters {
+                            collection_id: Some(collection_id.clone()),
+                            force: true,
+                            synchronous: true,
+                            vector_records,
+                            batch_ids: Vec::new(),
+                            collection_config: Some(collection_config),
+                            ..Default::default()
+                        };
+
+                        // Execute flush via the public flush() method which includes validation
+                        // and post-processing (do_flush is internal implementation)
+                        match storage_engine.flush(flush_params).await {
+                            Ok(result) => {
+                                let entries = result.entries_flushed.unwrap_or(0) as u64;
+                                let bytes = result.bytes_written.unwrap_or(0) as u64;
+
+                                total_vectors_flushed += entries;
+                                total_bytes_written += bytes;
+                                collections_flushed += 1;
+
+                                // Clear flushed batches from memtable (synchronous - eager cleanup)
+                                if let Err(e) = write_buffer.clear_flushed(collection_id).await {
+                                    tracing::warn!(
+                                        "⚠️ EMBEDDED: Failed to clear flushed batches for '{}': {}",
+                                        collection_id, e
+                                    );
+                                }
+
+                                // Delete WAL files from disk after successful flush
+                                // This prevents 2x storage overhead from keeping WAL + SST files
+                                let batch_id_strings: Vec<String> = batches.iter()
+                                    .map(|b| b.batch_id.to_base62())
+                                    .collect();
+
+                                if !batch_id_strings.is_empty() {
+                                    match crate::storage::persistence::write_ahead_log::manifest::mark_flushed_and_delete_files(&batch_id_strings).await {
+                                        Ok(deleted) => {
+                                            tracing::info!(
+                                                "🗑️ EMBEDDED: Deleted {} WAL files for collection '{}'",
+                                                deleted, collection_id
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "⚠️ EMBEDDED: Failed to delete WAL files for '{}': {}",
+                                                collection_id, e
+                                            );
+                                        }
+                                    }
+                                }
+
+                                tracing::info!(
+                                    "✅ EMBEDDED: Flushed collection '{}': {} vectors, {} bytes",
+                                    collection_id, entries, bytes
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "❌ EMBEDDED: Failed to flush collection '{}': {}",
+                                    collection_id, e
+                                );
+                                failed_collections.push((collection_id.clone(), e.to_string()));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "❌ EMBEDDED: Failed to get unflushed batches for '{}': {}",
+                            collection_id, e
+                        );
+                        failed_collections.push((collection_id.clone(), e.to_string()));
+                    }
+                }
+            }
+
+            tracing::info!(
+                "🛑 EMBEDDED: Flush complete - {} collections, {} vectors, {} bytes{}",
+                collections_flushed,
+                total_vectors_flushed,
+                total_bytes_written,
+                if failed_collections.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} failures", failed_collections.len())
+                }
+            );
+
+            // NOTE: We removed the redundant force_flush_all() call here.
+            // The per-collection storage_engine.flush() above already flushes all data.
+            // Calling force_flush_all() caused duplicate SST files (2x data overhead).
+
+            if failed_collections.is_empty() {
+                Ok(())
+            } else {
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to flush {} collections: {:?}", failed_collections.len(), failed_collections),
+                )) as Box<dyn std::error::Error + Send + Sync>)
+            }
+        })
+    }
+
+    // ========================================================================
+    // Vector CRUD Operations - Phase 1: GET
+    // ========================================================================
+
+    /// Get a vector by ID from a collection
+    ///
+    /// Returns the vector record with id, vector data, and metadata if found.
+    /// Searches both unflushed data (WAL/memtable) and flushed storage (SST files).
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `vector_id` - ID of the vector to retrieve
+    ///
+    /// # Returns
+    /// * `Ok(Some(VectorRecord))` - Vector found
+    /// * `Ok(None)` - Vector not found
+    /// * `Err` - Error occurred during lookup
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let record = db.get_vector("embeddings", "vec_123")?;
+    /// if let Some(vec) = record {
+    ///     println!("Found vector: {:?}", vec.vector);
+    /// }
+    /// ```
+    pub fn get_vector(
+        &self,
+        collection: &str,
+        vector_id: &str,
+    ) -> Result<Option<VectorRecord>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
+
+        self.runtime.block_on(async {
+            // Step 1: Check WAL/memtable for unflushed data (most recent)
+            if let Some(write_buffer) = get_global_write_buffer_behavior() {
+                if let Ok(batches) = write_buffer.get_unflushed_batches(collection).await {
+                    for batch in batches {
+                        for record in batch.vector_records.iter() {
+                            if record.id == vector_id {
+                                // Found in unflushed data - check if it's a tombstone
+                                if record.vector.is_empty() && record.version.is_none() {
+                                    // This is a tombstone marker - vector was deleted
+                                    return Ok(None);
+                                }
+                                return Ok(Some(record.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Step 2: Search in flushed storage using the unified storage engine
+            // Use a filter-based search to find the specific vector by ID
+            let results = self
+                .shared_services.vector_operations_service
+                .unified_search_by_id(collection, vector_id)
+                .await;
+
+            match results {
+                Ok(Some(record)) => {
+                    // Check if it's a tombstone
+                    if record.vector.is_empty() && record.version.is_none() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(record))
+                    }
+                }
+                Ok(None) => Ok(None),
+                Err(e) => Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to get vector: {}", e),
+                )) as Box<dyn std::error::Error + Send + Sync>),
+            }
+        })
+    }
+
+    /// Check if a vector exists in a collection
+    ///
+    /// This is a fast existence check that uses bloom filters when available.
+    /// More efficient than `get_vector` when you only need to check existence.
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `vector_id` - ID of the vector to check
+    ///
+    /// # Returns
+    /// * `true` - Vector exists
+    /// * `false` - Vector does not exist
+    pub fn vector_exists(
+        &self,
+        collection: &str,
+        vector_id: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        // For now, use get_vector and check if Some
+        // In the future, this could use bloom filter for faster negative checks
+        Ok(self.get_vector(collection, vector_id)?.is_some())
+    }
+
+    /// Delete a single vector by ID (tombstone-based)
+    ///
+    /// This uses tombstone markers to logically delete the vector. The tombstone
+    /// will be written to the WAL and will shadow the original vector in searches.
+    /// Physical deletion happens during compaction.
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `vector_id` - ID of the vector to delete
+    ///
+    /// # Returns
+    /// * `true` - Tombstone was written (doesn't guarantee vector existed)
+    /// * `false` - Failed to write tombstone
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let deleted = db.delete_vector("embeddings", "vec_123")?;
+    /// ```
+    pub fn delete_vector(
+        &self,
+        collection: &str,
+        vector_id: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::VectorRecord;
+        use std::sync::Arc;
+
+        // Create tombstone record: empty vector + version=None marks deletion
+        // expires_at is set to 30 days from now for eventual cleanup during compaction
+        let now = chrono::Utc::now();
+        let tombstone = VectorRecord {
+            id: vector_id.to_string(),
+            vector: vec![],  // Empty vector = tombstone marker
+            metadata: std::collections::HashMap::new(),
+            timestamp: Some(now.timestamp_millis()),
+            updated_at: Some(now.timestamp_millis()),
+            expires_at: Some(now.timestamp() + 30 * 24 * 60 * 60), // 30 days
+            version: None,  // None = tombstone marker
+            source: None,
+        };
+
+        let records = Arc::new(vec![tombstone]);
+
+        self.runtime.block_on(async {
+            self.shared_services
+                .vector_operations_service
+                .insert_vectors_direct(collection, records)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+            Ok(true)
+        })
+    }
+
+    /// Delete multiple vectors by IDs (batch tombstone operation)
+    ///
+    /// More efficient than calling `delete_vector` multiple times.
+    /// All tombstones are written in a single batch operation.
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `vector_ids` - Vector of IDs to delete
+    ///
+    /// # Returns
+    /// Number of tombstones written (equals input count)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let count = db.delete_vectors("embeddings", vec!["vec_1".to_string(), "vec_2".to_string()])?;
+    /// assert_eq!(count, 2);
+    /// ```
+    pub fn delete_vectors(
+        &self,
+        collection: &str,
+        vector_ids: Vec<String>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::VectorRecord;
+        use std::sync::Arc;
+
+        if vector_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let now = chrono::Utc::now();
+        let expires_at = now.timestamp() + 30 * 24 * 60 * 60; // 30 days
+
+        // Create tombstone records for all IDs
+        let tombstones: Vec<VectorRecord> = vector_ids
+            .iter()
+            .map(|id| VectorRecord {
+                id: id.clone(),
+                vector: vec![],  // Empty vector = tombstone marker
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(now.timestamp_millis()),
+                updated_at: Some(now.timestamp_millis()),
+                expires_at: Some(expires_at),
+                version: None,  // None = tombstone marker
+                source: None,
+            })
+            .collect();
+
+        let count = tombstones.len();
+        let records = Arc::new(tombstones);
+
+        self.runtime.block_on(async {
+            self.shared_services
+                .vector_operations_service
+                .insert_vectors_direct(collection, records)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+            Ok(count)
+        })
+    }
+
+    /// Upsert vectors (insert or update)
+    ///
+    /// This is an atomic operation that:
+    /// 1. Checks which IDs already exist
+    /// 2. Deletes existing vectors (creates tombstones)
+    /// 3. Inserts all vectors as new records
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `ids` - Vector IDs
+    /// * `vectors` - Vector data
+    /// * `metadata` - Optional metadata for each vector
+    ///
+    /// # Returns
+    /// Tuple of (inserted_count, updated_count)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let (inserted, updated) = db.upsert(
+    ///     "embeddings",
+    ///     vec!["vec_1".to_string(), "vec_2".to_string()],
+    ///     vec![vec![0.1; 768], vec![0.2; 768]],
+    ///     None,
+    /// )?;
+    /// println!("Inserted: {}, Updated: {}", inserted, updated);
+    /// ```
+    pub fn upsert(
+        &self,
+        collection: &str,
+        ids: Vec<String>,
+        vectors: Vec<Vec<f32>>,
+        metadata: Option<Vec<std::collections::HashMap<String, serde_json::Value>>>,
+    ) -> Result<(usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+        if ids.is_empty() {
+            return Ok((0, 0));
+        }
+
+        if ids.len() != vectors.len() {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("IDs count ({}) must match vectors count ({})", ids.len(), vectors.len()),
+            )) as Box<dyn std::error::Error + Send + Sync>);
+        }
+
+        // Check which IDs already exist
+        let mut existing_ids = Vec::new();
+        let mut inserted = 0;
+        let mut updated = 0;
+
+        for id in &ids {
+            if self.vector_exists(collection, id)? {
+                existing_ids.push(id.clone());
+                updated += 1;
+            } else {
+                inserted += 1;
+            }
+        }
+
+        // Delete existing vectors (creates tombstones)
+        if !existing_ids.is_empty() {
+            self.delete_vectors(collection, existing_ids)?;
+        }
+
+        // Insert all vectors as new records
+        self.insert(collection, ids, vectors, metadata)?;
+
+        Ok((inserted, updated))
     }
 
     /// Get storage statistics
@@ -566,6 +1465,249 @@ impl EmbeddedProximaDB {
                 cache_hit_rate: 0.0, // TODO: Get from cache orchestrator
             })
         })
+    }
+
+    // ========================================================================
+    // Generic Graph Operations API
+    // ========================================================================
+
+    /// Create a graph collection
+    ///
+    /// A graph must be created before nodes and edges can be added.
+    pub fn create_graph(
+        &self,
+        graph_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+
+            let request = crate::proto::proximadb_v1::CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: Some(graph_id.to_string()),
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            };
+
+            graph_service
+                .create_graph_collection(request)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(())
+        })
+    }
+
+    /// Create nodes in the graph
+    ///
+    /// Inserts nodes with their properties. Use labels and properties
+    /// for domain-specific categorization and attributes.
+    pub fn create_nodes(
+        &self,
+        graph_id: &str,
+        nodes: Vec<GraphNode>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        let count = nodes.len();
+
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+
+            for node in nodes {
+                let proto_node = node.to_proto();
+                graph_service
+                    .create_node(graph_id, proto_node)
+                    .await
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    })?;
+            }
+
+            Ok(count)
+        })
+    }
+
+    /// Create edges in the graph
+    pub fn create_edges(
+        &self,
+        graph_id: &str,
+        edges: Vec<GraphEdge>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        let count = edges.len();
+
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+
+            for edge in edges {
+                let proto_edge = edge.to_proto();
+                graph_service
+                    .create_edge(graph_id, proto_edge)
+                    .await
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    })?;
+            }
+
+            Ok(count)
+        })
+    }
+
+    /// Get a node by ID
+    pub fn get_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<GraphNode>, Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+            let node_id_string = node_id.to_string();
+
+            let proto_node = graph_service
+                .get_node(graph_id, &node_id_string)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(proto_node.map(|n| GraphNode::from_proto(&n)))
+        })
+    }
+
+    /// Query nodes by labels
+    pub fn query_nodes_by_labels(
+        &self,
+        graph_id: &str,
+        labels: Vec<String>,
+    ) -> Result<Vec<GraphNode>, Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+
+            let node_query = crate::proto::proximadb_v1::NodeQuery {
+                labels,
+                ..Default::default()
+            };
+
+            let proto_nodes = graph_service
+                .query_nodes(graph_id, node_query)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(proto_nodes.into_iter().map(|n| GraphNode::from_proto(&n)).collect())
+        })
+    }
+
+    /// Get outgoing edges from a node
+    pub fn get_outgoing_edges(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        edge_types: Option<Vec<String>>,
+    ) -> Result<Vec<GraphEdge>, Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+
+            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+                from_node_id: Some(node_id.to_string()),
+                to_node_id: None,
+                edge_types: edge_types.unwrap_or_default(),
+                ..Default::default()
+            };
+
+            let proto_edges = graph_service
+                .query_edges(graph_id, edge_query)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(proto_edges.into_iter().map(|e| GraphEdge::from_proto(&e)).collect())
+        })
+    }
+
+    /// Get incoming edges to a node
+    pub fn get_incoming_edges(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        edge_types: Option<Vec<String>>,
+    ) -> Result<Vec<GraphEdge>, Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+
+            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+                from_node_id: None,
+                to_node_id: Some(node_id.to_string()),
+                edge_types: edge_types.unwrap_or_default(),
+                ..Default::default()
+            };
+
+            let proto_edges = graph_service
+                .query_edges(graph_id, edge_query)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(proto_edges.into_iter().map(|e| GraphEdge::from_proto(&e)).collect())
+        })
+    }
+
+    /// Delete a node and its edges
+    pub fn delete_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+            let node_id_string = node_id.to_string();
+
+            let deleted = graph_service
+                .delete_node(graph_id, &node_id_string)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(deleted.is_some())
+        })
+    }
+
+    /// Get graph statistics
+    pub fn graph_stats(
+        &self,
+        graph_id: &str,
+    ) -> Result<GraphStats, Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let graph_service = &self.shared_services.graph_service;
+
+            let proto_stats = graph_service
+                .get_stats(graph_id)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(GraphStats {
+                total_nodes: proto_stats.total_nodes,
+                total_edges: proto_stats.total_edges,
+            })
+        })
+    }
+
+    /// Delete entire graph
+    pub fn delete_graph(
+        &self,
+        graph_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // remove_graph returns Option, not Result - it's always successful
+        let _ = self.shared_services.graph_service.remove_graph(graph_id);
+        Ok(())
     }
 }
 

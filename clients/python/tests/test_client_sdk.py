@@ -9,13 +9,13 @@ import asyncio
 import time
 from typing import Dict, Any
 
-from proximadb import (
+from proximadb_sdk import (
     ProximaDBClient,
     connect, connect_grpc, connect_rest, Protocol
 )
-from proximadb import CollectionConfig, DistanceMetric
-from proximadb import ProximaDBError, CollectionNotFoundError
-from proximadb import ClientConfig, RetryConfig
+from proximadb_sdk import CollectionConfig, DistanceMetric
+from proximadb_sdk import ProximaDBError, CollectionNotFoundError
+from proximadb_sdk import ClientConfig, RetryConfig
 
 
 class TestClientCreation:

@@ -73,6 +73,10 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Viper => Self::create_viper(),
             ProtoStorageEngine::Sst => Self::create_sst(),
+            ProtoStorageEngine::Helix => Self::create_helix(),
+            ProtoStorageEngine::Swift => Self::create_swift(),
+            ProtoStorageEngine::Nova => Self::create_nova(),
+            ProtoStorageEngine::Raptor => Self::create_raptor(),
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst()
@@ -81,9 +85,6 @@ impl StorageEngineFactory {
                 warn!("Hybrid engine not yet implemented, using SST");
                 Self::create_sst()
             }
-            ProtoStorageEngine::Swift => Self::create_swift(),
-            ProtoStorageEngine::Nova => Self::create_nova(),
-            // Add RAPTOR for cloud-optimized workloads
             _ => {
                 warn!("Unknown storage engine type, defaulting to SST");
                 Self::create_sst()
@@ -102,6 +103,10 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Viper => Self::create_viper_async().await,
             ProtoStorageEngine::Sst => Self::create_sst_async().await,
+            ProtoStorageEngine::Helix => Self::create_helix_async().await,
+            ProtoStorageEngine::Swift => Self::create_swift_async().await,
+            ProtoStorageEngine::Nova => Self::create_nova_async().await,
+            ProtoStorageEngine::Raptor => Self::create_raptor_async().await,
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst_async().await
@@ -110,8 +115,6 @@ impl StorageEngineFactory {
                 warn!("Hybrid engine not yet implemented, using SST");
                 Self::create_sst_async().await
             }
-            ProtoStorageEngine::Swift => Self::create_swift_async().await,
-            ProtoStorageEngine::Nova => Self::create_nova_async().await,
             _ => {
                 warn!("Unknown storage engine type, defaulting to SST");
                 Self::create_sst_async().await

@@ -646,6 +646,18 @@ pub struct SstableHeader {
     pub vector_format: VectorFormat,  // Fixed, Variable, or Mixed
     pub fixed_dimension: Option<u32>, // For fixed-dimension optimization
     pub compression_ratio: f32,       // Achieved compression ratio
+
+    // NEW: Centroid index for IVF-style search optimization (LanceDB-inspired)
+    // Stores the centroid (mean vector) of all vectors in this SST file
+    // Used for partition-aware search to skip irrelevant SST files
+    #[serde(default)]
+    pub centroid: Option<Vec<f32>>,              // Centroid vector (mean of all vectors)
+    #[serde(default)]
+    pub centroid_distance_sum: Option<f32>,      // Sum of distances to centroid (for variance)
+    #[serde(default)]
+    pub min_distance_to_centroid: Option<f32>,   // Minimum distance from any vector to centroid
+    #[serde(default)]
+    pub max_distance_to_centroid: Option<f32>,   // Maximum distance from any vector to centroid
 }
 
 // SST compression now uses unified_compression::CompressionAlgorithm directly
@@ -1160,18 +1172,10 @@ mod compression_helpers {
 /// Calculate optimal block size based on vector dimensions
 /// Target: 2000-2500 vectors per block
 pub fn optimal_block_size(vector_dim: usize) -> usize {
-    let vector_size = vector_dim * 4 + 200; // FP32 + metadata overhead (more realistic estimate)
-
-    // Target 3MB as optimal default, varying slightly by dimension
-    let target_block_size = match vector_dim {
-        0..=384 => 3 * 1024 * 1024,            // 3MB for small vectors
-        385..=768 => 3 * 1024 * 1024,          // 3MB for medium vectors
-        769..=1536 => 3 * 1024 * 1024,         // 3MB for large vectors
-        _ => (2.5 * 1024.0 * 1024.0) as usize, // 2.5MB for XL vectors (network optimization)
-    };
-
-    // Clamp between 2MB and 4MB (optimal range for cloud IOPS and compression)
-    target_block_size.max(2 * 1024 * 1024).min(4 * 1024 * 1024)
+    crate::storage::engines::core::formats::proximablocks::utils::recommend_block_size_for_dimension(
+        vector_dim,
+        200, // metadata overhead estimate retained from previous logic
+    )
 }
 
 // Import centralized compression markers and helper functions

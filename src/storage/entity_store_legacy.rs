@@ -555,6 +555,7 @@ impl EntityStore for ProximaEntityStore {
                     include_vectors: false,
                     include_metadata: true,
                     scenario: Some("sks_entity_search".to_string()),
+                    search_mode: crate::core::search::SearchMode::default(),
                 };
                 let vos_results = vs
                     .unified_search_v1(

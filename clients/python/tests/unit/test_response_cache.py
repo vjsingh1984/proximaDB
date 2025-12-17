@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.cache import (
+from proximadb_sdk.cache import (
     CacheStrategy,
     CacheLevel,
     CacheMetrics,
@@ -48,9 +48,9 @@ class TestCacheMetrics:
     def test_hit_rate_calculation(self):
         """Test hit rate calculation"""
         metrics = CacheMetrics(hits=8, total_requests=10)
-        
-        assert metrics.hit_rate == 0.8
-        assert metrics.miss_rate == 0.2
+
+        assert metrics.hit_rate == pytest.approx(0.8)
+        assert metrics.miss_rate == pytest.approx(0.2)
     
     def test_edge_cases(self):
         """Test edge cases in metrics"""

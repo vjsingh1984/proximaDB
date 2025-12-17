@@ -11,8 +11,8 @@ import uuid
 import logging
 from typing import List, Dict, Any, Optional
 
-from proximadb import ProximaDBClient
-from proximadb.exceptions import ProximaDBError
+from proximadb_sdk import ProximaDBClient
+from proximadb_sdk.exceptions import ProximaDBError
 
 logger = logging.getLogger(__name__)
 

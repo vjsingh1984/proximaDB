@@ -7,9 +7,9 @@ import json
 from pathlib import Path
 import tempfile
 
-from proximadb.chunking import TextChunker, ChunkingConfig, ChunkingStrategy, create_vector_records, prepare_vector_records
-from proximadb import VectorRecord
-from proximadb.models import CollectionConfig, StorageEngine, DistanceMetric
+from proximadb_sdk.chunking import TextChunker, ChunkingConfig, ChunkingStrategy, create_vector_records, prepare_vector_records
+from proximadb_sdk import VectorRecord
+from proximadb_sdk.models import CollectionConfig, StorageEngine, DistanceMetric
 import logging
 from sentence_transformers import SentenceTransformer
 
@@ -133,7 +133,7 @@ class TestChunkingIntegration:
 
     def test_real_integration_rest_grpc_sql(self):
         """REAL integration test: chunking → VectorRecord → REST/gRPC insert → REST/gRPC/SQL search"""
-        from proximadb import ProximaDBClient, Protocol
+        from proximadb_sdk import ProximaDBClient, Protocol
         import time
         import random
         
@@ -368,7 +368,7 @@ class TestChunkingIntegration:
 
     def test_all_chunking_strategies_with_real_server(self):
         """Test all chunking strategies produce 10+ chunks and work with real server"""
-        from proximadb import ProximaDBClient, Protocol
+        from proximadb_sdk import ProximaDBClient, Protocol
         import time
         
         # Long test text designed to produce many chunks
@@ -437,7 +437,7 @@ class TestChunkingIntegration:
 
     def test_chunking_strategy_comparison(self):
         """COMPARATIVE TEST: Same text chunked with different strategies, compare search performance"""
-        from proximadb import ProximaDBClient, Protocol
+        from proximadb_sdk import ProximaDBClient, Protocol
         import time
         import random
         import logging
@@ -493,7 +493,7 @@ class TestChunkingIntegration:
         
         try:
             # Create collection
-            from proximadb.models import CollectionConfig, StorageEngine, DistanceMetric
+            from proximadb_sdk.models import CollectionConfig, StorageEngine, DistanceMetric
             collection_config = CollectionConfig(
                 name=collection_name,
                 dimension=384,  # BERT mini (all-MiniLM-L6-v2) embedding dimension
@@ -682,7 +682,7 @@ class TestChunkingIntegration:
 
     def test_comprehensive_chunking_all_engines_protocols(self):
         """COMPREHENSIVE TEST: All chunking strategies × All engines × All protocols × SQL"""
-        from proximadb import ProximaDBClient, Protocol
+        from proximadb_sdk import ProximaDBClient, Protocol
         import time
         import random
         import json

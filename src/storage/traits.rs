@@ -987,7 +987,22 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
             match self.compact(compact_params).await {
                 Ok(_) => result.compaction_triggered = true,
-                Err(e) => tracing::warn!("⚠️ Post-flush compaction failed: {}", e),
+                Err(e) => {
+                    let collection_info = params
+                        .collection_id
+                        .as_ref()
+                        .map(|id| format!(" for collection {}", id))
+                        .unwrap_or_default();
+                    tracing::error!(
+                        "⚠️ Post-flush compaction failed{}: {}. Data is safe but \
+                         storage may be suboptimal. Consider triggering manual compaction.",
+                        collection_info,
+                        e
+                    );
+                    result.compaction_error = Some(e.to_string());
+                    // Note: Compaction failure after flush is non-fatal - data integrity is preserved.
+                    // The caller can inspect result.compaction_error and decide whether to retry.
+                }
             }
         }
 
@@ -1912,6 +1927,9 @@ pub struct FlushResult {
     /// Whether compaction was triggered as a result
     pub compaction_triggered: bool,
 
+    /// Error message if post-flush compaction failed (for observability and retry scheduling)
+    pub compaction_error: Option<String>,
+
     /// Batch IDs that were successfully flushed (for WAL cleanup coordination)
     pub flushed_batch_ids: Vec<crate::storage::persistence::write_ahead_log::BatchId>,
 }
@@ -2173,6 +2191,7 @@ impl Default for FlushResult {
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: vec![],
         }
     }

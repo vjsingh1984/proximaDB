@@ -36,8 +36,8 @@ class FakeRestAsync:
 
 @pytest.mark.asyncio
 async def test_unified_async_uses_grpc_when_available(monkeypatch):
-    from proximadb.unified_client_async import ProximaDBAsyncUnified
-    import proximadb.unified_client_async as m
+    from proximadb_sdk.unified_client_async import ProximaDBAsyncUnified
+    import proximadb_sdk.unified_client_async as m
 
     monkeypatch.setattr(m, "GRPC_OK", True)
     monkeypatch.setattr(m, "GrpcAsyncClient", FakeGrpcAsync)
@@ -57,8 +57,8 @@ async def test_unified_async_uses_grpc_when_available(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unified_async_fallback_to_rest_on_failure(monkeypatch):
-    from proximadb.unified_client_async import ProximaDBAsyncUnified
-    import proximadb.unified_client_async as m
+    from proximadb_sdk.unified_client_async import ProximaDBAsyncUnified
+    import proximadb_sdk.unified_client_async as m
 
     class FailingGrpc(FakeGrpcAsync):
         def __init__(self, *a, **k):
@@ -77,8 +77,8 @@ async def test_unified_async_fallback_to_rest_on_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unified_async_forced_rest(monkeypatch):
-    from proximadb.unified_client_async import ProximaDBAsyncUnified
-    import proximadb.unified_client_async as m
+    from proximadb_sdk.unified_client_async import ProximaDBAsyncUnified
+    import proximadb_sdk.unified_client_async as m
 
     monkeypatch.setattr(m, "RestAsyncClient", FakeRestAsync)
 
@@ -91,8 +91,8 @@ async def test_unified_async_forced_rest(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unified_async_forced_rest_shortest_path(monkeypatch):
-    from proximadb.unified_client_async import ProximaDBAsyncUnified
-    import proximadb.unified_client_async as m
+    from proximadb_sdk.unified_client_async import ProximaDBAsyncUnified
+    import proximadb_sdk.unified_client_async as m
 
     monkeypatch.setattr(m, "RestAsyncClient", FakeRestAsync)
 

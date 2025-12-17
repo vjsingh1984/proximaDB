@@ -9,15 +9,15 @@ import pytest
 import numpy as np
 from typing import List
 
-from proximadb.chunking import (
+from proximadb_sdk.chunking import (
     TextChunker,
     ChunkingConfig,
     ChunkingStrategy,
     create_vector_records,
     chunk_and_embed_text
 )
-from proximadb.embedding_providers import get_provider, recommend_free_providers
-from proximadb.embedding_providers.core import BaseEmbeddingProvider as EmbeddingProvider
+from proximadb_sdk.embedding_providers import get_provider, recommend_free_providers
+from proximadb_sdk.embedding_providers.core import BaseEmbeddingProvider as EmbeddingProvider
 
 
 class TestChunkingEmbeddingIntegration:

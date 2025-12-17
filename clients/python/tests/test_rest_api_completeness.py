@@ -9,9 +9,9 @@ import time
 import numpy as np
 from typing import List, Dict, Any
 
-from proximadb import connect_rest
-from proximadb import CollectionConfig, DistanceMetric
-from proximadb import ProximaDBError, CollectionNotFoundError
+from proximadb_sdk import connect_rest
+from proximadb_sdk import CollectionConfig, DistanceMetric
+from proximadb_sdk import ProximaDBError, CollectionNotFoundError
 
 
 class TestRESTAPICompleteness:

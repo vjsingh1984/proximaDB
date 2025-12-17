@@ -6,7 +6,7 @@ from typing import List
 
 import numpy as np
 
-from proximadb import ProximaDBClient, VectorRecord
+from proximadb_sdk import ProximaDBClient, VectorRecord
 
 
 def _rest_available(url: str) -> bool:

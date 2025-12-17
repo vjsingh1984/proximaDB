@@ -551,6 +551,19 @@ impl SstableWriter {
             SstBlockHeader, SstGlobalHeader,
         };
 
+        // === CENTROID COMPUTATION (LanceDB-inspired IVF optimization) ===
+        // Compute centroid (mean vector) for this SST file to enable partition-aware search
+        let (centroid, centroid_distance_sum, min_distance_to_centroid, max_distance_to_centroid) =
+            self.compute_centroid_stats(&all_vectors);
+
+        debug!(
+            "📊 Computed centroid for {} vectors: dim={}, min_dist={:.4}, max_dist={:.4}",
+            all_vectors.len(),
+            centroid.as_ref().map(|c| c.len()).unwrap_or(0),
+            min_distance_to_centroid.unwrap_or(0.0),
+            max_distance_to_centroid.unwrap_or(0.0)
+        );
+
         // Calculate offsets manually since atomic writer doesn't track position
         let current_offset = 0u64;
 
@@ -624,6 +637,11 @@ impl SstableWriter {
             vector_format: super::VectorFormat::Fixed { dimension: 3 },
             fixed_dimension: None,
             compression_ratio: 1.0,
+            // Centroid index for IVF-style search optimization
+            centroid,
+            centroid_distance_sum,
+            min_distance_to_centroid,
+            max_distance_to_centroid,
         };
         // Serialize header without compression (minimal savings not worth complexity)
         let header_bytes = bincode::serialize(&header)?;
@@ -973,6 +991,14 @@ impl SstableWriter {
 
         // Write header length (4 bytes, little-endian)
         // Create a proper SstableHeader structure that matches what the reader expects
+        // For finalize_sstable, compute centroid from the records
+        let vectors: Vec<Vec<f32>> = sorted_records
+            .iter()
+            .map(|(_, r)| r.vector.clone())
+            .collect();
+        let (centroid, centroid_distance_sum, min_distance_to_centroid, max_distance_to_centroid) =
+            self.compute_centroid_stats(&vectors);
+
         let header = super::SstableHeader {
             version: 1,
             level: 0, // L0 for new SSTable
@@ -1006,6 +1032,11 @@ impl SstableWriter {
             vector_format: super::VectorFormat::Fixed { dimension: 3 },
             fixed_dimension: None, // Not used when vector_format contains dimension
             compression_ratio: 1.0,
+            // Centroid index for IVF-style search optimization
+            centroid,
+            centroid_distance_sum,
+            min_distance_to_centroid,
+            max_distance_to_centroid,
         };
         let header_bytes = bincode::serialize(&header)?;
         let header_len = header_bytes.len() as u32;
@@ -1108,6 +1139,86 @@ impl SstableWriter {
     /// Check if dimension is supported for fixed-length optimization
     fn is_supported_fixed_dimension(dimension: usize) -> bool {
         matches!(dimension, 64 | 128 | 256 | 512 | 768 | 1024 | 1536 | 2048)
+    }
+
+    /// Compute centroid statistics for IVF-style search optimization (LanceDB-inspired)
+    ///
+    /// Returns:
+    /// - centroid: The mean vector of all vectors in this SST file
+    /// - centroid_distance_sum: Sum of squared distances to centroid (for variance calculation)
+    /// - min_distance_to_centroid: Minimum distance from any vector to the centroid
+    /// - max_distance_to_centroid: Maximum distance from any vector to the centroid
+    ///
+    /// These statistics enable efficient partition-aware search:
+    /// 1. Query first computes distance to each SST file's centroid
+    /// 2. Only SST files with centroid distance < k-th best + max_distance_to_centroid are searched
+    /// 3. This can skip 80-90% of SST files for approximate search (nprobe=sqrt(n))
+    fn compute_centroid_stats(
+        &self,
+        vectors: &[Vec<f32>],
+    ) -> (Option<Vec<f32>>, Option<f32>, Option<f32>, Option<f32>) {
+        if vectors.is_empty() {
+            return (None, None, None, None);
+        }
+
+        // Get dimension from first non-empty vector
+        let dimension = match vectors.iter().find(|v| !v.is_empty()) {
+            Some(v) => v.len(),
+            None => return (None, None, None, None),
+        };
+
+        if dimension == 0 {
+            return (None, None, None, None);
+        }
+
+        // Compute centroid (mean of all vectors)
+        let n = vectors.len() as f32;
+        let mut centroid = vec![0.0f32; dimension];
+
+        for vector in vectors {
+            if vector.len() == dimension {
+                for (i, &val) in vector.iter().enumerate() {
+                    centroid[i] += val;
+                }
+            }
+        }
+
+        for c in &mut centroid {
+            *c /= n;
+        }
+
+        // Compute distance statistics
+        let mut distance_sum = 0.0f32;
+        let mut min_distance = f32::MAX;
+        let mut max_distance = f32::MIN;
+
+        for vector in vectors {
+            if vector.len() == dimension {
+                // Compute squared Euclidean distance to centroid
+                let mut dist_sq = 0.0f32;
+                for (i, &val) in vector.iter().enumerate() {
+                    let diff = val - centroid[i];
+                    dist_sq += diff * diff;
+                }
+                let dist = dist_sq.sqrt();
+
+                distance_sum += dist_sq;
+                min_distance = min_distance.min(dist);
+                max_distance = max_distance.max(dist);
+            }
+        }
+
+        // Handle edge case where no valid vectors were processed
+        if min_distance == f32::MAX {
+            return (Some(centroid), None, None, None);
+        }
+
+        (
+            Some(centroid),
+            Some(distance_sum),
+            Some(min_distance),
+            Some(max_distance),
+        )
     }
 
     // REMOVED: estimate_compression_ratio - no longer needed without compression_ratio field

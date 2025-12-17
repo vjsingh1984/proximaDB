@@ -12,6 +12,8 @@ use axum::{
 };
 use std::sync::Arc;
 use tracing::{debug, error, info, trace};
+#[cfg(any(feature = "ai_endpoints", feature = "sales_endpoints"))]
+use tracing::warn;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
@@ -680,23 +682,31 @@ pub fn create_router(state: AppState) -> axum::Router {
         use crate::storage::entity_store::{
             CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
         };
+
         let engine = state
             .unified_handlers
             .vector_operations_service
             .unified_engine();
-        let store = Arc::new(ProximaEntityStore::with_vector_service(
+        let legacy_store = ProximaEntityStore::with_vector_service(
             engine,
             Arc::new(CsrRelationsStore::new()),
             Arc::new(InMemoryProvenanceRegistry::new()),
             state.unified_handlers.vector_operations_service.clone(),
-        ));
+        );
+
+        // Register legacy store globally for compatibility (entity API currently uses legacy store).
+        let legacy_arc = Arc::new(legacy_store);
+        ProximaEntityStore::register_global(legacy_arc.clone());
+
+        // Use the same Arc - no need to clone the inner value
+        let store = legacy_arc.clone();
         // Register store globally for hybrid executor access (embedding catalog)
         crate::storage::entity_store::ProximaEntityStore::register_global(store.clone());
         let entity_state = EntityApiState { store };
         entities::configure_routes().with_state(entity_state)
     };
 
-    let router = axum::Router::new()
+    let mut router = axum::Router::new()
         // Vector operations
         .route("/api/v1/search", post(vector_search))
         .route("/api/v1/vectors/batch", post(vector_batch))
@@ -736,6 +746,42 @@ pub fn create_router(state: AppState) -> axum::Router {
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router)
         .with_state(state);
+
+    // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
+    #[cfg(feature = "ai_endpoints")]
+    {
+        use crate::api_handlers::ai_endpoints;
+
+        match tokio::runtime::Runtime::new()
+            .and_then(|rt| rt.block_on(ai_endpoints::initialize_ai_service_state()))
+        {
+            Ok(ai_state) => {
+                router = router.nest("/ai", ai_endpoints::create_ai_router(ai_state));
+                info!("✅ AI endpoints enabled at /ai");
+            }
+            Err(e) => {
+                warn!("AI endpoints disabled (initialization failed): {}", e);
+            }
+        }
+    }
+
+    // Optional Sales endpoints (disabled by default; enable with `--features sales_endpoints`)
+    #[cfg(feature = "sales_endpoints")]
+    {
+        use crate::api_handlers::sales_endpoints;
+
+        match tokio::runtime::Runtime::new()
+            .and_then(|rt| rt.block_on(sales_endpoints::initialize_sales_service_state()))
+        {
+            Ok(sales_state) => {
+                router = router.nest("/sales", sales_endpoints::create_sales_router(sales_state));
+                info!("✅ Sales endpoints enabled at /sales");
+            }
+            Err(e) => {
+                warn!("Sales endpoints disabled (initialization failed): {}", e);
+            }
+        }
+    }
 
     info!("✅ REST API: Router created with routes:");
     info!("   POST   /api/v1/collections (collection_operation)");

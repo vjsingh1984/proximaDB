@@ -27,7 +27,7 @@ import numpy as np
 
 # Try importing ProximaDB native module
 try:
-    import proximadb
+    import proximadb_sdk
     PROXIMADB_AVAILABLE = True
     print(f"ProximaDB v{proximadb.__version__} loaded")
 except ImportError:

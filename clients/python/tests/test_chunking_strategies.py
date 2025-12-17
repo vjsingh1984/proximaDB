@@ -2,7 +2,7 @@
 Test all chunking strategies with ProximaDB SDK
 """
 import pytest
-from proximadb.chunking import (
+from proximadb_sdk.chunking import (
     TextChunker, ChunkingConfig, ChunkingStrategy,
     chunk_by_sentences, chunk_by_paragraphs, chunk_sliding_window,
     create_chunker

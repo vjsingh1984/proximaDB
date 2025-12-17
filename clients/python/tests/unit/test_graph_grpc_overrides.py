@@ -1,8 +1,36 @@
 import pytest
+from unittest.mock import Mock, patch
 
 import types
-from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
-import proximadb.protocols.grpc_sync as grpc_mod
+from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
+import proximadb_sdk.protocols.grpc_sync as grpc_mod
+
+
+class MockResourcePool:
+    """Mock resource pool that doesn't actually create connections"""
+    def __init__(self, factory, max_size=5, **kwargs):
+        self.factory = factory
+        self.max_size = max_size
+        self._resources = []
+
+    def acquire(self, timeout=None):
+        return Mock()
+
+    def release(self, resource):
+        pass
+
+    def close(self):
+        pass
+
+    def get_stats(self):
+        """Return mock pool stats as dict"""
+        return {
+            'total_resources': self.max_size,
+            'available_resources': self.max_size,
+            'in_use_resources': 0,
+            'resources_created': self.max_size,
+            'resources_destroyed': 0
+        }
 
 
 def test_grpc_metadata_overrides(monkeypatch):
@@ -39,7 +67,7 @@ def test_grpc_metadata_overrides(monkeypatch):
     ), raising=False)
 
     # Patch connection pool to bypass real channels
-    from proximadb.protocols.connection_pools import GrpcConnectionPool, GrpcChannelContext
+    from proximadb_sdk.protocols.connection_pools import GrpcConnectionPool, GrpcChannelContext
 
     class FakePool:
         def __init__(self, *a, **k):
@@ -57,8 +85,10 @@ def test_grpc_metadata_overrides(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("proximadb.protocols.connection_pools.GrpcConnectionPool", FakePool)
-    monkeypatch.setattr("proximadb.protocols.connection_pools.GrpcChannelContext", FakeCtx)
+    monkeypatch.setattr("proximadb_sdk.protocols.connection_pools.GrpcConnectionPool", FakePool)
+    monkeypatch.setattr("proximadb_sdk.protocols.connection_pools.GrpcChannelContext", FakeCtx)
+    monkeypatch.setattr("proximadb_sdk.resource_pool.ResourcePool", MockResourcePool)
+    monkeypatch.setattr("grpc.insecure_channel", lambda *a, **k: Mock())
 
     client = ProximaDBSyncGrpcClient("localhost:5679")
     resp = client.shortest_path(

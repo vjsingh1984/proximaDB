@@ -7,7 +7,7 @@ Tests each storage engine (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX) with and with
 import pytest
 import numpy as np
 import time
-from proximadb import connect_rest, connect_grpc, StorageEngine, VectorRecord
+from proximadb_sdk import connect_rest, connect_grpc, StorageEngine, VectorRecord
 
 
 # Test parameters for each engine

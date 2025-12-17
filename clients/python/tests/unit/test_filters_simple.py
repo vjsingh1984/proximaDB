@@ -2,7 +2,7 @@
 Test suite for ProximaDB filter builder API - simplified version
 """
 import pytest
-from proximadb.filters import (
+from proximadb_sdk.filters import (
     FilterOp,
     LogicalOp,
     FilterCondition,

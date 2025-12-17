@@ -154,32 +154,23 @@ def main():
             print(f"      Text: {text_preview}")
             print(f"      Category: {result.metadata.get('category', 'N/A')}")
         
-        # Step 6: Search with client-side metadata filtering (demo)
-        print("\n🔎 Searching with metadata filtering...")
-        
-        # Get more results to filter manually for demonstration
-        all_results = client.search(
+        # Step 6: Search with server-side metadata filtering (preferred)
+        print("\n🔎 Searching with metadata filtering (server-side)...")
+
+        metadata_filter = {
+            "operator": "and",
+            "conditions": [
+                {"field": "category", "operation": "equals", "value": "ai_ml"},
+                {"field": "document_type", "operation": "equals", "value": "article"},
+            ],
+        }
+
+        filtered_results = client.search(
             collection_id=collection_name,
             vector=query_vector,
-            top_k=10
+            top_k=5,
+            metadata_filter=metadata_filter,
         )
-        
-        # Filter for AI/ML category documents
-        filtered_results = []
-        for result in all_results:
-            # Handle both string values and dict-wrapped values
-            category = result.metadata.get('category')
-            if isinstance(category, dict):
-                category = category.get('string_value', category)
-
-            doc_type = result.metadata.get('document_type')
-            if isinstance(doc_type, dict):
-                doc_type = doc_type.get('string_value', doc_type)
-
-            if category == 'ai_ml' and doc_type == 'article':
-                filtered_results.append(result)
-                if len(filtered_results) >= 5:  # Limit to 5 results
-                    break
 
         print(f"\n✅ Found {len(filtered_results)} AI/ML articles:")
         for result in filtered_results:

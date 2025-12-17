@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.intelligent_router import (
+from proximadb_sdk.intelligent_router import (
     IntelligentRouter,
     RoutingConfig,
     RoutingRule,
@@ -29,10 +29,10 @@ from proximadb.intelligent_router import (
     ProtocolMetrics,
     ProtocolHealth
 )
-from proximadb.config import Protocol
+from proximadb_sdk.config import Protocol
 # Backward compatibility
-from proximadb.operation_router import OperationRouter, create_operation_router
-from proximadb.models import VectorRecord
+from proximadb_sdk.operation_router import OperationRouter, create_operation_router
+from proximadb_sdk.models import VectorRecord
 
 
 class TestProtocolMetrics:
@@ -350,7 +350,7 @@ class TestBackwardCompatibility:
     def test_imports_work(self):
         """Test that old imports still work"""
         # These imports should work due to backward compatibility
-        from proximadb.operation_router import (
+        from proximadb_sdk.operation_router import (
             OperationRouter,
             RoutingConfig,
             RoutingStrategy,

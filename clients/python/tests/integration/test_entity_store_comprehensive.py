@@ -28,7 +28,7 @@ from typing import List, Dict, Any
 import numpy as np
 from ..embedding_utils import embed_seed
 
-from proximadb import ProximaDBClient, VectorRecord
+from proximadb_sdk import ProximaDBClient, VectorRecord
 
 
 def _server_available(url: str) -> bool:

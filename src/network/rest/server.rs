@@ -16,7 +16,7 @@
 
 //! REST server implementation using axum
 
-use axum::{Router, extract::DefaultBodyLimit};
+use axum::{Router, extract::DefaultBodyLimit, middleware};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -29,6 +29,7 @@ use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
 use crate::network::middleware::backpressure::{BackpressureConfig, create_concurrency_limit_layer};
 use crate::network::middleware::cors::{CorsConfig, create_cors_layer};
+use crate::network::middleware::request_id::request_id_middleware;
 use crate::network::middleware::timeout::{TimeoutConfig, create_timeout_layer};
 
 /// REST server for ProximaDB
@@ -207,6 +208,9 @@ impl RestServer {
             base_router
         };
 
+        // Add request ID middleware for tracing and correlation
+        let base_router = base_router.layer(middleware::from_fn(request_id_middleware));
+
         let router = if compression {
             // Create compression layer with support for multiple algorithms
             // Priority order (fastest to best compression): deflate, gzip, zstd, brotli
@@ -223,9 +227,15 @@ impl RestServer {
                 .br(true)
                 .zstd(true);
 
+            // IMPORTANT: Layer ordering matters for security!
+            // In Tower ServiceBuilder, layers wrap previous layers, so request flow is:
+            // cors -> trace -> compression -> body_limit -> decompression -> handler
+            //
+            // We want body limit BEFORE decompression to prevent decompression bombs
+            // (small compressed payload expanding to huge uncompressed data causing OOM)
             let service_builder = ServiceBuilder::new()
-                .layer(DefaultBodyLimit::max(max_size_bytes as usize))
-                .layer(decompression_layer) // Handle compressed requests
+                .layer(decompression_layer) // Handle compressed requests (innermost)
+                .layer(DefaultBodyLimit::max(max_size_bytes as usize)) // Body limit BEFORE decompression
                 .layer(compression_layer) // Compress responses
                 .layer(TraceLayer::new_for_http())
                 .layer(cors_layer);

@@ -172,6 +172,8 @@ pub mod events;
 pub mod graph_collection;
 pub mod operations;
 pub mod search;
+#[cfg(feature = "tenant_access")]
+pub mod tenant_access;
 
 // Legacy test module (to be reorganized)
 #[cfg(test)]

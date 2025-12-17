@@ -3,8 +3,8 @@ import uuid
 import numpy as np
 import pytest
 
-from proximadb.unified_client import ProximaDBClient
-from proximadb.models import VectorRecord
+from proximadb_sdk.unified_client import ProximaDBClient
+from proximadb_sdk.models import VectorRecord
 
 
 def rest_available(url: str) -> bool:

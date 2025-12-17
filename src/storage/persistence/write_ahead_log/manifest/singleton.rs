@@ -1,39 +1,47 @@
 //! Global Manifest Singleton with Convenience Functions
+//!
+//! Supports both server mode (single instance) and embedded mode (multiple instances).
+//! In embedded mode, call `reset()` before creating a new database instance.
 
 use anyhow::{Context, Result, anyhow};
-use once_cell::sync::OnceCell;
-use std::sync::Arc;
-use tracing::{info, trace, warn};
+use std::sync::{Arc, RwLock};
+use tracing::{debug, info, trace, warn};
 
 use super::{
     GlobalManifestEntry, GlobalManifestService, GlobalManifestServiceConfig, WalEntryStatus,
 };
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
 
-/// Global singleton instance
-static GLOBAL_MANIFEST: OnceCell<Arc<GlobalManifestService>> = OnceCell::new();
+/// Global singleton instance - uses RwLock to support reset in embedded mode
+static GLOBAL_MANIFEST: RwLock<Option<Arc<GlobalManifestService>>> = RwLock::new(None);
 
 /// Initialize the global manifest (call once during server startup)
 pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
-    if let Some(service) = GLOBAL_MANIFEST.get() {
-        info!("✅ Global manifest already initialized");
-        return Ok(service.clone());
+    // Check if already initialized
+    {
+        let guard = GLOBAL_MANIFEST
+            .read()
+            .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
+        if let Some(ref service) = *guard {
+            debug!("Global manifest already initialized");
+            return Ok(service.clone());
+        }
     }
 
-    info!("🌐 Initializing global WAL manifest");
-    info!(
-        "🔍 DEBUG: Config has {} data directories",
+    info!("Initializing global WAL manifest");
+    debug!(
+        "Config has {} data directories",
         config.multi_disk.data_directories.len()
     );
-    info!(
-        "🔍 DEBUG: Config global_manifest_url: {:?}",
+    debug!(
+        "Config global_manifest_url: {:?}",
         config.global_manifest_url
     );
 
     // Get manifest location from explicit config or fallback to primary disk
     let wal_base_url = if let Some(ref explicit_url) = config.global_manifest_url {
-        info!(
-            "📌 Using explicit global manifest location: {}",
+        debug!(
+            "Using explicit global manifest location: {}",
             explicit_url
         );
         explicit_url.clone()
@@ -46,15 +54,15 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
             .cloned()
             .unwrap_or_else(|| "file://./data".to_string());
         let url = format!("{}/wal", primary_disk.trim_end_matches('/'));
-        info!("📁 Using default manifest location (primary disk): {}", url);
+        debug!("Using default manifest location (primary disk): {}", url);
         url
     };
 
-    trace!("🔍 : Final wal_base_url: {}", wal_base_url);
+    trace!("Final wal_base_url: {}", wal_base_url);
 
     if config.multi_disk.data_directories.len() > 1 {
         info!(
-            "📊 Multi-disk mode: {} data disks, 1 global manifest location",
+            "Multi-disk mode: {} data disks, 1 global manifest location",
             config.multi_disk.data_directories.len()
         );
     }
@@ -72,39 +80,82 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
     )
     .await?;
 
-    match GLOBAL_MANIFEST.set(service.clone()) {
-        Ok(()) => {
-            info!("✅ Global manifest initialized");
-            Ok(service)
+    // Store in singleton
+    {
+        let mut guard = GLOBAL_MANIFEST
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
+
+        // Double-check in case another thread initialized while we were creating
+        if guard.is_some() {
+            warn!("Manifest initialized by another thread");
+            return Ok(guard.as_ref().unwrap().clone());
         }
-        Err(_) => {
-            warn!("⚠️  Manifest initialized by another thread");
-            Ok(GLOBAL_MANIFEST.get().unwrap().clone())
-        }
+
+        *guard = Some(service.clone());
     }
+
+    info!("Global manifest initialized");
+    Ok(service)
 }
 
 /// Get the global manifest service (returns None if not initialized)
 pub fn get_service() -> Option<Arc<GlobalManifestService>> {
-    GLOBAL_MANIFEST.get().cloned()
+    GLOBAL_MANIFEST
+        .read()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+/// Reset the global manifest singleton (for embedded mode)
+///
+/// This shuts down the existing manifest and clears the singleton so a new one
+/// can be initialized with different configuration. Call this before creating
+/// a new EmbeddedProximaDB instance with a different storage location.
+pub async fn reset() -> Result<()> {
+    // First shutdown the existing service if any
+    let service = {
+        let guard = GLOBAL_MANIFEST
+            .read()
+            .map_err(|e| anyhow!("Failed to acquire read lock: {}", e))?;
+        guard.clone()
+    };
+
+    if let Some(svc) = service {
+        debug!("Shutting down existing global manifest before reset");
+        if let Err(e) = svc.shutdown().await {
+            warn!("Error during manifest shutdown (continuing with reset): {}", e);
+        }
+    }
+
+    // Clear the singleton
+    {
+        let mut guard = GLOBAL_MANIFEST
+            .write()
+            .map_err(|e| anyhow!("Failed to acquire write lock: {}", e))?;
+        *guard = None;
+    }
+
+    debug!("Global manifest singleton reset");
+    Ok(())
 }
 
 /// Get or initialize with default config (not recommended, use init() instead)
 pub async fn get_or_init() -> Result<Arc<GlobalManifestService>> {
-    if let Some(service) = GLOBAL_MANIFEST.get() {
-        return Ok(service.clone());
+    if let Some(service) = get_service() {
+        return Ok(service);
     }
 
-    warn!("⚠️  Manifest not initialized, using default config");
+    warn!("Manifest not initialized, using default config");
     init(&WALConfig::default()).await
 }
 
 /// Shutdown the global manifest
 pub async fn shutdown() -> Result<()> {
-    if let Some(service) = GLOBAL_MANIFEST.get() {
-        info!("🛑 Shutting down global manifest");
+    if let Some(service) = get_service() {
+        info!("Shutting down global manifest");
         service.shutdown().await?;
-        info!("✅ Manifest shut down");
+        info!("Manifest shut down");
     }
     Ok(())
 }
@@ -163,4 +214,13 @@ pub async fn cleanup_checkpointed() -> Result<usize> {
 pub async fn mark_flushed(batch_ids: &[String]) -> Result<()> {
     let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
     service.mark_flushed(batch_ids).await
+}
+
+/// Mark entries as flushed AND delete the actual WAL files from disk
+///
+/// This is the recommended function to use after a successful flush to storage.
+/// It marks entries as flushed first (for crash safety), then deletes the WAL files.
+pub async fn mark_flushed_and_delete_files(batch_ids: &[String]) -> Result<usize> {
+    let service = get_service().ok_or_else(|| anyhow!("Global manifest not initialized"))?;
+    service.mark_flushed_and_delete_files(batch_ids).await
 }

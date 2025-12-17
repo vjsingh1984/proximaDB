@@ -175,7 +175,7 @@ pub mod typed_field {
     }
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StringArray {
     #[prost(string, repeated, tag = "1")]
     pub values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
@@ -260,7 +260,7 @@ pub struct UpsertEntityRequest {
     #[prost(bool, tag = "3")]
     pub create_collection_if_missing: bool,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpsertEntityResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
@@ -269,7 +269,7 @@ pub struct UpsertEntityResponse {
     #[prost(string, tag = "3")]
     pub message: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetEntityRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -285,7 +285,7 @@ pub struct GetEntityResponse {
     #[prost(message, optional, tag = "1")]
     pub entity: ::core::option::Option<Entity>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteEntityRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -294,7 +294,7 @@ pub struct DeleteEntityRequest {
     #[prost(bool, tag = "3")]
     pub hard_delete: bool,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteEntityResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
@@ -398,14 +398,14 @@ pub mod filter_clause {
         BoolValue(bool),
     }
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TemporalClause {
     #[prost(oneof = "temporal_clause::Clause", tags = "1, 2")]
     pub clause: ::core::option::Option<temporal_clause::Clause>,
 }
 /// Nested message and enum types in `TemporalClause`.
 pub mod temporal_clause {
-    #[derive(Clone, Copy, PartialEq, ::prost::Oneof)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Clause {
         /// Unix epoch milliseconds
         #[prost(int64, tag = "1")]
@@ -415,7 +415,7 @@ pub mod temporal_clause {
     }
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimeRange {
     /// Unix epoch milliseconds
     #[prost(int64, tag = "1")]
@@ -425,7 +425,7 @@ pub struct TimeRange {
     pub end_ms: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PageInfo {
     #[prost(string, tag = "1")]
     pub cursor: ::prost::alloc::string::String,
@@ -433,7 +433,7 @@ pub struct PageInfo {
     pub has_more: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProgressInfo {
     #[prost(uint32, tag = "1")]
     pub stage: u32,
@@ -660,7 +660,7 @@ pub mod entity_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.EntityService/UpsertEntity",
             );
@@ -684,7 +684,7 @@ pub mod entity_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.EntityService/GetEntity",
             );
@@ -708,7 +708,7 @@ pub mod entity_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.EntityService/DeleteEntity",
             );
@@ -732,7 +732,7 @@ pub mod entity_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.EntityService/SearchEntities",
             );
@@ -892,7 +892,7 @@ pub mod entity_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = UpsertEntitySvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -937,7 +937,7 @@ pub mod entity_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetEntitySvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -982,7 +982,7 @@ pub mod entity_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeleteEntitySvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1027,7 +1027,7 @@ pub mod entity_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = SearchEntitiesSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1089,7 +1089,7 @@ pub struct CreateRelationRequest {
     #[prost(message, optional, tag = "2")]
     pub relation: ::core::option::Option<Relation>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteRelationRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -1100,7 +1100,7 @@ pub struct DeleteRelationRequest {
     #[prost(string, tag = "4")]
     pub relation_type: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListRelationsRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -1122,7 +1122,7 @@ pub struct GraphPath {
     #[prost(message, repeated, tag = "2")]
     pub relations: ::prost::alloc::vec::Vec<Relation>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TraverseRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -1242,7 +1242,7 @@ pub mod relations_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.RelationsService/CreateRelation",
             );
@@ -1266,7 +1266,7 @@ pub mod relations_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.RelationsService/DeleteRelation",
             );
@@ -1293,7 +1293,7 @@ pub mod relations_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.RelationsService/ListRelations",
             );
@@ -1320,7 +1320,7 @@ pub mod relations_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.RelationsService/Traverse",
             );
@@ -1479,7 +1479,7 @@ pub mod relations_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CreateRelationSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1525,7 +1525,7 @@ pub mod relations_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeleteRelationSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1571,7 +1571,7 @@ pub mod relations_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ListRelationsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1616,7 +1616,7 @@ pub mod relations_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = TraverseSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -1671,7 +1671,7 @@ pub mod relations_service_server {
         const NAME: &'static str = SERVICE_NAME;
     }
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AssembleDocumentRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -1695,7 +1695,7 @@ pub struct AssembleDocumentResponse {
     #[prost(message, repeated, tag = "2")]
     pub segments: ::prost::alloc::vec::Vec<DocumentSegment>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AssembleContextRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -1828,7 +1828,7 @@ pub mod context_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.ContextService/AssembleDocument",
             );
@@ -1855,7 +1855,7 @@ pub mod context_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.ContextService/AssembleContext",
             );
@@ -2006,7 +2006,7 @@ pub mod context_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = AssembleDocumentSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2052,7 +2052,7 @@ pub mod context_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = AssembleContextSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -2245,7 +2245,7 @@ pub struct VectorBatchRequest {
     #[prost(message, repeated, tag = "2")]
     pub vectors: ::prost::alloc::vec::Vec<VectorRecord>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct VectorGetRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
@@ -2257,7 +2257,7 @@ pub struct VectorGetRequest {
     pub include_metadata: ::core::option::Option<bool>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperationMetrics {
     #[prost(int64, tag = "1")]
     pub total_processed: i64,
@@ -2538,7 +2538,7 @@ pub mod quantization_level {
 }
 /// Filterable column specification
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct FilterableColumnSpec {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -2552,14 +2552,14 @@ pub struct FilterableColumnSpec {
     pub estimated_cardinality: ::core::option::Option<u32>,
 }
 /// Source content for provenance tracking
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SourceContent {
     #[prost(oneof = "source_content::Data", tags = "1, 2, 3")]
     pub data: ::core::option::Option<source_content::Data>,
 }
 /// Nested message and enum types in `SourceContent`.
 pub mod source_content {
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Data {
         #[prost(string, tag = "1")]
         TextContent(::prost::alloc::string::String),
@@ -2626,7 +2626,7 @@ pub struct FilterCondition {
 }
 /// Index configurations
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HnswConfig {
     /// Default: 16
     #[prost(uint32, optional, tag = "1")]
@@ -2654,7 +2654,7 @@ pub struct HnswConfig {
     pub lazy_loading: ::core::option::Option<bool>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IvfConfig {
     /// Default: sqrt(num_vectors)
     #[prost(uint32, optional, tag = "1")]
@@ -3265,7 +3265,7 @@ pub mod vector_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.VectorService/VectorBatch",
             );
@@ -3289,7 +3289,7 @@ pub mod vector_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.VectorService/VectorSearch",
             );
@@ -3313,7 +3313,7 @@ pub mod vector_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.VectorService/VectorGet",
             );
@@ -3321,6 +3321,33 @@ pub mod vector_service_client {
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.VectorService", "VectorGet"));
             self.inner.unary(req, path, codec).await
+        }
+        /// Streaming search for large result sets - streams individual search results
+        pub async fn vector_search_stream(
+            &mut self,
+            request: impl tonic::IntoRequest<super::VectorSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::SearchVectorRecord>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.VectorService/VectorSearchStream",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.VectorService", "VectorSearchStream"),
+                );
+            self.inner.server_streaming(req, path, codec).await
         }
     }
 }
@@ -3356,6 +3383,20 @@ pub mod vector_service_server {
             request: tonic::Request<super::VectorGetRequest>,
         ) -> std::result::Result<
             tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the VectorSearchStream method.
+        type VectorSearchStreamStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::SearchVectorRecord, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
+        /// Streaming search for large result sets - streams individual search results
+        async fn vector_search_stream(
+            &self,
+            request: tonic::Request<super::VectorSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::VectorSearchStreamStream>,
             tonic::Status,
         >;
     }
@@ -3466,7 +3507,7 @@ pub mod vector_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = VectorBatchSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -3511,7 +3552,7 @@ pub mod vector_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = VectorSearchSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -3556,7 +3597,7 @@ pub mod vector_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = VectorGetSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -3567,6 +3608,53 @@ pub mod vector_service_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.VectorService/VectorSearchStream" => {
+                    #[allow(non_camel_case_types)]
+                    struct VectorSearchStreamSvc<T: VectorService>(pub Arc<T>);
+                    impl<
+                        T: VectorService,
+                    > tonic::server::ServerStreamingService<super::VectorSearchRequest>
+                    for VectorSearchStreamSvc<T> {
+                        type Response = super::SearchVectorRecord;
+                        type ResponseStream = T::VectorSearchStreamStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::VectorSearchRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as VectorService>::vector_search_stream(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = VectorSearchStreamSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)
@@ -3783,7 +3871,7 @@ pub struct TraversalResponse {
 }
 /// Traversal statistics
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TraversalStats {
     #[prost(uint32, tag = "1")]
     pub nodes_visited: u32,
@@ -3927,7 +4015,7 @@ pub struct HybridSearchResponse {
 }
 /// Statistics for hybrid search
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HybridSearchStats {
     #[prost(uint32, tag = "1")]
     pub vector_results_count: u32,
@@ -3960,7 +4048,7 @@ pub struct GraphStats {
     pub connected_components: u32,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LabelStats {
     #[prost(string, tag = "1")]
     pub label: ::prost::alloc::string::String,
@@ -3968,7 +4056,7 @@ pub struct LabelStats {
     pub count: u64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EdgeTypeStats {
     #[prost(string, tag = "1")]
     pub edge_type: ::prost::alloc::string::String,
@@ -3983,7 +4071,7 @@ pub struct CreateNodeRequest {
     #[prost(message, optional, tag = "2")]
     pub node: ::core::option::Option<Node>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetNodeRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
@@ -3997,7 +4085,7 @@ pub struct UpdateNodeRequest {
     #[prost(message, optional, tag = "2")]
     pub node: ::core::option::Option<Node>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteNodeRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
@@ -4012,7 +4100,7 @@ pub struct CreateEdgeRequest {
     #[prost(message, optional, tag = "2")]
     pub edge: ::core::option::Option<Edge>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetEdgeRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
@@ -4026,14 +4114,14 @@ pub struct UpdateEdgeRequest {
     #[prost(message, optional, tag = "2")]
     pub edge: ::core::option::Option<Edge>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteEdgeRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub edge_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetNeighborsRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
@@ -4042,13 +4130,13 @@ pub struct GetNeighborsRequest {
     #[prost(string, optional, tag = "3")]
     pub edge_type: ::core::option::Option<::prost::alloc::string::String>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetStatsRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
 }
 /// Shortest path request/response
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ShortestPathRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
@@ -4094,7 +4182,7 @@ pub struct TraversalChunk {
     pub done: bool,
 }
 /// Unique constraint DDL
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UniqueConstraintRequest {
     #[prost(string, tag = "1")]
     pub graph_id: ::prost::alloc::string::String,
@@ -4103,7 +4191,7 @@ pub struct UniqueConstraintRequest {
     #[prost(string, tag = "3")]
     pub property: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UniqueConstraintResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
@@ -4117,13 +4205,13 @@ pub struct ConnectedComponentsResponse {
     pub components: ::prost::alloc::vec::Vec<Component>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Component {
     #[prost(string, repeated, tag = "1")]
     pub node_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Cycle detection response
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CycleCheckResponse {
     #[prost(bool, tag = "1")]
     pub has_cycle: bool,
@@ -4383,7 +4471,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/CreateNode",
             );
@@ -4404,7 +4492,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/GetNode",
             );
@@ -4425,7 +4513,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/UpdateNode",
             );
@@ -4446,7 +4534,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/DeleteNode",
             );
@@ -4468,7 +4556,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/CreateEdge",
             );
@@ -4489,7 +4577,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/GetEdge",
             );
@@ -4510,7 +4598,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/UpdateEdge",
             );
@@ -4531,7 +4619,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/DeleteEdge",
             );
@@ -4553,7 +4641,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/QueryNodes",
             );
@@ -4574,7 +4662,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/QueryEdges",
             );
@@ -4596,7 +4684,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/GetNeighbors",
             );
@@ -4620,7 +4708,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/TraverseGraph",
             );
@@ -4645,7 +4733,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/StreamTraverse",
             );
@@ -4666,7 +4754,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/GetGraphStats",
             );
@@ -4691,7 +4779,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/ShortestPath",
             );
@@ -4716,7 +4804,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/GetConnectedComponents",
             );
@@ -4745,7 +4833,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/HasCycle",
             );
@@ -4770,7 +4858,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/AddUniqueConstraint",
             );
@@ -4796,7 +4884,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/RemoveUniqueConstraint",
             );
@@ -4823,7 +4911,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/BatchCreateNodes",
             );
@@ -4846,7 +4934,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/BatchCreateEdges",
             );
@@ -4873,7 +4961,7 @@ pub mod graph_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.GraphService/ExecuteHybridQuery",
             );
@@ -5135,7 +5223,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CreateNodeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5180,7 +5268,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetNodeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5225,7 +5313,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = UpdateNodeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5270,7 +5358,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeleteNodeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5315,7 +5403,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CreateEdgeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5360,7 +5448,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetEdgeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5405,7 +5493,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = UpdateEdgeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5450,7 +5538,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeleteEdgeSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5493,7 +5581,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = QueryNodesSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5536,7 +5624,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = QueryEdgesSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5581,7 +5669,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetNeighborsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5626,7 +5714,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = TraverseGraphSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5672,7 +5760,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = StreamTraverseSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5717,7 +5805,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetGraphStatsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5762,7 +5850,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ShortestPathSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5811,7 +5899,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetConnectedComponentsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5856,7 +5944,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = HasCycleSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5902,7 +5990,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = AddUniqueConstraintSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5951,7 +6039,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = RemoveUniqueConstraintSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -5997,7 +6085,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = BatchCreateNodesSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -6043,7 +6131,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = BatchCreateEdgesSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -6089,7 +6177,7 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ExecuteHybridQuerySvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -6194,7 +6282,7 @@ pub struct CollectionConfig {
     pub embedding_models: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CollectionStats {
     #[prost(int64, tag = "1")]
     pub vector_count: i64,
@@ -6287,7 +6375,7 @@ pub struct IndexConfig {
 }
 /// Storage configuration
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StorageConfig {
     /// Default: auto-generated based on collection ID
     #[prost(string, optional, tag = "1")]
@@ -6325,13 +6413,13 @@ pub struct StorageAssignment {
     #[prost(int64, tag = "6")]
     pub assigned_at: i64,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetCollectionRequest {
     /// name or ID
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListCollectionsRequest {
     #[prost(uint32, optional, tag = "1")]
     pub limit: ::core::option::Option<u32>,
@@ -6345,12 +6433,12 @@ pub struct ListCollectionsResponse {
     #[prost(message, repeated, tag = "1")]
     pub collections: ::prost::alloc::vec::Vec<Collection>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteCollectionRequest {
     #[prost(string, tag = "1")]
     pub collection_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteCollectionResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
@@ -6571,7 +6659,7 @@ pub mod collection_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.CollectionService/CreateCollection",
             );
@@ -6594,7 +6682,7 @@ pub mod collection_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.CollectionService/GetCollection",
             );
@@ -6620,7 +6708,7 @@ pub mod collection_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.CollectionService/ListCollections",
             );
@@ -6646,7 +6734,7 @@ pub mod collection_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.CollectionService/DeleteCollection",
             );
@@ -6802,7 +6890,7 @@ pub mod collection_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CreateCollectionSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -6848,7 +6936,7 @@ pub mod collection_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetCollectionSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -6894,7 +6982,7 @@ pub mod collection_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ListCollectionsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -6940,7 +7028,7 @@ pub mod collection_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeleteCollectionSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -7102,7 +7190,7 @@ pub mod sql_service_client {
                         format!("Service was not ready: {}", e.into()),
                     )
                 })?;
-            let codec = tonic::codec::ProstCodec::default();
+            let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/proximadb.v1.SqlService/ExecuteSql",
             );
@@ -7241,7 +7329,7 @@ pub mod sql_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ExecuteSqlSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
+                        let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
                                 accept_compression_encodings,
@@ -7453,7 +7541,7 @@ pub mod property_constraint {
     }
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StringConstraint {
     #[prost(int32, optional, tag = "1")]
     pub min_length: ::core::option::Option<i32>,
@@ -7475,7 +7563,7 @@ pub struct NumericConstraint {
     pub multiple_of: ::core::option::Option<f64>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ArrayConstraint {
     #[prost(int32, optional, tag = "1")]
     pub min_items: ::core::option::Option<i32>,
@@ -7486,7 +7574,7 @@ pub struct ArrayConstraint {
     pub item_type: i32,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegexConstraint {
     /// Regular expression pattern
     #[prost(string, tag = "1")]
@@ -7497,7 +7585,7 @@ pub struct RegexConstraint {
 }
 /// Unique constraint definition
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UniqueConstraint {
     /// Constraint name
     #[prost(string, tag = "1")]
@@ -7585,7 +7673,7 @@ pub struct AccessControl {
     pub writers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Permission {
     /// User ID or role name
     #[prost(string, tag = "1")]
@@ -7661,7 +7749,7 @@ pub struct SchemaValidationResult {
     pub affected_edges: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ValidationError {
     /// Error description
     #[prost(string, tag = "1")]
@@ -7674,7 +7762,7 @@ pub struct ValidationError {
     pub severity: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ValidationWarning {
     /// Warning description
     #[prost(string, tag = "1")]

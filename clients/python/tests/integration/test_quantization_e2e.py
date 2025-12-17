@@ -13,10 +13,10 @@ from ..embedding_utils import embed_seed, embed_many
 import logging
 from typing import List, Dict, Any
 
-from proximadb import connect_rest, connect_grpc
+from proximadb_sdk import connect_rest, connect_grpc
 
 logger = logging.getLogger(__name__)
-from proximadb import (
+from proximadb_sdk import (
     CollectionConfig,
     DistanceMetric,
     QuantizationConfig,
@@ -25,7 +25,7 @@ from proximadb import (
     QuantizationHint,
     VectorRecord
 )
-# from proximadb import proximadb_pb2  # Use SDK models instead
+# from proximadb_sdk import proximadb_pb2  # Use SDK models instead
 
 
 class TestQuantizationE2E:

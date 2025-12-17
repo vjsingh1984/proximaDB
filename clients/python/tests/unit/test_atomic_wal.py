@@ -12,7 +12,7 @@ import requests
 import json
 import numpy as np
 from ..embedding_utils import embed_seed
-from proximadb import ProximaDBClient, Protocol
+from proximadb_sdk import ProximaDBClient, Protocol
 
 
 def test_atomic_wal_behavior():

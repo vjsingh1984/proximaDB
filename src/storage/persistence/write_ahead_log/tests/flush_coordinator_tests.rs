@@ -57,6 +57,7 @@ impl UnifiedStorageEngine for MockStorageEngine {
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: vec![],
         })
     }

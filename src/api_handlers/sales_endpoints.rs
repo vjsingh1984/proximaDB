@@ -1,6 +1,8 @@
 //! Sales Enablement API Endpoints
 //!
-//! Customer-facing API endpoints for trial management, demonstrations, and sales automation
+//! Customer-facing API endpoints for trial management, demonstrations, and sales automation.
+//! NOTE: This module is not exposed from `api_handlers::mod` or routed in the REST server,
+//! so these endpoints are currently dormant until integrated.
 
 use crate::sales_enablement::{EnterpriseTrialManager, TrialCreationRequest, EnterpriseTrial, TrialType};
 use serde::{Deserialize, Serialize};

@@ -54,6 +54,7 @@ ProximaDB is a **hybrid vector + graph database** built in Rust, optimized for:
 - **Cloud-Native**: S3/Azure/GCS support is feature-gated (`aws`, `azure`, `gcp`) and disabled by default; requires enabling features and credentials
 - **Production-Scale**: ~536K LOC across ~1,043 Rust files (scan: `rg --files src`)
 - **Well-Tested**: ~4,190 Rust tests detected (`#[test]` + `#[tokio::test]`; see Verification Notes)
+- **Optional Surfaces**: AI dashboards, sales/trial flows, tenant access, and executive intelligence are kept behind Cargo features to keep the default surface minimal. See `docs/feature_toggles.md`.
 
 ---
 
@@ -123,15 +124,20 @@ ProximaDB is a **hybrid vector + graph database** built in Rust, optimized for:
 
 **Purpose**: Foundation types and utilities shared across all modules
 
-**Key Files**:
-- `service_types.rs`: VectorRecord, Collection, SearchRequest, etc.
-- `config.rs`: System configuration structures
-- `error.rs`: Unified error handling
-- `hardware_capabilities.rs`: CPU/GPU feature detection (52KB, comprehensive)
+**Key Modules**:
+- `service_types.rs`: Core service types for vector operations (VectorRecord, Collection, etc.)
+- `config.rs`: System configuration structures and defaults
+- `config_loader.rs`: Configuration loading from files and environment
+- `config_reloader.rs`: Dynamic configuration reloading
+- `error.rs` & `errors/`: Unified error handling
+- `hardware_capabilities.rs`: CPU/GPU feature detection
 - `compression/`: Unified compression interface with adaptive selection
-- `bloom/`: Probabilistic data structures (4 strategies)
-- `memory/pool.rs`: Memory pool management
-- `quantization/`: Multi-level quantization (Binary, INT8, PQ4-PQ32)
+- `bloom/`: Probabilistic data structures for fast lookups
+- `memory/`: Memory management, pools, and allocation strategies
+- `quantization/`: This module has been moved to `src/compute/`.
+- `serialization/`: Serialization utilities for various formats
+- `resilience/`: Resilience patterns like Circuit Breaker and Retry
+- `utils/`: Common utility functions
 
 **Important Types**:
 ```rust
@@ -212,10 +218,12 @@ ProximaDB implements **6 specialized storage engines** using the Strategy Patter
 #### 1. SST Engine (`sst/`)
 **Best for**: OLTP, real-time queries, frequent updates
 
-**Format**: Hybrid columnar (ProximaBlocks)
-- 3-stage filtering: Bloom filter → Block metadata → Row data
-- Compression: LZ4 (fastest), Snappy, ZSTD
-- Performance: ~5.32ms for 10K vectors
+**Architecture**: LSM-tree with hybrid columnar format (ProximaBlocks)
+- **Three-Stage Filtering**: Bloom filter -> Quantized vector filtering -> Full precision for maximum efficiency.
+- **Compression**: LZ4 (fastest), Snappy, ZSTD.
+- **Performance**: ~5.32ms for 10K vectors, <5ms for point lookups.
+- **Write-Optimized**: LSM-tree architecture is optimized for frequent updates.
+- **Zero-Copy Compaction**: For efficient background maintenance.
 
 **Key Files**:
 - `lib.rs`: Main SST implementation
@@ -225,12 +233,13 @@ ProximaDB implements **6 specialized storage engines** using the Strategy Patter
 - `unified_search_engine/`: Query execution
 
 #### 2. VIPER Engine (`viper/`)
-**Best for**: Analytics, batch operations, compression
+**Best for**: Analytics, batch operations, high-throughput workloads
 
-**Format**: Columnar Parquet with Arrow integration
-- 5-10x compression ratio
-- Columnar storage for efficient analytics
-- Performance: ~89.5ms for 10K vectors (compression overhead)
+**Architecture**: Columnar storage based on Apache Parquet, with Arrow integration.
+- **Quantization Pipeline**: Multi-stage quantization (Binary -> INT8 -> PQ -> FP32) for optimal compression and performance.
+- **Cloud-First Design**: Optimized for cloud storage with features like footer caching and range reads.
+- **Analytics-Focused**: Efficient columnar storage is ideal for analytical queries and bulk operations.
+- **Performance**: ~89.5ms for 10K vectors, with excellent write throughput.
 
 **Key Files**:
 - `lib.rs`: VIPER core
@@ -238,37 +247,41 @@ ProximaDB implements **6 specialized storage engines** using the Strategy Patter
 - `write_engine.rs`: Batch writing
 
 #### 3. NOVA Engine (`nova/`)
-**Best for**: Mixed workloads, progressive search
+**Best for**: Complex analytical workloads, large-scale data mining
 
-**Format**: Hybrid quantized columnar
-- Integrated quantization support
-- Progressive search optimization
-- Zone maps for predicate pushdown
+**Architecture**: Advanced columnar analytics engine with hierarchical optimization.
+- **Hierarchical Statistics**: Multi-level SuperBlock metadata for intelligent query pruning (70-90% I/O reduction).
+- **Advanced Zone Maps**: Multi-dimensional pruning beyond simple min/max filtering.
+- **Streaming Architecture**: Memory-efficient processing of terabyte-scale data.
+- **Cost-Based Optimization**: Intelligent query planning using data distribution statistics.
+- **Progressive Search**: Adaptive query refinement with early termination.
 
 #### 4. SWIFT Engine (`swift/`)
-**Best for**: Low-latency writes, hot data
+**Best for**: Hierarchical data, large-scale organized datasets
 
-**Format**: Hierarchical superblock architecture
-- Fast sequential access
-- Cache-optimized layout
-- Performance: ~94.1ms at 10K (cache limits)
+**Architecture**: Hierarchical storage with a three-tier architecture (SuperBlock -> DataBlock -> Records).
+- **Hierarchical Indexing**: O(log n) access to data, ideal for organized datasets.
+- **Large-Scale Support**: Optimized for datasets from millions to billions of vectors.
+- **Use Cases**: Enterprise content management, multi-tenant systems, version control.
+- **Performance**: ~94.1ms at 10K, with excellent query performance due to hierarchical pruning.
 
 #### 5. RAPTOR Engine (`raptor/`)
 **Best for**: Adaptive workload optimization, multi-tenant systems
 
-**Format**: Matrix Trinity architecture (P²+K²+P×K matrices)
-- Workload adaptation learns from query patterns
-- Smart resource management with adaptive sizing
-- Pattern-aware compaction and consolidated reading
-- Performance: ~9.36ms for 10K vectors
+**Architecture**: The innovative Matrix Trinity architecture (P²+K²+P×K matrices) for intelligent workload optimization.
+- **Workload Adaptation**: Learns from query patterns to optimize performance in real-time.
+- **Smart Resource Management**: Features adaptive row group sizing and memory-efficient operations.
+- **Intelligent Compaction**: Uses pattern-aware compaction and consolidated reading.
+- **Performance**: ~9.36ms for 10K vectors.
 
 #### 6. HELIX Engine (`helix/`)
-**Best for**: High-dimensional vectors (>1536D)
+**Best for**: Spatially clustered data, image/video search, geospatial data
 
-**Format**: PCA + Hilbert clustering
-- Dimension reduction
-- Spatial indexing
-- Performance: ~13.2ms for 10K vectors
+**Architecture**: Locality-optimized engine using PCA and Hilbert curves to cluster similar vectors.
+- **Hilbert Curve Clustering**: Maps high-dimensional vectors to a 1D space, preserving locality for efficient range queries.
+- **PCA Dimensionality Reduction**: Reduces the dimensionality of vectors before Hilbert mapping to improve clustering.
+- **Spatial Pruning**: Achieves 90%+ query pruning by exploiting the spatial locality of the data.
+- **Performance**: ~13.2ms for 10K vectors, with excellent performance on clustered data.
 
 ### Storage Formats (`src/storage/engines/core/formats/`)
 
@@ -318,8 +331,10 @@ Insert → WAL append → MemTable → Background Flush → Storage Engine
 - Collection affinity for locality
 - TTL support for time-based expiry
 
-**Known Issue (open)**:
-- WAL pool metadata propagation bug: pool managers can miss the injected metadata provider, directing WAL files to incorrect paths and breaking recovery. See `URGENT_FIX_INSTRUCTIONS.md`, `FINAL_FIX_NEEDED.md`, and `STARTUP_HANG_ISSUE.md`. Fix involves sharing the metadata provider `Arc` into pool managers and/or a global `OnceLock`.
+**Resolved Issue (Previously "Known Issue")**:
+- A previous version of this document described a "WAL pool metadata propagation bug" and suggested a fix involving a global `OnceLock` for the metadata provider.
+- **WARNING**: Implementing this fix is known to cause a server hang on startup due to a deadlock. DO NOT USE a global metadata provider.
+- **Resolution**: The bug was resolved by passing the metadata provider `Arc` through constructor parameters, not a global singleton. The WAL system now correctly resolves collection paths without the risk of deadlocks.
 
 **Configuration**:
 ```rust
@@ -402,26 +417,25 @@ pub struct WALConfig {
 #### SQL Frontend (`sql_frontend/`)
 **SQL Support**:
 ```sql
--- Create collection with vector column
-CREATE COLLECTION products (
-    id TEXT PRIMARY KEY,
-    embedding VECTOR(768),
-    category TEXT,
-    price FLOAT
-);
-
 -- Vector similarity search with filters
-SELECT id, category, COSINE_DISTANCE(embedding, ?) as score
+SELECT id, category, SIMILAR(embedding, ?) as score
 FROM products
 WHERE category = 'electronics' AND price < 1000
 ORDER BY score DESC
 LIMIT 10;
+
+-- Graph traversal
+SELECT id
+FROM nodes
+WHERE id IN (FOLLOW('start_node', 'edge_type', 2));
 ```
 
 **Key Files**:
-- `parser.rs`: SQL parsing with sqlparser crate
+- `parser.rs`: SQL parsing with sqlparser crate and conversion to internal AST.
 - `lowering.rs`: SQL → Internal AST
 - `extensions.rs`: Vector function extensions
+
+**Note:** The SQL frontend currently only supports `SELECT` queries. `CREATE COLLECTION` and other DDL statements are not supported via the SQL interface and must be performed using the REST or gRPC APIs.
 
 #### Execution Engine (`execution/`)
 - `executor.rs`: Query execution
@@ -813,10 +827,11 @@ path = "src/bin/proximadb-bench-consolidated.rs"
 ### Test Organization
 
 **Test Coverage Statistics** (comprehensive testing):
-- **Unit Tests**: ~3,354 tests (1,835 #[test] + 1,519 #[tokio::test])
-- **Integration Tests**: 859 tests across 173 test files
+- **Unit Tests**: ~80 tests (`#[test]` + `#[tokio::test]`)
+- **Integration Tests**: ~174 test files in the `tests/` directory
 - **Benchmarks**: 13 major benchmark suites + production validation
-- **Test Files**: 173 files with comprehensive coverage
+
+**Note:** The test counts are approximate and based on a simple `grep` and `find` commands. The actual number of tests may be higher due to test case macros and other dynamic test generation methods.
 
 #### Unit Tests (`src/*/tests/`)
 Co-located with source code:
@@ -1355,16 +1370,56 @@ tokio::select! {
 
 ## Performance Characteristics
 
-### Storage Engine Performance (10K Vectors)
+### Storage Engine Performance (SIFT-1M Benchmark)
 
-| Engine | Search | Insert | Compression | Memory |
-|--------|--------|--------|-------------|--------|
-| HELIX  | 13.2ms | 2K/s   | 3x          | Low    |
-| SST    | 5.3ms  | 5K/s   | 3-5x        | Medium |
-| RAPTOR | 9.4ms  | 3K/s   | 4-6x        | Medium |
-| VIPER  | 89.5ms | 10K/s  | 5-10x       | Low    |
-| NOVA   | 101ms  | 8K/s   | 6-12x       | Low    |
-| SWIFT  | 95ms   | 4K/s   | 2-3x        | High   |
+The following table shows the performance of ProximaDB's storage engines on the industry-standard SIFT-1M benchmark (100,000 vectors, 128 dimensions).
+
+[cols="2,2,2,2,2a",options="header"]
+|===
+| Engine | Search Latency (ms) | Insert Throughput (vectors/s) | Recall@10 | Disk Usage (MB) | Notes
+
+| SST
+| ~79
+| ~285,000
+| 100%
+| ~102
+| Persistent, exact search
+
+| HELIX
+| ~78
+| ~306,000
+| 100%
+| ~46
+| Persistent, exact search
+
+| VIPER
+| ~79
+| ~303,000
+| 100%
+| ~46
+| Persistent, exact search
+
+| NOVA
+| ~78
+| ~301,000
+| 100%
+| ~48
+| Persistent, exact search
+
+| SWIFT
+| ~77
+| ~300,000
+| 100%
+| ~51
+| Persistent, exact search
+
+| RAPTOR
+| ~81
+| ~280,000
+| 100%
+| ~87
+| Persistent, exact search
+|===
 
 ### Distance Computation (SIMD)
 

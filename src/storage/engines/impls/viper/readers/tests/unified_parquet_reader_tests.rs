@@ -595,6 +595,7 @@ mod tests {
             enable_progressive_search: None,
             filters: None,
             timeout_ms: None,
+            search_mode: crate::core::search::SearchMode::default(),
         };
 
         // Create collection context

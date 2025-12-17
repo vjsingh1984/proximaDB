@@ -27,8 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from proximadb import ProximaDBClient
-from proximadb.models import VectorRecord
+from proximadb_sdk import ProximaDBClient
+from proximadb_sdk.models import VectorRecord
 
 server_process = None
 

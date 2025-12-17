@@ -14,9 +14,9 @@ import requests
 import numpy as np
 from typing import List, Dict, Any
 
-from proximadb import ProximaDBClient, connect
-from proximadb import ProximaDBError
-from proximadb import CollectionConfig
+from proximadb_sdk import ProximaDBClient, connect
+from proximadb_sdk import ProximaDBError
+from proximadb_sdk import CollectionConfig
 
 
 class IntegrationTest:
@@ -34,7 +34,7 @@ class IntegrationTest:
             raise RuntimeError("ProximaDB server is not responding")
         
         # Initialize client
-        from proximadb import ClientConfig
+        from proximadb_sdk import ClientConfig
         config = ClientConfig(url=self.server_url, enable_http2=False)
         self.client = ProximaDBClient(config=config)
         print("✓ Connected to ProximaDB server")

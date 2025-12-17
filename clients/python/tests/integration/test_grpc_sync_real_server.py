@@ -16,10 +16,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
-from proximadb import SearchResult, VectorOperationResponse, VectorRecord
-from proximadb import ProximaDBError, NetworkError
-from proximadb.models import (
+from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
+from proximadb_sdk import SearchResult, VectorOperationResponse, VectorRecord
+from proximadb_sdk import ProximaDBError, NetworkError
+from proximadb_sdk.models import (
     Collection, CollectionConfig, DistanceMetric, 
     StorageEngine, IndexingAlgorithm
 )

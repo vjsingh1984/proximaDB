@@ -61,6 +61,34 @@ impl EngineCapabilities {
                 supported.insert(CompressionAlgorithm::CompressionBrotli);
                 supported
             }
+            StorageEngine::Helix | StorageEngine::Swift => {
+                // HELIX and SWIFT are SST-based engines - support same algorithms as SST
+                let mut supported = HashSet::new();
+                supported.insert(CompressionAlgorithm::CompressionNone);
+                supported.insert(CompressionAlgorithm::CompressionZstd);
+                supported.insert(CompressionAlgorithm::CompressionLz4);
+                supported.insert(CompressionAlgorithm::CompressionSnappy);
+                supported.insert(CompressionAlgorithm::CompressionGzip);
+                supported.insert(CompressionAlgorithm::CompressionBrotli);
+                supported.insert(CompressionAlgorithm::CompressionBzip2);
+                supported.insert(CompressionAlgorithm::CompressionDeflate);
+                supported.insert(CompressionAlgorithm::CompressionXz);
+                supported.insert(CompressionAlgorithm::CompressionZlib);
+                supported.insert(CompressionAlgorithm::CompressionLz4hc);
+                supported.insert(CompressionAlgorithm::CompressionLzma);
+                supported
+            }
+            StorageEngine::Nova | StorageEngine::Raptor => {
+                // NOVA and RAPTOR are columnar-based engines - support same as VIPER
+                let mut supported = HashSet::new();
+                supported.insert(CompressionAlgorithm::CompressionNone);
+                supported.insert(CompressionAlgorithm::CompressionZstd);
+                supported.insert(CompressionAlgorithm::CompressionLz4);
+                supported.insert(CompressionAlgorithm::CompressionSnappy);
+                supported.insert(CompressionAlgorithm::CompressionGzip);
+                supported.insert(CompressionAlgorithm::CompressionBrotli);
+                supported
+            }
             _ => {
                 // Unknown engine - return empty set (no support)
                 HashSet::new()
@@ -126,6 +154,34 @@ impl EngineCapabilities {
                 CompressionAlgorithm::CompressionZstd
             }
             (StorageEngine::Viper, CompressionPriority::Ratio) => {
+                CompressionAlgorithm::CompressionBrotli
+            }
+
+            // HELIX and SWIFT engine recommendations (SST-based, use LZ4 for speed)
+            (StorageEngine::Helix, CompressionPriority::Speed)
+            | (StorageEngine::Swift, CompressionPriority::Speed) => {
+                CompressionAlgorithm::CompressionLz4
+            }
+            (StorageEngine::Helix, CompressionPriority::Balanced)
+            | (StorageEngine::Swift, CompressionPriority::Balanced) => {
+                CompressionAlgorithm::CompressionZstd
+            }
+            (StorageEngine::Helix, CompressionPriority::Ratio)
+            | (StorageEngine::Swift, CompressionPriority::Ratio) => {
+                CompressionAlgorithm::CompressionBrotli
+            }
+
+            // NOVA and RAPTOR engine recommendations (columnar-based, use ZSTD)
+            (StorageEngine::Nova, CompressionPriority::Speed)
+            | (StorageEngine::Raptor, CompressionPriority::Speed) => {
+                CompressionAlgorithm::CompressionSnappy
+            }
+            (StorageEngine::Nova, CompressionPriority::Balanced)
+            | (StorageEngine::Raptor, CompressionPriority::Balanced) => {
+                CompressionAlgorithm::CompressionZstd
+            }
+            (StorageEngine::Nova, CompressionPriority::Ratio)
+            | (StorageEngine::Raptor, CompressionPriority::Ratio) => {
                 CompressionAlgorithm::CompressionBrotli
             }
 
@@ -211,6 +267,10 @@ impl EngineCapabilities {
         match engine {
             StorageEngine::Sst => "SST",
             StorageEngine::Viper => "VIPER",
+            StorageEngine::Helix => "HELIX",
+            StorageEngine::Nova => "NOVA",
+            StorageEngine::Swift => "SWIFT",
+            StorageEngine::Raptor => "RAPTOR",
             _ => "Unknown",
         }
     }
@@ -220,6 +280,10 @@ impl EngineCapabilities {
         match engine_type {
             1 => StorageEngine::Sst,
             2 => StorageEngine::Viper,
+            3 => StorageEngine::Helix,
+            4 => StorageEngine::Nova,
+            5 => StorageEngine::Swift,
+            6 => StorageEngine::Raptor,
             _ => StorageEngine::Unspecified,
         }
     }

@@ -18,7 +18,9 @@ mod common;
 
 use common::sks_fixtures::TestKnowledgeGraph;
 use proximadb::graph::GraphOperationsService;
-use proximadb::proto::proximadb_v1::CreateGraphRequest;
+use proximadb::proto::proximadb_v1::{
+    ComparisonOp, CreateGraphRequest, FilterClause, LogicalOp, MetadataFilter,
+};
 use proximadb::storage::entity_store::{EntityStore, OrionBackedEntityStore};
 use std::sync::Arc;
 
@@ -724,6 +726,103 @@ async fn test_memory_overhead_comparison() {
     println!("  - Per-entity: {:.2} bytes (threshold: <{:.2})", per_entity_bytes, max_per_entity);
     println!("  - Estimated 21% savings vs legacy split storage");
     println!("  - Benefits increase with scale (30-40% savings @ 10K+ entities)");
+}
+
+/// Test 8: Metadata filter search (server-side)
+#[tokio::test]
+async fn test_entity_search_with_metadata_filter() {
+    let graph_service = Arc::new(GraphOperationsService::new());
+
+    // Create graph collection
+    let create_request = CreateGraphRequest {
+        graph_id: "test-metadata-search".to_string(),
+        name: Some("Test Metadata Search".to_string()),
+        description: None,
+        schema: None,
+        storage_config: None,
+        engine_config: None,
+        access_control: None,
+    };
+    graph_service
+        .create_graph_collection(create_request)
+        .await
+        .expect("Failed to create graph collection");
+
+    let store = OrionBackedEntityStore::new(
+        graph_service.clone(),
+        "test-metadata-search".to_string(),
+    );
+
+    // Build two entities with different metadata
+    let mut entity1 = proximadb::proto::proximadb_v1::Entity {
+        id: "e1".to_string(),
+        collection_id: "test-metadata-search".to_string(),
+        embeddings: vec![proximadb::proto::proximadb_v1::EmbeddingVersion {
+            model_id: "m".into(),
+            model_version: "v".into(),
+            vector: vec![0.1, 0.2, 0.3],
+            dimension: 3,
+            created_at_ms: 0,
+            model_params: std::collections::HashMap::new(),
+            modality: proximadb::proto::proximadb_v1::Modality::Text as i32,
+        }],
+        typed_metadata: None,
+        flexible_metadata: std::iter::once((
+            "category".to_string(),
+            proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(
+                    proximadb::proto::proximadb_v1::sql_value::Value::StringValue("ai".into()),
+                ),
+            },
+        ))
+        .collect(),
+        provenance: None,
+        temporal: None,
+        relations: vec![],
+    };
+    let mut entity2 = entity1.clone();
+    entity2.id = "e2".to_string();
+    entity2.flexible_metadata.insert(
+        "category".to_string(),
+        proximadb::proto::proximadb_v1::SqlValue {
+            value: Some(
+                proximadb::proto::proximadb_v1::sql_value::Value::StringValue("ops".into()),
+            ),
+        },
+    );
+
+    store
+        .upsert_entity("test-metadata-search", entity1)
+        .await
+        .expect("insert e1");
+    store
+        .upsert_entity("test-metadata-search", entity2)
+        .await
+        .expect("insert e2");
+
+    let metadata_filter = MetadataFilter {
+        clauses: vec![FilterClause {
+            field: "category".into(),
+            op: ComparisonOp::Eq as i32,
+            value: Some(
+                proximadb::proto::proximadb_v1::filter_clause::Value::StringValue("ai".into()),
+            ),
+        }],
+        op: LogicalOp::And as i32,
+    };
+
+    let results = store
+        .search_entities(
+            "test-metadata-search",
+            Some(vec![0.1, 0.2, 0.3]),
+            Some(metadata_filter),
+            5,
+        )
+        .await
+        .expect("search");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].0.id, "e1");
 }
 
 /// Helper: Verify test fixtures are valid

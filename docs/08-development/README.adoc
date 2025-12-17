@@ -28,6 +28,7 @@ This section contains documentation for developers contributing to ProximaDB, in
 3. **Read Contributing Guide**: Follow the guidelines in CONTRIBUTING.adoc
 4. **Follow Style Guide**: Use the style guide checklist for consistency
 5. **Test Your Changes**: Run tests before submitting PRs
+6. **High-Value Areas**: AXIS index for SKS hybrid search, metadata filter parity (server + SDK), and Prometheus/observability improvements are the fastest ways to have impact.
 
 == Development Workflow
 

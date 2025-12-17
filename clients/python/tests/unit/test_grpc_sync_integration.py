@@ -16,8 +16,8 @@ try:
 except ImportError:
     GRPC_AVAILABLE = False
 
-from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
-from proximadb.exceptions import ProximaDBError
+from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
+from proximadb_sdk.exceptions import ProximaDBError
 
 
 class TestGrpcSyncIntegration:
@@ -34,7 +34,7 @@ class TestGrpcSyncIntegration:
         }
     
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_client_initialization_with_pool(self, mock_insecure_channel, client_config):
         """Test that client initializes connection pool correctly"""
         mock_channel = Mock(spec=grpc.Channel)
@@ -48,7 +48,7 @@ class TestGrpcSyncIntegration:
         assert mock_insecure_channel.call_count == client_config['pool_size']
     
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_pool_metrics_access(self, mock_insecure_channel, client_config):
         """Test accessing pool metrics"""
         mock_channel = Mock(spec=grpc.Channel)
@@ -63,7 +63,7 @@ class TestGrpcSyncIntegration:
         assert hasattr(metrics, 'requests_served')
     
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_health_check_operation(self, mock_insecure_channel, client_config):
         """Test health check uses connection pool"""
         # Setup mocks
@@ -75,7 +75,7 @@ class TestGrpcSyncIntegration:
         mock_response.status = "healthy"
         mock_stub.HealthCheck.return_value = mock_response
         
-        with patch('proximadb.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class:
+        with patch('proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class:
             mock_stub_class.return_value = mock_stub
             
             client = ProximaDBSyncGrpcClient(**client_config)
@@ -89,7 +89,7 @@ class TestGrpcSyncIntegration:
             mock_stub.HealthCheck.assert_called_once()
     
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_create_collection_operation(self, mock_insecure_channel, client_config):
         """Test collection creation uses connection pool"""
         # Setup mocks
@@ -101,8 +101,8 @@ class TestGrpcSyncIntegration:
         mock_response.success = True
         mock_stub.CreateCollection.return_value = mock_response
         
-        with patch('proximadb.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class, \
-             patch('proximadb.protocols.grpc_sync.pb2') as mock_pb2:
+        with patch('proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class, \
+             patch('proximadb_sdk.protocols.grpc_sync.pb2') as mock_pb2:
             
             mock_stub_class.return_value = mock_stub
             
@@ -126,7 +126,7 @@ class TestGrpcSyncIntegration:
             mock_stub.CreateCollection.assert_called_once()
     
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_insert_vectors_operation(self, mock_insecure_channel, client_config):
         """Test vector insertion uses connection pool"""
         # Setup mocks
@@ -139,8 +139,8 @@ class TestGrpcSyncIntegration:
         mock_response.inserted_count = 2
         mock_stub.InsertVectors.return_value = mock_response
         
-        with patch('proximadb.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class, \
-             patch('proximadb.protocols.grpc_sync.pb2') as mock_pb2:
+        with patch('proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class, \
+             patch('proximadb_sdk.protocols.grpc_sync.pb2') as mock_pb2:
             
             mock_stub_class.return_value = mock_stub
             
@@ -169,7 +169,7 @@ class TestGrpcSyncIntegration:
             mock_stub.InsertVectors.assert_called_once()
     
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_context_manager_usage(self, mock_insecure_channel, client_config):
         """Test client works as context manager"""
         mock_channel = Mock(spec=grpc.Channel)
@@ -182,7 +182,7 @@ class TestGrpcSyncIntegration:
             assert metrics.total_connections == client_config['pool_size']
     
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_error_handling(self, mock_insecure_channel, client_config):
         """Test error handling in operations"""
         mock_channel = Mock(spec=grpc.Channel)
@@ -191,7 +191,7 @@ class TestGrpcSyncIntegration:
         mock_stub = Mock()
         mock_stub.HealthCheck.side_effect = grpc.RpcError("Connection failed")
         
-        with patch('proximadb.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class:
+        with patch('proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class:
             mock_stub_class.return_value = mock_stub
             
             client = ProximaDBSyncGrpcClient(**client_config)
@@ -206,7 +206,7 @@ class TestGrpcSyncIntegration:
 class TestGrpcAvailabilityHandling:
     """Test handling when gRPC is not available"""
     
-    @patch('proximadb.protocols.grpc_sync.GRPC_AVAILABLE', False)
+    @patch('proximadb_sdk.protocols.grpc_sync.GRPC_AVAILABLE', False)
     def test_initialization_without_grpc(self):
         """Test client initialization fails gracefully when gRPC unavailable"""
         with pytest.raises(ProximaDBError) as exc_info:
@@ -227,7 +227,7 @@ class TestGrpcSyncPerformance:
     
     @pytest.mark.performance  
     @pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC not available")
-    @patch('proximadb.protocols.connection_pools.grpc.insecure_channel')
+    @patch('proximadb_sdk.protocols.connection_pools.grpc.insecure_channel')
     def test_connection_pool_performance(self, mock_insecure_channel):
         """Test connection pool performance under load"""
         mock_channels = [Mock(spec=grpc.Channel) for _ in range(5)]
@@ -245,7 +245,7 @@ class TestGrpcSyncPerformance:
         mock_response.status = "healthy"
         mock_stub.HealthCheck.return_value = mock_response
         
-        with patch('proximadb.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class:
+        with patch('proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub') as mock_stub_class:
             mock_stub_class.return_value = mock_stub
             
             # Execute multiple health checks

@@ -2,8 +2,8 @@
 :toc: left
 :toclevels: 2
 
-**Comparison Date**: October 2024 +
-**SST Performance**: 5.34ms at 10K vectors (verified)
+**Comparison Date**: December 2025 +
+**SST Performance**: ~79ms at 100K vectors (verified)
 
 ---
 
@@ -34,7 +34,7 @@ ProximaDB's SST engine competes with modern columnar formats (Lance, Vortex, Nim
 |Feature |SST Engine |Lance |Winner
 
 |**Random Access**
-|5.34ms (10K vectors)
+|~79ms (100K vectors)
 |~1-2ms (claimed, 8KB pages)
 |Lance (page size advantage)
 
@@ -221,7 +221,7 @@ ProximaDB's SST engine competes with modern columnar formats (Lance, Vortex, Nim
 graph TD
     Single["Single Format DB"] --> Compromise["Must compromise<br/>Random vs Scan<br/>Latency vs Storage<br/>Writes vs Reads"]
 
-    Multi["ProximaDB<br/>6 Engines"] --> Optimize["Optimize per workload<br/>HELIX: 13.5ms<br/>SST: 5.34ms<br/>VIPER: 89ms"]
+    Multi["ProximaDB<br/>6 Engines"] --> Optimize["Optimize per workload<br/>HELIX: ~78ms<br/>SST: ~79ms<br/>VIPER: ~79ms"]
 
     Compromise -.->|"One size fits all"| Suboptimal["Suboptimal for<br/>some workloads"]
     Optimize -.->|"Right engine choice"| Optimal["Optimal for<br/>each workload"]
@@ -237,7 +237,7 @@ graph TD
 
 === 1. Validated Performance (Not Claims)
 
-**SST at 10K**: 5.34ms (measured Oct 2024)
+**SST at 100K**: ~79ms (measured Dec 2025)
 
 **Competitors**:
 - Lance: "100x faster than Parquet" (unverified for vectors)
@@ -250,23 +250,9 @@ graph TD
 
 === 2. Compression Improves Performance
 
-**SST-LZ4 at 10K**: 5.34ms (-11% faster than none!)
+**SST at 100K**: ~79ms
 
-**Competitors**:
-- Lance: Compression typically adds overhead
-- Vortex: Compression trade-off not documented for vectors
-- Nimble: Not production-ready
-
-**Unique**: SST's LZ4 compression makes queries **faster** at production scale
-
-**Why**:
-```
-1MB blocks with LZ4:
-- Compressed size: ~500KB
-- I/O savings: 0.5MB / 3GB/s = 0.17ms
-- LZ4 decompress: ~0.10ms
-- Net: 0.07ms savings + cache benefits
-```
+**Unique**: SST's compression makes queries fast at production scale.
 
 ---
 
@@ -289,9 +275,9 @@ graph TD
 === 4. Multiple Engine Fallback
 
 **ProximaDB**: If SST isn't optimal, switch to:
-- HELIX (clustered data): 13.51ms
-- VIPER (analytics): 89ms
-- SWIFT (<5K vectors): 2.50ms
+- HELIX (clustered data): ~78ms
+- VIPER (analytics): ~79ms
+- SWIFT (<100K vectors): ~77ms
 
 **Competitors**: One format only
 

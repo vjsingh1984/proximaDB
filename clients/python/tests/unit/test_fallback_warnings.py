@@ -6,14 +6,14 @@ Test that fallback warnings are properly shown during collection creation.
 import pytest
 import warnings
 from unittest.mock import Mock, patch
-from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
-from proximadb.protocols.rest_sync import ProximaDBClient
+from proximadb_sdk.models import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 
 
 class TestFallbackWarnings:
     """Test fallback warning system"""
     
-    @patch('proximadb.protocols.rest_sync.ProximaDBClient._make_request')
+    @patch('proximadb_sdk.protocols.rest_sync.ProximaDBClient._make_request')
     def test_distance_metric_no_fallback_warning(self, mock_request):
         """Test no warning for now-supported distance metric (all 13 metrics supported as of 2025-08)"""
         # Mock the server response
@@ -53,7 +53,7 @@ class TestFallbackWarnings:
                                 if "manhattan" in str(warning.message).lower() and "fallback" in str(warning.message).lower()]
             assert len(distance_warnings) == 0
     
-    @patch('proximadb.protocols.rest_sync.ProximaDBClient._make_request')
+    @patch('proximadb_sdk.protocols.rest_sync.ProximaDBClient._make_request')
     def test_storage_engine_fallback_warning(self, mock_request):
         """Test warning for unsupported storage engine"""
         mock_response = Mock()
@@ -91,7 +91,7 @@ class TestFallbackWarnings:
             assert "fallback to 'viper'" in warning_message
             assert "server decision" in warning_message
     
-    @patch('proximadb.protocols.rest_sync.ProximaDBClient._make_request')
+    @patch('proximadb_sdk.protocols.rest_sync.ProximaDBClient._make_request')
     def test_indexing_algorithm_no_fallback_warning(self, mock_request):
         """Test no warning for now-supported indexing algorithm (LSH supported as of 2025-08)"""
         mock_response = Mock()
@@ -128,7 +128,7 @@ class TestFallbackWarnings:
                                 if "lsh" in str(warning.message).lower() and "fallback" in str(warning.message).lower()]
             assert len(indexing_warnings) == 0
     
-    @patch('proximadb.protocols.rest_sync.ProximaDBClient._make_request')
+    @patch('proximadb_sdk.protocols.rest_sync.ProximaDBClient._make_request')
     def test_storage_engine_only_fallback_warnings(self, mock_request):
         """Test warnings for storage engine fallbacks only (distance metrics and indexing algorithms now supported)"""
         mock_response = Mock()
@@ -174,7 +174,7 @@ class TestFallbackWarnings:
             assert "hybrid" in warning_message and "viper" in warning_message
             assert "server decision" in warning_message
     
-    @patch('proximadb.protocols.rest_sync.ProximaDBClient._make_request')
+    @patch('proximadb_sdk.protocols.rest_sync.ProximaDBClient._make_request')
     def test_no_warnings_for_supported_config(self, mock_request):
         """Test no warnings are issued for fully supported configurations"""
         mock_response = Mock()

@@ -9,7 +9,7 @@ import pytest
 import numpy as np
 from ..embedding_utils import embed_seed, embed_many
 import logging
-from proximadb import (
+from proximadb_sdk import (
     QuantizationType,
     QuantizationConfig,
     SearchOptimization,
@@ -17,12 +17,12 @@ from proximadb import (
     CollectionConfig,
     DistanceMetric,
 )
-from proximadb import ProximaDBClient, Protocol
+from proximadb_sdk import ProximaDBClient, Protocol
 
 logger = logging.getLogger(__name__)
 
 try:
-    from proximadb import proximadb_pb2
+    from proximadb_sdk import proximadb_pb2
 except ImportError as e:
     logger.debug(f"Failed to import proximadb_pb2: {e}")
     proximadb_pb2 = None

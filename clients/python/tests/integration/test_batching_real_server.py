@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.batching_unified import (
+from proximadb_sdk.batching_unified import (
     BatchStrategy,
     BatchOperationType, 
     BatchConfig,
@@ -31,7 +31,7 @@ from proximadb.batching_unified import (
     create_vector_batcher,
     batch_insert_vectors
 )
-from proximadb.models import VectorRecord
+from proximadb_sdk.models import VectorRecord
 
 
 class TestBatchConfig(BaseProximaDBTest):

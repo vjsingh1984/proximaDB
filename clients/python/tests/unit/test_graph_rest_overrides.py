@@ -1,5 +1,5 @@
 import types
-from proximadb.protocols import rest_sync
+from proximadb_sdk.protocols import rest_sync
 
 
 class FakeResponse:

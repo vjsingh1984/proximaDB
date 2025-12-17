@@ -13,6 +13,9 @@ use tracing::{debug, info, trace};
 
 use super::QuantizationConfig;
 use crate::core::compression::CompressionAlgorithm;
+use crate::storage::engines::core::formats::columnar::constants::{
+    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
+};
 use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
 
 /// Convert proto FilterableColumnSpec to internal ColumnarFilterableSpec
@@ -267,8 +270,8 @@ pub struct WriterPropertiesConfig {
 impl Default for WriterPropertiesConfig {
     fn default() -> Self {
         Self {
-            row_group_size: 50_000,
-            page_size: 1024 * 1024, // 1MB pages
+            row_group_size: DEFAULT_ROW_GROUP_SIZE,
+            page_size: DEFAULT_PAGE_SIZE,
             dictionary_enabled: true,
             statistics_enabled: true,
             bloom_filter_enabled: true,

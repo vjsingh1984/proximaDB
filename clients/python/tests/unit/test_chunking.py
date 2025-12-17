@@ -3,7 +3,7 @@ Comprehensive test suite for ProximaDB text chunking module
 Focuses on improving code coverage for uncovered functionality
 """
 import pytest
-from proximadb.chunking import (
+from proximadb_sdk.chunking import (
     ChunkingStrategy,
     TextChunk,
     ChunkingConfig,

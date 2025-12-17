@@ -5,10 +5,14 @@
 //! disable or tune them based on their specific requirements.
 
 use crate::proto::proximadb_v1::QuantizationConfig;
+use crate::storage::engines::core::formats::columnar::constants::{
+    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
+};
 use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
 use crate::storage::engines::core::formats::columnar::{
     FooterCacheConfig, HybridWriterConfig, WriterMode,
 };
+use crate::storage::engines::core::formats::columnar::utilities::recommend_page_size_for_dimension;
 use parquet::basic::Compression;
 use std::time::Duration;
 
@@ -33,8 +37,8 @@ impl ParquetConfigBuilder {
     pub fn minimal() -> Self {
         Self {
             config: ParquetWriterConfig {
-                row_group_size: 10000,
-                page_size: 524288, // 512KB
+                row_group_size: DEFAULT_ROW_GROUP_SIZE,
+                page_size: DEFAULT_PAGE_SIZE,
                 write_batch_size: 1000,
                 compression: Compression::UNCOMPRESSED,
                 compression_level: None,
@@ -117,6 +121,21 @@ impl ParquetConfigBuilder {
     /// Set row group size
     pub fn row_group_size(mut self, size: usize) -> Self {
         self.config.row_group_size = size;
+        self
+    }
+
+    /// Tune page size based on dimension and current row group size (targets ~2–8 pages/row group)
+    pub fn tune_pages_for_dimension(
+        mut self,
+        dimension: usize,
+        metadata_overhead_bytes: usize,
+    ) -> Self {
+        let page_size = recommend_page_size_for_dimension(
+            self.config.row_group_size,
+            dimension,
+            metadata_overhead_bytes,
+        );
+        self.config.page_size = page_size;
         self
     }
 
@@ -334,7 +353,7 @@ impl ParquetPresets {
     pub fn balanced() -> ParquetWriterConfig {
         ParquetConfigBuilder::new()
             .row_group_size(5000)
-            .page_size(512 * 1024) // 512KB pages
+            .page_size(DEFAULT_PAGE_SIZE * 2) // 512KB pages
             .bloom_filter_fpp(0.05) // 5% FPP
             .build()
     }
@@ -345,7 +364,7 @@ impl ParquetPresets {
             .disable_bloom_filters()
             .disable_pq_sorting()
             .row_group_size(1000)
-            .page_size(256 * 1024) // 256KB pages
+            .page_size(DEFAULT_PAGE_SIZE) // 256KB pages
             .metadata_inference_samples(100)
             .build()
     }
@@ -364,7 +383,7 @@ impl ParquetPresets {
     pub fn real_time() -> ParquetWriterConfig {
         ParquetConfigBuilder::new()
             .row_group_size(1000) // Small row groups for quick flushes
-            .page_size(256 * 1024) // Smaller pages
+            .page_size(DEFAULT_PAGE_SIZE) // Smaller pages
             .compression(Compression::LZ4) // Fast compression
             .build()
     }

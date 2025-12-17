@@ -9,8 +9,8 @@ IMPORTANT: The current ProximaDB SQL implementation has limitations:
 """
 
 import pytest
-from proximadb import connect_rest, connect_grpc, ProximaDBError, Protocol
-from proximadb import StorageEngine, VectorRecord
+from proximadb_sdk import connect_rest, connect_grpc, ProximaDBError, Protocol
+from proximadb_sdk import StorageEngine, VectorRecord
 import numpy as np
 
 

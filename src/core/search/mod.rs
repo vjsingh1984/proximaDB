@@ -32,6 +32,80 @@ pub struct ProgressiveRecalls {
     pub pq_recall: Option<f32>,
 }
 
+/// Search mode for controlling accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
+///
+/// This enum allows users to choose between exact search (100% recall) and
+/// approximate search (faster but potentially lower recall).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SearchMode {
+    /// Exact search with 100% recall - searches all partitions (current default behavior)
+    /// This is the safest option for accuracy-critical applications.
+    Exact,
+
+    /// Approximate search using IVF-style partition pruning.
+    /// Searches only `nprobe` closest partitions for faster queries.
+    /// - `nprobe`: Number of partitions to search (None = auto-calculate as sqrt(num_partitions))
+    /// - Typical recall: 95-98% with nprobe=sqrt(n)
+    Approximate { nprobe: Option<usize> },
+
+    /// Adaptive mode: automatically selects Exact or Approximate based on dataset size.
+    /// - Uses Exact for small datasets (< threshold vectors)
+    /// - Uses Approximate for large datasets
+    Adaptive { threshold: usize },
+}
+
+impl Default for SearchMode {
+    fn default() -> Self {
+        // Default to Exact mode to preserve 100% recall for accuracy-critical applications
+        SearchMode::Exact
+    }
+}
+
+impl SearchMode {
+    /// Create approximate search mode with auto-calculated nprobe
+    pub fn approximate() -> Self {
+        SearchMode::Approximate { nprobe: None }
+    }
+
+    /// Create approximate search mode with specific nprobe value
+    pub fn approximate_with_nprobe(nprobe: usize) -> Self {
+        SearchMode::Approximate {
+            nprobe: Some(nprobe),
+        }
+    }
+
+    /// Create adaptive mode with default threshold (10,000 vectors)
+    pub fn adaptive() -> Self {
+        SearchMode::Adaptive { threshold: 10_000 }
+    }
+
+    /// Check if this is exact search mode
+    pub fn is_exact(&self) -> bool {
+        matches!(self, SearchMode::Exact)
+    }
+
+    /// Calculate the effective nprobe value for a given number of partitions
+    pub fn effective_nprobe(&self, num_partitions: usize, dataset_size: usize) -> usize {
+        match self {
+            SearchMode::Exact => num_partitions, // Search all partitions
+            SearchMode::Approximate { nprobe } => {
+                nprobe.unwrap_or_else(|| {
+                    // LanceDB-style: sqrt(num_partitions) for ~95% recall
+                    3.max((num_partitions as f32).sqrt().ceil() as usize)
+                })
+            }
+            SearchMode::Adaptive { threshold } => {
+                if dataset_size < *threshold {
+                    num_partitions // Use exact for small datasets
+                } else {
+                    // Use approximate for large datasets
+                    3.max((num_partitions as f32).sqrt().ceil() as usize)
+                }
+            }
+        }
+    }
+}
+
 /// Unified search parameters for all storage engines
 #[derive(Debug, Clone)]
 pub struct SearchParams {
@@ -97,6 +171,10 @@ pub struct SearchParams {
 
     /// Optimization hint for search strategy
     pub optimization_hint: Option<String>,
+
+    /// Search mode for accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
+    /// Defaults to Exact (100% recall). Use Approximate for faster queries with ~95-98% recall.
+    pub search_mode: SearchMode,
 }
 
 impl Default for SearchParams {
@@ -122,6 +200,7 @@ impl Default for SearchParams {
             progressive_scenario: None,
             progressive_recalls: None,
             optimization_hint: None,
+            search_mode: SearchMode::default(), // Exact mode by default for 100% recall
         }
     }
 }

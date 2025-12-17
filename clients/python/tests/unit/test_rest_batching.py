@@ -8,7 +8,7 @@ import threading
 from unittest.mock import Mock, patch, MagicMock
 from collections import deque
 
-from proximadb.batching_unified import (
+from proximadb_sdk.batching_unified import (
     ThreadedBatchProcessor,
     BatchConfig,
     BatchStrategy,
@@ -16,8 +16,8 @@ from proximadb.batching_unified import (
     BatchMetrics,
     BatchOperationType
 )
-from proximadb.exceptions import BatchError, ProximaDBError
-from proximadb.models import VectorRecord
+from proximadb_sdk.exceptions import BatchError, ProximaDBError
+from proximadb_sdk.models import VectorRecord
 
 
 class TestBatchConfig:
@@ -175,7 +175,7 @@ class TestBatchingIntegration:
     def test_backward_compatibility(self):
         """Test that old REST batching imports still work"""
         # This should work due to backward compatibility
-        from proximadb.batching import RequestBatcher
+        from proximadb_sdk.batching import RequestBatcher
         
         config = BatchConfig()
         batcher = RequestBatcher(config)
@@ -183,7 +183,7 @@ class TestBatchingIntegration:
     
     def test_unified_batch_manager(self):
         """Test unified batch manager can create REST processors"""
-        from proximadb.batching_unified import UnifiedBatchManager
+        from proximadb_sdk.batching_unified import UnifiedBatchManager
         
         config = BatchConfig()
         manager = UnifiedBatchManager(config)

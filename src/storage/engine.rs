@@ -227,21 +227,82 @@ impl StorageEngine {
     }
 
     pub async fn stop(&mut self) -> crate::storage::Result<()> {
-        // Stop compaction manager first
+        // STEP 1: Flush all unflushed memtable data to storage engines FIRST
+        // This ensures fast recovery on restart by having data in SST files
+        tracing::info!("🛑 STORAGE_ENGINE: Flushing all unflushed data to storage engines...");
+        match self.flush_memtable_to_storage().await {
+            Ok(result) => {
+                tracing::info!(
+                    "✅ STORAGE_ENGINE: Flushed {} collections, {} vectors, {} bytes to storage",
+                    result.collections_flushed,
+                    result.total_vectors_flushed,
+                    result.total_bytes_written
+                );
+                if !result.failed_collections.is_empty() {
+                    tracing::warn!(
+                        "⚠️ STORAGE_ENGINE: {} collections failed to flush: {:?}",
+                        result.failed_collections.len(),
+                        result.failed_collections
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ STORAGE_ENGINE: Failed to flush memtable to storage: {}", e);
+            }
+        }
+
+        // STEP 2: Stop compaction manager
         if let Some(manager) = Arc::get_mut(&mut self.compaction_manager) {
             manager.stop().await?;
         }
 
-        // SST is pure SSTable storage - no memtable to flush
-        // All data is already persisted through WAL → Flush → SSTable pipeline
-
-        // Force WAL flush during shutdown
+        // STEP 3: Force WAL flush during shutdown (for any remaining entries)
         tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");
         if let Err(e) = self.write_ahead_log_manager.flush(None).await {
             tracing::warn!("Failed to flush WAL during shutdown: {}", e);
         }
 
         Ok(())
+    }
+
+    /// Flush all unflushed memtable data to storage engines
+    ///
+    /// This method is called during graceful shutdown to ensure all in-memory
+    /// vector data is persisted to SST files before the database closes.
+    /// This enables fast recovery on restart without needing to replay WAL.
+    pub async fn flush_memtable_to_storage(&self) -> crate::storage::Result<crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult> {
+        use crate::storage::persistence::write_ahead_log::flush_coordinator::{WALFlushCoordinator, FlushAllResult};
+        use crate::storage::traits::UnifiedStorageEngine;
+
+        // Create a temporary flush coordinator for shutdown
+        let mut flush_coordinator = WALFlushCoordinator::new();
+
+        // Register all SST engines from our storage map
+        // Each SST engine implements UnifiedStorageEngine
+        for entry in self.sst_storages.iter() {
+            let engine_key = entry.key();
+            let engine = entry.value();
+            // SST engines use "sst" as engine type
+            flush_coordinator.register_storage_engine("sst", engine.clone()).await;
+            tracing::debug!("Registered SST engine '{}' for shutdown flush", engine_key);
+        }
+
+        // Set collection service if available for metadata lookup
+        if let Some(ref provider) = *self.metadata_provider.read().await {
+            // Note: FlushCoordinator expects CollectionService, but we have InternalCollectionProvider
+            // The flush_all_collections() method will use None for flush_context and let
+            // execute_coordinated_flush() handle engine determination
+            tracing::debug!("Metadata provider available for engine determination");
+        }
+
+        // Execute flush for all collections with unflushed data
+        match flush_coordinator.flush_all_collections().await {
+            Ok(result) => Ok(result),
+            Err(e) => Err(crate::storage::StorageError::WalError(format!(
+                "Failed to flush memtable to storage: {}",
+                e
+            ))),
+        }
     }
 
     /// Recover all vectors from WAL files for all collections

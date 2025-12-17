@@ -380,23 +380,44 @@ impl SstCompactor {
             }
 
             // Track if this ID has any tombstones
-            // A tombstone is indicated by expires_at being set and in the past
+            // Tombstone indicators (consistent with search coordinator):
+            // 1. Empty vector (primary indicator - marks deleted records)
+            // 2. expires_at in the past (secondary - marks expired tombstones ready for cleanup)
             let current_time = chrono::Utc::now().timestamp() as u32;
-            let has_tombstone = versions.iter().any(|r| {
-                r.expires_at
-                    .map_or(false, |exp| exp > 0 && exp < current_time as i64)
-            });
-            if has_tombstone {
-                debug!("Skipping tombstoned record: {}", id);
-                stats.tombstoned_ids.push(id.clone());
-                stats.records_deleted += versions.len() as u64;
-                continue;
+
+            // Check for empty vector tombstones (deleted records)
+            let has_empty_vector_tombstone = versions.iter().any(|r| r.vector.is_empty());
+            if has_empty_vector_tombstone {
+                // Check if any tombstone has expired (past grace period)
+                let tombstone_expired = versions.iter().any(|r| {
+                    r.vector.is_empty()
+                        && r.expires_at.map_or(false, |exp| exp < current_time as i64)
+                });
+
+                if tombstone_expired {
+                    // Tombstone grace period has passed - fully remove
+                    debug!("Removing expired tombstone for record: {}", id);
+                    stats.tombstoned_ids.push(id.clone());
+                    stats.records_deleted += versions.len() as u64;
+                    continue;
+                } else {
+                    // Tombstone still within grace period - keep the tombstone marker
+                    // but don't include any actual data versions
+                    debug!("Keeping active tombstone for record: {}", id);
+                    // Keep only the tombstone record (newest empty vector)
+                    if let Some(tombstone) = versions.iter().find(|r| r.vector.is_empty()).cloned()
+                    {
+                        stats.tombstoned_ids.push(id.clone());
+                        merged_records.push(tombstone);
+                    }
+                    continue;
+                }
             }
 
-            // Track if this ID has expired versions
+            // Check for expired records (via expires_at without empty vector)
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < now as i64));
+                .any(|r| r.expires_at.map_or(false, |exp| exp < current_time as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());
@@ -562,23 +583,44 @@ impl SstCompactor {
             }
 
             // Track if this ID has any tombstones
-            // A tombstone is indicated by expires_at being set and in the past
+            // Tombstone indicators (consistent with search coordinator):
+            // 1. Empty vector (primary indicator - marks deleted records)
+            // 2. expires_at in the past (secondary - marks expired tombstones ready for cleanup)
             let current_time = chrono::Utc::now().timestamp() as u32;
-            let has_tombstone = versions.iter().any(|r| {
-                r.expires_at
-                    .map_or(false, |exp| exp > 0 && exp < current_time as i64)
-            });
-            if has_tombstone {
-                debug!("Skipping tombstoned record: {}", id);
-                stats.tombstoned_ids.push(id.clone());
-                stats.records_deleted += versions.len() as u64;
-                continue;
+
+            // Check for empty vector tombstones (deleted records)
+            let has_empty_vector_tombstone = versions.iter().any(|r| r.vector.is_empty());
+            if has_empty_vector_tombstone {
+                // Check if any tombstone has expired (past grace period)
+                let tombstone_expired = versions.iter().any(|r| {
+                    r.vector.is_empty()
+                        && r.expires_at.map_or(false, |exp| exp < current_time as i64)
+                });
+
+                if tombstone_expired {
+                    // Tombstone grace period has passed - fully remove
+                    debug!("Removing expired tombstone for record: {}", id);
+                    stats.tombstoned_ids.push(id.clone());
+                    stats.records_deleted += versions.len() as u64;
+                    continue;
+                } else {
+                    // Tombstone still within grace period - keep the tombstone marker
+                    // but don't include any actual data versions
+                    debug!("Keeping active tombstone for record: {}", id);
+                    // Keep only the tombstone record (newest empty vector)
+                    if let Some(tombstone) = versions.iter().find(|r| r.vector.is_empty()).cloned()
+                    {
+                        stats.tombstoned_ids.push(id.clone());
+                        merged_records.push(tombstone);
+                    }
+                    continue;
+                }
             }
 
-            // Track if this ID has expired versions
+            // Check for expired records (via expires_at without empty vector)
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < now as i64));
+                .any(|r| r.expires_at.map_or(false, |exp| exp < current_time as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());

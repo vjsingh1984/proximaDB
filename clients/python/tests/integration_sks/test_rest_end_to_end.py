@@ -4,8 +4,8 @@ import uuid
 import numpy as np
 import pytest
 
-from proximadb.protocols.rest_sync import ProximaDBClient
-from proximadb.models import CollectionConfig
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
+from proximadb_sdk.models import CollectionConfig
 
 
 def server_available(url: str) -> bool:

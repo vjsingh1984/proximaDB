@@ -1009,10 +1009,14 @@ impl GraphOperationsService {
                 // Only handle equality and range/prefix on stringified keys
                 match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                     Op::Equals => {
+                        // Safely handle missing filter value
+                        let Some(filter_val) = filter.value.as_ref() else {
+                            continue;
+                        };
                         if let Some(index_map) =
                             self.memory_pool.edge_property_indexes.get(&filter.key)
                         {
-                            let key = index_key_for_value(filter.value.as_ref().unwrap());
+                            let key = index_key_for_value(filter_val);
                             if let Some(ids) = index_map.get(&key) {
                                 let set: std::collections::HashSet<EdgeId> =
                                     ids.iter().cloned().collect();
@@ -1026,13 +1030,19 @@ impl GraphOperationsService {
                         }
                     }
                     Op::StartsWith => {
-                        if let Some(prefix) =
-                            extract_string_from_value(filter.value.as_ref().unwrap())
-                        {
+                        // Safely handle missing filter value
+                        let Some(filter_val) = filter.value.as_ref() else {
+                            continue;
+                        };
+                        if let Some(prefix) = extract_string_from_value(filter_val) {
                             if let Some(map_lock) =
                                 self.memory_pool.edge_property_str_ordered.get(&filter.key)
                             {
-                                let map = map_lock.read().unwrap();
+                                // Handle poisoned lock gracefully
+                                let Ok(map) = map_lock.read() else {
+                                    tracing::warn!("Poisoned lock in edge_property_str_ordered for key {}", filter.key);
+                                    continue;
+                                };
                                 let mut matched = std::collections::HashSet::new();
                                 for (k, ids) in map
                                     .range(prefix.to_string()..)
@@ -1048,13 +1058,21 @@ impl GraphOperationsService {
                         }
                     }
                     Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
+                        // Safely handle missing filter value
+                        let Some(filter_val) = filter.value.as_ref() else {
+                            continue;
+                        };
                         // Prefer numeric range if value numeric, else fallback to string ordered
-                        if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap())
+                        if let Some(num) = extract_number_from_value(filter_val)
                         {
                             if let Some(map_lock) =
                                 self.memory_pool.edge_property_num_indexes.get(&filter.key)
                             {
-                                let map = map_lock.read().unwrap();
+                                // Handle poisoned lock gracefully
+                                let Ok(map) = map_lock.read() else {
+                                    tracing::warn!("Poisoned lock in edge_property_num_indexes for key {}", filter.key);
+                                    continue;
+                                };
                                 let mut matched = std::collections::HashSet::new();
                                 match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                                     Op::GreaterThan => {
@@ -1095,9 +1113,14 @@ impl GraphOperationsService {
                         } else if let Some(map_lock) =
                             self.memory_pool.edge_property_str_ordered.get(&filter.key)
                         {
-                            let map = map_lock.read().unwrap();
+                            // Handle poisoned lock gracefully
+                            let Ok(map) = map_lock.read() else {
+                                tracing::warn!("Poisoned lock in edge_property_str_ordered for key {} (string fallback)", filter.key);
+                                continue;
+                            };
                             let mut matched = std::collections::HashSet::new();
-                            let s = extract_string_from_value(filter.value.as_ref().unwrap())
+                            // filter_val was already validated at the start of this Op branch
+                            let s = extract_string_from_value(filter_val)
                                 .unwrap_or("");
                             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                                 Op::GreaterThan => {
@@ -1167,28 +1190,34 @@ impl GraphOperationsService {
             results.retain(|edge| {
                 for filter in &query.filters {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+
+                    // Safely get filter value - if missing, filter fails (edge excluded)
+                    let Some(filter_val) = filter.value.as_ref() else {
+                        return false;
+                    };
+
                     let prop_val_opt = edge.properties.get(&filter.key);
                     let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
-                            Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                            Some(v) => v.value == filter_val.value,
                             None => false,
                         },
                         Op::NotEquals => match prop_val_opt {
-                            Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                            Some(v) => v.value != filter_val.value,
                             None => true,
                         },
                         Op::GreaterThan => {
-                            cmp_prop_gt(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_gt(prop_val_opt, filter_val)
                         }
                         Op::GreaterEqual => {
-                            cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_ge(prop_val_opt, filter_val)
                         }
-                        Op::LessThan => cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap()),
-                        Op::LessEqual => cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap()),
+                        Op::LessThan => cmp_prop_lt(prop_val_opt, filter_val),
+                        Op::LessEqual => cmp_prop_le(prop_val_opt, filter_val),
                         Op::StartsWith => {
-                            prop_starts_with(prop_val_opt, filter.value.as_ref().unwrap())
+                            prop_starts_with(prop_val_opt, filter_val)
                         }
-                        Op::Contains => prop_contains(prop_val_opt, filter.value.as_ref().unwrap()),
+                        Op::Contains => prop_contains(prop_val_opt, filter_val),
                         _ => false,
                     };
                     if !pass {

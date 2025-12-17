@@ -8,15 +8,15 @@ import pytest
 import time
 from typing import Dict, Any
 
-from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb import (
+from proximadb_sdk import ProximaDBClient, Protocol, connect_rest, connect_grpc
+from proximadb_sdk import (
     CollectionConfig, IndexConfiguration, FlushConfig,
     DistanceMetric, IndexType, StorageEngine,
     CompressionType, StorageConfig
 )
-from proximadb.models import CompressionConfig  # Import from models to avoid namespace conflict
-from proximadb import ProximaDBError, CollectionNotFoundError
-from proximadb import ClientConfig
+from proximadb_sdk.models import CompressionConfig  # Import from models to avoid namespace conflict
+from proximadb_sdk import ProximaDBError, CollectionNotFoundError
+from proximadb_sdk import ClientConfig
 
 
 class TestCollectionCRUD:

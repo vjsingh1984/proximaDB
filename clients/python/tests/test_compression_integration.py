@@ -10,7 +10,7 @@ import numpy as np
 from typing import List
 from unittest.mock import Mock, patch, MagicMock
 
-from proximadb.models import (
+from proximadb_sdk.models import (
     CollectionConfig,
     CompressionConfig,
     CompressionAlgorithm,

@@ -4,8 +4,8 @@ Unit tests for proto conversion utilities (v1 proto)
 Tests filter conversion and SearchParams conversion with v1 proto structure.
 """
 import pytest
-from proximadb.filters import FilterBuilder, FilterOp, LogicalOp
-from proximadb.search_utils import build_search_params_grpc, _python_value_to_sql_value
+from proximadb_sdk.filters import FilterBuilder, FilterOp, LogicalOp
+from proximadb_sdk.search_utils import build_search_params_grpc, _python_value_to_sql_value
 
 
 class TestFilterProtoConversion:
@@ -13,7 +13,7 @@ class TestFilterProtoConversion:
 
     def test_simple_equality_filter(self):
         """Test simple equality filter conversion"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         filter_builder = FilterBuilder().equals('category', 'electronics')
         proto_filter = filter_builder.to_proto_filter()
@@ -27,7 +27,7 @@ class TestFilterProtoConversion:
 
     def test_multiple_and_conditions(self):
         """Test multiple AND conditions"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         filter_builder = (FilterBuilder()
             .equals('category', 'electronics')
@@ -55,7 +55,7 @@ class TestFilterProtoConversion:
 
     def test_or_filter(self):
         """Test OR filter"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         filter_builder = (FilterBuilder()
             .or_()
@@ -69,7 +69,7 @@ class TestFilterProtoConversion:
 
     def test_comparison_operators(self):
         """Test all comparison operators"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         test_cases = [
             (FilterOp.EQUALS, entity_pb2.EQ),
@@ -92,7 +92,7 @@ class TestFilterProtoConversion:
 
     def test_value_type_conversion(self):
         """Test different value types in filters"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         # Test string value
         f1 = FilterBuilder().equals('name', 'test')
@@ -116,7 +116,7 @@ class TestFilterProtoConversion:
 
     def test_in_filter_with_list(self):
         """Test IN filter with list values"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         filter_builder = FilterBuilder().in_('category', ['electronics', 'books'])
         proto_filter = filter_builder.to_proto_filter()
@@ -127,7 +127,7 @@ class TestFilterProtoConversion:
 
     def test_nested_filter_flattening(self):
         """Test nested filter groups get flattened"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         # Create nested filter
         inner_filter = FilterBuilder().equals('brand', 'Apple')
@@ -160,7 +160,7 @@ class TestSearchParamsProtoConversion:
 
     def test_basic_search_params(self):
         """Test basic SearchParams creation"""
-        from proximadb.v1 import vector_types_pb2
+        from proximadb_sdk.v1 import vector_types_pb2
 
         params = build_search_params_grpc(
             top_k=10,
@@ -173,7 +173,7 @@ class TestSearchParamsProtoConversion:
 
     def test_all_scalar_fields(self):
         """Test all scalar optional fields"""
-        from proximadb.v1 import vector_types_pb2
+        from proximadb_sdk.v1 import vector_types_pb2
 
         params = build_search_params_grpc(
             top_k=10,
@@ -257,42 +257,42 @@ class TestSqlValueConversion:
 
     def test_string_value(self):
         """Test string to SqlValue"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value('test', types_pb2)
         assert sql_value.string_value == 'test'
 
     def test_int_value(self):
         """Test int to SqlValue"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value(42, types_pb2)
         assert sql_value.int64_value == 42
 
     def test_float_value(self):
         """Test float to SqlValue"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value(3.14, types_pb2)
         assert sql_value.number_value == 3.14
 
     def test_bool_value(self):
         """Test bool to SqlValue"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value(True, types_pb2)
         assert sql_value.bool_value is True
 
     def test_bytes_value(self):
         """Test bytes to SqlValue"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value(b'binary', types_pb2)
         assert sql_value.bytes_value == b'binary'
 
     def test_none_value(self):
         """Test None to SqlValue"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
         from google.protobuf import struct_pb2
 
         sql_value = _python_value_to_sql_value(None, types_pb2)
@@ -300,7 +300,7 @@ class TestSqlValueConversion:
 
     def test_list_value(self):
         """Test list to SqlValue (SqlArray)"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value([1, 2, 3], types_pb2)
         assert len(sql_value.array_value.values) == 3
@@ -310,7 +310,7 @@ class TestSqlValueConversion:
 
     def test_dict_value(self):
         """Test dict to SqlValue (SqlObject)"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value({'key': 'value', 'count': 42}, types_pb2)
         assert 'key' in sql_value.object_value.fields
@@ -320,7 +320,7 @@ class TestSqlValueConversion:
 
     def test_nested_structures(self):
         """Test nested lists and dicts"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         # Nested list
         sql_value = _python_value_to_sql_value([[1, 2], [3, 4]], types_pb2)
@@ -334,7 +334,7 @@ class TestSqlValueConversion:
 
     def test_fallback_string_conversion(self):
         """Test fallback to string for unknown types"""
-        from proximadb.v1 import types_pb2
+        from proximadb_sdk.v1 import types_pb2
 
         class CustomObject:
             def __str__(self):
@@ -349,7 +349,7 @@ class TestEdgeCases:
 
     def test_empty_filter(self):
         """Test empty filter builder"""
-        from proximadb.v1 import entity_pb2
+        from proximadb_sdk.v1 import entity_pb2
 
         filter_builder = FilterBuilder()
         proto_filter = filter_builder.to_proto_filter()
@@ -360,7 +360,7 @@ class TestEdgeCases:
 
     def test_search_params_with_none_values(self):
         """Test SearchParams with None values (should be skipped)"""
-        from proximadb.v1 import vector_types_pb2
+        from proximadb_sdk.v1 import vector_types_pb2
 
         params = build_search_params_grpc(
             top_k=None,
@@ -376,7 +376,7 @@ class TestEdgeCases:
 
     def test_search_params_empty_custom_hints(self):
         """Test SearchParams with empty custom hints"""
-        from proximadb.v1 import vector_types_pb2
+        from proximadb_sdk.v1 import vector_types_pb2
 
         params = build_search_params_grpc(custom_hints={})
 

@@ -1,3 +1,5 @@
+// NOTE: This tenant access layer is not exported from `services::mod` and has no current
+// call sites. Keep implementation changes in sync with future wiring if it becomes active.
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;

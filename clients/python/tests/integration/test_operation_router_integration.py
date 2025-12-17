@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb.intelligent_router import (
+from proximadb_sdk.intelligent_router import (
     IntelligentRouter,
     RoutingConfig,
     RoutingStrategy,
@@ -25,9 +25,9 @@ from proximadb.intelligent_router import (
     ProtocolMetrics,
     ProtocolHealth
 )
-from proximadb.config import Protocol, ClientConfig
+from proximadb_sdk.config import Protocol, ClientConfig
 # Backward compatibility imports
-from proximadb.operation_router import (
+from proximadb_sdk.operation_router import (
     OperationRouter,
     create_operation_router
 )

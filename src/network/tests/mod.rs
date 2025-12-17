@@ -5,3 +5,6 @@ pub mod config_tests;
 
 #[cfg(test)]
 pub mod compression_tests;
+
+#[cfg(test)]
+pub mod metrics_tests;

@@ -18,10 +18,10 @@ from utils.server_utils import ensure_server_running
 
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
 # This test needs to be updated for the new architecture
-from proximadb.chunking_strategies import SemanticStrategy
-from proximadb.chunking import ChunkingConfig, ChunkingStrategy
-from proximadb.chunking import TextChunk, ChunkingConfig, ChunkingStrategy, TextChunker
-from proximadb.embedding_interface import (
+from proximadb_sdk.chunking_strategies import SemanticStrategy
+from proximadb_sdk.chunking import ChunkingConfig, ChunkingStrategy
+from proximadb_sdk.chunking import TextChunk, ChunkingConfig, ChunkingStrategy, TextChunker
+from proximadb_sdk.embedding_interface import (
     create_embedding_provider,
     get_default_embedding_provider,
     BERTEmbeddingProvider,
@@ -323,7 +323,7 @@ class TestSemanticChunkingIntegration(BaseProximaDBTest):
         embeddings = provider.embed_texts(chunk_texts)
         
         # Convert to vector records
-        from proximadb.chunking import chunks_to_vector_records
+        from proximadb_sdk.chunking import chunks_to_vector_records
         
         records = chunks_to_vector_records(
             chunks=chunks,

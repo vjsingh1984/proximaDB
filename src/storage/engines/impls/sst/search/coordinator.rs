@@ -31,6 +31,9 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::impls::sst::SstEngine;
 use crate::storage::traits::StorageQueryContext;
 
+/// Default over-fetch multiplier to account for tombstones being filtered
+const TOMBSTONE_OVERFETCH_MULTIPLIER: f32 = 1.2;
+
 /// Search strategy enumeration
 #[derive(Debug, Clone)]
 pub enum SearchStrategy {
@@ -160,13 +163,47 @@ impl SearchCoordinator {
         })
     }
 
+    /// Filter tombstones from search results
+    ///
+    /// Tombstones are identified by:
+    /// - Empty vector (None or empty Vec) - PRIMARY indicator
+    ///
+    /// Deleted records are marked with empty vectors during the delete operation.
+    /// These should be excluded from search results.
+    fn filter_tombstones(&self, results: Vec<OptimizedSearchRecord>) -> Vec<OptimizedSearchRecord> {
+        let original_count = results.len();
+        let filtered: Vec<OptimizedSearchRecord> = results
+            .into_iter()
+            .filter(|r| {
+                // Primary tombstone indicator: empty vector
+                // A record is considered a tombstone if it has no vector data
+                // Keep records that have a non-empty vector
+                r.vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+            })
+            .collect();
+
+        let filtered_count = original_count - filtered.len();
+        if filtered_count > 0 {
+            debug!(
+                "🗑️ Tombstone filter: removed {} deleted records from {} total",
+                filtered_count, original_count
+            );
+        }
+
+        filtered
+    }
+
     /// Post-process search results for optimization
     async fn post_process_results(
         &self,
-        mut results: Vec<OptimizedSearchRecord>,
+        results: Vec<OptimizedSearchRecord>,
         ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!("🔧 Post-processing {} search results", results.len());
+
+        // Filter out tombstones (deleted records) first
+        let results = self.filter_tombstones(results);
+        debug!("📊 After tombstone filtering: {} results", results.len());
 
         // Use bounded priority queue for efficient top-k selection
         let k = ctx.top_k();
@@ -316,6 +353,7 @@ mod tests {
             progressive_scenario: None,
             progressive_recalls: None,
             optimization_hint: None,
+            search_mode: crate::core::search::SearchMode::default(),
         });
 
         let collection = Arc::new(crate::proto::proximadb_v1::Collection {

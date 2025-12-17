@@ -17,14 +17,14 @@ import sys
 from .loader import code_module, read_resource_file, RESOURCES_DIR
 
 # Import after loader has set up modules
-from proximadb.code_knowledge import (
+from proximadb_sdk.code_knowledge import (
     CodeKnowledgeBuilder,
     CodeIndexConfig,
     CodeSearchResult,
     IndexingResult,
     create_code_knowledge_store,
 )
-from proximadb.chunking_strategies.code import (
+from proximadb_sdk.chunking_strategies.code import (
     CodeSymbol,
     CodeSymbolType,
     CodeRelation,

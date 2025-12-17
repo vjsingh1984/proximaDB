@@ -16,8 +16,8 @@ from sentence_transformers import SentenceTransformer
 import json
 import glob
 
-from proximadb import ProximaDBClient, Protocol
-from proximadb import VectorRecord, CollectionConfig, DistanceMetric, StorageEngine
+from proximadb_sdk import ProximaDBClient, Protocol
+from proximadb_sdk import VectorRecord, CollectionConfig, DistanceMetric, StorageEngine
 
 
 def generate_bert_embeddings(texts, model_name='all-MiniLM-L6-v2'):

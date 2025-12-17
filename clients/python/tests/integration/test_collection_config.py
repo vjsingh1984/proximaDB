@@ -13,7 +13,7 @@ import itertools
 from typing import List, Dict, Any
 import logging
 
-from proximadb import (
+from proximadb_sdk import (
     ProximaDBClient, Protocol, connect_rest, connect_grpc,
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm,
     FilterableColumn, FilterableDataType, IndexConfiguration,
@@ -21,7 +21,7 @@ from proximadb import (
     ProximaDBError
 )
 # Import index configs directly from models
-from proximadb.models import (
+from proximadb_sdk.models import (
     HnswConfig, IvfConfig, FlatConfig, PqConfig, 
     AnnoyConfig, LshConfig
 )

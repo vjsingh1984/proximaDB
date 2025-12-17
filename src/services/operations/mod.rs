@@ -3,10 +3,12 @@
 //! Core operations on vectors including search, insert, update, delete
 
 pub mod batch_result;
+pub mod bulk_write_router;
 pub mod vectors;
 
 #[cfg(test)]
 pub mod vectors_test;
 
 pub use batch_result::{BatchOperationResult, OperationMetrics};
+pub use bulk_write_router::{BulkWriteConfig, BulkWriteDecision, BulkWriteRouter};
 pub use vectors::{UnifiedSearchConfig as SearchConfig, VectorOperationsService as VectorOps};

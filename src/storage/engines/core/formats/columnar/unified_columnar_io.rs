@@ -36,6 +36,9 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::engines::core::formats::columnar::constants::{
+    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
+};
 use crate::storage::unified_scan_strategy::{ScanIterator, ScanStrategy};
 
 /// Unified columnar I/O configuration
@@ -104,8 +107,8 @@ impl Default for UnifiedColumnarConfig {
     fn default() -> Self {
         Self {
             // Common
-            row_group_size: 10000,
-            page_size: 1024 * 1024, // 1MB
+            row_group_size: DEFAULT_ROW_GROUP_SIZE,
+            page_size: DEFAULT_PAGE_SIZE,
             write_batch_size: 1000,
             memory_budget_bytes: 512 * 1024 * 1024, // 512MB
 
@@ -520,16 +523,16 @@ impl UnifiedColumnarWriter {
             format: FormatType::Parquet,
             records_written: records.len(),
             bytes_written: metadata
-                .row_groups
+                .row_groups()
                 .iter()
-                .map(|rg| rg.total_byte_size)
+                .map(|rg| rg.total_byte_size())
                 .sum::<i64>() as usize,
             compression_ratio: self.calculate_compression_ratio(
                 &records,
                 metadata
-                    .row_groups
+                    .row_groups()
                     .iter()
-                    .map(|rg| rg.total_byte_size)
+                    .map(|rg| rg.total_byte_size())
                     .sum::<i64>() as usize,
             ),
         })

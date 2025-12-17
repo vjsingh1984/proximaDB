@@ -21,9 +21,9 @@ import numpy as np
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from proximadb import ProximaDBClient, Protocol
-from proximadb import CollectionConfig, VectorRecord, DistanceMetric, StorageEngine
-from proximadb import ProximaDBError
+from proximadb_sdk import ProximaDBClient, Protocol
+from proximadb_sdk import CollectionConfig, VectorRecord, DistanceMetric, StorageEngine
+from proximadb_sdk import ProximaDBError
 
 
 class TestSDKUpsertOperations:

@@ -433,6 +433,7 @@ pub fn create_test_search_params() -> SearchParams {
         progressive_scenario: None,
         progressive_recalls: None,
         optimization_hint: None,
+        search_mode: crate::core::search::SearchMode::default(),
     }
 }
 

@@ -101,10 +101,10 @@ pub const VIPER_FILE_EXTENSION: &str = ".viper.parquet";
 
 // === Default Values ===
 /// Default row group size
-pub const DEFAULT_ROW_GROUP_SIZE: usize = 10000;
+pub const DEFAULT_ROW_GROUP_SIZE: usize = 2048; // Tuned for 384–1204d embeddings
 
 /// Default page size
-pub const DEFAULT_PAGE_SIZE: usize = 1024;
+pub const DEFAULT_PAGE_SIZE: usize = 256 * 1024; // 256KB pages for balanced IO vs. overhead
 
 /// Default write batch size
 pub const DEFAULT_WRITE_BATCH_SIZE: usize = 1000;

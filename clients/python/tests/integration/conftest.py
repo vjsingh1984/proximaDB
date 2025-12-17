@@ -2,21 +2,20 @@
 """
 ProximaDB Python SDK Test Configuration
 Shared fixtures and configuration for all test modules
+
+Note: Tests rely on the editable install (pip install -e .)
+rather than sys.path manipulation for consistent imports.
 """
 
 import pytest
 import logging
 import time
-import sys
 import os
 from typing import Generator, Dict, Any
 
-# Add the SDK source to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb import CollectionConfig, DistanceMetric
-from proximadb import ProximaDBError
+from proximadb_sdk import ProximaDBClient, connect_rest, connect_grpc
+from proximadb_sdk import CollectionConfig, DistanceMetric
+from proximadb_sdk import ProximaDBError
 
 
 
@@ -49,7 +48,7 @@ def test_config() -> Dict[str, Any]:
 def verify_server_running(test_config):
     """Verify ProximaDB server is running before tests"""
     try:
-        from proximadb.config import ClientConfig, Protocol
+        from proximadb_sdk.config import ClientConfig, Protocol
         config = ClientConfig(
             url=test_config["rest_endpoint"],
             protocol=Protocol.REST,
@@ -81,7 +80,7 @@ def verify_server_running(test_config):
 @pytest.fixture(scope="class")
 def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
     """Shared REST client fixture for test classes"""
-    from proximadb.config import ClientConfig, Protocol
+    from proximadb_sdk.config import ClientConfig, Protocol
     config = ClientConfig(
         url=test_config["rest_endpoint"],
         protocol=Protocol.REST,
@@ -97,7 +96,7 @@ def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 @pytest.fixture(scope="class")
 def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
     """Shared gRPC client fixture for test classes"""
-    from proximadb.config import ClientConfig, Protocol
+    from proximadb_sdk.config import ClientConfig, Protocol
     
     # Ensure grpc_endpoint has the proper scheme
     grpc_url = test_config["grpc_endpoint"]

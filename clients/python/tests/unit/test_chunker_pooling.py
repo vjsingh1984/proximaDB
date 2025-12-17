@@ -25,7 +25,7 @@ import threading
 import time
 from unittest.mock import patch
 
-from proximadb.chunking import (
+from proximadb_sdk.chunking import (
     ChunkerPool,
     PooledChunkerContext,
     TextChunker,
