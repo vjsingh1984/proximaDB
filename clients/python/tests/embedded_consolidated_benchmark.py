@@ -64,6 +64,7 @@ import random
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import numpy as np
 import struct
@@ -80,6 +81,50 @@ except ImportError:
     RICH_AVAILABLE = False
     Console = None
     Table = None
+
+
+# =============================================================================
+# Logging and Timing Utilities
+# =============================================================================
+
+class BenchmarkLogger:
+    """Utility for logging benchmark progress with timestamps and inline stats."""
+
+    @staticmethod
+    def log_start(engine_name: str, operation: str = ""):
+        """Log the start of a benchmark operation."""
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        op_str = f" ({operation})" if operation else ""
+        print(f"\n  [{timestamp}] ▶ START: {engine_name}{op_str}")
+        return time.perf_counter()
+
+    @staticmethod
+    def log_end(engine_name: str, start_time: float, stats: Dict[str, Any] = None):
+        """Log the end of a benchmark operation with stats."""
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+        # Format stats line
+        stats_str = ""
+        if stats:
+            stat_parts = []
+            for key, value in stats.items():
+                if isinstance(value, float):
+                    stat_parts.append(f"{key}={value:.2f}")
+                elif isinstance(value, int):
+                    stat_parts.append(f"{key}={value:,}")
+                else:
+                    stat_parts.append(f"{key}={value}")
+            stats_str = f" | {' | '.join(stat_parts)}"
+
+        print(f"  [{timestamp}] ✓ DONE:  {engine_name} ({elapsed_ms:.1f}ms){stats_str}")
+        return elapsed_ms
+
+    @staticmethod
+    def log_error(engine_name: str, error: Exception):
+        """Log an error during benchmark."""
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        print(f"  [{timestamp}] ✗ ERROR: {engine_name} - {str(error)}")
 
 
 # =============================================================================
@@ -2338,19 +2383,21 @@ def _benchmark_proximadb_engine(
     """Benchmark a single ProximaDB engine with disk persistence."""
     results = []
     name = display_name if display_name else engine.upper()
-    print(f"  Benchmarking {name}...", end="", flush=True)
+    logger = BenchmarkLogger()
 
     # Handle special engine aliases (e.g., sst_approx -> sst for different search modes)
     actual_engine = "sst" if engine == "sst_approx" else engine
 
     try:
+        # Phase 1: Create DB and insert all data
+        phase1_start = logger.log_start(name, "Create + Insert")
+
         if temp_dir is None:
             temp_dir = tempfile.mkdtemp()
 
         data_dir = os.path.join(temp_dir, f"sift_{engine}")  # Keep unique dir per alias
         os.makedirs(data_dir, exist_ok=True)
 
-        # Phase 1: Create DB and insert all data
         db = proximadb.ProximaDB(
             data_dirs=data_dir,
             metadata_dir=os.path.join(data_dir, "metadata"),
@@ -2371,6 +2418,16 @@ def _benchmark_proximadb_engine(
             db.insert(collection_name, ids, vectors_list, None)
         insert_time = (time.perf_counter() - start) * 1000
 
+        logger.log_end(
+            f"{name} (Insert)",
+            phase1_start,
+            {
+                "vectors": len(base_vectors),
+                "throughput_v/s": len(base_vectors) / (insert_time / 1000),
+                "time_ms": insert_time
+            }
+        )
+
         results.append(BenchmarkResult(
             "sift_insert", engine, insert_time,
             throughput=len(base_vectors) / (insert_time / 1000),
@@ -2378,6 +2435,8 @@ def _benchmark_proximadb_engine(
         ))
 
         # Phase 2: Force flush memtable to SST files before close
+        phase2_start = logger.log_start(name, "Flush + Close")
+
         # This is critical for:
         # 1. Creating SST files with centroid indexes (enables approximate search)
         # 2. Avoiding WAL replay overhead on reopen
@@ -2393,8 +2452,12 @@ def _benchmark_proximadb_engine(
         gc.collect()
         time.sleep(1.0)  # Allow OS to flush file handles (increased from 0.5s)
 
+        logger.log_end(f"{name} (Flush+Close)", phase2_start)
+
         # Calculate disk space - scan ACTUAL ProximaDB write location and filter by collection
         # ProximaDB writes to ./data/write_buffer/ regardless of data_dirs parameter
+        phase_disk_start = logger.log_start(name, "Disk Analysis")
+
         proximadb_write_dir = "./data/write_buffer"
         collection_prefix = f"sift_{engine}/"  # Files for this engine's collection
 
@@ -2430,6 +2493,12 @@ def _benchmark_proximadb_engine(
         disk_size_bytes = total_size
         disk_size_mb = disk_size_bytes / (1024 * 1024)
 
+        logger.log_end(
+            f"{name} (Disk Analysis)",
+            phase_disk_start,
+            {"files": file_count, "disk_mb": disk_size_mb}
+        )
+
         # Print file details if disk size > 0
         # if disk_size_mb > 0.1 and file_count > 0:
         #     print(f"\n    📁 Engine files ({file_count} files, {disk_size_mb:.2f}MB for {collection_prefix}):")
@@ -2437,6 +2506,8 @@ def _benchmark_proximadb_engine(
         #         print(f"       - {rel_path}: {size_kb:.1f}KB")
 
         # Phase 3: Reopen DB for search (loads indexes from disk)
+        phase3_start = logger.log_start(name, "Reopen + Search")
+
         db = proximadb.ProximaDB(
             data_dirs=data_dir,
             metadata_dir=os.path.join(data_dir, "metadata"),
@@ -2476,6 +2547,18 @@ def _benchmark_proximadb_engine(
         qps = 1000 / avg_search
         avg_recall = float(np.mean(recalls)) * 100 if recalls else None
 
+        logger.log_end(
+            f"{name} (Search {num_queries}q)",
+            phase3_start,
+            {
+                "avg_ms": avg_search,
+                "p50_ms": p50_search,
+                "p95_ms": p95_search,
+                "qps": qps,
+                "recall": f"{avg_recall:.1f}%" if avg_recall else "N/A"
+            }
+        )
+
         results.append(BenchmarkResult(
             "sift_search", engine, avg_search,
             throughput=qps, p50_ms=p50_search, p95_ms=p95_search, p99_ms=p99_search,
@@ -2488,11 +2571,11 @@ def _benchmark_proximadb_engine(
         #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms{recall_str}, Disk: {disk_size_mb:.1f}MB")
 
     except TimeoutError as e:
+        logger.log_error(name, e)
         results.append(BenchmarkResult("sift_search", engine, 0, error=str(e)))
-        print(f" TIMEOUT: {str(e)}")
     except Exception as e:
+        logger.log_error(name, e)
         results.append(BenchmarkResult("sift_ops", engine, 0, error=str(e)))
-        print(f" ERROR: {str(e)[:50]}")
 
     return results
 
