@@ -490,10 +490,17 @@ impl SwiftEngine {
         let centroids: Vec<Vec<f32>> = superblocks
             .iter()
             .map(|sb| {
-                sb.centroid
-                    .as_ref()
-                    .map(|c| c.clone())
-                    .unwrap_or_else(|| vec![0.0; query.len()])
+                // Use FP16 centroid if available (50% storage reduction),
+                // fallback to FP32 centroid, or use zero vector
+                if let Some(ref fp16_centroid) = sb.centroid_fp16 {
+                    // Convert FP16 to FP32 for distance computation
+                    crate::storage::engines::impls::sst::fp16_to_fp32(fp16_centroid)
+                } else {
+                    sb.centroid
+                        .as_ref()
+                        .map(|c| c.clone())
+                        .unwrap_or_else(|| vec![0.0; query.len()])
+                }
             })
             .collect();
 

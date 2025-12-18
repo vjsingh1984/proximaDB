@@ -401,6 +401,7 @@ fn create_authorization_failure_event(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use tracing::{debug, info, warn};
 
     fn create_test_config() -> SecurityConfig {
         SecurityConfig {

@@ -4695,15 +4695,185 @@ impl UnifiedSstableReader {
         _index_blocks: &[IndexEntry],
         _params: &SearchParams,
     ) -> Vec<usize> {
-        // TODO: Implement smart block selection based on search parameters
-        // For now, select all blocks
-        (0.._index_blocks.len()).collect()
+        // Use block centroids when available to prune blocks before decompression.
+        let query = _params
+            .vector
+            .as_ref()
+            .or_else(|| _params.query_vectors.as_ref().and_then(|v| v.first()));
+
+        let query = match query {
+            Some(q) if !q.is_empty() => q,
+            _ => {
+                // No query vector; fall back to scanning all blocks.
+                return (0.._index_blocks.len()).collect();
+            }
+        };
+
+        let metric = _params
+            .distance_metric
+            .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+
+        select_blocks_by_centroid(query, _index_blocks, metric, &_params.block_prune)
+    }
+
+    fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
+        a.iter()
+            .zip(b.iter())
+            .fold(0.0f32, |acc, (x, y)| acc + (x - y) * (x - y))
     }
 
     fn is_hot_data(&self, data_block: &ProximaDataBlock) -> bool {
         // Simple heuristic: blocks with many non-tombstone records are hot
         let active_records = data_block.records.len();
         active_records > data_block.records.len() / 2
+    }
+}
+
+fn select_blocks_by_centroid(
+    query: &[f32],
+    entries: &[IndexEntry],
+    metric: crate::compute::distance_computation::DistanceMetric,
+    prune: &crate::core::search::BlockPruneConfig,
+) -> Vec<usize> {
+    if prune.force_exact {
+        return (0..entries.len()).collect();
+    }
+
+    let mut scored = Vec::with_capacity(entries.len());
+
+    for (idx, entry) in entries.iter().enumerate() {
+        // Use FP16 centroid if available (50% storage reduction, <0.1% error)
+        // Falls back to FP32 for backward compatibility
+        let centroid = super::super::get_centroid_fp32(
+            &entry.block_centroid_fp16,
+            &entry.block_centroid,
+        );
+
+        if centroid.len() != query.len() {
+            scored.push((f32::INFINITY, idx));
+            continue;
+        }
+        let dist = metric_distance(query, &centroid, metric);
+        scored.push((dist, idx));
+    }
+
+    if scored.is_empty() {
+        return Vec::new();
+    }
+
+    let mut keep = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => {
+            (scored.len() as f32).sqrt().ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Ratio => {
+            let r = prune.ratio.clamp(0.0, 1.0);
+            ((scored.len() as f32) * r).ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Fixed(k) => k,
+    };
+
+    keep = keep.max(prune.min_keep);
+    if prune.max_keep > 0 {
+        keep = keep.min(prune.max_keep);
+    }
+    keep = keep.clamp(1, scored.len());
+
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut selected: Vec<usize> = scored.into_iter().take(keep).map(|(_, idx)| idx).collect();
+
+    selected.sort_unstable();
+    selected.dedup();
+    selected
+}
+
+fn metric_distance(
+    a: &[f32],
+    b: &[f32],
+    metric: crate::compute::distance_computation::DistanceMetric,
+) -> f32 {
+    // Delegate to unified distance engine to honor all metrics consistently.
+    let distance_compute = UnifiedDistanceCompute::default();
+    distance_compute.distance_with_metric(a, b, &metric)
+}
+
+#[cfg(test)]
+mod centroid_tests {
+    use super::*;
+
+    #[test]
+    fn selects_sqrt_top_blocks() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+            },
+            IndexEntry {
+                key: "c".into(),
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.2, 0.2],
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+            },
+            IndexEntry {
+                key: "d".into(),
+                offset: 0,
+                size: 0,
+                block_id: 3,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![5.0, 5.0],
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+            },
+        ];
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &crate::core::search::BlockPruneConfig::default(),
+        );
+        // sqrt(4) = 2 => expect the two closest blocks by centroid: block_ids 0 and 2.
+        assert_eq!(selected, vec![0, 2]);
     }
 }
 

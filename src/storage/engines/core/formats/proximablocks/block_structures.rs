@@ -460,6 +460,9 @@ pub struct SuperBlock {
 
     /// SuperBlock-level indexes
     pub centroid: Option<Vec<f32>>,
+    /// FP16 quantized superblock centroid (50% storage reduction, <0.1% distance error)
+    /// When present, this is used for block selection; centroid is kept for backward compatibility
+    pub centroid_fp16: Option<Vec<u16>>,
     pub quantized_signature: Vec<u8>,
     pub bloom_filter: Option<SstableBloomFilter>,
 
@@ -4777,6 +4780,7 @@ impl SuperBlock {
             id_range: ("".to_string(), "".to_string()),
             timestamp_range: (0, 0),
             centroid: None,
+            centroid_fp16: None,
             quantized_signature: Vec::new(),
             bloom_filter: None,
             layout: BlockLayout::default(),

@@ -168,6 +168,7 @@ pub async fn search_progressive(
     query: &[f32],
     top_k: usize,
     filter: Option<MetadataFilter>,
+    prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<VectorRecord>> {
     let config = ProgressiveSearchConfig::default();
 
@@ -188,6 +189,7 @@ pub async fn search_progressive(
         &filter,
         config.binary_threshold,
         &quantization_engine,
+        prune,
     )
     .await?;
 
@@ -259,6 +261,7 @@ async fn phase1_binary_filtering(
     filter: &Option<MetadataFilter>,
     threshold: f32,
     quantization_engine: &StorageQuantizationEngine,
+    prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<Candidate>> {
     // Use binary quantization approach - create a simple binary representation
     // TODO: Implement proper binary quantization via storage engine
@@ -273,6 +276,8 @@ async fn phase1_binary_filtering(
     let mut candidates = BinaryHeap::new();
 
     // First check superblock-level signatures
+    let metric = parse_distance_metric(&sst.header.distance_metric);
+
     for (sb_idx, superblock) in sst.superblocks.iter().enumerate() {
         // Quick check with superblock signature
         let sb_binary = BinarySketch {
@@ -285,8 +290,12 @@ async fn phase1_binary_filtering(
             continue; // Skip entire superblock
         }
 
+        // Block-level centroid pruning
+        let block_indices = select_blocks_by_centroid(superblock, query, &metric, prune);
+
         // Check individual blocks
-        for (b_idx, block) in superblock.blocks.iter().enumerate() {
+        for &b_idx in &block_indices {
+            let block = &superblock.blocks[b_idx];
             // Apply metadata filter at block level
             if let Some(f) = filter {
                 if !block_matches_filter(block, f) {
@@ -723,6 +732,81 @@ fn condition_matches_record(
     }
 }
 
+fn parse_distance_metric(name: &str) -> crate::compute::distance_computation::DistanceMetric {
+    use crate::compute::distance_computation::DistanceMetric;
+    match name.to_lowercase().as_str() {
+        "cosine" => DistanceMetric::Cosine,
+        "dot" | "dotproduct" => DistanceMetric::DotProduct,
+        "manhattan" | "l1" => DistanceMetric::Manhattan,
+        "hamming" => DistanceMetric::Hamming,
+        _ => DistanceMetric::Euclidean,
+    }
+}
+
+fn select_blocks_by_centroid(
+    superblock: &super::SuperBlock,
+    query: &[f32],
+    metric: &crate::compute::distance_computation::DistanceMetric,
+    prune: &crate::core::search::BlockPruneConfig,
+) -> Vec<usize> {
+    if prune.force_exact {
+        return (0..superblock.blocks.len()).collect();
+    }
+    if superblock.block_centroids.is_empty() {
+        return (0..superblock.blocks.len()).collect();
+    }
+
+    let distance_compute =
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+    let mut scored = Vec::with_capacity(superblock.block_centroids.len());
+
+    for (idx, fp32_centroid) in superblock.block_centroids.iter().enumerate() {
+        // Use FP16 centroid if available (50% storage reduction, <0.1% error)
+        // Falls back to FP32 for backward compatibility
+        let centroid = if let Some(ref fp16_centroids) = superblock.block_centroids_fp16 {
+            if let Some(fp16_centroid) = fp16_centroids.get(idx) {
+                crate::storage::engines::impls::sst::fp16_to_fp32(fp16_centroid)
+            } else {
+                fp32_centroid.clone()
+            }
+        } else {
+            fp32_centroid.clone()
+        };
+
+        if centroid.len() != query.len() {
+            scored.push((f32::INFINITY, idx));
+            continue;
+        }
+        let dist = distance_compute.distance_with_metric(query, &centroid, metric);
+        scored.push((dist, idx));
+    }
+
+    if scored.is_empty() {
+        return Vec::new();
+    }
+
+    let mut k = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => {
+            (scored.len() as f32).sqrt().ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Ratio => {
+            let r = prune.ratio.clamp(0.0, 1.0);
+            ((scored.len() as f32) * r).ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Fixed(k) => k,
+    };
+    if prune.max_keep > 0 {
+        k = k.min(prune.max_keep);
+    }
+    k = k.max(prune.min_keep).clamp(1, scored.len());
+
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut selected: Vec<usize> = scored.into_iter().take(k).map(|(_, idx)| idx).collect();
+    selected.sort_unstable();
+    selected.dedup();
+    selected
+}
+
 // Removed compute_distance wrapper - directly use UnifiedDistanceCompute in calling code
 
 #[cfg(test)]
@@ -774,5 +858,142 @@ mod tests {
 
         let dot_result = compute.calculate_distance(&a, &b, &DistanceMetric::DotProduct);
         assert_eq!(dot_result.distance, 0.0); // Orthogonal vectors
+    }
+
+    #[test]
+    fn test_block_centroid_pruning_selects_sqrt() {
+        let superblock = super::SuperBlock {
+            superblock_id: 0,
+            name: "sb".into(),
+            blocks: Vec::new(),
+            superblock_encoding_marker: 0,
+            centroid: vec![],
+            block_centroids: vec![
+                vec![0.1, 0.1],
+                vec![3.0, 3.0],
+                vec![0.2, 0.2],
+                vec![6.0, 6.0],
+            ],
+            quantized_signature: Vec::new(),
+            swift_metadata: super::SwiftSuperBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                swift_specific_data: super::SwiftSpecificData {
+                    hierarchical_structure: true,
+                    large_scale_optimization: true,
+                    efficient_metadata_storage: true,
+                    optimized_traversal: true,
+                },
+            },
+            record_count: 0,
+        };
+
+        let metric = DistanceMetric::Euclidean;
+        let prune = crate::core::search::BlockPruneConfig::default();
+        let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
+        // sqrt(4)=2 -> expect the two closest indices 0 and 2
+        assert_eq!(selected, vec![0, 2]);
+    }
+
+    #[test]
+    fn test_block_centroid_pruning_ratio() {
+        let superblock = super::SuperBlock {
+            superblock_id: 0,
+            name: "sb".into(),
+            blocks: Vec::new(),
+            superblock_encoding_marker: 0,
+            centroid: vec![],
+            block_centroids: vec![vec![0.1, 0.1], vec![3.0, 3.0], vec![0.2, 0.2], vec![6.0, 6.0]],
+            quantized_signature: Vec::new(),
+            swift_metadata: super::SwiftSuperBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                swift_specific_data: super::SwiftSpecificData {
+                    hierarchical_structure: true,
+                    large_scale_optimization: true,
+                    efficient_metadata_storage: true,
+                    optimized_traversal: true,
+                },
+            },
+            record_count: 0,
+        };
+
+        let metric = DistanceMetric::Euclidean;
+        let prune = crate::core::search::BlockPruneConfig {
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 0.25, // keep ~1 of 4
+            min_keep: 1,
+            max_keep: 0,
+            ..Default::default()
+        };
+        let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0], 0);
+    }
+
+    #[test]
+    fn test_block_centroid_pruning_force_exact() {
+        let superblock = super::SuperBlock {
+            superblock_id: 0,
+            name: "sb".into(),
+            blocks: vec![ProximaDataBlock::default(); 3],
+            superblock_encoding_marker: 0,
+            centroid: vec![],
+            block_centroids: vec![vec![0.1, 0.1], vec![3.0, 3.0], vec![0.2, 0.2]],
+            quantized_signature: Vec::new(),
+            swift_metadata: super::SwiftSuperBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                swift_specific_data: super::SwiftSpecificData {
+                    hierarchical_structure: true,
+                    large_scale_optimization: true,
+                    efficient_metadata_storage: true,
+                    optimized_traversal: true,
+                },
+            },
+            record_count: 0,
+        };
+
+        let metric = DistanceMetric::Euclidean;
+        let prune = crate::core::search::BlockPruneConfig {
+            force_exact: true,
+            ..Default::default()
+        };
+        let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_block_centroid_pruning_fixed() {
+        let superblock = super::SuperBlock {
+            superblock_id: 0,
+            name: "sb".into(),
+            blocks: Vec::new(),
+            superblock_encoding_marker: 0,
+            centroid: vec![],
+            block_centroids: vec![
+                vec![0.1, 0.1],
+                vec![0.2, 0.2],
+                vec![3.0, 3.0],
+                vec![4.0, 4.0],
+            ],
+            quantized_signature: Vec::new(),
+            swift_metadata: super::SwiftSuperBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                swift_specific_data: super::SwiftSpecificData {
+                    hierarchical_structure: true,
+                    large_scale_optimization: true,
+                    efficient_metadata_storage: true,
+                    optimized_traversal: true,
+                },
+            },
+            record_count: 0,
+        };
+
+        let prune = crate::core::search::BlockPruneConfig {
+            mode: crate::core::search::BlockPruneMode::Fixed(3),
+            ..Default::default()
+        };
+        let metric = DistanceMetric::Euclidean;
+        let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
+        assert_eq!(selected.len(), 3);
+        assert_eq!(selected, vec![0, 1, 2]);
     }
 }

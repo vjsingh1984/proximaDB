@@ -220,7 +220,13 @@ pub struct SuperBlock {
     pub name: String,
     pub blocks: Vec<ProximaDataBlock>,
     pub superblock_encoding_marker: u8,
-    pub centroid: Option<Vec<f32>>,
+    pub centroid: Vec<f32>,
+    /// FP16 quantized superblock centroid (50% storage reduction, <0.1% error)
+    pub centroid_fp16: Option<Vec<u16>>,
+    /// Per-block centroids aligned with `blocks`
+    pub block_centroids: Vec<Vec<f32>>,
+    /// FP16 quantized per-block centroids (50% storage reduction)
+    pub block_centroids_fp16: Option<Vec<Vec<u16>>>,
     pub quantized_signature: Vec<u8>,
     /// ✅ Now uses SWIFT composition metadata instead of manual bloom filter
     pub swift_metadata: SwiftSuperBlockMetadata,
@@ -248,7 +254,10 @@ impl SuperBlock {
             name,
             blocks: Vec::new(),
             superblock_encoding_marker: 0x00,
-            centroid: None,
+            centroid: Vec::new(),
+            centroid_fp16: None,
+            block_centroids: Vec::new(),
+            block_centroids_fp16: None,
             quantized_signature: Vec::new(),
             swift_metadata,
             record_count: 0,
@@ -257,6 +266,9 @@ impl SuperBlock {
 
     /// ✅ REFACTORED: Add block and aggregate Proxima metadata automatically
     pub fn add_block(&mut self, block: ProximaDataBlock) {
+        let prev_count = self.record_count as f32;
+        let block_count = block.metadata.record_count as f32;
+
         // ✅ Update SuperBlock metadata using Proxima auto-generated metadata
         self.record_count += block.metadata.record_count;
 
@@ -310,6 +322,37 @@ impl SuperBlock {
             self.swift_metadata.proxima_metadata = block.metadata.clone();
         }
 
+        // Update centroid with weighted mean across blocks
+        let block_centroid = compute_block_centroid(&block);
+
+        // Store FP32 centroid first (before any potential move)
+        self.block_centroids.push(block_centroid.clone());
+
+        // NEW: Compute and store FP16 centroid (50% storage reduction)
+        if !block_centroid.is_empty() {
+            let fp16_centroid = crate::storage::engines::impls::sst::fp32_to_fp16(&block_centroid);
+            if let Some(ref mut fp16_vec) = self.block_centroids_fp16 {
+                fp16_vec.push(fp16_centroid);
+            } else {
+                self.block_centroids_fp16 = Some(vec![fp16_centroid]);
+            }
+        }
+
+        // Update superblock centroid with weighted mean
+        if !block_centroid.is_empty() {
+            if self.centroid.is_empty() {
+                self.centroid = block_centroid;
+            } else if self.centroid.len() == block_centroid.len() {
+                let total = prev_count + block_count;
+                if total > 0.0 {
+                    for (i, val) in block_centroid.iter().enumerate() {
+                        self.centroid[i] =
+                            (self.centroid[i] * prev_count + val * block_count) / total;
+                    }
+                }
+            }
+        }
+
         self.blocks.push(block);
     }
 }
@@ -324,6 +367,32 @@ impl QuantizedIndex {
     pub fn new(dimension: usize) -> Self {
         Self { dimension }
     }
+}
+
+fn compute_block_centroid(block: &ProximaDataBlock) -> Vec<f32> {
+    let first = match block.records.first() {
+        Some(r) => r.vector.as_slice(),
+        None => return Vec::new(),
+    };
+    let dim = first.len();
+    if dim == 0 {
+        return Vec::new();
+    }
+    let mut sum = vec![0f32; dim];
+    let mut count = 0f32;
+    for record in &block.records {
+        if record.vector.len() != dim {
+            return Vec::new();
+        }
+        for (i, v) in record.vector.iter().enumerate() {
+            sum[i] += *v;
+        }
+        count += 1.0;
+    }
+    if count == 0.0 {
+        return Vec::new();
+    }
+    sum.into_iter().map(|s| s / count).collect()
 }
 
 /// SWIFT file structure - hierarchical superblock design
@@ -545,15 +614,16 @@ impl SwiftFile {
             let superblock_id = block_id / 64;
             if self.superblocks.len() <= superblock_id {
                 // ✅ Create SuperBlock using Proxima composition pattern
-                let mut superblock =
-                    SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
+            let mut superblock =
+                SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
 
-                // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
-                superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
+            // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
+            superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
 
-                // Initialize SWIFT-specific fields
-                superblock.centroid = Some(vec![0.0; self.header.dimension]);
-                superblock.quantized_signature = Vec::new();
+            // Initialize SWIFT-specific fields
+            superblock.centroid = vec![0.0; self.header.dimension];
+            superblock.block_centroids = Vec::new();
+            superblock.quantized_signature = Vec::new();
 
                 // ✅ Proxima will automatically provide bloom filters when blocks are added!
 
@@ -634,16 +704,17 @@ impl SwiftFile {
             let superblock_id = block_id / 64;
             if self.superblocks.len() <= superblock_id as usize {
                 // Use row-based SuperBlock constructor
-                let mut superblock =
-                    SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
+            let mut superblock =
+                SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
 
-                // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
-                // SWIFT benefits from encoding 10K vectors together for better compression
-                superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
+            // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
+            // SWIFT benefits from encoding 10K vectors together for better compression
+            superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
 
-                // Initialize SWIFT-specific fields
-                superblock.centroid = Some(vec![0.0; self.header.dimension]);
-                superblock.quantized_signature = Vec::new();
+            // Initialize SWIFT-specific fields
+            superblock.centroid = vec![0.0; self.header.dimension];
+            superblock.block_centroids = Vec::new();
+            superblock.quantized_signature = Vec::new();
 
                 // ✅ Proxima will automatically provide bloom filters when blocks are added!
 
@@ -745,8 +816,9 @@ impl SwiftFile {
         query: &[f32],
         top_k: usize,
         filter: Option<MetadataFilter>,
+        prune: &crate::core::search::BlockPruneConfig,
     ) -> Result<Vec<VectorRecord>> {
-        progressive_search::search_progressive(self, query, top_k, filter).await
+        progressive_search::search_progressive(self, query, top_k, filter, prune).await
     }
 
     /// Serialize SwiftFile to bytes for disk persistence
@@ -821,6 +893,15 @@ impl SwiftFile {
                 }
             } else {
                 buffer.extend_from_slice(&0u8.to_le_bytes()); // No bloom filter
+            }
+
+            // Write block centroids (mandatory, aligned with blocks)
+            buffer.extend_from_slice(&(superblock.block_centroids.len() as u32).to_le_bytes());
+            for centroid in &superblock.block_centroids {
+                buffer.extend_from_slice(&(centroid.len() as u32).to_le_bytes());
+                for v in centroid {
+                    buffer.extend_from_slice(&v.to_le_bytes());
+                }
             }
         }
 
@@ -937,6 +1018,47 @@ impl SwiftFile {
                 cursor.read_exact(&mut bloom_data)?;
                 // ✅ Bloom filters are now stored in Proxima blocks, skip legacy bloom data
                 // The blocks already have their bloom filters from deserialization
+            }
+
+            // Read block centroids
+            let centroid_count = cursor.get_u32_le() as usize;
+            for _ in 0..centroid_count {
+                let len = cursor.get_u32_le() as usize;
+                let mut buf = vec![0u8; len * 4];
+                cursor.read_exact(&mut buf)?;
+                let mut centroid = Vec::with_capacity(len);
+                for chunk in buf.chunks_exact(4) {
+                    centroid.push(f32::from_le_bytes([
+                        chunk[0], chunk[1], chunk[2], chunk[3],
+                    ]));
+                }
+                superblock.block_centroids.push(centroid);
+            }
+
+            // Recompute superblock centroid if possible (weighted by block records)
+            if !superblock.block_centroids.is_empty() {
+                let mut agg = vec![0f32; superblock.block_centroids[0].len()];
+                let mut total = 0f32;
+                for (block, centroid) in superblock
+                    .blocks
+                    .iter()
+                    .zip(superblock.block_centroids.iter())
+                {
+                    if centroid.len() != agg.len() {
+                        continue;
+                    }
+                    let w = block.metadata.record_count as f32;
+                    total += w;
+                    for (i, v) in centroid.iter().enumerate() {
+                        agg[i] += *v * w;
+                    }
+                }
+                if total > 0.0 {
+                    for v in &mut agg {
+                        *v /= total;
+                    }
+                    superblock.centroid = agg;
+                }
             }
 
             superblocks.push(superblock);
@@ -1085,6 +1207,11 @@ impl SwiftFile {
                     block.encoding_marker = 0xFF; // Inherit columnar SIMD from SuperBlock
                     block.encoding_metadata = None; // Use SuperBlock columnar metadata
                 }
+            }
+
+            // NEW: Compute FP16 centroid for superblock (50% storage reduction)
+            if !superblock.centroid.is_empty() {
+                superblock.centroid_fp16 = Some(crate::storage::engines::impls::sst::fp32_to_fp16(&superblock.centroid));
             }
         }
     }

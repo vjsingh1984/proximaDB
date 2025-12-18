@@ -2370,6 +2370,7 @@ impl UnifiedStorageEngine for ViperEngine {
             runtime_hints: None,
             enable_metadata_filtering_hint: None,
             custom_hints: Some(HashMap::new()),
+            block_prune: crate::core::search::BlockPruneConfig::default(),
             requires_ordering: None,
             enable_progressive_search: None,
             progressive_scenario: None,

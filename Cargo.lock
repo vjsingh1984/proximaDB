@@ -4247,6 +4247,7 @@ dependencies = [
  "flate2",
  "futures",
  "google-cloud-storage",
+ "half",
  "hyper 0.14.32",
  "jni",
  "jsonwebtoken",

@@ -112,6 +112,7 @@ impl HelixSIMDWriter {
             .collect();
 
         let spatial_variance = self.calculate_spatial_variance(&vectors);
+        let block_centroid = compute_centroid(&vectors);
         let clustering_hints = ClusteringHints {
             access_frequency: 0.0, // Will be updated by query patterns
             last_accessed: None,
@@ -122,6 +123,7 @@ impl HelixSIMDWriter {
         let helix_metadata = HelixBlockMetadata {
             proxima_metadata: block.metadata.clone(),
             hilbert_range,
+            block_centroid,
             pca_stats: None, // Could be added later for advanced PCA integration
             clustering_hints: Some(clustering_hints),
         };
@@ -191,6 +193,32 @@ impl HelixSIMDWriter {
     }
 }
 
+fn compute_centroid(vectors: &[Vec<f32>]) -> Vec<f32> {
+    let first = match vectors.first() {
+        Some(f) => f,
+        None => return Vec::new(),
+    };
+    let dim = first.len();
+    if dim == 0 {
+        return Vec::new();
+    }
+    let mut sum = vec![0f32; dim];
+    let mut count = 0f32;
+    for v in vectors {
+        if v.len() != dim {
+            return Vec::new();
+        }
+        for (i, val) in v.iter().enumerate() {
+            sum[i] += *val;
+        }
+        count += 1.0;
+    }
+    if count == 0.0 {
+        return Vec::new();
+    }
+    sum.into_iter().map(|s| s / count).collect()
+}
+
 /// Enhanced HELIX SSTable writer with SIMD optimization
 
 /// HELIX-specific SSTable metadata with clustering information
@@ -200,6 +228,8 @@ pub struct HelixBlockMetadata {
     pub proxima_metadata: ProximaBlockMetadata,
     /// Hilbert key range for this block
     pub hilbert_range: Option<(u64, u64)>,
+    /// Block centroid for pruning or clustering
+    pub block_centroid: Vec<f32>,
     /// PCA projection statistics
     pub pca_stats: Option<PCAStats>,
     /// Liquid clustering hints
@@ -638,6 +668,7 @@ pub async fn search_helix_sstable(
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     collection: Option<&crate::proto::proximadb_v1::Collection>,
     filter_expression: Option<&crate::core::search::FilterExpression>,
+    prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<
     Vec<(
         String,
@@ -655,14 +686,19 @@ pub async fn search_helix_sstable(
     let mut blocks_pruned = 0;
     let mut blocks_searched = 0;
 
-    // Process only relevant blocks with Hilbert pruning
+    // Centroid-based pruning (sqrt heuristic) to reduce block reads
+    let centroid_selected =
+        select_blocks_by_centroid(query_vector, &header.block_metadata, distance_metric, prune);
+
+    // Process only relevant blocks with Hilbert + centroid pruning
     tracing::debug!(
-        "HELIX search: query_hilbert_key = {:?}, num_blocks = {}",
+        "HELIX search: query_hilbert_key = {:?}, num_blocks = {}, centroid_selected = {}",
         query_hilbert_key,
-        num_blocks
+        num_blocks,
+        centroid_selected.len()
     );
 
-    for block_idx in 0..num_blocks {
+    for &block_idx in &centroid_selected {
         let meta = &header.block_metadata[block_idx];
         let block_offset = header.block_offsets[block_idx];
 
@@ -778,6 +814,113 @@ pub async fn search_helix_sstable(
     Ok(results)
 }
 
+fn select_blocks_by_centroid(
+    query_vector: &[f32],
+    metas: &[HelixBlockMetadata],
+    metric: &crate::compute::distance_computation::DistanceMetric,
+    prune: &crate::core::search::BlockPruneConfig,
+) -> Vec<usize> {
+    if prune.force_exact {
+        return (0..metas.len()).collect();
+    }
+    let mut scored = Vec::with_capacity(metas.len());
+    for (idx, meta) in metas.iter().enumerate() {
+        if meta.block_centroid.len() != query_vector.len() {
+            scored.push((f32::INFINITY, idx));
+            continue;
+        }
+        let dist = metric_distance(query_vector, &meta.block_centroid, metric);
+        scored.push((dist, idx));
+    }
+
+    if scored.is_empty() {
+        return Vec::new();
+    }
+
+    let mut k = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => {
+            (scored.len() as f32).sqrt().ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Ratio => {
+            let r = prune.ratio.clamp(0.0, 1.0);
+            ((scored.len() as f32) * r).ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Fixed(k) => k,
+    };
+    k = k.max(prune.min_keep).min(if prune.max_keep > 0 { prune.max_keep } else { usize::MAX });
+    k = k.clamp(1, scored.len());
+
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut selected: Vec<usize> = scored.into_iter().take(k).map(|(_, idx)| idx).collect();
+    selected.sort_unstable();
+    selected.dedup();
+    selected
+}
+
+fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .fold(0.0f32, |acc, (x, y)| acc + (x - y) * (x - y))
+}
+
+fn metric_distance(
+    a: &[f32],
+    b: &[f32],
+    metric: &crate::compute::distance_computation::DistanceMetric,
+) -> f32 {
+    let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+    distance_compute.distance_with_metric(a, b, metric)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn centroid_pruning_selects_sqrt() {
+        let query = vec![0.0f32, 0.0];
+        let metas = vec![
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![0.1, 0.1],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![3.0, 3.0],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![0.2, 0.2],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![6.0, 6.0],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+        ];
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &metas,
+            &crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &crate::core::search::BlockPruneConfig::default(),
+        );
+        // sqrt(4)=2 -> expect the two closest indices 0 and 2
+        assert_eq!(selected, vec![0, 2]);
+    }
+}
+
 /// Extract block metadata for HELIX
 pub fn extract_helix_metadata(
     records: &[VectorRecord],
@@ -828,6 +971,12 @@ pub fn extract_helix_metadata(
             HelixBlockMetadata {
                 proxima_metadata: base_metadata,
                 hilbert_range,
+                block_centroid: compute_centroid(
+                    &chunk
+                        .iter()
+                        .map(|r| r.vector.clone())
+                        .collect::<Vec<_>>(),
+                ),
                 pca_stats: None,
                 clustering_hints: None,
             }

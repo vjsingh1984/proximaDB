@@ -2578,6 +2578,52 @@ def _benchmark_proximadb_engine(
             metadata={"num_vectors": len(base_vectors), "dimension": metadata['dimension']}
         ))
 
+        # Phase 1.5: WARM CACHE SEARCH (DB still open, file handles valid)
+        # This measures true algorithm performance without cold I/O penalty
+        phase_warm_start = logger.log_start(name, "Search (Warm Cache)")
+
+        search_times_warm = []
+        recalls_warm = []
+        num_queries = min(len(query_vectors), 1000)
+
+        for i in range(num_queries):
+            start = time.perf_counter()
+            if hasattr(db, 'search_numpy'):
+                search_results = db.search_numpy(collection_name, query_vectors[i], k, search_mode=search_mode)
+            else:
+                search_results = db.search(collection_name, query_vectors[i].tolist(), k, search_mode=search_mode)
+            search_times_warm.append((time.perf_counter() - start) * 1000)
+
+            # Compute recall@k
+            if ground_truth and i < len(ground_truth):
+                result_ids = [r.id if hasattr(r, 'id') else r.get('id', '') for r in search_results]
+                recalls_warm.append(compute_recall_at_k(ground_truth[i], result_ids, k))
+
+        avg_search_warm = float(np.mean(search_times_warm))
+        p50_search_warm = float(np.percentile(search_times_warm, 50))
+        p95_search_warm = float(np.percentile(search_times_warm, 95))
+        qps_warm = 1000 / avg_search_warm
+        avg_recall_warm = float(np.mean(recalls_warm)) * 100 if recalls_warm else None
+
+        logger.log_end(
+            f"{name} (Warm {num_queries}q)",
+            phase_warm_start,
+            {
+                "avg_ms": avg_search_warm,
+                "p50_ms": p50_search_warm,
+                "p95_ms": p95_search_warm,
+                "qps": qps_warm,
+                "recall": f"{avg_recall_warm:.1f}%" if avg_recall_warm else "N/A"
+            }
+        )
+
+        results.append(BenchmarkResult(
+            "sift_search_warm", engine, avg_search_warm,
+            throughput=qps_warm, p50_ms=p50_search_warm, p95_ms=p95_search_warm,
+            recall_at_k=avg_recall_warm,
+            metadata={"cache_state": "warm", "num_queries": num_queries}
+        ))
+
         # Phase 2: Force flush memtable to SST files before close
         phase2_start = logger.log_start(name, "Flush + Close")
 

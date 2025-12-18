@@ -1763,6 +1763,7 @@ impl UnifiedStorageEngine for HelixEngine {
                     filter_expression, // Pass FilterExpression for type-safe filtering
                     None,              // No specific IDs to check
                     Some(&*ctx.collection), // Pass collection for type-safe metadata
+                    &ctx.search_params.block_prune,
                 )
                 .await?;
 
