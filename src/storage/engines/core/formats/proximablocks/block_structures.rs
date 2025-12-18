@@ -224,7 +224,7 @@ pub struct BlockMetadataStats {
 /// ```
 ///
 /// **See module documentation for complete usage examples and best practices!**
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProximaDataBlock {
     /// PROXIMA ENCODING MARKER (1 byte) - First byte of serialized block
     ///
@@ -370,7 +370,7 @@ pub struct QuantizationStatistics {
 }
 
 /// Vector encoding layout strategies for Proxima compression
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VectorEncodingLayout {
     /// TransposeFieldEncodedAndCompressedVector: transpose RxD → DxR, store each dimension as separate field
     /// Each dimension field gets Proxima encoding + field-level compression
@@ -401,6 +401,7 @@ pub enum VectorEncodingLayout {
     /// Auto: choose strategy based on workload type and benchmark data
     /// DEFAULT: FullVector (fastest decode for vector database WORM workloads)
     /// Based on comprehensive 12-pattern benchmark showing FullVector has best decode performance
+    #[default]
     Auto,
 }
 
@@ -755,7 +756,7 @@ impl ProximaDataBlock {
         block
     }
 
-    /// Generate bloom filter for record IDs
+    /// Generate bloom filter for record IDs with adaptive sizing
     fn generate_bloom_filter(records: &[VectorRecord]) -> Option<SstableBloomFilter> {
         if records.is_empty() {
             return None;
@@ -763,7 +764,26 @@ impl ProximaDataBlock {
 
         use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
 
-        let bloom_config = BloomFilterConfig::for_sstable(records.len());
+        // Use adaptive bloom filter sizing for optimal memory usage
+        let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::for_block_level();
+        let num_keys = records.len();
+        let optimal_size = adaptive_config.optimal_size(num_keys);
+        let bits_per_key = if num_keys > 0 {
+            (optimal_size / num_keys).max(4) as u32
+        } else {
+            10
+        };
+
+        // Create config with adaptive sizing
+        let bloom_config = BloomFilterConfig {
+            enabled: true,
+            strategy: crate::core::bloom::BloomStrategy::BitPacked,
+            bits_per_key,
+            expected_items: num_keys,
+            false_positive_rate: Some(adaptive_config.target_fp_rate),
+            hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+        };
+
         let mut bloom = BloomFilterFactory::create(&bloom_config);
 
         for record in records {
@@ -776,9 +796,9 @@ impl ProximaDataBlock {
                 use crate::core::bloom::BloomFilterStats;
 
                 let stats = BloomFilterStats {
-                    key_count: records.len() as u64,
+                    key_count: num_keys as u64,
                     metadata_columns: 0, // No metadata columns in block-level bloom
-                    total_keys: records.len() as u64,
+                    total_keys: num_keys as u64,
                     key_lookups_saved: 0,
                     metadata_queries_saved: 0,
                 };
