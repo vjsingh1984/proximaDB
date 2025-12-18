@@ -102,6 +102,50 @@ impl Default for EmbeddedConfig {
     }
 }
 
+impl EmbeddedConfig {
+    /// Create an optimized configuration for embedded benchmarks
+    ///
+    /// This configuration is tuned for:
+    /// - Maximum write throughput
+    /// - Low-latency reads
+    /// - Efficient memory usage with adaptive bloom filters
+    /// - Aggressive compaction for smaller footprint
+    pub fn for_benchmarks(data_path: impl Into<String>) -> Self {
+        let path = data_path.into();
+        Self {
+            storage_locations: vec![StorageLocationConfig {
+                path: path.clone(),
+                weight: 1,
+                tags: vec!["benchmark".to_string()],
+            }],
+            metadata_path: format!("{}/metadata", path),
+            cache_size_mb: 1024, // 1GB cache for benchmarks
+            default_engine: "sst".to_string(),
+            enable_wal: true,
+            wal_sync_mode: "batch".to_string(), // Batch for better throughput
+        }
+    }
+
+    /// Create an optimized configuration for memory-constrained environments
+    ///
+    /// Uses minimal cache and aggressive pruning
+    pub fn for_low_memory(data_path: impl Into<String>) -> Self {
+        let path = data_path.into();
+        Self {
+            storage_locations: vec![StorageLocationConfig {
+                path: path.clone(),
+                weight: 1,
+                tags: vec![],
+            }],
+            metadata_path: format!("{}/metadata", path),
+            cache_size_mb: 128, // Minimal cache
+            default_engine: "sst".to_string(),
+            enable_wal: true,
+            wal_sync_mode: "batch".to_string(),
+        }
+    }
+}
+
 /// Storage location configuration for multi-disk support
 #[derive(Debug, Clone)]
 pub struct StorageLocationConfig {
@@ -507,10 +551,48 @@ impl EmbeddedProximaDB {
             format!("file://{}", abs_path)
         };
 
+        // Create optimized SST config for embedded mode
+        // Adaptive bloom filters are automatically used by the SST writer
+        let sst_config = crate::core::config::SstConfig {
+            // Use default block size (256KB) optimized for NVMe
+            block_size_kb: 256,
+            // Enable bloom filters with adaptive sizing
+            bloom_filter_config: Some(crate::core::bloom::BloomFilterConfig {
+                enabled: true,
+                strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+                bits_per_key: 10, // Base value, adaptive sizing will optimize this
+                false_positive_rate: Some(0.01), // 1% FPR target
+                expected_items: 10000,
+                hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+            }),
+            // Enable LZ4 compression for better throughput
+            compression: "lz4".to_string(),
+            compression_level: 3,
+            // Aggressive compaction for embedded mode
+            compaction_threshold: 4, // Compact more frequently than server (5)
+            compaction_strategy: "leveled".to_string(),
+            // Optimize for embedded workloads
+            cache_size_mb: (config.cache_size_mb / 4).max(32) as u64, // Reserve some cache for SST
+            mmap_enabled: true,
+            prefetch_enabled: true,
+            prefetch_size_kb: 64,
+            ..Default::default()
+        };
+
         StorageConfig {
             storage_locations,
             metadata_url,
             cache_size_mb: config.cache_size_mb as u64,
+            sst_config: Some(sst_config),
+            // Enable bloom filters globally
+            bloom_filter_config: Some(crate::core::bloom::BloomFilterConfig {
+                enabled: true,
+                strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+                bits_per_key: 10,
+                false_positive_rate: Some(0.01),
+                expected_items: 10000,
+                hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+            }),
             wal_config: crate::core::config::WriteBufferUserConfig {
                 enable_wal: config.enable_wal,
                 ..Default::default()
