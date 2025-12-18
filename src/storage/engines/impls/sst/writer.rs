@@ -511,6 +511,17 @@ impl SstableWriter {
             let mut bloom_config = self.bloom_config.clone();
             bloom_config.hash_algorithm = HashAlgorithm::XXHash; // Ensure XXHash is used
 
+            // Apply adaptive bloom filter sizing based on actual record count
+            let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::default();
+            let num_keys = vector_records.len();
+            if num_keys > 0 {
+                let optimal_size = adaptive_config.optimal_size(num_keys);
+                let bits_per_key = (optimal_size / num_keys).max(4);
+                bloom_config.bits_per_key = bits_per_key as u32;
+                bloom_config.expected_items = num_keys;
+                bloom_config.false_positive_rate = Some(adaptive_config.target_fp_rate);
+            }
+
             // Build bloom filter with all record IDs
             let mut builder = BloomFilterBuilder::new(bloom_config.clone());
 
@@ -1081,16 +1092,30 @@ impl SstableWriter {
         // Write header
         file_content.extend_from_slice(&header_bytes);
 
-        // Create and write bloom filter for vector IDs
+        // Create and write bloom filter for vector IDs with adaptive sizing
         let bloom_filter = {
+            // Use adaptive bloom configuration for optimal sizing
+            let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::default();
+            let num_keys = sorted_records.len();
+            let optimal_size = adaptive_config.optimal_size(num_keys);
+            let optimal_hash_count = adaptive_config.optimal_hash_count(optimal_size, num_keys);
+
+            // Convert to bits_per_key for existing BloomFilterConfig
+            let bits_per_key = if num_keys > 0 {
+                (optimal_size / num_keys).max(4)
+            } else {
+                10 // fallback default
+            };
+
             let config = crate::core::bloom::BloomFilterConfig {
                 enabled: true,
                 strategy: crate::core::bloom::BloomStrategy::BitPacked,
-                bits_per_key: 10,
-                expected_items: sorted_records.len(),
-                false_positive_rate: Some(0.01),
+                bits_per_key: bits_per_key as u32,
+                expected_items: num_keys,
+                false_positive_rate: Some(adaptive_config.target_fp_rate),
                 hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
             };
+
             let mut builder = crate::core::bloom::BloomFilterBuilder::new(config);
             for (key, _) in &sorted_records {
                 builder.add(key.as_bytes());
