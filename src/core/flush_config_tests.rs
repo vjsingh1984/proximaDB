@@ -30,8 +30,8 @@ mod tests {
         assert_eq!(config.max_files_per_level, 10);
 
         // Test block size
-        assert_eq!(config.block_size_kb, 1024); // 1MB blocks (new default)
-        assert_eq!(config.block_size_bytes(), 1024 * 1024);
+        assert_eq!(config.block_size_kb, 256); // 256KB blocks (default for low-latency NVMe)
+        assert_eq!(config.block_size_bytes(), 256 * 1024);
 
         // Test compression - server default is lz4 (faster than no compression)
         assert_eq!(config.compression, "lz4");

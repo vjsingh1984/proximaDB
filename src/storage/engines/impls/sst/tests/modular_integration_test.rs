@@ -130,7 +130,7 @@ mod tests {
         let engine = create_test_engine().await;
 
         // Test that the engine is properly initialized
-        assert_eq!(engine.config().block_size_kb, 1024); // New default // Default value
+        assert_eq!(engine.config().block_size_kb, 256); // Default: 256KB for low-latency NVMe
 
         // Test filesystem access (this should work)
         let fs = engine.filesystem();
@@ -226,24 +226,7 @@ mod tests {
             query_vectors: None,
             vector: Some(vec![]),
             top_k: Some(10),
-            distance_metric: None,
-            filter_expression: None,
-            filters: None,
-            accuracy_threshold: None,
-            include_expired: None,
-            timeout_ms: None,
-            enable_two_stage: None,
-            quantization_hint: None,
-            enable_clustering_hint: None,
-            runtime_hints: None,
-            enable_metadata_filtering_hint: None,
-            custom_hints: None,
-            requires_ordering: None,
-            enable_progressive_search: None,
-            progressive_scenario: None,
-            progressive_recalls: None,
-            optimization_hint: None,
-            search_mode: crate::core::search::SearchMode::default(),
+            ..Default::default()
         });
 
         let collection = Arc::new(Collection {
