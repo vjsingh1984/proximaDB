@@ -3417,7 +3417,7 @@ impl RaptorReader {
                     // Decode based on column type
                     match column_type {
                         ColumnType::VectorsFp32 => {
-                            partial.vectors = Some(self.decode_vector_column(&decompressed)?);
+                            partial.vectors = Some(self.decode_vector_column(&decompressed, metadata.dimension)?);
                         }
                         ColumnType::Ids => {
                             partial.ids = Some(self.decode_id_column(&decompressed)?);
@@ -3511,11 +3511,67 @@ impl RaptorReader {
         )
     }
 
-    /// Helper: Decode vector column
-    fn decode_vector_column(&self, data: &[u8]) -> Result<Vec<Vec<f32>>> {
-        // Implementation would decode the columnar vector format
-        // For now, return empty to compile
-        Ok(Vec::new())
+    /// Helper: Decode vector column from columnar format
+    /// Format: [col1_len:u32][col1_data][col2_len:u32][col2_data]...
+    /// Each column is one dimension across all vectors, encoded with ProximaCodec
+    fn decode_vector_column(&self, data: &[u8], dimension: usize) -> Result<Vec<Vec<f32>>> {
+        use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
+
+        let codec = ProximaCodec::global();
+        let mut offset = 0;
+        let mut dimension_columns: Vec<Vec<f32>> = Vec::with_capacity(dimension);
+
+        // Read each dimension column
+        for _dim_idx in 0..dimension {
+            if offset + 4 > data.len() {
+                // No more data - break early (might have fewer dimensions than expected)
+                break;
+            }
+
+            // Read column length
+            let col_len = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            if offset + col_len > data.len() {
+                return Err(anyhow::anyhow!(
+                    "Invalid vector column data: expected {} bytes at offset {}, but only {} available",
+                    col_len, offset, data.len() - offset
+                ));
+            }
+
+            // Decode this dimension column
+            let encoded_col = &data[offset..offset + col_len];
+            let decoded_col: Vec<f32> = codec.decode(encoded_col)?;
+            dimension_columns.push(decoded_col);
+            offset += col_len;
+        }
+
+        if dimension_columns.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Transpose from columnar to row format
+        let num_vectors = dimension_columns[0].len();
+        let mut vectors = Vec::with_capacity(num_vectors);
+
+        for vec_idx in 0..num_vectors {
+            let mut vector = Vec::with_capacity(dimension_columns.len());
+            for dim_col in &dimension_columns {
+                if vec_idx < dim_col.len() {
+                    vector.push(dim_col[vec_idx]);
+                } else {
+                    vector.push(0.0); // Padding for incomplete vectors
+                }
+            }
+            vectors.push(vector);
+        }
+
+        Ok(vectors)
     }
 
     /// Helper: Decode ID column

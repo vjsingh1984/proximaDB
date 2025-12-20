@@ -150,7 +150,6 @@ async fn test_insert_and_retrieve() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Fix search - returns empty results despite successful flush (known issue)
 async fn test_search_vectors() -> Result<()> {
     println!("=== RAPTOR SEARCH TEST DEBUG ===");
     let engine = create_test_engine().await?;
@@ -712,7 +711,6 @@ fn test_centroid_distance_matrix_performance() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Fix search - same issue as test_search_vectors (known issue)
 async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
     // LARGE-SCALE SEARCH BENCHMARK
     // Single batch test with 5120 vectors - balances test coverage with execution time

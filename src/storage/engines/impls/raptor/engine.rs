@@ -939,6 +939,7 @@ impl RaptorEngine {
         // Construct the data directory path: {storage_path}/{collection_id}/data
         let data_dir = format!("{}/{}/data", storage_path, collection_id);
         debug!("SCAN_DISK: Looking for files in: {}", data_dir);
+
         let list_start = std::time::Instant::now();
 
         // Use filesystem API to list files (cloud-compatible)

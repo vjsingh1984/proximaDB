@@ -2905,7 +2905,14 @@ impl RaptorWriter {
                 },
             );
 
-            // Update rowgroup metadata with column pages
+            // Compute centroid for this rowgroup (CRITICAL for hierarchical search)
+            let centroid = if !page_vectors.is_empty() {
+                Some(self.compute_rowgroup_centroid(&page_vectors))
+            } else {
+                None
+            };
+
+            // Update rowgroup metadata with column pages AND centroid
             let rg_metadata = RowGroupMetadata {
                 id: rowgroup_id as u16,
                 vector_count: page.rows.len(),
@@ -2916,7 +2923,7 @@ impl RaptorWriter {
                 metadata_stats: HashMap::new(),
                 min_timestamp: None,
                 max_timestamp: None,
-                centroid: None,
+                centroid,  // FIXED: Set centroid for EACH rowgroup, not just the last
                 centroid_stats: None,
                 bloom_filter_offset: None, // Will be set when bloom filter is written
             };
