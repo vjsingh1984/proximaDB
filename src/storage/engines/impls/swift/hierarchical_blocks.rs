@@ -531,6 +531,7 @@ impl MetadataIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::VectorRecord;
 
     #[test]
     fn test_bitset_operations() {

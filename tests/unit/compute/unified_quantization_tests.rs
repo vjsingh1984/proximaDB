@@ -5,8 +5,8 @@
 
 use proximadb::compute::CodebookStore;
 use proximadb::compute::{
-    BinaryQuantization, Codebook, CodebookData, DistanceMetric, InMemoryCodebookStore,
-    QuantizationLevel, ScalarQuantization, TrainingConfig, UnifiedDistanceCompute,
+    BinaryQuantization, DistanceMetric, InMemoryCodebookStore,
+    QuantizationLevel, ScalarQuantization, UnifiedDistanceCompute,
     UnifiedQuantizationEngine, UnifiedQuantizationLevel, UniformQuantization,
 };
 use std::sync::Arc;

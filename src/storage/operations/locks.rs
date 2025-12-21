@@ -6,8 +6,8 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, Semaphore};
-use tracing::{debug, info, warn};
+use tokio::sync::{OwnedMutexGuard, OwnedSemaphorePermit, RwLock, Semaphore};
+use tracing::{debug, info};
 
 /// Global lock manager for coordinating background operations
 /// 
@@ -89,7 +89,7 @@ impl GlobalLockManager {
     }
 
     /// Acquire flush lock for collection
-    /// 
+    ///
     /// Flush locks allow multiple concurrent flushes but prevent conflicts
     /// with major compactions and re-quantization operations.
     pub async fn acquire_flush_lock(&self, collection_id: &str) -> Result<FlushLockGuard> {
@@ -98,10 +98,10 @@ impl GlobalLockManager {
         // Get or create collection lock
         let collection_lock = self.get_or_create_collection_lock(collection_id).await;
 
-        // Acquire flush semaphore (allows multiple concurrent flushes)
+        // Acquire flush semaphore (allows multiple concurrent flushes) - use acquire_owned for owned permit
         let permit = tokio::time::timeout(
             self.timeout_config.flush_timeout,
-            collection_lock.flush_semaphore.acquire()
+            collection_lock.flush_semaphore.clone().acquire_owned()
         ).await
         .map_err(|_| anyhow::anyhow!("Timeout acquiring flush lock for collection: {}", collection_id))?
         .map_err(|_| anyhow::anyhow!("Failed to acquire flush lock (semaphore closed)"))?;
@@ -132,7 +132,7 @@ impl GlobalLockManager {
         start_level: u32,
         end_level: u32,
     ) -> Result<CompactionLockGuard> {
-        debug!("🔒 Acquiring compaction lock for collection: {} levels {}-{}", 
+        debug!("🔒 Acquiring compaction lock for collection: {} levels {}-{}",
                collection_id, start_level, end_level);
 
         let level_range = LevelRange { start_level, end_level };
@@ -152,19 +152,19 @@ impl GlobalLockManager {
 
         for overlapping_range in overlapping_ranges {
             if let Some(semaphore) = collection_level_locks.get(&overlapping_range) {
-                // Wait for exclusive access to this level range
+                // Wait for exclusive access to this level range (just wait, we don't keep this permit)
                 let _permit = tokio::time::timeout(
                     self.timeout_config.compaction_timeout,
-                    semaphore.acquire()
+                    semaphore.clone().acquire_owned()
                 ).await
                 .map_err(|_| anyhow::anyhow!("Timeout acquiring compaction lock for levels {}-{}", start_level, end_level))?
                 .map_err(|_| anyhow::anyhow!("Failed to acquire compaction lock (semaphore closed)"))?;
             }
         }
 
-        // 3. Create semaphore for this level range (exclusive access)
+        // 3. Create semaphore for this level range (exclusive access) and acquire owned permit
         let level_semaphore = Arc::new(Semaphore::new(1)); // Only one compaction per level range
-        let permit = level_semaphore.acquire().await
+        let permit = level_semaphore.clone().acquire_owned().await
             .map_err(|_| anyhow::anyhow!("Failed to acquire initial compaction permit"))?;
 
         collection_level_locks.insert(level_range.clone(), level_semaphore);
@@ -199,7 +199,7 @@ impl GlobalLockManager {
 
         let guard = tokio::time::timeout(
             self.timeout_config.requantization_timeout,
-            self.requantization_lock.lock()
+            self.requantization_lock.clone().lock_owned()
         ).await
         .map_err(|_| anyhow::anyhow!("Timeout acquiring re-quantization lock"))?;
 
@@ -262,7 +262,7 @@ impl GlobalLockManager {
 
 /// Lock guard for flush operations
 pub struct FlushLockGuard {
-    _permit: tokio::sync::SemaphorePermit<'static>,
+    _permit: OwnedSemaphorePermit,
     collection_id: String,
     collection_lock: Arc<CollectionLock>,
 }
@@ -280,9 +280,9 @@ impl Drop for FlushLockGuard {
     }
 }
 
-/// Lock guard for compaction operations  
+/// Lock guard for compaction operations
 pub struct CompactionLockGuard {
-    _permit: tokio::sync::SemaphorePermit<'static>,
+    _permit: OwnedSemaphorePermit,
     collection_id: String,
     level_range: LevelRange,
     collection_lock: Arc<CollectionLock>,
@@ -309,7 +309,7 @@ fn ranges_overlap(range1: &LevelRange, range2: &LevelRange) -> bool {
 
 /// Lock guard for re-quantization operations
 pub struct RequantizationLockGuard {
-    _guard: tokio::sync::MutexGuard<'static, ()>,
+    _guard: OwnedMutexGuard<()>,
 }
 
 /// Lock status for monitoring and diagnostics

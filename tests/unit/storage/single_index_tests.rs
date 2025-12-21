@@ -17,10 +17,10 @@
 //! Unit tests for single collection index functionality
 
 use proximadb::proto::proximadb_v1::{
-    Collection, CollectionConfig, CollectionStats, DistanceMetric, IndexingAlgorithm, StorageEngine,
+    Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine,
 };
 use proximadb::storage::metadata::single_index::SingleCollectionIndex;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 fn create_test_collection(id: &str, name: &str) -> Collection {
     let temp_dir = tempfile::tempdir().unwrap();

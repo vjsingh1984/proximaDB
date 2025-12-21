@@ -1,13 +1,7 @@
 //! Comprehensive tests for config and config_loader modules
 //! Target: 80%+ coverage for configuration handling
 
-use proximadb::core::config::{
-    ApiConfig, Config, ConsensusConfig, MonitoringConfig, ServerConfig, SstConfig, StorageConfig,
-    StorageLocation,
-};
-use std::env;
-use std::io::Write;
-use tempfile::{NamedTempFile, TempDir};
+use proximadb::core::config::Config;
 
 #[test]
 fn test_default_config() {

@@ -422,6 +422,8 @@ impl std::fmt::Display for LLMProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::llm_integration::types::FinishReason;
+    use chrono::Utc;
 
     #[test]
     fn test_llm_request_creation() {

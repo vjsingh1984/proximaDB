@@ -1028,7 +1028,11 @@ impl VectorOperationsService {
 
         // Get collection configuration
         let collection = self.get_or_load_collection(collection_id).await?;
-        let search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        // CRITICAL FIX: Use actual k value in search_params, not the default (10).
+        // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
+        // which incorrectly limits all searches to 100 results regardless of the requested k.
+        let mut search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        search_params.top_k = Some(k);
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal.clone())
@@ -1091,7 +1095,11 @@ impl VectorOperationsService {
 
         // Plan context
         let collection = self.get_or_load_collection(collection_id).await?;
-        let search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        // CRITICAL FIX: Use actual k value in search_params, not the default (10).
+        // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
+        // which incorrectly limits all searches to 100 results regardless of the requested k.
+        let mut search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        search_params.top_k = Some(k);
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal.clone())
@@ -1224,26 +1232,13 @@ impl VectorOperationsService {
         // Create search parameters with progressive settings
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            vector: None,
-            top_k: Some(k),
-            distance_metric: None,
             filter_expression: filter.clone(),
-            filters: None,
-            accuracy_threshold: None,
-            include_expired: Some(false),
-            timeout_ms: Some(30000),
-            enable_two_stage: Some(true),
-            custom_hints: None,
-            enable_clustering_hint: Some(true),
-            enable_metadata_filtering_hint: Some(filter.is_some()),
-            quantization_hint: None,
-            runtime_hints: None,
             requires_ordering: Some(true),
             enable_progressive_search: Some(true),
             progressive_scenario: config.scenario.clone(),
             progressive_recalls: config.progressive_recalls.clone(),
             optimization_hint: config.scenario.clone(),
-            search_mode: crate::core::search::SearchMode::default(),
+            ..Default::default()
         };
 
         // Use the internal execution with progressive configuration
@@ -1292,28 +1287,11 @@ impl VectorOperationsService {
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            vector: None, // query_vectors is used for the actual vector
             top_k: Some(top_k),
-            distance_metric: None, // TODO: Add distance_metric parameter if needed
             filter_expression: filter.clone(),
-            filters: None, // Legacy field - using filter_expression instead
-            accuracy_threshold: None,
-            include_expired: Some(false),
-            timeout_ms: None,
-            enable_two_stage: None,
-            // Add missing fields with defaults
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
-            requires_ordering: None,
-            // Progressive search parameters
-            enable_progressive_search: Some(true), // Enable by default if quantization available
-            progressive_scenario: None,
-            progressive_recalls: None,
             optimization_hint: Some(optimization_goal.to_string()),
-            search_mode: crate::core::search::SearchMode::default(),
+            enable_progressive_search: Some(true), // Enable by default if quantization available
+            ..Default::default()
         };
 
         let query_vector_clone = query_vector.clone();
@@ -1685,26 +1663,15 @@ impl VectorOperationsService {
         // Prepare storage search context first
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            vector: None, // query_vectors is used for the actual vector
             top_k: Some(candidates),
             distance_metric: Some(distance_metric),
             filter_expression: filter.clone(), // Pass the same FilterExpression to storage engine
-            filters: None,                     // Legacy field - using filter_expression instead
-            accuracy_threshold: None,
             include_expired: Some(false),
-            timeout_ms: None,
             enable_two_stage: Some(false), // Already doing two-stage at this level
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
             requires_ordering: Some(true),
             enable_progressive_search: Some(true),
-            progressive_scenario: None,
-            progressive_recalls: None,
-            optimization_hint: None,
             search_mode: search_mode.clone(), // Use passed search_mode for exact vs approximate search
+            ..Default::default()
         };
 
         let search_context = crate::storage::traits::StorageQueryContext::new(
@@ -1954,27 +1921,9 @@ impl VectorOperationsService {
 
         // Create a dummy search_params for filtering only
         let search_params = crate::core::search::SearchParams {
-            query_vectors: None, // No query vector needed for pure filtering
-            vector: None,
-            top_k: Some(0), // We only want filtered results, not search results
-            distance_metric: None,
             filter_expression: Some(filter_expression),
-            filters: None,
-            accuracy_threshold: None,
             include_expired: Some(false),
-            timeout_ms: None,
-            enable_two_stage: None,
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
-            requires_ordering: None,
-            enable_progressive_search: None,
-            progressive_scenario: None,
-            progressive_recalls: None,
-            optimization_hint: None,
-            search_mode: crate::core::search::SearchMode::default(),
+            ..Default::default()
         };
 
         let search_context = crate::storage::traits::StorageQueryContext::new(
@@ -2010,26 +1959,11 @@ impl VectorOperationsService {
         // Convert IndexLookupParams to SearchParams
         let search_params = crate::core::search::SearchParams {
             query_vectors: params.query_vector.map(|v| vec![v]),
-            vector: None,
             top_k: Some(params.top_k),
-            distance_metric: None,
             filter_expression: params.filter,
-            filters: None,
-            accuracy_threshold: None,
             include_expired: Some(false),
-            timeout_ms: None,
-            enable_two_stage: None,
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
-            requires_ordering: None,
-            enable_progressive_search: None,
-            progressive_scenario: None,
-            progressive_recalls: None,
             optimization_hint: Some(format!("IndexLookup:{:?}", index_type)),
-            search_mode: crate::core::search::SearchMode::default(),
+            ..Default::default()
         };
 
         // Convert SearchParams to HybridQuery for AxisManager

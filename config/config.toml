@@ -67,3 +67,23 @@ collection_affinity = true
 
 # [security]
 # enabled = false  # Enable for production
+# mode = "development"  # development | production | enterprise
+# [security.authentication]
+# enabled = false  # When true and a SecurityCoordinator is configured, REST auth middleware is enabled
+# methods = ["api_key", "jwt"]
+# require_authentication = true
+# default_session_timeout_minutes = 60
+# # Example API key (replace in production)
+# [security.authentication.api_keys]
+# "local-dev-key" = { user_id = "devuser", permissions = ["*"] }
+# [security.authentication.jwt]
+# enabled = false
+# secret = "change-me"
+# access_token_expiration_minutes = 60
+# refresh_token_expiration_days = 7
+# issuer = "proximadb"
+# audience = "proximadb-clients"
+# algorithm = "HS256"
+# [security.authentication.sso]
+# enabled = false
+# providers = []

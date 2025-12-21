@@ -86,6 +86,8 @@ pub struct WALFlushCoordinator {
     collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
     /// Metrics updater for tracking flush operations
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
+    /// Memtable manager for cleanup after flush
+    memtable_manager: Option<Arc<super::memtable_manager::MemtableManager>>,
 }
 
 impl WALFlushCoordinator {
@@ -99,7 +101,17 @@ impl WALFlushCoordinator {
             optimized_coordinator: None,
             collection_service: None,
             metrics_updater: None,
+            memtable_manager: None,
         }
+    }
+
+    /// Set memtable manager for cleanup after flush
+    pub fn set_memtable_manager(
+        &mut self,
+        manager: Arc<super::memtable_manager::MemtableManager>,
+    ) {
+        self.memtable_manager = Some(manager);
+        info!("🔗 FlushCoordinator: Memtable manager registered for post-flush cleanup");
     }
 
     /// Set collection service for metadata fetching
@@ -405,12 +417,35 @@ impl WALFlushCoordinator {
                 "📋 Coordinator: WAL cleanup handled by VectorOperationsService with context optimization"
             );
 
-            // Cleanup memtable using BatchIds
-            // TODO: Add memtable cleanup interface
-            info!(
-                "🧹 Coordinator: Memtable cleanup for {} batches (TODO: implement)",
-                storage_result.flushed_batch_ids.len()
-            );
+            // Cleanup memtable using BatchIds - remove flushed data from memory
+            if let Some(ref memtable_manager) = self.memtable_manager {
+                if !storage_result.flushed_batch_ids.is_empty() {
+                    match memtable_manager
+                        .remove_flushed_batches(collection_id, &storage_result.flushed_batch_ids)
+                        .await
+                    {
+                        Ok(()) => {
+                            info!(
+                                "🧹 Coordinator: Successfully cleaned up {} batches from memtable for collection {}",
+                                storage_result.flushed_batch_ids.len(),
+                                collection_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "⚠️ Coordinator: Failed to cleanup memtable for collection {}: {:?}",
+                                collection_id, e
+                            );
+                            // Continue despite cleanup failure - data is already persisted
+                        }
+                    }
+                }
+            } else {
+                debug!(
+                    "📋 Coordinator: Memtable cleanup skipped (no manager registered) for {} batches",
+                    storage_result.flushed_batch_ids.len()
+                );
+            }
         } else {
             info!("📋 Coordinator: Skipping cleanup (no entries flushed or storage failed)");
         }

@@ -34,7 +34,7 @@ pub mod optimizer;
 
 use anyhow::Result;
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::FilterExpression;
@@ -204,12 +204,14 @@ impl SstEngine {
         // When SearchMode is Approximate, uses centroid-based IVF-style optimization
         tracing::debug!(storage_url = %storage_url, "Discovering SSTable files");
         let search_mode = &ctx.search_params.search_mode;
+        let prune_config = &ctx.search_params.block_prune; // [AGENT_FIX] Get prune config
         let sstable_files = self
             .discover_sstable_files_with_centroid_pruning(
                 storage_url,
                 query_vector,
                 distance_metric,
                 search_mode,
+                prune_config, // [AGENT_FIX] Pass prune config down
             )
             .await?;
         tracing::debug!("[SST] Discovered {} SSTable files (search_mode={:?})", sstable_files.len(), search_mode);
@@ -224,8 +226,13 @@ impl SstEngine {
         );
 
         // Search each SSTable file
-        for sstable_path in &sstable_files {
-            debug!("🔍 SST: Searching SSTable: {}", sstable_path);
+        for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
+            trace!(
+                "SST: Searching SSTable [{}/{}]: {}",
+                file_idx + 1,
+                sstable_files.len(),
+                sstable_path
+            );
 
             match self
                 .sstable_reader()
@@ -240,11 +247,19 @@ impl SstEngine {
                 .await
             {
                 Ok(results) => {
-                    debug!("📊 Found {} candidates in {}", results.len(), sstable_path);
+                    trace!(
+                        "SST: Found {} candidates in file {}",
+                        results.len(),
+                        file_idx + 1
+                    );
                     all_candidates.extend(results);
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to search SSTable {}: {}", sstable_path, e);
+                    warn!(
+                        "SST: Failed to search SSTable {}: {}",
+                        sstable_path,
+                        e
+                    );
                     // Continue with other files
                 }
             }
@@ -289,17 +304,35 @@ impl SstEngine {
         query_vector: &[f32],
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         search_mode: &crate::core::search::SearchMode,
+        prune_config: &crate::core::search::BlockPruneConfig, // [AGENT_FIX] New parameter
     ) -> Result<Vec<String>> {
         use crate::core::search::SearchMode;
 
         // First get all files
         let all_files = self.discover_sstable_files(storage_url).await?;
 
-        // For exact mode or small datasets, search all files
-        if matches!(search_mode, SearchMode::Exact) || all_files.len() <= 3 {
+        // [AGENT_FIX] Use the configured min_keep value instead of a hardcoded number.
+        let min_keep = prune_config.min_keep.max(1);
+
+        // For exact mode or small datasets (<= min_keep), search all files
+        if matches!(search_mode, SearchMode::Exact) || all_files.len() <= min_keep {
+            if !matches!(search_mode, SearchMode::Exact) {
+                 tracing::warn!("Fewer than or equal to `min_keep` ({}) SST files, forcing exact search.", min_keep);
+            }
             return Ok(all_files);
         }
 
+        // [AGENT_FIX] If the search mode is not explicitly 'Approximate' with a defined
+        // pruning strategy, it should be treated as an exact search. This corrects a
+        // flaw where default-constructed SearchParams would lead to an unintended
+        // approximate search.
+        if !matches!(search_mode, SearchMode::Approximate { .. }) {
+            tracing::warn!(
+                "Search mode is not 'Approximate', but centroid pruning was called. Forcing exact search by returning all files."
+            );
+            return Ok(all_files);
+        }
+        
         // For adaptive mode with small datasets, search all files
         if let SearchMode::Adaptive { threshold } = search_mode {
             if all_files.len() <= 3 {
@@ -581,6 +614,7 @@ mod tests {
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_parse_storage_url() {

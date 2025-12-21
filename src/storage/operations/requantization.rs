@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn, error};
 
 use super::{RequantizationResult, OperationType};
-use crate::storage::engines::StorageEngineType;
+use crate::storage::types::StorageEngineType;
 
 /// Re-quantization manager coordinates codebook updates across storage engines
 pub struct RequantizationManager {
@@ -25,8 +25,8 @@ pub struct RequantizationManager {
     /// Performance metrics tracking
     metrics: Arc<RequantizationMetrics>,
     
-    /// Data distribution analyzers by collection
-    analyzers: Arc<RwLock<HashMap<String, Arc<DataDistributionAnalyzer>>>>,
+    /// Data distribution analyzers by collection (wrapped in RwLock for interior mutability)
+    analyzers: Arc<RwLock<HashMap<String, Arc<RwLock<DataDistributionAnalyzer>>>>>,
 }
 
 /// Re-quantization configuration
@@ -52,7 +52,7 @@ impl Default for RequantizationConfig {
     fn default() -> Self {
         Self {
             quality_degradation_threshold: 0.05, // 5% quality drop triggers re-quantization
-            max_analysis_interval: Duration::from_hours(12),
+            max_analysis_interval: Duration::from_secs(12 * 60 * 60), // 12 hours
             min_data_change_ratio: 0.20, // 20% data change minimum
             target_compression_ratio: 0.25, // 4:1 compression target
             analysis_sample_size: 10000,
@@ -194,13 +194,13 @@ impl RequantizationManager {
         let analyzer = {
             let mut analyzers = self.analyzers.write().await;
             analyzers.entry(collection_id.to_string()).or_insert_with(|| {
-                Arc::new(DataDistributionAnalyzer::new(collection_id.to_string(), self.config.clone()))
+                Arc::new(RwLock::new(DataDistributionAnalyzer::new(collection_id.to_string(), self.config.clone())))
             }).clone()
         };
 
         // Perform data distribution analysis
         let current_snapshot = self.collect_distribution_snapshot(collection_id, engine_type).await?;
-        let needs_requantization = analyzer.analyze_distribution_change(&current_snapshot).await?;
+        let needs_requantization = analyzer.write().await.analyze_distribution_change(&current_snapshot).await?;
 
         // Update analysis time
         {
@@ -266,32 +266,33 @@ impl RequantizationManager {
     }
 
     /// Check if collection needs re-quantization based on automatic triggers
-    pub async fn needs_requantization(&self, collection_id: &str, engine_type: StorageEngineType) -> bool {
+    pub async fn needs_requantization(&self, collection_id: &str, _engine_type: StorageEngineType) -> bool {
         let state = self.state.read().await;
-        
+
         // Check time-based triggers
         if let Some(last_time) = state.last_analysis_time.get(collection_id) {
             if last_time.elapsed() > self.config.max_analysis_interval {
                 return true;
             }
         } else {
-            return true; // Never analyzed
+            // Never analyzed = no prior quantization exists, nothing to re-quantize
+            return false;
         }
-        
+
         // Check quality degradation
         if let Some(quality) = state.quality_metrics.get(collection_id) {
-            let quality_degradation = (quality.baseline_quality_score - quality.current_quality_score) 
+            let quality_degradation = (quality.baseline_quality_score - quality.current_quality_score)
                 / quality.baseline_quality_score;
-            
+
             if quality_degradation > self.config.quality_degradation_threshold {
                 return true;
             }
-            
+
             if matches!(quality.degradation_trend, QualityTrend::Rapid_Degradation) {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -387,11 +388,10 @@ impl RequantizationManager {
     }
 
     async fn update_operation_phase(&self, operation_id: &str, phase: RequantizationPhase) {
-        if let Ok(mut state) = self.state.write().await.try_into() {
-            if let Some(operation) = state.active_operations.get_mut(operation_id) {
-                operation.current_phase = phase;
-                debug!("🔄 Re-quantization {} entered phase: {:?}", operation_id, phase);
-            }
+        let mut state = self.state.write().await;
+        if let Some(operation) = state.active_operations.get_mut(operation_id) {
+            operation.current_phase = phase;
+            debug!("🔄 Re-quantization {} entered phase: {:?}", operation_id, phase);
         }
     }
 }

@@ -2,9 +2,9 @@
 
 // Use default filesystem config
 use proximadb::storage::persistence::filesystem::FilesystemConfig;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
-use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord};
 use proximadb::storage::engines::impls::sst::readers::sst_query_engine::SstDirectReader;
 use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata, SstableWriter};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;

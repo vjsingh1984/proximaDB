@@ -324,6 +324,7 @@ impl ProgressiveSearchCoordinator {
                 None, // No filter expression at this level
                 None, // No candidate_ids
                 None, // No collection available at this level
+                &crate::core::search::BlockPruneConfig::default(),
             )
             .await?;
 
@@ -363,6 +364,7 @@ impl ProgressiveSearchCoordinator {
             None, // No filter expression at this level
             None, // No candidate_ids
             None, // No collection available at this level
+            &crate::core::search::BlockPruneConfig::default(),
         )
         .await
     }

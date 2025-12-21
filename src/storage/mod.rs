@@ -181,6 +181,8 @@
 //! - `StorageError::Configuration` - Invalid configuration
 
 pub mod builder;
+pub mod error;
+pub mod trait_components;
 pub mod traits;
 pub mod types;
 pub mod unified_scan_strategy;
@@ -228,6 +230,9 @@ pub mod relations;
 // Key-value storage interface
 pub mod kv;
 
+// Unified operations coordination (flush, compaction, re-quantization)
+pub mod operations;
+
 // Lock-free implementations have been integrated into the main implementations
 // TransactionCoordinator now uses DashMap for active_operations
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers
@@ -241,6 +246,12 @@ pub use validation::ConfigValidator;
 pub use traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult as TraitFlushResult, StorageEngineStrategy, UnifiedStorageEngine,
+};
+
+// New decomposed trait hierarchy (ISP-compliant)
+pub use trait_components::{
+    StorageCompactor, StorageIdentity, StorageLifecycle, StorageMetrics, StorageReader,
+    StorageScan, StorageWriter,
 };
 
 // Engine exports

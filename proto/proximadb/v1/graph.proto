@@ -379,7 +379,10 @@ service GraphService {
     // Query operations
     rpc QueryNodes(NodeQuery) returns (BatchResponse);
     rpc QueryEdges(EdgeQuery) returns (BatchResponse);
-    
+
+    // Declarative query language support
+    rpc ExecuteQuery(GraphQueryRequest) returns (GraphQueryResponse);
+
     // Graph operations
     rpc GetNeighbors(GetNeighborsRequest) returns (BatchResponse);
     rpc TraverseGraph(TraversalRequest) returns (TraversalResponse);
@@ -460,4 +463,176 @@ message Component {
 // Cycle detection response
 message CycleCheckResponse {
   bool has_cycle = 1;
+}
+
+// ===== Declarative Query Language Support =====
+
+// Supported query languages for declarative graph queries
+enum QueryLanguage {
+  QUERY_LANGUAGE_UNSPECIFIED = 0;
+  QUERY_LANGUAGE_NATIVE = 1;     // Existing property-based API (using NodeQuery, EdgeQuery, etc.)
+  QUERY_LANGUAGE_CYPHER = 2;     // openCypher-compatible queries
+  QUERY_LANGUAGE_GREMLIN = 3;    // Future: Gremlin support
+}
+
+// Graph query request using declarative query language
+message GraphQueryRequest {
+  // Graph ID to execute query against
+  string graph_id = 1;
+
+  // Query language (Cypher, Gremlin, or Native)
+  QueryLanguage language = 2;
+
+  // Query string (e.g., "MATCH (n:Person) WHERE n.age > 30 RETURN n")
+  string query = 3;
+
+  // Optional query parameters (for parameterized queries)
+  map<string, PropertyValue> parameters = 4;
+
+  // Optional query timeout in milliseconds
+  optional uint32 timeout_ms = 5;
+
+  // Optional execution options (e.g., explain, profile)
+  optional QueryExecutionOptions options = 6;
+}
+
+// Query execution options
+message QueryExecutionOptions {
+  // Return query execution plan instead of results
+  bool explain = 1;
+
+  // Return query execution plan with profiling statistics
+  bool profile = 2;
+
+  // Read-only mode (prevents mutations)
+  bool read_only = 3;
+
+  // Maximum result rows to return
+  optional uint32 max_rows = 4;
+}
+
+// Graph query response containing result rows
+message GraphQueryResponse {
+  // Result rows from query execution
+  repeated ResultRow rows = 1;
+
+  // Query execution statistics
+  QueryExecutionStats stats = 2;
+
+  // Optional execution plan (if explain=true or profile=true)
+  optional QueryPlan query_plan = 3;
+
+  // Optional error message if query failed
+  optional string error_message = 4;
+}
+
+// A single result row with column bindings
+message ResultRow {
+  // Column values keyed by variable name or projection alias
+  map<string, QueryValue> columns = 1;
+}
+
+// Value type for query results (supports nodes, edges, paths, primitives, lists)
+message QueryValue {
+  oneof value {
+    // Graph element types
+    Node node = 1;
+    Edge edge = 2;
+    GraphPath path = 3;
+
+    // Primitive types
+    PropertyValue property = 4;
+
+    // Collection types
+    QueryValueList list = 5;
+    QueryValueMap map = 6;
+
+    // Null value
+    bool null = 7;  // true means NULL
+  }
+}
+
+// List of query values
+message QueryValueList {
+  repeated QueryValue values = 1;
+}
+
+// Map of query values
+message QueryValueMap {
+  map<string, QueryValue> entries = 1;
+}
+
+// Query execution statistics
+message QueryExecutionStats {
+  // Execution time in microseconds
+  uint64 execution_time_microseconds = 1;
+
+  // Number of result rows returned
+  uint32 rows_returned = 2;
+
+  // Number of nodes accessed
+  uint32 nodes_accessed = 3;
+
+  // Number of edges traversed
+  uint32 edges_traversed = 4;
+
+  // Number of indexes used
+  uint32 indexes_used = 5;
+
+  // Compilation time (parsing + planning) in microseconds
+  uint64 compilation_time_microseconds = 6;
+
+  // Whether results were cached
+  bool cache_hit = 7;
+}
+
+// Query execution plan (for EXPLAIN/PROFILE)
+message QueryPlan {
+  // Plan ID
+  string plan_id = 1;
+
+  // Root plan step
+  PlanStep root_step = 2;
+
+  // Estimated total cost
+  double estimated_cost = 3;
+
+  // Estimated result size
+  uint32 estimated_result_size = 4;
+
+  // Plan creation timestamp (milliseconds)
+  int64 created_at_ms = 5;
+}
+
+// A step in the query execution plan
+message PlanStep {
+  // Step type (e.g., "NodeScan", "Expand", "Filter", "Project")
+  string step_type = 1;
+
+  // Step description (human-readable)
+  string description = 2;
+
+  // Estimated cost for this step
+  double estimated_cost = 3;
+
+  // Estimated cardinality (rows) for this step
+  uint32 estimated_cardinality = 4;
+
+  // Child plan steps
+  repeated PlanStep children = 5;
+
+  // Actual execution statistics (only present in PROFILE mode)
+  optional PlanStepProfile profile = 6;
+}
+
+// Profiling statistics for a plan step (only available with profile=true)
+message PlanStepProfile {
+  // Actual execution time in microseconds
+  uint64 actual_time_microseconds = 1;
+
+  // Actual rows produced
+  uint32 actual_rows = 2;
+
+  // Number of times this step was executed
+  uint32 executions = 3;
 }

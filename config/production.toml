@@ -116,6 +116,7 @@ mode = "production"  # Secure production mode
 methods = ["sso", "jwt", "api_key", "mtls"]
 require_authentication = true  # Always require authentication
 default_session_timeout_minutes = 480
+enabled = true  # When true and security is configured, REST auth middleware is enabled
 
 [security.api_keys]
 # Production API keys (configure via environment variables)

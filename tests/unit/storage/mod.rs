@@ -24,6 +24,8 @@ pub mod unified_index_tests;
 // pub mod viper_flush_compaction_tests; // Removed - obsolete API
 // SST tests - now using unified test utilities
 pub mod sst_atomic_operations_test;
+// pub mod sst_bplustree_integration_test; // Commented: Uses deprecated SstableWriter/SstQueryEngine APIs
+// pub mod sst_bplustree_tests; // Commented: Uses deprecated VectorFormat::F32 API
 pub mod sst_core_tests;
 pub mod sst_sstable_format_test;
 // pub mod sst_flush_test; // Removed - duplicate of integration tests

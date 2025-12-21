@@ -754,7 +754,7 @@ async fn test_entity_search_with_metadata_filter() {
     );
 
     // Build two entities with different metadata
-    let mut entity1 = proximadb::proto::proximadb_v1::Entity {
+    let entity1 = proximadb::proto::proximadb_v1::Entity {
         id: "e1".to_string(),
         collection_id: "test-metadata-search".to_string(),
         embeddings: vec![proximadb::proto::proximadb_v1::EmbeddingVersion {

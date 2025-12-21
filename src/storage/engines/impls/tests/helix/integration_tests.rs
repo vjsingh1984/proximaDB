@@ -593,8 +593,8 @@ async fn test_end_to_end_search() {
 fn test_configuration() {
     let mut config = HelixConfig::default();
 
-    // Test defaults
-    assert_eq!(config.pca_dimensions, 16);
+    // Test defaults (pca_dimensions changed from 16 to 64 for adaptive PCA: 8-64 based on vector dim)
+    assert_eq!(config.pca_dimensions, 64);
     assert_eq!(config.hilbert_bits_per_dimension, 16);
     assert_eq!(config.proxima_block_size, 128);
     assert!(config.enable_liquid_clustering);
@@ -1212,6 +1212,7 @@ async fn test_proxima_integration() {
         &distance_compute,
         None,
         None,
+        &crate::core::search::BlockPruneConfig::default(),
     )
     .await
     .unwrap();
@@ -1484,6 +1485,7 @@ async fn test_large_dimension_blocks_1536d() {
         &distance_compute,
         None,
         None,
+        &crate::core::search::BlockPruneConfig::default(),
     )
     .await
     .unwrap();
@@ -1633,6 +1635,7 @@ async fn test_exact_size_eliminates_rereads() {
         &distance_compute,
         None,
         None,
+        &crate::core::search::BlockPruneConfig::default(),
     )
     .await
     .unwrap();
@@ -2000,6 +2003,7 @@ async fn test_complete_query_flow_with_pruning() {
         &distance_compute,
         None,
         None,
+        &crate::core::search::BlockPruneConfig::default(),
     )
     .await
     .unwrap();

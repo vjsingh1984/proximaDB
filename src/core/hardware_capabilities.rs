@@ -1172,68 +1172,49 @@ impl HardwareCapabilities {
     fn detect_gpu() -> Result<GpuCapabilities> {
         #[cfg(feature = "gpu")]
         {
-            // TODO: Implement GPU detection using gpu module
-            // For now, return no GPU available
-            return Ok(GpuCapabilities {
-                backend: GpuBackend::None,
-                devices: vec![],
-                primary_device: None,
-                total_memory: 0,
-                cuda_compute_capability: None,
-            });
-
-            /* Original code - waiting for gpu_similarity module:
-            match crate::compute::gpu_similarity::detect_best_gpu() {
-                Ok(gpu_accel) => {
-                    let backend = match gpu_accel.backend() {
-                        HardwareBackend::CUDA => GpuBackend::CUDA,
-                        HardwareBackend::ROCm => GpuBackend::ROCm,
-                        HardwareBackend::MPS => GpuBackend::MPS,
-                        HardwareBackend::OpenCL => GpuBackend::OpenCL,
-                        _ => GpuBackend::None,
-                    };
-
-                    // For now, create a single device entry
-                    // In production, we'd enumerate all devices
-                    let devices = if backend != GpuBackend::None {
-                        vec![GpuDevice {
-                            id: 0,
-                            name: format!("{} GPU", backend),
-                            total_memory: 4 * 1024 * 1024 * 1024, // 4GB placeholder
-                            available_memory: 3 * 1024 * 1024 * 1024, // 3GB placeholder
-                            compute_capability: None,
-                            backend,
-                        }]
-                    } else {
-                        vec![]
-                    };
-
+            match crate::compute::gpu::distance::detect_gpu_capabilities() {
+                Ok((backend, devices)) => {
                     let total_memory = devices.iter().map(|d| d.total_memory).sum();
+                    let primary_device = if devices.is_empty() { None } else { Some(0) };
 
-                    Ok(GpuCapabilities {
+                    if backend != GpuBackend::None {
+                        info!(
+                            "✅ GPU detected: backend={:?}, devices={}",
+                            backend,
+                            devices.len()
+                        );
+                        for (idx, device) in devices.iter().enumerate() {
+                            info!(
+                                "   • [{}] {} (backend={:?}, mem={} MB)",
+                                idx,
+                                device.name,
+                                device.backend,
+                                device.total_memory / (1024 * 1024)
+                            );
+                        }
+                    } else {
+                        info!("GPU feature enabled but no GPU devices detected");
+                    }
+
+                    return Ok(GpuCapabilities {
                         backend,
                         devices,
-                        primary_device: if backend != GpuBackend::None {
-                            Some(0)
-                        } else {
-                            None
-                        },
+                        primary_device,
                         total_memory,
                         cuda_compute_capability: None,
-                    })
+                    });
                 }
-                Err(_) => {
-                    // No GPU available
-                    Ok(GpuCapabilities {
+                Err(err) => {
+                    tracing::warn!("GPU detection failed, disabling GPU acceleration: {:?}", err);
+                    return Ok(GpuCapabilities {
                         backend: GpuBackend::None,
                         devices: vec![],
                         primary_device: None,
                         total_memory: 0,
                         cuda_compute_capability: None,
-                    })
+                    });
                 }
             }
-            */
         }
 
         #[cfg(not(feature = "gpu"))]

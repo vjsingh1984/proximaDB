@@ -303,6 +303,7 @@ use crate::storage::engines::core::formats::proximablocks::block_structures::{
 #[cfg(test)]
 mod sst_filename_tests {
     use super::*;
+    use crate::storage::common::FilenameCodec;
 
     #[test]
     fn test_generate_filename() {
@@ -722,7 +723,271 @@ pub struct IndexEntry {
 
     // NEW: Vector format optimization info
     pub vector_format: VectorFormat,
+
+    // NEW: Z-Order spatial indexing for range-based pruning
+    /// Z-Order code (Morton code) for this block's centroid after PCA projection
+    /// Enables efficient spatial range queries and pruning (supports up to 64 PCA dims)
+    #[serde(default)]
+    pub zorder_code: Option<crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode>,
+
     // REMOVED: compression_ratio - can be calculated on-demand from size and DataBlock.uncompressed_size
+}
+
+/// Minimal B+ tree descriptor persisted in the index blob for fast lookups.
+/// We use a two-level structure (root + leaves) for O(log n) key/range lookups.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BPlusTreeIndex {
+    /// Fan-out per leaf (number of entries per leaf)
+    pub fanout: usize,
+    /// Leaf ranges referencing slices in the sorted IndexEntry array
+    pub leaves: Vec<BPlusLeaf>,
+    /// Root separators for quick leaf selection
+    pub root: Vec<BPlusRootEntry>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BPlusLeaf {
+    pub start_key: String,
+    pub end_key: String,
+    /// Start index in the IndexEntry array
+    pub start_idx: usize,
+    /// Number of entries in this leaf
+    pub len: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BPlusRootEntry {
+    pub pivot_key: String,
+    pub leaf_idx: usize,
+}
+
+impl BPlusTreeIndex {
+    /// Build a two-level B+ tree over already-sorted entries.
+    pub fn build(entries: &[IndexEntry], fanout: usize) -> Self {
+        let fanout = fanout.max(8); // Minimum fanout of 8
+        let mut leaves = Vec::new();
+
+        for (i, chunk) in entries.chunks(fanout).enumerate() {
+            let start_key = chunk.first().map(|e| e.key.clone()).unwrap_or_default();
+            let end_key = chunk.last().map(|e| e.key.clone()).unwrap_or_else(|| start_key.clone());
+            leaves.push(BPlusLeaf {
+                start_key,
+                end_key,
+                start_idx: i * fanout,
+                len: chunk.len(),
+            });
+        }
+
+        let mut root = Vec::with_capacity(leaves.len());
+        for (idx, leaf) in leaves.iter().enumerate() {
+            root.push(BPlusRootEntry {
+                pivot_key: leaf.start_key.clone(),
+                leaf_idx: idx,
+            });
+        }
+
+        Self {
+            fanout,
+            leaves,
+            root,
+        }
+    }
+
+    /// Locate the leaf range for a given key.
+    pub fn leaf_for_key(&self, key: &str) -> Option<&BPlusLeaf> {
+        if self.root.is_empty() {
+            return None;
+        }
+
+        // Binary search in root to find leaf
+        let mut lo = 0;
+        let mut hi = self.root.len();
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2;
+            if key >= self.root[mid].pivot_key.as_str() {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        self.root
+            .get(lo)
+            .and_then(|entry| self.leaves.get(entry.leaf_idx))
+    }
+
+    /// Find entries in a range [start_key, end_key].
+    pub fn range_leaves(&self, start_key: &str, end_key: &str) -> Vec<&BPlusLeaf> {
+        let mut result = Vec::new();
+
+        for leaf in &self.leaves {
+            // Check if this leaf overlaps with [start_key, end_key]
+            if leaf.end_key.as_str() >= start_key && leaf.start_key.as_str() <= end_key {
+                result.push(leaf);
+            }
+        }
+
+        result
+    }
+}
+
+/// Enhanced SSTable index with metadata statistics and custom serialization
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SstableIndex {
+    pub entries: Vec<IndexEntry>,
+    pub metadata_stats: HashMap<String, MetadataStats>, 
+    pub vector_count: usize,
+    pub min_key: String,
+    pub max_key: String,
+    /// Optional B+ tree for fast point/range lookups (built at write time)
+    #[serde(default)]
+    pub bplus_tree: Option<BPlusTreeIndex>,
+}
+
+/// Metadata statistics for predicate pushdown
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MetadataStats {
+    pub min_value: serde_json::Value,
+    pub max_value: serde_json::Value,
+    pub null_count: usize,
+    pub distinct_count: usize,
+    pub bloom_filter_offset: Option<u64>,
+}
+
+impl SstableIndex {
+    /// Custom serialization for robust persistence
+    /// Uses explicit layout for IndexEntries to avoid serde_json issues in bincode
+    pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
+        use std::io::Write;
+        let mut buffer = Vec::new();
+        
+        // Magic header for version 1
+        buffer.write_all(b"IDX1")?; 
+        
+        // Min/Max keys
+        let min_bytes = self.min_key.as_bytes();
+        buffer.write_all(&(min_bytes.len() as u32).to_le_bytes())?;
+        buffer.write_all(min_bytes)?;
+        
+        let max_bytes = self.max_key.as_bytes();
+        buffer.write_all(&(max_bytes.len() as u32).to_le_bytes())?;
+        buffer.write_all(max_bytes)?;
+        
+        // Vector count
+        buffer.write_all(&(self.vector_count as u64).to_le_bytes())?;
+        
+        // Entries
+        buffer.write_all(&(self.entries.len() as u64).to_le_bytes())?;
+        for entry in &self.entries {
+            // Use IndexEntry's custom serialization which handles JSON safely
+            let entry_bytes = entry.serialize()?;
+            buffer.write_all(&(entry_bytes.len() as u32).to_le_bytes())?;
+            buffer.write_all(&entry_bytes)?;
+        }
+        
+        // B+ Tree (safe to use bincode here as it contains no JSON Values)
+        match &self.bplus_tree {
+            Some(tree) => {
+                buffer.write_all(&1u8.to_le_bytes())?;
+                let tree_bytes = bincode::serialize(tree)?;
+                buffer.write_all(&(tree_bytes.len() as u32).to_le_bytes())?;
+                buffer.write_all(&tree_bytes)?;
+            }
+            None => buffer.write_all(&0u8.to_le_bytes())?,
+        }
+        
+        // Metadata Stats (placeholder - writing 0 count)
+        buffer.write_all(&0u32.to_le_bytes())?; 
+        
+        Ok(buffer)
+    }
+
+    /// Custom deserialization for robust persistence
+    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
+        use std::io::Read;
+        let mut cursor = std::io::Cursor::new(data);
+        
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+        
+        // Check magic header
+        if &magic != b"IDX1" {
+             return Err(anyhow::anyhow!("Invalid SstableIndex format: expected IDX1, got {:?}", std::str::from_utf8(&magic).unwrap_or("????")));
+        }
+        
+        // Min Key
+        let mut len_buf = [0u8; 4];
+        cursor.read_exact(&mut len_buf)?;
+        let min_len = u32::from_le_bytes(len_buf) as usize;
+        let mut min_bytes = vec![0u8; min_len];
+        cursor.read_exact(&mut min_bytes)?;
+        let min_key = String::from_utf8(min_bytes)?;
+
+        // Max Key
+        cursor.read_exact(&mut len_buf)?;
+        let max_len = u32::from_le_bytes(len_buf) as usize;
+        let mut max_bytes = vec![0u8; max_len];
+        cursor.read_exact(&mut max_bytes)?;
+        let max_key = String::from_utf8(max_bytes)?;
+        
+        // Vector Count
+        let mut u64_buf = [0u8; 8];
+        cursor.read_exact(&mut u64_buf)?;
+        let vector_count = u64::from_le_bytes(u64_buf) as usize;
+        
+        // Entries
+        cursor.read_exact(&mut u64_buf)?;
+        let entries_count = u64::from_le_bytes(u64_buf) as usize;
+        let mut entries = Vec::with_capacity(entries_count);
+        
+        for _ in 0..entries_count {
+             cursor.read_exact(&mut len_buf)?;
+             let entry_len = u32::from_le_bytes(len_buf) as usize;
+             
+             let start = cursor.position() as usize;
+             if start + entry_len > data.len() {
+                 return Err(anyhow::anyhow!("Truncated index entry"));
+             }
+             
+             let entry_data = &data[start..start+entry_len];
+             entries.push(IndexEntry::deserialize(entry_data)?);
+             
+             cursor.set_position((start + entry_len) as u64);
+        }
+        
+        // B+ Tree
+        let mut bool_buf = [0u8; 1];
+        cursor.read_exact(&mut bool_buf)?;
+        let bplus_tree = if bool_buf[0] == 1 {
+            cursor.read_exact(&mut len_buf)?;
+            let tree_len = u32::from_le_bytes(len_buf) as usize;
+            
+            let start = cursor.position() as usize;
+            if start + tree_len > data.len() {
+                return Err(anyhow::anyhow!("Truncated B+ tree data"));
+            }
+            
+            let tree = bincode::deserialize(&data[start..start+tree_len])?;
+            cursor.set_position((start + tree_len) as u64);
+            Some(tree)
+        } else {
+            None
+        };
+        
+        // Metadata Stats (consume count)
+        if cursor.position() < data.len() as u64 {
+            let _ = cursor.read_exact(&mut len_buf);
+        }
+        
+        Ok(Self {
+            entries,
+            metadata_stats: HashMap::new(),
+            vector_count,
+            min_key,
+            max_key,
+            bplus_tree,
+        })
+    }
 }
 
 impl IndexEntry {
@@ -1006,6 +1271,7 @@ impl IndexEntry {
             block_key_bloom,
             block_metadata_bloom,
             vector_format,
+            zorder_code: None,  // Deserialized separately if present
         })
     }
 }

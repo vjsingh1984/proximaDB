@@ -155,25 +155,7 @@ pub struct CacheMetrics {
     pub memory_pressure_events: u64,
 }
 
-/// Enhanced SSTable index with metadata statistics
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SstableIndex {
-    pub entries: Vec<IndexEntry>,
-    pub metadata_stats: HashMap<String, MetadataStats>,
-    pub vector_count: usize,
-    pub min_key: String,
-    pub max_key: String,
-}
-
-/// Metadata statistics for predicate pushdown
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MetadataStats {
-    pub min_value: serde_json::Value,
-    pub max_value: serde_json::Value,
-    pub null_count: usize,
-    pub distinct_count: usize,
-    pub bloom_filter_offset: Option<u64>,
-}
+use crate::storage::engines::impls::sst::{SstableIndex, MetadataStats};
 
 /// Enhanced bloom filter supporting metadata columns
 
@@ -743,6 +725,7 @@ impl ModularBlockReader {
                 vector_count: 0,
                 min_key: String::new(),
                 max_key: String::new(),
+                bplus_tree: None,
             });
         }
 
@@ -840,6 +823,7 @@ impl ModularBlockReader {
             vector_count: header.entry_count as usize,
             min_key,
             max_key,
+            bplus_tree: None,
         };
 
         Ok(index)
@@ -880,8 +864,8 @@ impl ModularBlockReader {
         // Read index data using range read
         let index_data = self.read_range(index_offset + 4, index_size).await?;
 
-        // Deserialize index
-        let index: SstableIndex = bincode::deserialize(&index_data)?;
+        // Deserialize index using robust implementation
+        let index = SstableIndex::deserialize(&index_data)?;
 
         Ok(index)
     }
@@ -2837,9 +2821,9 @@ impl UnifiedSstableReader {
 
                 // Check each metadata condition against block statistics
                 for (column, value) in &metadata_conditions {
-                    // Check if this block might contain the value
-                    if let Some(min_val) = entry.metadata_min_values.get("min_key") {
-                        if let Some(max_val) = entry.metadata_max_values.get("max_key") {
+                    // Check if this block might contain the value using column-specific min/max
+                    if let Some(min_val) = entry.metadata_min_values.get(column) {
+                        if let Some(max_val) = entry.metadata_max_values.get(column) {
                             // Use the centralized comparison function for proper numeric handling
                             // If value is outside the min/max range, skip this block
                             if Self::compare_metadata_values(value, min_val)
@@ -2852,12 +2836,12 @@ impl UnifiedSstableReader {
                             }
                         }
                     } else {
-                        // Column not present in this block, check if there are nulls
-                        if entry.metadata_null_counts.get(column).copied().unwrap_or(0) == 0 {
-                            // No values for this column in this block
-                            should_include = false;
-                            break;
-                        }
+                        // Column not tracked in block stats - be conservative, include block
+                        // We can't reject blocks when we don't have column statistics
+                        debug!(
+                            "    ⚠️ Column '{}' not in block stats, including block conservatively",
+                            column
+                        );
                     }
                 }
 
@@ -3004,6 +2988,7 @@ impl UnifiedSstableReader {
                 vector_count: 0,
                 min_key: String::new(),
                 max_key: String::new(),
+                bplus_tree: None,
             }
         } else {
             // Load index from disk
@@ -3200,111 +3185,22 @@ impl UnifiedSstableReader {
                 .await?
         } else {
             trace!("SST Load Index: No index data (index_len = 0)");
-            vec![]
+            return Ok(SstableIndex {
+                entries: Vec::new(),
+                metadata_stats: HashMap::new(),
+                vector_count: 0,
+                min_key: header.min_key.clone(),
+                max_key: header.max_key.clone(),
+                bplus_tree: None,
+            });
         };
 
-        // Deserialize index entries using custom deserialization
-        let mut entries = Vec::new();
-        let mut cursor = std::io::Cursor::new(&index_data[..]);
-
-        while (cursor.position() as usize) < index_data.len() {
-            let mut len_buf = [0u8; 4];
-            if cursor.read_exact(&mut len_buf).is_err() {
-                break; // End of data
-            }
-            let entry_len = u32::from_le_bytes(len_buf) as usize;
-
-            let current_pos = cursor.position() as usize;
-            if current_pos + entry_len > index_data.len() {
-                break; // Invalid entry length
-            }
-
-            let entry_data = &index_data[current_pos..current_pos + entry_len];
-            match IndexEntry::deserialize(entry_data) {
-                Ok(entry) => entries.push(entry),
-                Err(e) => {
-                    warn!("Failed to deserialize index entry: {}", e);
-                    break;
-                }
-            }
-
-            cursor.set_position((current_pos + entry_len) as u64);
-        }
-
-        // Build metadata statistics from index entries
-        let mut metadata_stats = HashMap::new();
-
-        // Aggregate metadata statistics across all blocks
-        for entry in &entries {
-            for (column, min_val) in &entry.metadata_min_values {
-                let stats = metadata_stats
-                    .entry(column.clone())
-                    .or_insert(MetadataStats {
-                        min_value: min_val.clone(),
-                        max_value: min_val.clone(),
-                        null_count: 0,
-                        distinct_count: 0,
-                        bloom_filter_offset: Some(bloom_offset + 4), // Bloom filter location
-                    });
-
-                // Update min value
-                if Self::compare_metadata_values(min_val, &stats.min_value)
-                    == std::cmp::Ordering::Less
-                {
-                    stats.min_value = min_val.clone();
-                }
-            }
-
-            for (column, max_val) in &entry.metadata_max_values {
-                let stats = metadata_stats
-                    .entry(column.clone())
-                    .or_insert(MetadataStats {
-                        min_value: max_val.clone(),
-                        max_value: max_val.clone(),
-                        null_count: 0,
-                        distinct_count: 0,
-                        bloom_filter_offset: Some(bloom_offset + 4),
-                    });
-
-                // Update max value
-                if Self::compare_metadata_values(max_val, &stats.max_value)
-                    == std::cmp::Ordering::Greater
-                {
-                    stats.max_value = max_val.clone();
-                }
-            }
-
-            // Update null counts
-            for (column, null_count) in &entry.metadata_null_counts {
-                let stats = metadata_stats
-                    .entry(column.clone())
-                    .or_insert(MetadataStats {
-                        min_value: serde_json::Value::Null,
-                        max_value: serde_json::Value::Null,
-                        null_count: 0,
-                        distinct_count: 0,
-                        bloom_filter_offset: Some(bloom_offset + 4),
-                    });
-                stats.null_count += *null_count as usize;
-            }
-        }
-
-        debug!(
-            "Built metadata statistics for {} columns",
-            metadata_stats.len()
-        );
-
-        let index = SstableIndex {
-            entries,
-            metadata_stats,
-            vector_count: header.entry_count as usize,
-            min_key: header.min_key,
-            max_key: header.max_key,
-        };
-
-        // Note: We don't cache here anymore as the caller handles caching
-        // to avoid double-locking issues
-
+        // Robust deserialization using shared implementation which includes B+ Tree and stats
+        let index = SstableIndex::deserialize(&index_data).map_err(|e| {
+             warn!("SST Load Index: Failed to deserialize index: {}", e);
+             anyhow::anyhow!("Failed to deserialize index: {}", e)
+        })?;
+        
         Ok(index)
     }
 
@@ -3777,7 +3673,7 @@ impl UnifiedSstableReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
-        trace!("SST Proxima: Reading blocks from: {}", path);
+        trace!("SST Proxima: read_proximablocks called for path: {}", path);
 
         // Get filesystem
         let scheme = if path.contains("://") {
@@ -3888,21 +3784,48 @@ impl UnifiedSstableReader {
             match ProximaDataBlock::deserialize(&block_data, collection) {
                 Ok(block) => {
                     trace!(
-                        "SST Proxima: Successfully deserialized block with {} records",
+                        "SST Proxima: Deserialized block with {} records",
                         block.records.len()
                     );
                     blocks.push(block);
                 }
                 Err(e) => {
-                    debug!("SST Proxima: Failed to deserialize block: {}", e);
+                    warn!(
+                        "SST Proxima: Failed to deserialize block at offset {}: {}",
+                        offset, e
+                    );
                     // Continue with next block
                 }
             }
 
             offset += block_len;
+
+            // Skip cache-line padding that the writer adds for SIMD alignment
+            //
+            // ## Why skip padding?
+            // The SST writer pads each block to 64-byte cache-line boundaries for:
+            // - Direct SIMD operations on mmap'd data (AVX2/AVX-512/NEON)
+            // - No runtime copy to aligned buffer needed
+            //
+            // ## Overhead Analysis (Audited December 2024)
+            // - Typical 263KB block with ~51 bytes padding = 0.019% overhead
+            // - This negligible overhead enables significant SIMD performance gains
+            //
+            // See: src/storage/engines/impls/sst/writer.rs:120-134 for writer side
+            // See: src/storage/engines/core/formats/proximablocks/mod.rs for best practices
+            const CACHE_LINE_SIZE: u64 = 64;
+            let aligned_block_len = ((block_len + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let padding = aligned_block_len - block_len;
+            if padding > 0 && padding < CACHE_LINE_SIZE {
+                offset += padding;
+            }
         }
 
-        trace!("SST Proxima: Read {} total blocks", blocks.len());
+        trace!(
+            "SST Proxima: Finished reading {} blocks from {}",
+            blocks.len(),
+            path
+        );
         Ok(blocks)
     }
 
@@ -4484,6 +4407,7 @@ impl UnifiedSstableReader {
                     vector_count: entries.len(),
                     min_key: entries.first().map(|e| e.key.clone()).unwrap_or_default(),
                     max_key: entries.last().map(|e| e.key.clone()).unwrap_or_default(),
+                    bplus_tree: None,
                 }
             };
 
@@ -4713,6 +4637,37 @@ impl UnifiedSstableReader {
             .distance_metric
             .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
 
+        // Two-stage pruning approach:
+        // 1. Z-Order spatial pruning (broad filter)
+        // 2. Centroid-based pruning (fine-grained distance filter)
+
+        // Stage 1: Z-Order pruning (if Z-Order codes are available)
+        if let Some(zorder_filtered) = filter_blocks_by_zorder(query, _index_blocks) {
+            // Apply Z-Order filtering
+            if zorder_filtered.len() < _index_blocks.len() {
+                // Create a filtered subset of index entries
+                let filtered_entries: Vec<IndexEntry> = zorder_filtered
+                    .iter()
+                    .filter_map(|&idx| _index_blocks.get(idx).cloned())
+                    .collect();
+
+                // Stage 2: Apply centroid-based pruning on the filtered set
+                let local_indices = select_blocks_by_centroid(
+                    query,
+                    &filtered_entries,
+                    metric,
+                    &_params.block_prune,
+                );
+
+                // Map local indices back to original indices
+                return local_indices
+                    .into_iter()
+                    .filter_map(|local_idx| zorder_filtered.get(local_idx).copied())
+                    .collect();
+            }
+        }
+
+        // Fallback: No Z-Order codes or no pruning benefit, use only centroid-based pruning
         select_blocks_by_centroid(query, _index_blocks, metric, &_params.block_prune)
     }
 
@@ -4727,6 +4682,195 @@ impl UnifiedSstableReader {
         let active_records = data_block.records.len();
         active_records > data_block.records.len() / 2
     }
+}
+
+// ============================================================================
+// Z-Order Pruning Helper Functions
+// ============================================================================
+
+/// Compute Z-Order code for a query vector using PCA transform.
+///
+/// This transforms the query to PCA space and encodes it with Z-Order,
+/// enabling spatial range-based block pruning.
+///
+/// # Arguments
+/// * `query` - Query vector (original dimension)
+/// * `entries` - Index entries with block centroids
+///
+/// # Returns
+/// Z-Order code for the query, or None if insufficient data
+fn compute_query_zorder_code(
+    query: &[f32],
+    entries: &[IndexEntry],
+) -> Option<crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
+        AdaptivePcaConfig, IncrementalPCA, ZOrderEncoder,
+    };
+
+    if entries.is_empty() || query.is_empty() {
+        return None;
+    }
+
+    // Collect centroids from index entries
+    let centroids: Vec<Vec<f32>> = entries
+        .iter()
+        .map(|entry| {
+            super::super::get_centroid_fp32(&entry.block_centroid_fp16, &entry.block_centroid)
+        })
+        .collect();
+
+    if centroids.is_empty() {
+        return None;
+    }
+
+    let dimension = centroids[0].len();
+    if query.len() != dimension {
+        return None;
+    }
+
+    // Use adaptive PCA configuration (supports up to 64 dims)
+    let pca_config = AdaptivePcaConfig::for_vector_dim(dimension);
+    let target_dims = pca_config.n_components;
+
+    let mut pca = IncrementalPCA::new(dimension, target_dims);
+
+    for centroid in &centroids {
+        pca.add_sample(centroid);
+    }
+    pca.finalize();
+
+    // Transform query to PCA space
+    let pca_coords = pca.transform(query);
+
+    // Normalize to [0, 1] range for Z-Order encoding
+    let normalized = normalize_coords_for_zorder(&pca_coords);
+
+    // Encode with Z-Order using adaptive configuration
+    let encoder = ZOrderEncoder::new(target_dims, pca_config.bits_per_dim);
+    let code = encoder.encode(&normalized);
+
+    Some(code)
+}
+
+/// Calculate Z-Order epsilon for pruning range.
+///
+/// The epsilon determines the search radius in Z-Order space.
+/// Blocks outside [query_code - epsilon, query_code + epsilon] are pruned.
+///
+/// # Arguments
+/// * `query_code` - Query's Z-Order code
+/// * `entries` - Index entries with Z-Order codes
+///
+/// # Returns
+/// Epsilon value (search radius in Z-Order space)
+fn calculate_zorder_epsilon(
+    query_code: &crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode,
+    entries: &[IndexEntry],
+) -> crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode {
+    use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+    // Collect all Z-Order codes
+    let codes: Vec<&SpatialCode> = entries
+        .iter()
+        .filter_map(|e| e.zorder_code.as_ref())
+        .collect();
+
+    if codes.is_empty() {
+        // No pruning if no codes - return max epsilon for the code type
+        return match query_code {
+            SpatialCode::Code64(_) => SpatialCode::Code64(u64::MAX),
+            SpatialCode::Code128(_) => SpatialCode::Code128(u128::MAX),
+            SpatialCode::Code256 { .. } => SpatialCode::Code256 { low: u128::MAX, high: u128::MAX },
+            SpatialCode::Code512(_) => SpatialCode::Code512(crate::storage::engines::core::formats::proximablocks::spatial_encoding::U512::MAX),
+        };
+    }
+
+    // Find min and max codes
+    let min_code = codes.iter().min().unwrap();
+    let max_code = codes.iter().max().unwrap();
+
+    // Calculate epsilon as 10% of range (built into SpatialCode::epsilon method)
+    // Min epsilon of 1000 to avoid over-pruning
+    max_code.epsilon(min_code, 10.0, 1000)
+}
+
+/// Filter index entries by Z-Order range.
+///
+/// Returns indices of blocks that fall within the Z-Order search range.
+///
+/// # Arguments
+/// * `query` - Query vector
+/// * `entries` - Index entries with Z-Order codes
+///
+/// # Returns
+/// Vector of block indices within the search range
+fn filter_blocks_by_zorder(
+    query: &[f32],
+    entries: &[IndexEntry],
+) -> Option<Vec<usize>> {
+    // Compute query's Z-Order code
+    let query_code = compute_query_zorder_code(query, entries)?;
+
+    // Calculate pruning range
+    let epsilon = calculate_zorder_epsilon(&query_code, entries);
+    let min_code = query_code.saturating_sub(&epsilon);
+    let max_code = query_code.saturating_add(&epsilon);
+
+    // Filter blocks by Z-Order range
+    let filtered_indices: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            if let Some(code) = &entry.zorder_code {
+                code.in_range(&min_code, &max_code)
+            } else {
+                true // Include blocks without Z-Order (backward compat)
+            }
+        })
+        .map(|(idx, _)| idx)
+        .collect();
+
+    // Log pruning effectiveness
+    let pruned_percentage = if entries.len() > 0 {
+        100 - (filtered_indices.len() * 100 / entries.len())
+    } else {
+        0
+    };
+
+    debug!(
+        "🔬 SST Z-Order Pruning: {} → {} blocks ({}% pruned)",
+        entries.len(),
+        filtered_indices.len(),
+        pruned_percentage
+    );
+
+    Some(filtered_indices)
+}
+
+/// Normalize coordinates to [0, 1] range for Z-Order encoding.
+///
+/// Uses min-max normalization across all dimensions.
+fn normalize_coords_for_zorder(coords: &[f32]) -> Vec<f32> {
+    if coords.is_empty() {
+        return Vec::new();
+    }
+
+    // Find min and max across all dimensions
+    let min_val = coords.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_val = coords.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    let range = max_val - min_val;
+
+    if range < 1e-6 {
+        // All coordinates are very similar, return middle of range
+        return vec![0.5; coords.len()];
+    }
+
+    // Normalize each coordinate to [0, 1]
+    coords
+        .iter()
+        .map(|&c| ((c - min_val) / range).clamp(0.0, 1.0))
+        .collect()
 }
 
 fn select_blocks_by_centroid(
@@ -4799,6 +4943,7 @@ fn metric_distance(
 #[cfg(test)]
 mod centroid_tests {
     use super::*;
+    use crate::storage::engines::impls::sst::VectorFormat;
 
     #[test]
     fn selects_sqrt_top_blocks() {
@@ -4812,12 +4957,14 @@ mod centroid_tests {
                 block_offset: 0,
                 compressed: false,
                 block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
                 metadata_min_values: HashMap::new(),
                 metadata_max_values: HashMap::new(),
                 metadata_null_counts: HashMap::new(),
                 block_key_bloom: None,
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
+                zorder_code: None,
             },
             IndexEntry {
                 key: "b".into(),
@@ -4827,12 +4974,14 @@ mod centroid_tests {
                 block_offset: 0,
                 compressed: false,
                 block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
                 metadata_min_values: HashMap::new(),
                 metadata_max_values: HashMap::new(),
                 metadata_null_counts: HashMap::new(),
                 block_key_bloom: None,
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
+                zorder_code: None,
             },
             IndexEntry {
                 key: "c".into(),
@@ -4842,12 +4991,14 @@ mod centroid_tests {
                 block_offset: 0,
                 compressed: false,
                 block_centroid: vec![0.2, 0.2],
+                block_centroid_fp16: None,
                 metadata_min_values: HashMap::new(),
                 metadata_max_values: HashMap::new(),
                 metadata_null_counts: HashMap::new(),
                 block_key_bloom: None,
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
+                zorder_code: None,
             },
             IndexEntry {
                 key: "d".into(),
@@ -4857,12 +5008,14 @@ mod centroid_tests {
                 block_offset: 0,
                 compressed: false,
                 block_centroid: vec![5.0, 5.0],
+                block_centroid_fp16: None,
                 metadata_min_values: HashMap::new(),
                 metadata_max_values: HashMap::new(),
                 metadata_null_counts: HashMap::new(),
                 block_key_bloom: None,
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
+                zorder_code: None,
             },
         ];
 
@@ -4874,6 +5027,654 @@ mod centroid_tests {
         );
         // sqrt(4) = 2 => expect the two closest blocks by centroid: block_ids 0 and 2.
         assert_eq!(selected, vec![0, 2]);
+    }
+
+    #[test]
+    fn test_block_prune_none_mode_force_exact() {
+        // None mode (force_exact=true) should return ALL blocks regardless of other settings
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![5.0, 5.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: true, // None mode - disable all pruning
+            mode: crate::core::search::BlockPruneMode::Fixed(1),
+            ratio: 0.1,
+            min_keep: 1,
+            max_keep: 1,
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 2, "force_exact should return ALL blocks");
+        assert_eq!(selected, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_block_prune_min_keep_override() {
+        // min_keep should override mode when mode returns fewer blocks
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "c".into(),
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(1), // Mode wants 1 block
+            ratio: 0.2,
+            min_keep: 3, // But min_keep requires at least 3
+            max_keep: 0,
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 3, "min_keep=3 should override Fixed(1)");
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_block_prune_max_keep_override() {
+        // max_keep should override mode when mode returns more blocks
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "c".into(),
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "d".into(),
+                offset: 0,
+                size: 0,
+                block_id: 3,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![3.0, 3.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 0.75, // Would return 3 blocks
+            min_keep: 1,
+            max_keep: 2, // But max_keep limits to 2
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 2, "max_keep=2 should override Ratio(0.75)");
+        assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
+    }
+
+    #[test]
+    fn test_block_prune_min_max_conflict() {
+        // When min_keep > max_keep, correct order is: mode -> min_keep -> max_keep
+        // Result should respect max_keep as the final constraint
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "c".into(),
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(1),
+            ratio: 0.2,
+            min_keep: 5, // Configuration error: min_keep > max_keep
+            max_keep: 2, // max_keep should take precedence
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        // Evaluation: Fixed(1)=1 -> max(1,5)=5 -> min(5,2)=2 -> clamp(2,1,3)=2
+        assert_eq!(
+            selected.len(),
+            2,
+            "max_keep=2 should win when min_keep=5 > max_keep=2"
+        );
+        assert_eq!(selected, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_block_prune_ratio_mode() {
+        // Ratio mode should return ratio * n blocks (rounded up)
+        let query = vec![0.0f32, 0.0];
+        let entries = (0..5)
+            .map(|i| IndexEntry {
+                key: format!("block_{}", i),
+                offset: 0,
+                size: 0,
+                block_id: i,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![i as f32, i as f32],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            })
+            .collect::<Vec<_>>();
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 0.4, // 0.4 * 5 = 2
+            min_keep: 1,
+            max_keep: 0,
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 2, "Ratio(0.4) of 5 blocks should be 2");
+        assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
+    }
+
+    // ========================================================================
+    // Z-Order Pruning Tests
+    // ========================================================================
+
+    #[test]
+    fn test_compute_query_zorder_code_basic() {
+        // Test basic Z-Order code computation
+        let query = vec![1.0f32, 0.5];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode::Code64(100)),
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode::Code64(200)),
+            },
+        ];
+
+        let code = compute_query_zorder_code(&query, &entries);
+        assert!(code.is_some(), "Should compute Z-Order code");
+    }
+
+    #[test]
+    fn test_compute_query_zorder_code_empty_input() {
+        // Test with empty entries
+        let query = vec![1.0f32, 0.5];
+        let entries: Vec<IndexEntry> = vec![];
+
+        let code = compute_query_zorder_code(&query, &entries);
+        assert!(code.is_none(), "Should return None for empty entries");
+    }
+
+    #[test]
+    fn test_calculate_zorder_epsilon() {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+        // Test epsilon calculation
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(1000)),
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![10.0, 10.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(10000)),
+            },
+        ];
+
+        let query_code = SpatialCode::Code64(5000);
+        let epsilon = calculate_zorder_epsilon(&query_code, &entries);
+        // Epsilon should be 10% of range: (10000 - 1000) / 10 = 900, but min is 1000
+        assert_eq!(epsilon, SpatialCode::Code64(1000), "Epsilon should be max of (10% of range, 1000)");
+    }
+
+    #[test]
+    fn test_calculate_zorder_epsilon_no_codes() {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+        // Test with no Z-Order codes
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let query_code = SpatialCode::Code64(0);
+        let epsilon = calculate_zorder_epsilon(&query_code, &entries);
+        assert_eq!(epsilon, SpatialCode::Code64(u64::MAX), "Should return MAX for no codes");
+    }
+
+    #[test]
+    fn test_filter_blocks_by_zorder() {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+        // Test Z-Order filtering
+        let query = vec![1.0f32, 1.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(100)),
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(5000)),
+            },
+            IndexEntry {
+                key: "c".into(),
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![10.0, 10.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(10000)),
+            },
+        ];
+
+        let filtered = filter_blocks_by_zorder(&query, &entries);
+        assert!(filtered.is_some(), "Should return filtered indices");
+
+        let indices = filtered.unwrap();
+        // Should prune at least one block (the one furthest away)
+        assert!(
+            indices.len() < entries.len(),
+            "Should prune some blocks (got {}, expected < {})",
+            indices.len(),
+            entries.len()
+        );
+    }
+
+    #[test]
+    fn test_filter_blocks_by_zorder_backward_compat() {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+        // Test that blocks without Z-Order codes are included (backward compatibility)
+        let query = vec![1.0f32, 1.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None, // No Z-Order code
+            },
+            IndexEntry {
+                key: "b".into(),
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(5000)),
+            },
+        ];
+
+        let filtered = filter_blocks_by_zorder(&query, &entries);
+        assert!(filtered.is_some(), "Should handle mix of coded/non-coded blocks");
+
+        let indices = filtered.unwrap();
+        // Block without code should be included
+        assert!(indices.contains(&0), "Should include block without Z-Order code");
+    }
+
+    #[test]
+    fn test_normalize_coords_for_zorder() {
+        // Test normalization to [0, 1]
+        let coords = vec![-10.0f32, 0.0, 10.0, 20.0];
+        let normalized = normalize_coords_for_zorder(&coords);
+
+        assert_eq!(normalized.len(), coords.len());
+
+        // All values should be in [0, 1]
+        for &val in &normalized {
+            assert!(val >= 0.0 && val <= 1.0, "Value {} not in [0, 1]", val);
+        }
+
+        // Min should map to 0.0, max to 1.0
+        assert!((normalized[0] - 0.0).abs() < 1e-5, "Min should map to 0.0");
+        assert!((normalized[3] - 1.0).abs() < 1e-5, "Max should map to 1.0");
+    }
+
+    #[test]
+    fn test_normalize_coords_for_zorder_constant() {
+        // Test with all same values
+        let coords = vec![5.0f32, 5.0, 5.0];
+        let normalized = normalize_coords_for_zorder(&coords);
+
+        // Should return middle of range (0.5)
+        for &val in &normalized {
+            assert!((val - 0.5).abs() < 1e-5, "Constant coords should map to 0.5");
+        }
     }
 }
 

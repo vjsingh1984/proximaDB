@@ -70,6 +70,7 @@ pub async fn search_sstable(
     filter_expression: Option<&crate::core::search::FilterExpression>,
     candidate_ids: Option<&[String]>, // Optional IDs to check via bloom filter
     collection: Option<&crate::proto::proximadb_v1::Collection>,
+    prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<OptimizedSearchRecord>> {
     // Check bloom filter if candidate IDs provided
     if let Some(ids) = candidate_ids {
@@ -100,6 +101,7 @@ pub async fn search_sstable(
         distance_compute,
         collection,        // Pass collection for type-safe metadata deserialization
         filter_expression, // Pass FilterExpression for type-safe filtering
+        prune,
     )
     .await?;
 
@@ -250,6 +252,7 @@ pub async fn parallel_search(
                 filter_clone.as_ref(),
                 None, // No candidate IDs for now
                 None, // No collection available at this level
+                &crate::core::search::BlockPruneConfig::default(),
             )
             .await;
 
@@ -359,6 +362,7 @@ pub async fn search_with_stats(
             None, // No filter expression
             None, // No candidate IDs
             None, // No collection available at this level
+            &crate::core::search::BlockPruneConfig::default(),
         )
         .await?;
 

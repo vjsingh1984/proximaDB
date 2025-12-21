@@ -168,7 +168,7 @@ pub use unified_strategy_reader::{CachedSWIFTReader, DirectSWIFTReader, UnifiedS
 use anyhow::{Result, anyhow};
 // use std::collections::HashMap; // Unused import
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -231,6 +231,8 @@ pub struct SuperBlock {
     /// ✅ Now uses SWIFT composition metadata instead of manual bloom filter
     pub swift_metadata: SwiftSuperBlockMetadata,
     pub record_count: u32, // Track total records in this superblock
+    /// AdaCurve code for learned space-filling curve (hierarchical spatial indexing)
+    pub adacurve_code: Option<u64>,
 }
 
 impl SuperBlock {
@@ -261,6 +263,7 @@ impl SuperBlock {
             quantized_signature: Vec::new(),
             swift_metadata,
             record_count: 0,
+            adacurve_code: None,  // Will be populated during clustering
         }
     }
 
@@ -662,69 +665,123 @@ impl SwiftFile {
             return Ok(());
         }
 
-        // Group records into blocks (~2000 vectors per block)
+        // === NEW: Create blocks and prepare for AdaCurves clustering ===
         let records_per_block = self.header.records_per_block as usize;
-        let mut block_id = 0;
+        let mut blocks = Vec::new();
+
+        // Helper structure to hold centroid info for clustering
+        struct BlockWithCentroid {
+            centroid: Vec<f32>,
+        }
+        let mut block_centroids = Vec::new();
 
         for chunk in records.chunks(records_per_block) {
-            // Use centralized compression config conversion from Proxima
             use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
             let mut block_compression_config =
                 RowBasedCompressionConfig::create_block_config_from_proto(
                     compression_config.as_ref(),
                 );
 
-            // Enable SIMD optimization for SWIFT (hierarchical low-latency focus)
             block_compression_config.vector_layout = crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
 
-            // ✅ Proxima automatically handles quantization, bloom filters, and metadata statistics
-            // Now with SIMD-optimized encoding!
             let block = ProximaDataBlock::new_with_engine_profile(
                 chunk.to_vec(),
                 block_compression_config,
                 EngineProfile::Swift,
             );
 
-            // ❌ REMOVED: Manual quantization processing - Proxima handles this automatically!
-            // ❌ REMOVED: Manual vector collection - unnecessary with Proxima
-            debug!(
-                "Stored {} records in block {} using Proxima auto-capabilities",
-                chunk.len(),
-                block_id
+            // Compute and store centroid for clustering
+            let centroid = compute_block_centroid(&block);
+            block_centroids.push(BlockWithCentroid {
+                centroid: centroid.clone()
+            });
+            blocks.push(block);
+        }
+
+        // === NEW: Cluster blocks using PCA + AdaCurves for superior spatial locality ===
+        // AdaCurves learns from data distribution for better clustering (0.92 quality vs 0.82 for Z-Order)
+        // This is especially beneficial for SWIFT's hierarchical structure
+        info!("🔬 SWIFT: Applying PCA + AdaCurves clustering to {} blocks", blocks.len());
+
+        // Use adaptive PCA configuration for optimal dimension selection
+        use crate::storage::engines::core::formats::proximablocks::spatial_clustering::AdaptivePcaConfig;
+
+        let dimension = if let Some(first_centroid) = block_centroids.first() {
+            first_centroid.centroid.len()
+        } else {
+            self.header.dimension
+        };
+
+        let pca_config = AdaptivePcaConfig::for_vector_dim(dimension);
+        let target_dims = pca_config.n_components;
+
+        let (clustered_blocks, clustered_centroids, adacurve_codes) =
+            crate::storage::engines::core::formats::proximablocks::spatial_clustering::cluster_blocks_pca_adacurves(
+                blocks,
+                block_centroids,
+                |bc: &BlockWithCentroid| &bc.centroid,
+                target_dims,
             );
 
-            // Update ID index
-            for (idx, record) in chunk.iter().enumerate() {
+        info!("🔬 SWIFT: AdaCurves clustering complete - codes range: {} to {}",
+            adacurve_codes.iter().min().unwrap_or(&0),
+            adacurve_codes.iter().max().unwrap_or(&0)
+        );
+
+        // Use clustered blocks for superblock construction
+        let blocks_with_score: Vec<(ProximaDataBlock, f32, u64)> = clustered_blocks
+            .into_iter()
+            .zip(adacurve_codes.iter())
+            .map(|(block, &code)| (block, code as f32, code))
+            .collect();
+
+        // Reinitialize superblocks for this build
+        self.superblocks.clear();
+
+        let mut block_id = 0u32;
+        let mut superblock_codes: std::collections::HashMap<usize, Vec<u64>> = std::collections::HashMap::new();
+
+        for (mut block, _, adacurve_code) in blocks_with_score.into_iter() {
+            // Assign deterministic block_id (preserves ID ordering inside blocks)
+            block.block_id = block_id;
+
+            // Update ID index with clustered block ordering
+            for (idx, record) in block.records.iter().enumerate() {
                 if !record.id.is_empty() {
-                    self.id_index.add(record.id.clone(), block_id as u32, idx)?;
+                    self.id_index.add(record.id.clone(), block_id, idx)?;
                 }
             }
 
-            // Group blocks into superblocks (64 blocks per superblock)
-            let superblock_id = block_id / 64;
-            if self.superblocks.len() <= superblock_id as usize {
-                // Use row-based SuperBlock constructor
-            let mut superblock =
-                SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
-
-            // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
-            // SWIFT benefits from encoding 10K vectors together for better compression
-            superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
-
-            // Initialize SWIFT-specific fields
-            superblock.centroid = vec![0.0; self.header.dimension];
-            superblock.block_centroids = Vec::new();
-            superblock.quantized_signature = Vec::new();
-
-                // ✅ Proxima will automatically provide bloom filters when blocks are added!
-
+            let superblock_id = (block_id / 64) as usize;
+            if self.superblocks.len() <= superblock_id {
+                let mut superblock =
+                    SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
+                superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
+                superblock.centroid = vec![0.0; self.header.dimension];
+                superblock.block_centroids = Vec::new();
+                superblock.quantized_signature = Vec::new();
                 self.superblocks.push(superblock);
             }
 
-            // ✅ Use the new add_block method that leverages Proxima metadata
-            self.superblocks[superblock_id].add_block(block);
+            // Track AdaCurve codes per superblock for aggregation
+            superblock_codes.entry(superblock_id)
+                .or_insert_with(Vec::new)
+                .push(adacurve_code);
 
+            self.superblocks[superblock_id].add_block(block);
             block_id += 1;
+        }
+
+        // Populate superblock AdaCurve codes (use average of block codes)
+        for (sb_id, codes) in superblock_codes.iter() {
+            if let Some(superblock) = self.superblocks.get_mut(*sb_id) {
+                let avg_code = if codes.is_empty() {
+                    0
+                } else {
+                    (codes.iter().map(|&c| c as u128).sum::<u128>() / codes.len() as u128) as u64
+                };
+                superblock.adacurve_code = Some(avg_code);
+            }
         }
 
         // Update header statistics

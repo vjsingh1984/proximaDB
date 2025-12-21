@@ -26,7 +26,9 @@ use tower_http::trace::TraceLayer;
 
 use super::v1::handlers::{AppState, create_router};
 use crate::api_handlers::UnifiedHandlers;
+use crate::network::auth::middleware::auth_middleware_unified;
 use crate::monitoring::MetricsCollector;
+use crate::security::SecurityCoordinator;
 use crate::network::middleware::backpressure::{BackpressureConfig, create_concurrency_limit_layer};
 use crate::network::middleware::cors::{CorsConfig, create_cors_layer};
 use crate::network::middleware::request_id::request_id_middleware;
@@ -36,6 +38,19 @@ use crate::network::middleware::timeout::{TimeoutConfig, create_timeout_layer};
 pub struct RestServer {
     router: Router,
     bind_addr: SocketAddr,
+}
+
+/// Authentication configuration for the REST server
+#[derive(Debug, Clone)]
+pub struct RestAuthConfig {
+    /// Whether unified authentication is enabled
+    pub enabled: bool,
+}
+
+impl Default for RestAuthConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
 }
 
 /// Security configuration for the REST server.
@@ -50,22 +65,31 @@ pub struct RestServerSecurityConfig {
     pub timeout: TimeoutConfig,
     /// Backpressure configuration for load shedding
     pub backpressure: BackpressureConfig,
+    /// Unified authentication configuration
+    pub auth: RestAuthConfig,
     /// Whether to run in development mode (relaxed security)
     pub development_mode: bool,
 }
 
 impl Default for RestServerSecurityConfig {
+    #[inline]
     fn default() -> Self {
         Self {
             cors: CorsConfig::production(),
             timeout: TimeoutConfig::default(),
             backpressure: BackpressureConfig::default(),
+            auth: RestAuthConfig::default(),
             development_mode: false,
         }
     }
 }
 
 impl RestServerSecurityConfig {
+    /// Create a new security configuration with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Create a development configuration with relaxed security.
     ///
     /// **WARNING**: Only use for local development. Never in production!
@@ -74,6 +98,7 @@ impl RestServerSecurityConfig {
             cors: CorsConfig::development(),
             timeout: TimeoutConfig::default(),
             backpressure: BackpressureConfig::disabled(),
+            auth: RestAuthConfig { enabled: false },
             development_mode: true,
         }
     }
@@ -87,6 +112,7 @@ impl RestServerSecurityConfig {
             timeout: TimeoutConfig::default(),
             backpressure: BackpressureConfig::default(),
             development_mode: false,
+            auth: RestAuthConfig::default(),
         }
     }
 }
@@ -104,6 +130,7 @@ impl RestServer {
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
     ) -> Self {
         Self::with_security(
             bind_addr,
@@ -111,6 +138,7 @@ impl RestServer {
             max_request_size_mb,
             compression,
             metrics_collector,
+            security_coordinator,
             RestServerSecurityConfig::default(),
         )
     }
@@ -124,6 +152,7 @@ impl RestServer {
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
     ) -> Self {
         tracing::warn!("🚨 Starting REST server in DEVELOPMENT mode - security is relaxed!");
         Self::with_security(
@@ -132,6 +161,7 @@ impl RestServer {
             max_request_size_mb,
             compression,
             metrics_collector,
+            security_coordinator,
             RestServerSecurityConfig::development(),
         )
     }
@@ -143,9 +173,13 @@ impl RestServer {
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
         security_config: RestServerSecurityConfig,
     ) -> Self {
-        let state = AppState { unified_handlers };
+        let state = AppState {
+            unified_handlers,
+            security_coordinator: security_coordinator.clone(),
+        };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
         let max_size_bytes = max_request_size_mb.unwrap_or(64) * 1024 * 1024;
@@ -161,6 +195,7 @@ impl RestServer {
         };
 
         // Build service layers conditionally to avoid type mismatch
+        let security_coordinator = state.security_coordinator.clone();
         let mut base_router = create_router(state);
 
         // Nest metrics router if available
@@ -180,6 +215,21 @@ impl RestServer {
 
         // Create concurrency limit layer for backpressure (if enabled)
         let concurrency_layer = create_concurrency_limit_layer(&security_config.backpressure);
+
+        // Authentication layer (unified): prefer SecurityCoordinator if available
+        let auth_layer = if security_config.auth.enabled {
+            if let Some(coordinator) = security_coordinator {
+                Some(middleware::from_fn_with_state(
+                    coordinator,
+                    crate::network::auth::middleware::auth_middleware_unified,
+                ))
+            } else {
+                tracing::warn!("Security enabled but no coordinator available; auth layer disabled");
+                None
+            }
+        } else {
+            None
+        };
 
         // Log security configuration
         if security_config.development_mode {
@@ -211,7 +261,7 @@ impl RestServer {
         // Add request ID middleware for tracing and correlation
         let base_router = base_router.layer(middleware::from_fn(request_id_middleware));
 
-        let router = if compression {
+        let mut router = if compression {
             // Create compression layer with support for multiple algorithms
             // Priority order (fastest to best compression): deflate, gzip, zstd, brotli
             let compression_layer = CompressionLayer::new()
@@ -259,6 +309,11 @@ impl RestServer {
                 base_router.layer(service_builder)
             }
         };
+
+        // Apply auth layer last so request IDs/backpressure/cors are preserved
+        if let Some(auth) = auth_layer {
+            router = router.layer(auth);
+        }
 
         Self { router, bind_addr }
     }
@@ -1262,4 +1317,141 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
 </body>
 </html>"#,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::middleware;
+    use axum::routing::get;
+    use hyper::body::to_bytes;
+    use tower::ServiceExt;
+
+    use crate::network::auth::middleware::auth_middleware_unified;
+    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
+    use crate::security::unified_auth::{
+        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, SSOConfig,
+    };
+    use crate::security::unified_rbac::RBACConfig;
+    use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
+
+    fn build_api_key_security_config() -> SecurityConfig {
+        let mut api_keys = std::collections::HashMap::new();
+        api_keys.insert(
+            "test-key".to_string(),
+            ApiKeyInfo {
+                user_id: "user1".to_string(),
+                tenant_id: None,
+                permissions: vec!["read".to_string()],
+                created_at: None,
+                expires_at: None,
+                rate_limit_per_minute: None,
+                ip_restrictions: vec![],
+            },
+        );
+
+        SecurityConfig {
+            enabled: true,
+            mode: SecurityMode::Development,
+            authentication: AuthenticationConfig {
+                enabled: true,
+                methods: vec![AuthenticationMethod::ApiKey],
+                require_authentication: true,
+                default_session_timeout_minutes: 60,
+                api_keys,
+                jwt: JwtConfig {
+                    enabled: false,
+                    secret: "dev-secret".to_string(),
+                    access_token_expiration_minutes: 15,
+                    refresh_token_expiration_days: 7,
+                    issuer: "test".to_string(),
+                    audience: "test".to_string(),
+                    algorithm: "HS256".to_string(),
+                },
+                sso: SSOConfig {
+                    enabled: false,
+                    providers: vec![],
+                    token_cache_ttl_minutes: 5,
+                    aws_iam: None,
+                    azure_ad: None,
+                },
+            },
+            rbac: RBACConfig::default(),
+            audit: AuditConfig::default(),
+            tls: TlsConfig {
+                enabled: false,
+                require_client_certificates: false,
+                cert_file: None,
+                key_file: None,
+                ca_file: None,
+            },
+            compliance: ComplianceConfig {
+                frameworks: vec![],
+                data_residency: None,
+                encryption_at_rest: false,
+                encryption_in_transit: false,
+            },
+        }
+    }
+
+    async fn build_test_router(auth_enabled: bool) -> Router {
+        let base_router = Router::new().route("/api/v1/search", get(|| async { "ok" }));
+
+        if auth_enabled {
+            let coordinator = Arc::new(
+                SecurityCoordinator::from_config(build_api_key_security_config())
+                    .await
+                    .unwrap(),
+            );
+            base_router.layer(middleware::from_fn_with_state(
+                coordinator,
+                auth_middleware_unified,
+            ))
+        } else {
+            base_router
+        }
+    }
+
+    #[tokio::test]
+    async fn rest_auth_disabled_allows_requests_without_header() {
+        let router = build_test_router(false).await;
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        assert_eq!(&body[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn rest_auth_enabled_requires_header() {
+        let router = build_test_router(true).await;
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rest_auth_enabled_accepts_api_key() {
+        let router = build_test_router(true).await;
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .header("Authorization", "Api-Key test-key")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        assert_eq!(&body[..], b"ok");
+    }
 }

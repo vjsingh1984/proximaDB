@@ -35,7 +35,9 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 
 use crate::graph::{Edge, Node, PropertyValue};
+use crate::proto::proximadb_v1::typed_field;
 use crate::proto::proximadb_v1::{
+    Modality, TypedField, TypedMetadata,
     property_value, sql_value, EmbeddingVersion, Entity,
     Relation, SqlValue,
 };

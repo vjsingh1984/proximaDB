@@ -577,13 +577,13 @@ impl PatternMatcher {
             PropertyConstraint::GreaterThan(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp > 0),
-            PropertyConstraint::GreaterThanOrEqual(expected) => self
+            PropertyConstraint::GreaterThanOrEqual(expected) | PropertyConstraint::GreaterOrEqual(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp >= 0),
             PropertyConstraint::LessThan(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp < 0),
-            PropertyConstraint::LessThanOrEqual(expected) => self
+            PropertyConstraint::LessThanOrEqual(expected) | PropertyConstraint::LessOrEqual(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp <= 0),
             PropertyConstraint::In(values) => Ok(values.contains(&json_value)),
@@ -706,16 +706,48 @@ impl PatternMatcher {
         where_clauses: &[WhereClause],
         bindings: &HashMap<String, VariableBinding>,
     ) -> QueryResult<bool> {
-        // Simplified evaluation - just check first clause for now
-        if let Some(clause) = where_clauses.first() {
-            if let Some(VariableBinding::Node(node)) = bindings.get(&clause.variable) {
-                if let Some(prop_value) = node.properties.get(&clause.property) {
-                    return self.evaluate_property_constraint(prop_value, &clause.constraint);
-                }
+        // Evaluate all WHERE clauses
+        for clause in where_clauses {
+            if !self.evaluate_where_clause(clause, bindings)? {
+                return Ok(false);
             }
         }
-
         Ok(true)
+    }
+
+    fn evaluate_where_clause(
+        &self,
+        clause: &WhereClause,
+        bindings: &HashMap<String, VariableBinding>,
+    ) -> QueryResult<bool> {
+        match clause {
+            WhereClause::Property { variable, property, constraint } => {
+                if let Some(VariableBinding::Node(node)) = bindings.get(variable) {
+                    if let Some(prop_value) = node.properties.get(property) {
+                        return self.evaluate_property_constraint(prop_value, constraint);
+                    }
+                }
+                Ok(false)
+            }
+            WhereClause::And(left, right) => {
+                let left_result = self.evaluate_where_clause(left, bindings)?;
+                if !left_result {
+                    return Ok(false);
+                }
+                self.evaluate_where_clause(right, bindings)
+            }
+            WhereClause::Or(left, right) => {
+                let left_result = self.evaluate_where_clause(left, bindings)?;
+                if left_result {
+                    return Ok(true);
+                }
+                self.evaluate_where_clause(right, bindings)
+            }
+            WhereClause::Not(inner) => {
+                let result = self.evaluate_where_clause(inner, bindings)?;
+                Ok(!result)
+            }
+        }
     }
 
     /// Apply ordering and limits to results
@@ -956,15 +988,15 @@ impl PatternCompiler {
                 // Property projection like "n.name"
                 let parts: Vec<&str> = item.split('.').collect();
                 if parts.len() == 2 {
-                    spec.projections.push(PropertyProjection {
+                    spec.projections.push(PropertyProjection::Property {
                         variable: parts[0].to_string(),
                         property: parts[1].to_string(),
-                        alias: None,
                     });
                 }
             } else {
                 // Variable like "n"
                 spec.variables.push(item.to_string());
+                spec.projections.push(PropertyProjection::Variable(item.to_string()));
             }
         }
 

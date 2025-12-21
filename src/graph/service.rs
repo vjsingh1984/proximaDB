@@ -83,6 +83,7 @@ use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -242,6 +243,11 @@ impl GraphOperationsService {
             .iter()
             .map(|entry| entry.key().clone())
             .collect()
+    }
+
+    /// Set the base storage URL for graph persistence (used by embedded/server wiring).
+    pub fn set_base_storage_url(&mut self, url: String) {
+        self.base_storage_url = url;
     }
 
     /// List all graph collections (delegates to collection service)
@@ -1312,11 +1318,10 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        let mut results = Vec::with_capacity(nodes.len());
-        for node in nodes {
-            results.push(engine.insert_node(node).await?);
-        }
-        Ok(results)
+        // Use bulk API for optimal performance (100-500x faster than individual inserts)
+        // Single WAL write instead of N WAL writes
+        let inserted = engine.bulk_insert_nodes(nodes).await?;
+        Ok(inserted)
     }
 
     /// Batch create nodes with upsert strategy
@@ -1366,19 +1371,142 @@ impl GraphOperationsService {
         graph_id: &str,
         edges: Vec<Edge>,
     ) -> Result<Vec<Arc<Edge>>> {
+        let service_start = std::time::Instant::now();
+
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
 
+        if edges.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        let mut results = Vec::with_capacity(edges.len());
-        for edge in edges {
-            results.push(engine.insert_edge(edge).await?);
+        // Enforce composite (from,to,type) uniqueness across existing + in-batch edges
+        let composite_start = std::time::Instant::now();
+        let mut seen: HashSet<(String, String, String)> = HashSet::with_capacity(edges.len());
+        for edge in edges.iter() {
+            let key = (
+                edge.from_node_id.clone(),
+                edge.to_node_id.clone(),
+                edge.edge_type.clone(),
+            );
+            if !seen.insert(key.clone()) {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Duplicate edge in batch: (from='{}', to='{}', type='{}')",
+                    key.0, key.1, key.2
+                )));
+            }
+            if self.memory_pool.edge_composite_index.contains_key(&key) {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Composite edge already exists: (from='{}', to='{}', type='{}')",
+                    key.0, key.1, key.2
+                )));
+            }
         }
-        Ok(results)
+        let composite_time = composite_start.elapsed();
+
+        // OPTIMIZATION: Check if schema exists FIRST - skip all validation if no schema
+        // This avoids expensive async future creation/polling for the common case
+        let maybe_collection = self.collection_service.get_graph(graph_id).await?;
+        let has_schema = maybe_collection
+            .as_ref()
+            .map(|c| c.schema.is_some())
+            .unwrap_or(false);
+
+        if has_schema {
+            // Schema/cardinality validation (only when schema exists)
+            // Step 1: Batch fetch all nodes first (reduces lock contention)
+            let mut validation_data: Vec<(Edge, Arc<Node>, Arc<Node>)> =
+                Vec::with_capacity(edges.len());
+            for edge in edges.iter() {
+                if let (Some(from), Some(to)) = (
+                    engine.get_node(&edge.from_node_id)?,
+                    engine.get_node(&edge.to_node_id)?,
+                ) {
+                    validation_data.push((edge.clone(), from, to));
+                }
+            }
+
+            // Step 2: Check if sequential validation is requested
+            let sequential =
+                std::env::var("PROXIMADB_SEQUENTIAL_VALIDATION").unwrap_or_default() == "1";
+
+            if sequential {
+                // Sequential validation (original implementation for comparison)
+                tracing::warn!(
+                    "TEST MODE: Using sequential validation via PROXIMADB_SEQUENTIAL_VALIDATION=1"
+                );
+                for (edge, from, to) in validation_data.iter() {
+                    self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
+                        .await?;
+                    self.enforce_cardinality_on_edge(graph_id, edge, engine.as_ref())
+                        .await?;
+                }
+            } else {
+                // Parallel validation (optimized)
+                let validation_futures: Vec<_> = validation_data
+                    .iter()
+                    .map(|(edge, from, to)| async {
+                        // Schema validation
+                        self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
+                            .await?;
+                        // Cardinality validation
+                        self.enforce_cardinality_on_edge(graph_id, edge, engine.as_ref())
+                            .await?;
+                        Ok::<(), ProximaDBError>(())
+                    })
+                    .collect();
+
+                // Execute all validations concurrently and check for errors
+                let results = futures::future::join_all(validation_futures).await;
+                for result in results {
+                    result?;
+                }
+            }
+        }
+        // If no schema, skip validation entirely - major performance win for bulk inserts
+
+        let edge_count = edges.len();
+        let engine_start = std::time::Instant::now();
+        let inserted = engine.bulk_insert_edges(edges).await?;
+        let engine_time = engine_start.elapsed();
+
+        // Update edge stats and per-type counters
+        let stats_start = std::time::Instant::now();
+        self.stats_edges
+            .fetch_add(inserted.len() as u64, Ordering::Relaxed);
+        if !inserted.is_empty() {
+            let mut per_type: HashMap<String, u64> = HashMap::new();
+            for e in inserted.iter() {
+                *per_type.entry(e.edge_type.clone()).or_default() += 1;
+            }
+            for (edge_type, count) in per_type {
+                self.edge_type_counts
+                    .entry(edge_type)
+                    .or_insert_with(|| AtomicU64::new(0))
+                    .fetch_add(count, Ordering::Relaxed);
+            }
+        }
+        let stats_time = stats_start.elapsed();
+
+        // Log timing breakdown for performance analysis (debug level)
+        let service_total = service_start.elapsed();
+        if edge_count >= 100 {
+            tracing::debug!(
+                "batch_create_edges timing for {} edges: composite={:?} engine={:?} stats={:?} total={:?}",
+                edge_count,
+                composite_time,
+                engine_time,
+                stats_time,
+                service_total
+            );
+        }
+
+        Ok(inserted)
     }
 
     // Helpers for range/string comparisons

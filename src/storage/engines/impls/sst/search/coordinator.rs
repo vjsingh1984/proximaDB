@@ -278,6 +278,7 @@ pub struct SearchStatistics {
 mod tests {
     use super::*;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::proto::proximadb_v1::DistanceMetric;
     use crate::query::unified_query_optimizer::SearchParams;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -352,6 +353,7 @@ mod tests {
             progressive_recalls: None,
             optimization_hint: None,
             search_mode: crate::core::search::SearchMode::default(),
+            block_prune: crate::core::search::BlockPruneConfig::default(),
         });
 
         let collection = Arc::new(crate::proto::proximadb_v1::Collection {

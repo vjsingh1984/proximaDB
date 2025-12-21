@@ -25,6 +25,8 @@ require_authentication = true
 default_session_timeout_minutes = 480
 ----
 
+Enabling `security.authentication.enabled = true` in your config (and configuring at least one method) turns on REST authentication middleware automatically when the server starts. Provide either an API key or a valid JWT/SSO credential in the `Authorization` header (`Api-Key ...` or `Bearer ...`) for REST calls.
+
 === API Keys
 
 API keys can be configured under the `[security.api_keys]` section.
@@ -177,6 +179,7 @@ let server = RestServer::new_development(
     None,
     true,
     None,
+    None, // no SecurityCoordinator in dev
 );
 ----
 

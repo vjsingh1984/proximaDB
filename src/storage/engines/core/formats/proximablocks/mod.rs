@@ -145,6 +145,88 @@
 //! - **Memory Efficiency**: Shared memory pools and caches
 //! - **Maintenance**: Single codebase for core functionality
 //! - **Testing**: Unified test suite for common components
+//!
+//! ## 🔧 **Serialization Best Practices (Audited December 2024)**
+//!
+//! ### **Cache-Line Alignment (64 bytes)**
+//!
+//! All blocks are padded to 64-byte cache-line boundaries for SIMD optimization:
+//!
+//! ```text
+//! Block Layout:
+//! ┌────────────────────────────────────────────────────────────┐
+//! │ [block_len:4 bytes][block_data:N bytes][padding:0-63 bytes]│
+//! └────────────────────────────────────────────────────────────┘
+//!
+//! Writer (writer.rs):
+//!   aligned_size = ((block_len + 63) / 64) * 64
+//!   padding = aligned_size - block_len
+//!   output.extend(vec![0u8; padding])  // Zero-fill padding
+//!
+//! Reader (sst_query_engine.rs):
+//!   offset += block_len
+//!   offset += padding  // Skip cache-line padding
+//! ```
+//!
+//! **Overhead Analysis:**
+//! - Typical block: 263KB with 51 bytes padding = **0.019% overhead**
+//! - This is negligible and enables direct SIMD operations on mmap'd data
+//! - No runtime copy to aligned buffer is needed
+//!
+//! ### **SIMD-Friendly Memory Layout**
+//!
+//! ```text
+//! ✅ Column-Oriented (SIMD-Optimal):
+//! Dimension 0: [v0_d0, v1_d0, v2_d0, ...] ← Process 8+ values per SIMD op
+//! Dimension 1: [v0_d1, v1_d1, v2_d1, ...]
+//!
+//! ❌ Row-Oriented (Scatter/Gather Overhead):
+//! Vector 0: [v0_d0, v0_d1, ..., v0_d1535]
+//! Vector 1: [v1_d0, v1_d1, ..., v1_d1535]
+//! ```
+//!
+//! ### **Zero-Copy Serialization**
+//!
+//! Uses `bytemuck::cast_slice` for FP32 vectors (see `serialization.rs:541-580`):
+//! ```rust,ignore
+//! let byte_buffer: &[u8] = bytemuck::cast_slice(&buffer);  // No copy!
+//! let fixed_array = FixedSizeBinaryArray::try_new(dimension * 4, ...)?;
+//! ```
+//!
+//! ### **Memory Pool Configuration (serialization.rs:157-179)**
+//!
+//! ```rust,ignore
+//! struct MemoryPools {
+//!     fp32_pool: Mutex<Vec<Vec<f32>>>,   // Reuse FP32 vectors
+//!     int8_pool: Mutex<Vec<Vec<i8>>>,    // Reuse INT8 quantized
+//!     binary_pool: Mutex<Vec<Vec<u8>>>,  // Reuse binary codes
+//!     pq_pool: Mutex<Vec<Vec<u8>>>,      // Reuse PQ codes
+//! }
+//! // Pool limit: 100 vectors per type to prevent memory bloat
+//! ```
+//!
+//! ### **Encoding Strategy Selection**
+//!
+//! Default: `FullVector` (fastest decode for read-heavy vector workloads)
+//!
+//! | Strategy | Decode Speed | Compression | Best For |
+//! |----------|--------------|-------------|----------|
+//! | FullVector | ⭐ Fastest (0.94ms/1536d) | 18-20% | Vector databases (default) |
+//! | GroupedField | Medium | 19-22% (best) | Storage-critical |
+//! | TransposeField | Medium | 18-21% | Columnar analytics |
+//!
+//! ### **Engine-Specific Metadata (Not Duplication)**
+//!
+//! Each engine correctly has unique metadata requirements:
+//!
+//! | Engine | Unique Fields | Purpose |
+//! |--------|---------------|---------|
+//! | SST | `block_index`, `bloom_filter`, `sst_level` | LSM-tree |
+//! | HELIX | `hilbert_config`, `pca_model` | Spatial locality |
+//! | VIPER | Parquet row-groups | Columnar analytics |
+//! | NOVA | `hierarchical_stats`, `zone_maps` | Progressive columnar |
+//! | SWIFT | `composite_indexes` | Ultra-low latency |
+//! | RAPTOR | `centroid_matrix` | Adaptive clustering |
 
 pub mod block_reader; // ✅ NEW: Unified Proxima block reader with strategies
 pub mod block_structures;
@@ -160,6 +242,8 @@ pub mod sst_io_layer; // Low-level I/O operations (formerly sst_io_layer)
 pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
 pub mod swift_metadata;
 pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
+pub mod spatial_clustering; // PCA-based clustering and Z-Order spatial indexing
+pub mod spatial_encoding; // 512-bit spatial codes for high-dimensional embeddings
 pub mod constants;
 
 // Re-exports for common use
@@ -181,6 +265,10 @@ pub use header_metadata::{
     ChecksumConfig, EngineMetadata, FileMetadata, RowBasedHeader, VersionInfo,
 };
 pub use utilities::{MemoryEstimator, PathResolver, PerformanceProfiler, RowBasedUtilities};
+pub use spatial_clustering::{
+    cluster_blocks_pca, cluster_blocks_pca_adacurves, cluster_blocks_pca_zorder, AdaCurve,
+    IncrementalPCA, ZOrderEncoder,
+};
 
 // NEW: Export shared SST reader components
 pub use sst_io_layer::{

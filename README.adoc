@@ -28,6 +28,8 @@ Quick links
 - Docs index: `docs/INDEX.adoc` • REST API: `docs/03-reference/rest-api-specification.adoc`
 - Performance hub: `docs/performance/README.adoc`
 - Feature toggles: `docs/feature_toggles.md` (AI/sales/tenant/executive/experimental SIMD are opt-in)
+- Security/auth: enable REST auth by setting `security.authentication.enabled=true` in config; send `Api-Key <key>` or `Bearer <jwt>` headers once a SecurityCoordinator is configured.
+- REST auth quickstart: set `security.authentication.enabled=true` (and `network.rest.auth.enabled=true` when using server overrides) to wire the axum middleware, then send `Authorization: Bearer <jwt>` or `Authorization: Api-Key <key>`; JWT issuer/audience come from `security.authentication.jwt.{issuer,audience}` and are enforced alongside expiry checks.
 
 ---
 

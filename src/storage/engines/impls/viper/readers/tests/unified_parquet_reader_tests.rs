@@ -596,6 +596,7 @@ mod tests {
             filters: None,
             timeout_ms: None,
             search_mode: crate::core::search::SearchMode::default(),
+            block_prune: crate::core::search::BlockPruneConfig::default(),
         };
 
         // Create collection context

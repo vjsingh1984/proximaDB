@@ -21,6 +21,8 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 #[cfg(feature = "gpu")]
+use crate::core::hardware_capabilities::GpuBackend;
+#[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::GpuDistanceCompute;
 
 use super::common::{
@@ -58,21 +60,20 @@ impl MatrixBuilder {
     ) -> Self {
         #[cfg(feature = "gpu")]
         let gpu_compute = {
-            match GpuDistanceCompute::new() {
-                Ok(gpu) => {
+            // Prefer cached detection from global hardware capabilities to avoid re-probing
+            GpuDistanceCompute::from_capabilities(&hardware)
+                .or_else(|| GpuDistanceCompute::new().ok())
+                .and_then(|gpu| {
                     if gpu.is_available() && gpu.backend() == GpuBackend::MPS {
-                        info!("🚀 RAPTOR MatrixBuilder: GPU MPS acceleration enabled for P² matrix");
+                        info!(
+                            "🚀 RAPTOR MatrixBuilder: GPU MPS acceleration enabled for P² matrix"
+                        );
                         Some(Arc::new(gpu))
                     } else {
                         debug!("GPU available but not MPS, using CPU SIMD for P² matrix");
                         None
                     }
-                }
-                Err(e) => {
-                    debug!("GPU not available for P² matrix: {}, using CPU SIMD", e);
-                    None
-                }
-            }
+                })
         };
 
         Self {
@@ -116,19 +117,25 @@ impl MatrixBuilder {
 
         // Try GPU path first for rowgroups >= 100 vectors (GPU overhead worthwhile)
         #[cfg(feature = "gpu")]
-        if num_vectors >= 100 {
+        if num_vectors >= self.hardware.config.gpu_min_batch_size {
             if let Some(ref gpu) = self.gpu_compute {
-                match self.build_p2_matrix_gpu(vectors, dimension, gpu.clone()) {
-                    Ok(matrix) => {
-                        info!(
-                            "🚀 P² matrix built on GPU: {} vectors, {}×{} = {} distances",
-                            num_vectors, num_vectors, num_vectors, num_vectors * num_vectors
-                        );
-                        return Ok(matrix);
-                    }
-                    Err(e) => {
-                        warn!("GPU P² matrix failed, falling back to CPU SIMD: {}", e);
-                        // Fall through to CPU path
+                // Only MPS pairwise kernels are implemented today
+                if gpu.backend() == GpuBackend::MPS {
+                    match self.build_p2_matrix_gpu(vectors, dimension, gpu.clone()) {
+                        Ok(matrix) => {
+                            info!(
+                                "🚀 P² matrix built on GPU: {} vectors, {}×{} = {} distances",
+                                num_vectors,
+                                num_vectors,
+                                num_vectors,
+                                num_vectors * num_vectors
+                            );
+                            return Ok(matrix);
+                        }
+                        Err(e) => {
+                            warn!("GPU P² matrix failed, falling back to CPU SIMD: {}", e);
+                            // Fall through to CPU path
+                        }
                     }
                 }
             }
@@ -306,11 +313,12 @@ impl MatrixBuilder {
     }
 
     /// Build K² matrix for inter-centroid navigation
-    /// This matrix stores distances between all centroids globally
+    /// OPTIMIZED: Only stores upper triangle (j > i) for 50% space savings
+    /// Matrix is symmetric: distance(i,j) = distance(j,i), diagonal = 0
     pub fn build_k2_matrix(
         &self,
         centroids: &[Vec<f32>],
-        dimension: usize,
+        _dimension: usize,
     ) -> Result<InterCentroidMatrix> {
         let num_centroids = centroids.len();
         if num_centroids == 0 {
@@ -329,29 +337,36 @@ impl MatrixBuilder {
             });
         }
 
-        info!("Building K² matrix for {} centroids", num_centroids);
+        // Upper triangle size: k*(k-1)/2 instead of k*k (50% savings)
+        let upper_triangle_size = num_centroids * (num_centroids - 1) / 2;
+        info!(
+            "Building K² matrix for {} centroids (upper triangle: {} entries, 50% savings)",
+            num_centroids, upper_triangle_size
+        );
 
-        // Calculate all centroid-to-centroid distances
-        let mut distances = Vec::with_capacity(num_centroids * num_centroids);
+        // Calculate ONLY upper triangle distances (j > i)
+        let mut distances = Vec::with_capacity(upper_triangle_size);
         let mut min_dist = f32::MAX;
         let mut max_dist = f32::MIN;
 
         for i in 0..num_centroids {
-            for j in 0..num_centroids {
-                let dist = if i == j {
-                    0.0
-                } else {
-                    self.distance_compute
-                        .calculate_distance(&centroids[i], &centroids[j], &self.distance_metric)
-                        .raw_value
-                };
+            for j in (i + 1)..num_centroids {
+                // Only compute where j > i (strict upper triangle)
+                let dist = self
+                    .distance_compute
+                    .calculate_distance(&centroids[i], &centroids[j], &self.distance_metric)
+                    .raw_value;
 
                 distances.push(dist);
-                if dist > 0.0 {
-                    min_dist = min_dist.min(dist);
-                    max_dist = max_dist.max(dist);
-                }
+                min_dist = min_dist.min(dist);
+                max_dist = max_dist.max(dist);
             }
+        }
+
+        // Handle edge case of single centroid
+        if distances.is_empty() {
+            min_dist = 0.0;
+            max_dist = 1.0;
         }
 
         // Compress using 16-bit quantization
@@ -361,38 +376,37 @@ impl MatrixBuilder {
             1.0
         };
 
-        let mut compressed_data = Vec::with_capacity(num_centroids * num_centroids * 2);
-        let mut row_compressed_sizes = Vec::with_capacity(num_centroids);
+        // Compressed data: upper triangle in row-major order
+        // Layout: [d(0,1), d(0,2), ..., d(0,k-1), d(1,2), d(1,3), ..., d(k-2,k-1)]
+        let mut compressed_data = Vec::with_capacity(upper_triangle_size * 2);
 
-        for i in 0..num_centroids {
-            let row_start = compressed_data.len();
-
-            for j in 0..num_centroids {
-                let dist = distances[i * num_centroids + j];
-                let quantized = if dist == 0.0 {
-                    0u16
-                } else {
-                    ((dist - min_dist) * scale_factor) as u16
-                };
-                compressed_data.extend_from_slice(&quantized.to_le_bytes());
-            }
-
-            row_compressed_sizes.push((compressed_data.len() - row_start) as u16);
+        for &dist in &distances {
+            let quantized = ((dist - min_dist) * scale_factor) as u16;
+            compressed_data.extend_from_slice(&quantized.to_le_bytes());
         }
 
-        // Build lookup table for fast access
+        // For upper triangle, we don't need per-row sizes or lookup table
+        // Access is O(1) via formula: idx = i*(2k-i-1)/2 + (j-i-1)
+        // But we keep the structures for compatibility
+        let row_compressed_sizes: Vec<u16> = (0..num_centroids)
+            .map(|i| ((num_centroids - i - 1) * 2) as u16)  // Each row i has (k-i-1) elements
+            .collect();
+
+        // Lookup table: cumulative offset for each row's start
         let mut lookup_table = Vec::with_capacity(num_centroids);
         let mut offset = 0u32;
-        for size in &row_compressed_sizes {
+        for i in 0..num_centroids {
             lookup_table.push(offset);
-            offset += *size as u32;
+            offset += (num_centroids - i - 1) as u32 * 2;  // 2 bytes per u16
         }
 
+        let full_matrix_size = num_centroids * num_centroids * 4;  // k² × 4 bytes (f32)
+        let compressed_size = compressed_data.len();
+        let savings_pct = (1.0 - compressed_size as f32 / full_matrix_size as f32) * 100.0;
+
         debug!(
-            "K² matrix compressed: {} -> {} bytes ({:.1}% reduction)",
-            distances.len() * 4,
-            compressed_data.len(),
-            (1.0 - compressed_data.len() as f32 / (distances.len() * 4) as f32) * 100.0
+            "K² matrix: {} centroids, {} bytes (vs {} full matrix, {:.1}% savings)",
+            num_centroids, compressed_size, full_matrix_size, savings_pct
         );
 
         Ok(InterCentroidMatrix {
@@ -623,38 +637,73 @@ impl MatrixBuilder {
         })
     }
 
-    /// Decompress a row from K² matrix for boundary detection
+    /// Decompress all distances from centroid `centroid_idx` to all other centroids.
+    /// Returns a vector of length k where result[j] = distance(centroid_idx, j).
+    ///
+    /// Since K² uses upper triangle storage, we need to handle:
+    /// - j == centroid_idx: return 0.0 (diagonal)
+    /// - j < centroid_idx: lookup d[j][centroid_idx] (swap i,j)
+    /// - j > centroid_idx: lookup d[centroid_idx][j] (direct)
     pub fn decompress_k2_row(
         &self,
         matrix: &InterCentroidMatrix,
         centroid_idx: usize,
     ) -> Result<Vec<f32>> {
-        if centroid_idx >= matrix.num_centroids as usize {
+        let k = matrix.num_centroids as usize;
+        if centroid_idx >= k {
             return Err(anyhow::anyhow!(
-                "Centroid index {} out of bounds",
-                centroid_idx
+                "Centroid index {} out of bounds (k={})",
+                centroid_idx, k
             ));
         }
 
-        let row_size = matrix.compression_metadata.row_compressed_sizes[centroid_idx] as usize;
-        let offset = matrix.lookup_table[centroid_idx] as usize;
-
-        let row_data = &matrix.compressed_data[offset..offset + row_size];
-        let mut distances = Vec::with_capacity(matrix.num_centroids as usize);
-
         let min_dist = matrix.compression_metadata.min_distance;
         let scale_factor = matrix.compression_metadata.scale_factor;
+        let mut distances = Vec::with_capacity(k);
 
-        for i in 0..matrix.num_centroids as usize {
-            let quantized = u16::from_le_bytes([row_data[i * 2], row_data[i * 2 + 1]]);
-
-            let dist = if quantized == 0 {
-                0.0
+        for j in 0..k {
+            if j == centroid_idx {
+                // Diagonal: distance to self is 0
+                distances.push(0.0);
             } else {
-                quantized as f32 / scale_factor + min_dist
-            };
+                // Ensure upper triangle access (i < j)
+                let (i, jj) = if centroid_idx < j {
+                    (centroid_idx, j)
+                } else {
+                    (j, centroid_idx)
+                };
 
-            distances.push(dist);
+                // Calculate linear index in upper triangle storage:
+                // Layout: [d(0,1), d(0,2), ..., d(0,k-1), d(1,2), ..., d(k-2,k-1)]
+                // For row i, elements start at position i*(2k-i-1)/2
+                // Position of d(i,j) is: i*(2k-i-1)/2 + (j-i-1)
+                let total_before_row_i = i * (2 * k - i - 1) / 2;
+                let position_in_row_i = jj - i - 1;
+                let linear_index = total_before_row_i + position_in_row_i;
+
+                // Read quantized u16 value
+                let byte_offset = linear_index * 2;
+                if byte_offset + 2 > matrix.compressed_data.len() {
+                    return Err(anyhow::anyhow!(
+                        "Index out of bounds: linear_index={}, byte_offset={}, data_len={}",
+                        linear_index, byte_offset, matrix.compressed_data.len()
+                    ));
+                }
+
+                let quantized = u16::from_le_bytes([
+                    matrix.compressed_data[byte_offset],
+                    matrix.compressed_data[byte_offset + 1],
+                ]);
+
+                // Dequantize: d = min + q / scale_factor
+                let dist = if quantized == 0 && min_dist == 0.0 {
+                    0.0
+                } else {
+                    quantized as f32 / scale_factor + min_dist
+                };
+
+                distances.push(dist);
+            }
         }
 
         Ok(distances)

@@ -15,8 +15,8 @@ impl HilbertCurve {
     /// Create a new Hilbert curve encoder
     pub fn new(dimensions: usize, bits_per_dim: usize) -> Self {
         assert!(
-            dimensions > 0 && dimensions <= 16,
-            "Dimensions must be 1-16"
+            dimensions > 0 && dimensions <= 64,
+            "Dimensions must be 1-64"
         );
         assert!(
             bits_per_dim > 0 && bits_per_dim <= 21,

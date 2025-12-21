@@ -21,6 +21,17 @@
 //! - **ORION**: In-memory CSR format for real-time traversal (1M+ edges/sec)
 //! - **PULSAR**: Distributed engine for sharded graphs (1B+ nodes) [Phase 2]
 //! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
+//!
+//! ## Embedding Storage Modes
+//!
+//! Graph engines support three embedding storage modes:
+//!
+//! - **None** (DEFAULT): No embeddings stored - pure graph, best performance
+//! - **Cold**: Embeddings in vector engine (SST/HELIX/VIPER) - SKS with large graphs
+//! - **Memory**: Embeddings cached in memory - SKS-heavy workloads, consumer override
+//!
+//! CSR (Compressed Sparse Row) format NEVER contains embedding data.
+//! Embeddings are optionally stored in separate vector storage engines.
 
 pub mod generic_traversal;
 pub mod orion;
@@ -35,6 +46,65 @@ use crate::metrics::collectors::MetricsSample;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+
+/// Embedding storage mode for graph engines
+///
+/// Controls how node embeddings are stored relative to the graph structure.
+/// CSR (Compressed Sparse Row) format NEVER contains embedding data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmbeddingMode {
+    /// No embeddings stored - pure graph workloads (DEFAULT, best performance)
+    ///
+    /// Use this for:
+    /// - Pure graph traversal/analytics
+    /// - Pattern matching
+    /// - Path finding
+    /// - When embeddings are not needed
+    #[default]
+    None,
+
+    /// Embeddings stored in cold tier vector engine (SST/HELIX/VIPER)
+    ///
+    /// Use this for:
+    /// - SKS (Semantic Knowledge Search) with large graphs
+    /// - When graph + embeddings don't fit in memory
+    /// - Cost-optimized production deployments
+    Cold,
+
+    /// Embeddings cached in memory (consumer override)
+    ///
+    /// Use this for:
+    /// - SKS-heavy workloads with smaller graphs
+    /// - When latency is critical
+    /// - Development/testing
+    Memory,
+}
+
+impl EmbeddingMode {
+    /// Parse embedding mode from config string
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "cold" => EmbeddingMode::Cold,
+            "memory" => EmbeddingMode::Memory,
+            _ => EmbeddingMode::None, // Default for "none" or invalid
+        }
+    }
+
+    /// Check if embeddings are stored at all
+    pub fn stores_embeddings(&self) -> bool {
+        !matches!(self, EmbeddingMode::None)
+    }
+
+    /// Check if embeddings are in cold tier
+    pub fn is_cold(&self) -> bool {
+        matches!(self, EmbeddingMode::Cold)
+    }
+
+    /// Check if embeddings are in memory
+    pub fn is_memory(&self) -> bool {
+        matches!(self, EmbeddingMode::Memory)
+    }
+}
 
 /// Engine performance statistics integrated with unified metrics framework
 #[derive(Debug, Clone, Default)]
@@ -568,7 +638,40 @@ impl GraphEngine for GraphEngineImpl {
         }
     }
 
-    // Note: Async methods can't be delegated in this pattern, but we can provide alternative methods
+    // ===== Bulk Operations - Critical for Performance =====
+    // These MUST be delegated to underlying engines to avoid O(n) per-edge overhead
+
+    async fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_insert_nodes(nodes).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_insert_nodes(nodes).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_insert_nodes(nodes).await,
+        }
+    }
+
+    async fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_insert_edges(edges).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_insert_edges(edges).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_insert_edges(edges).await,
+        }
+    }
+
+    async fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_delete_nodes(node_ids).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_delete_nodes(node_ids).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_delete_nodes(node_ids).await,
+        }
+    }
+
+    async fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_delete_edges(edge_ids).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_delete_edges(edge_ids).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_delete_edges(edge_ids).await,
+        }
+    }
 }
 
 /// Graph engine factory for creating different engine types

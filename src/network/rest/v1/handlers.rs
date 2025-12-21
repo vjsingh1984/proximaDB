@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone)]
 pub struct AppState {
     pub unified_handlers: Arc<UnifiedHandlers>,
+    pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
 }
 
 /// Aligned vector search handler
@@ -829,6 +830,7 @@ pub async fn readiness_check(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::rest::proto_json::ProtoApiResponse;
 
     #[test]
     fn test_error_conversion() {

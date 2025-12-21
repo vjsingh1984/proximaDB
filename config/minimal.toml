@@ -28,6 +28,14 @@ log_level = "info"
 [security]
 enabled = false
 mode = "development"
+# REST auth is disabled by default; set authentication.enabled=true and provide a key to enable
+# [security.authentication]
+# enabled = true
+# methods = ["api_key"]
+# require_authentication = true
+# default_session_timeout_minutes = 60
+# [security.authentication.api_keys]
+# "local-dev-key" = { user_id = "devuser", permissions = ["*"] }
 
 [cache]
 total_memory_mb = 128

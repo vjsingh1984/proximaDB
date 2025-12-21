@@ -110,13 +110,7 @@ mod api_consistency_tests {
             distance_metric_override: Some(DistanceMetric::Cosine as u32),
             search_params: Some(SearchParams {
                 top_k: Some(10),
-                accuracy_threshold: None,
-                include_expired: None,
-                timeout_ms: None,
-                enable_two_stage: None,
-                enable_clustering_hint: None,
-                enable_metadata_filtering_hint: None,
-                custom_hints: std::collections::HashMap::new(),
+                ..Default::default()
             }),
             include_fields: Some(IncludeFields {
                 vector: true,
@@ -251,13 +245,8 @@ mod api_consistency_tests {
             distance_metric_override: None,
             search_params: Some(SearchParams {
                 top_k: Some(10),
-                accuracy_threshold: None,
-                include_expired: None,
-                timeout_ms: None,
-                enable_two_stage: None,
-                enable_clustering_hint: None,
-                enable_metadata_filtering_hint: None,
                 custom_hints: std::collections::HashMap::new(),
+                ..Default::default()
             }),
             include_fields: Some(IncludeFields {
                 vector: true,
@@ -436,13 +425,8 @@ mod api_consistency_tests {
             distance_metric_override: None,
             search_params: Some(SearchParams {
                 top_k: Some(5),
-                accuracy_threshold: None,
-                include_expired: None,
-                timeout_ms: None,
-                enable_two_stage: None,
-                enable_clustering_hint: None,
-                enable_metadata_filtering_hint: None,
                 custom_hints: std::collections::HashMap::new(),
+                ..Default::default()
             }),
             include_fields: Some(IncludeFields {
                 vector: true,

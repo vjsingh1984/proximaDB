@@ -27,8 +27,9 @@
 //! db.insert("vectors", ids, vectors.tolist())
 //! ```
 
+use pyo3::exceptions::{PyRuntimeError, PyValueError, PyUserWarning};
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::{PyErr, PyTypeInfo};
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,6 +38,7 @@ use std::sync::Arc;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 
 use super::{EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
+use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
 use crate::core::proto_metadata_helper::sqlvalue_metadata_to_json;
 
 /// Python wrapper for disk configuration
@@ -506,17 +508,16 @@ pub struct PyProximaDB {
     inner: Arc<EmbeddedProximaDB>,
 }
 
+fn set_approx_defaults(mode_str: &str) -> (String, f32, usize, usize) {
+    match mode_str {
+        "ratio" => ("ratio".to_string(), 0.1, 1, 0),
+        _ => ("sqrt".to_string(), 0.2, 1, 0),
+    }
+}
+
 #[pymethods]
 impl PyProximaDB {
     /// Create a new embedded ProximaDB instance
-    ///
-    /// Args:
-    ///     data_dirs: List of DiskConfig for multi-disk storage, or a single path string
-    ///     metadata_dir: Path to metadata storage (should be on fast disk)
-    ///     cache_size_mb: Cache size in megabytes (default: 512)
-    ///     default_engine: Default storage engine ("sst", "viper", "nova", etc.)
-    ///     enable_wal: Enable write-ahead logging for durability (default: True)
-    ///     wal_sync_mode: WAL sync mode - "immediate", "batch", or "async" (default: "batch")
     #[new]
     #[pyo3(signature = (
         data_dirs=None,
@@ -524,16 +525,53 @@ impl PyProximaDB {
         cache_size_mb=512,
         default_engine="sst",
         enable_wal=true,
-        wal_sync_mode="batch"
+        prune_mode=None
     ))]
     fn new(
+        py: Python,
         data_dirs: Option<&PyAny>,
         metadata_dir: Option<String>,
         cache_size_mb: usize,
         default_engine: &str,
         enable_wal: bool,
-        wal_sync_mode: &str,
+        prune_mode: Option<&PyAny>,
     ) -> PyResult<Self> {
+        let mut final_prune_config = None;
+
+        if let Some(mode_arg) = prune_mode {
+            if let Ok(s) = mode_arg.extract::<String>() {
+                let s_lower = s.to_lowercase();
+                if s_lower == "exact" {
+                    // None implies exact; leave as default
+                } else if s_lower == "approximate" || s_lower == "sqrt" || s_lower == "ratio" {
+                    final_prune_config = Some(PruneModeConfig::Simple(s_lower));
+                } else {
+                    PyErr::warn(
+                        py,
+                        PyUserWarning::type_object(py),
+                        "Invalid 'prune_mode' string provided. Falling back to 'exact' mode.",
+                        1,
+                    )?;
+                }
+            } else if let Ok(dict) = mode_arg.downcast::<PyDict>() {
+                let prune_type = dict
+                    .get_item("type")?
+                    .and_then(|t| t.extract::<String>().ok())
+                    .unwrap_or_else(|| "sqrt".to_string());
+
+                final_prune_config = Some(PruneModeConfig::Advanced(AdvancedPruneConfig {
+                    r#type: prune_type,
+                    min_keep: dict.get_item("min_keep")?.and_then(|v| v.extract().ok()),
+                    max_keep: dict.get_item("max_keep")?.and_then(|v| v.extract().ok()),
+                    ratio: dict.get_item("ratio")?.and_then(|v| v.extract().ok()),
+                }));
+            } else {
+                return Err(PyValueError::new_err(
+                    "'prune_mode' must be a string, a dictionary, or None.",
+                ));
+            }
+        }
+
         // Parse data directories
         let storage_locations = if let Some(dirs) = data_dirs {
             if let Ok(path) = dirs.extract::<String>() {
@@ -573,8 +611,39 @@ impl PyProximaDB {
             cache_size_mb,
             default_engine: default_engine.to_string(),
             enable_wal,
-            wal_sync_mode: wal_sync_mode.to_string(),
+            // [AGENT_MODIFICATION]: The wal_sync_mode is not exposed in the new signature, so use a smart default.
+            wal_sync_mode: "batch".to_string(),
+            block_prune_mode: "exact".to_string(),
+            block_prune_ratio: 0.0,
+            block_prune_min_keep: 0,
+            block_prune_max_keep: 0,
         };
+
+        let mut config = config;
+
+        // Translate PruneModeConfig to EmbeddedConfig fields
+        if let Some(prune_cfg) = final_prune_config {
+            match prune_cfg {
+                PruneModeConfig::Simple(s) => {
+                    let (mode, ratio, min_k, max_k) = set_approx_defaults(&s);
+                    config.block_prune_mode = mode;
+                    config.block_prune_ratio = ratio;
+                    config.block_prune_min_keep = min_k;
+                    config.block_prune_max_keep = max_k;
+                }
+                PruneModeConfig::Advanced(adv) => {
+                    let (mode, def_ratio, def_min_k, def_max_k) =
+                        set_approx_defaults(&adv.r#type);
+                    config.block_prune_mode = adv.r#type;
+                    config.block_prune_ratio = adv.ratio.unwrap_or(def_ratio);
+                    config.block_prune_min_keep = adv.min_keep.unwrap_or(def_min_k);
+                    config.block_prune_max_keep = adv.max_keep.unwrap_or(def_max_k);
+                }
+            }
+        } else {
+            config.block_prune_mode = "exact".to_string();
+            // leave ratio/min/max at safe exact defaults
+        }
 
         let db = EmbeddedProximaDB::new(config)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create database: {}", e)))?;
@@ -590,6 +659,10 @@ impl PyProximaDB {
     ///     name: Collection name
     ///     dimension: Vector dimension
     ///     engine: Storage engine type (optional, uses default if not specified)
+    ///
+    /// Examples:
+    ///     db.create_collection("vectors", 768, "sst")
+    ///     db.create_collection("vectors", 768, "helix")
     ///
     /// Raises:
     ///     RuntimeError: If collection creation fails
@@ -1279,15 +1352,17 @@ impl PyProximaDB {
     ///
     /// Args:
     ///     graph_id: Unique identifier for the graph
+    ///     engine: Graph engine type ("orion", "pulsar", "quasar") (optional)
     ///
     /// Example:
     ///     ```python
-    ///     db.create_graph("my_knowledge_graph")
+    ///     db.create_graph("my_knowledge_graph", engine="orion")
     ///     db.create_nodes("my_knowledge_graph", nodes)
     ///     ```
-    fn create_graph(&self, graph_id: &str) -> PyResult<()> {
+    #[pyo3(signature = (graph_id, engine=None))]
+    fn create_graph(&self, graph_id: &str, engine: Option<&str>) -> PyResult<()> {
         self.inner
-            .create_graph(graph_id)
+            .create_graph(graph_id, engine)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create graph: {}", e)))
     }
 

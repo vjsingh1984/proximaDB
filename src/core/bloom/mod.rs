@@ -219,6 +219,11 @@ use std::collections::HashMap;
 pub mod factory;
 pub mod strategies;
 
+// Phase 1.2: Adaptive Bloom Filters
+pub mod adaptive;
+pub mod compression;
+pub mod hierarchical;
+
 /// Core trait for all bloom filter implementations
 pub trait BloomFilterStrategy: Send + Sync + std::fmt::Debug {
     /// Insert a key into the bloom filter
@@ -686,15 +691,24 @@ impl SstableBloomFilter {
     }
 
     /// Check if metadata might match using MetadataItem for type safety
+    ///
+    /// Returns `true` (might match) when:
+    /// - No metadata filter exists (can't reject without filter data)
+    /// - Metadata filter exists but indicates potential match
+    ///
+    /// Returns `false` (definitely no match) only when metadata filter
+    /// is populated AND definitively rejects the item.
     pub fn might_match_metadata(
         &self,
         _column: &str,
         _item: &crate::proto::proximadb_v1::MetadataItem,
     ) -> Result<bool> {
         if self.metadata_filter_data.is_empty() {
-            return Ok(false);
+            // No metadata bloom filter built - cannot reject, might match
+            return Ok(true);
         }
         // Conservative approach: assume metadata might match
+        // TODO: Implement actual metadata bloom filter checking when metadata is indexed
         Ok(true)
     }
 

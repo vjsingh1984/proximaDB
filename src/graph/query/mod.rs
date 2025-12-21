@@ -51,13 +51,19 @@
 //! ```
 
 pub mod ast;
+pub mod execution_traits;
 pub mod executor;
+pub mod operators;
 pub mod parser;
 pub mod pattern;
 pub mod planner;
 
 // Re-export public types
 pub use ast::{CompiledPattern, FoundPath, MatchResult};
+pub use execution_traits::{
+    ColumnSpec, ExecutionContext, ExecutionStats, PathElement, PhysicalOperator, QueryValue,
+    ResultTuple, ValueType,
+};
 pub use pattern::PatternMatcher;
 pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
 

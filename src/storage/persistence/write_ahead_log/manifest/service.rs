@@ -819,6 +819,143 @@ impl GlobalManifestService {
         Ok(())
     }
 
+    // ========================================================================
+    // PITR (Point-in-Time Recovery) Support Methods
+    // ========================================================================
+
+    /// Get the current LSN (last allocated LSN, or 0 if none allocated)
+    pub async fn current_lsn(&self) -> u64 {
+        let next = self.lsn_allocator.current().await;
+        if next > 1 { next - 1 } else { 0 }
+    }
+
+    /// Get all entries up to (and including) a specific LSN
+    pub async fn get_entries_up_to_lsn(&self, target_lsn: u64) -> Vec<GlobalManifestEntry> {
+        let entries = self.entries.read().await;
+        entries
+            .iter()
+            .filter(|e| e.global_lsn <= target_lsn)
+            .cloned()
+            .collect()
+    }
+
+    /// Get all entries in a LSN range [start_lsn, end_lsn] (inclusive)
+    pub async fn get_entries_between_lsn(
+        &self,
+        start_lsn: u64,
+        end_lsn: u64,
+    ) -> Vec<GlobalManifestEntry> {
+        let entries = self.entries.read().await;
+        entries
+            .iter()
+            .filter(|e| e.global_lsn >= start_lsn && e.global_lsn <= end_lsn)
+            .cloned()
+            .collect()
+    }
+
+    /// Mark all entries after a given LSN as rolled back (for PITR)
+    ///
+    /// This is used during point-in-time recovery to mark entries that should
+    /// not be recovered. Returns the number of entries marked.
+    pub async fn mark_entries_after_lsn_rolled_back(&self, target_lsn: u64) -> Result<usize> {
+        let mut entries = self.entries.write().await;
+        let mut marked_count = 0;
+        let mut status_updates = Vec::new();
+
+        for entry in entries.iter_mut() {
+            if entry.global_lsn > target_lsn && entry.status == WalEntryStatus::Active {
+                entry.status = WalEntryStatus::RolledBack;
+                marked_count += 1;
+
+                // Create status update entry for append-only storage
+                let mut update_entry = entry.clone();
+                update_entry.status = WalEntryStatus::RolledBack;
+                status_updates.push(update_entry);
+            }
+        }
+
+        drop(entries);
+
+        if !status_updates.is_empty() {
+            // Write status updates as new manifest segment
+            self.write_to_staging(&status_updates).await?;
+
+            info!(
+                "📛 PITR: Marked {} entries after LSN {} as RolledBack",
+                marked_count, target_lsn
+            );
+        }
+
+        Ok(marked_count)
+    }
+
+    /// Get entries that need to be replayed for a PITR recovery
+    ///
+    /// Returns active entries between current state and target LSN,
+    /// sorted by LSN for replay order.
+    pub async fn get_entries_for_pitr_replay(
+        &self,
+        current_lsn: u64,
+        target_lsn: u64,
+    ) -> Vec<GlobalManifestEntry> {
+        let entries = self.entries.read().await;
+
+        // For forward replay: current_lsn < target_lsn
+        // For rollback: current_lsn > target_lsn (return empty, handled separately)
+        if current_lsn >= target_lsn {
+            return Vec::new();
+        }
+
+        let mut replay_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| {
+                e.global_lsn > current_lsn
+                    && e.global_lsn <= target_lsn
+                    && e.status == WalEntryStatus::Active
+            })
+            .cloned()
+            .collect();
+
+        replay_entries.sort_by_key(|e| e.global_lsn);
+        replay_entries
+    }
+
+    /// Check if a LSN exists in the manifest
+    pub async fn lsn_exists(&self, target_lsn: u64) -> bool {
+        let entries = self.entries.read().await;
+        entries.iter().any(|e| e.global_lsn == target_lsn)
+    }
+
+    /// Find the closest LSN at or before a given timestamp
+    pub async fn find_lsn_at_timestamp(&self, timestamp_ms: u64) -> Option<u64> {
+        let entries = self.entries.read().await;
+
+        // Find entries at or before the timestamp, get the highest LSN
+        entries
+            .iter()
+            .filter(|e| e.timestamp_ms <= timestamp_ms)
+            .map(|e| e.global_lsn)
+            .max()
+    }
+
+    /// Get entry count by status (for PITR diagnostics)
+    pub async fn get_entry_counts_by_status(
+        &self,
+    ) -> std::collections::HashMap<WalEntryStatus, usize> {
+        let entries = self.entries.read().await;
+        let mut counts = std::collections::HashMap::new();
+
+        for entry in entries.iter() {
+            *counts.entry(entry.status.clone()).or_insert(0) += 1;
+        }
+
+        counts
+    }
+
+    // ========================================================================
+    // End PITR Support Methods
+    // ========================================================================
+
     /// Shutdown the service gracefully
     pub async fn shutdown(&self) -> Result<()> {
         debug!("Shutting down GlobalManifestService");

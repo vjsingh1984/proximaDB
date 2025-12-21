@@ -400,6 +400,8 @@ fn create_authorization_failure_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::AuthenticationMethod;
+    use crate::security::unified_auth::{JwtConfig, SSOConfig};
     use std::collections::HashMap;
     use tracing::{debug, info, warn};
 

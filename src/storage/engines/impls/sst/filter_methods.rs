@@ -27,11 +27,15 @@ pub struct SstIndexFilter {
 }
 
 /// Bloom filter configuration for metadata fields
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BloomFilterConfig {
+    #[allow(missing_docs)]
     pub field_name: String,
+    #[allow(missing_docs)]
     pub bits_per_key: usize,
+    #[allow(missing_docs)]
     pub false_positive_rate: f64,
+    #[allow(missing_docs)]
     pub enabled: bool,
 }
 

@@ -61,6 +61,7 @@ import time
 import tempfile
 import shutil
 import random
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
@@ -914,15 +915,21 @@ def generate_sks_data(num_entities: int, relations_per_entity: float, dimension:
     # Generate relations
     num_relations = int(num_entities * relations_per_entity)
     relations = []
-    for _ in range(num_relations):
+    seen_pairs = set()
+    while len(relations) < num_relations:
         from_idx = random.randint(0, num_entities - 1)
         to_idx = random.randint(0, num_entities - 1)
-        if from_idx != to_idx:
-            relations.append({
-                "from_entity_id": f"sks_entity_{from_idx}",
-                "to_entity_id": f"sks_entity_{to_idx}",
-                "relation_type": random.choice(["SIMILAR_TO", "DERIVED_FROM", "CITES"]),
-            })
+        if from_idx == to_idx:
+            continue
+        key = (from_idx, to_idx)
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        relations.append({
+            "from_entity_id": f"sks_entity_{from_idx}",
+            "to_entity_id": f"sks_entity_{to_idx}",
+            "relation_type": random.choice(["SIMILAR_TO", "DERIVED_FROM", "CITES"]),
+        })
 
     return entities, relations, vectors
 
@@ -937,78 +944,163 @@ def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[Bench
         return [BenchmarkResult("init", "all", 0, error="ProximaDB not available")]
 
     results = []
-    engines = ["sst", "helix", "viper", "nova", "swift", "raptor"]
+    
+    # Define engine configurations
+    # Exact mode: Supported by all engines
+    engines_exact = ["sst", "helix", "viper", "nova", "swift", "raptor"]
+    # Approximate (sqrt) mode: Supported by specific engines
+    engines_approx = ["sst", "helix", "swift"]
 
     for num_vectors in config.vector_sizes:
         vectors = generate_vectors(num_vectors, config.vector_dimension)
 
-        for engine in engines:
-            print(f"    Vector benchmark: {engine.upper()} ({num_vectors:,} vectors)...", end="", flush=True)
+        # 1. Benchmark Exact Mode (All Engines)
+        for engine in engines_exact:
+            mode = "exact"
+            engine_label = f"{engine}"
+            print(f"    Vector benchmark: {engine.upper()} ({mode}) ({num_vectors:,} vectors)...", end="", flush=True)
 
             try:
-                data_dir = os.path.join(temp_dir, f"vector_{engine}_{num_vectors}")
+                data_dir = os.path.join(temp_dir, f"vector_{engine}_{mode}_{num_vectors}")
                 os.makedirs(data_dir, exist_ok=True)
 
-                db = proximadb.ProximaDB(
+                # Use context manager for proper cleanup
+                with proximadb.ProximaDB(
                     data_dirs=data_dir,
                     metadata_dir=os.path.join(data_dir, "metadata"),
                     cache_size_mb=128,
-                    enable_wal=False
-                )
+                    enable_wal=False,
+                    prune_mode=mode
+                ) as db:
 
-                collection_name = f"bench_{engine}"
-                db.create_collection(collection_name, config.vector_dimension, engine)
+                    collection_name = f"bench_{engine}_{mode}"
+                    db.create_collection(collection_name, config.vector_dimension, engine)
 
-                # Insert benchmark - use zero-copy insert_numpy if available
-                ids = [f"vec_{i}" for i in range(num_vectors)]
+                    # Insert benchmark - use zero-copy insert_numpy if available
+                    ids = [f"vec_{i}" for i in range(num_vectors)]
 
-                start = time.perf_counter()
-                if hasattr(db, 'insert_numpy'):
-                    # Zero-copy numpy insert (faster)
-                    db.insert_numpy(collection_name, ids, vectors)
-                else:
-                    # Fallback to list-based insert
-                    vectors_list = [v.tolist() for v in vectors]
-                    db.insert(collection_name, ids, vectors_list, None)
-                insert_time = (time.perf_counter() - start) * 1000
-
-                results.append(BenchmarkResult(
-                    "vector_insert",
-                    engine,
-                    insert_time,
-                    throughput=num_vectors / (insert_time / 1000),
-                    metadata={"num_vectors": num_vectors}
-                ))
-
-                # Search benchmark - use zero-copy search_numpy if available
-                search_times = []
-                for _ in range(10):
                     start = time.perf_counter()
-                    if hasattr(db, 'search_numpy'):
-                        _ = db.search_numpy(collection_name, vectors[0], 10)
+                    if hasattr(db, 'insert_numpy'):
+                        # Zero-copy numpy insert (faster)
+                        db.insert_numpy(collection_name, ids, vectors)
                     else:
-                        _ = db.search(collection_name, vectors[0].tolist(), 10)
-                    search_times.append((time.perf_counter() - start) * 1000)
+                        # Fallback to list-based insert
+                        vectors_list = [v.tolist() for v in vectors]
+                        db.insert(collection_name, ids, vectors_list, None)
+                    insert_time = (time.perf_counter() - start) * 1000
 
-                results.append(BenchmarkResult(
-                    "vector_search",
-                    engine,
-                    float(np.mean(search_times)),
-                    p50_ms=float(np.percentile(search_times, 50)),
-                    p95_ms=float(np.percentile(search_times, 95)),
-                    p99_ms=float(np.percentile(search_times, 99)),
-                    metadata={"num_vectors": num_vectors}
-                ))
+                    results.append(BenchmarkResult(
+                        "vector_insert",
+                        engine_label,
+                        insert_time,
+                        throughput=num_vectors / (insert_time / 1000),
+                        metadata={"num_vectors": num_vectors, "mode": mode}
+                    ))
 
-                print(f" {insert_time:.2f}ms insert, {np.mean(search_times):.3f}ms search")
+                    # Search benchmark - use zero-copy search_numpy if available
+                    search_times = []
+                    for _ in range(10):
+                        start = time.perf_counter()
+                        if hasattr(db, 'search_numpy'):
+                            _ = db.search_numpy(collection_name, vectors[0], 10)
+                        else:
+                            _ = db.search(collection_name, vectors[0].tolist(), 10)
+                        search_times.append((time.perf_counter() - start) * 1000)
+
+                    results.append(BenchmarkResult(
+                        "vector_search",
+                        engine_label,
+                        float(np.mean(search_times)),
+                        p50_ms=float(np.percentile(search_times, 50)),
+                        p95_ms=float(np.percentile(search_times, 95)),
+                        p99_ms=float(np.percentile(search_times, 99)),
+                        metadata={"num_vectors": num_vectors, "mode": mode}
+                    ))
+
+                    print(f" {insert_time:.2f}ms insert, {np.mean(search_times):.3f}ms search")
 
             except Exception as e:
                 results.append(BenchmarkResult(
                     "vector_ops",
-                    engine,
+                    engine_label,
                     0,
                     error=str(e),
-                    metadata={"num_vectors": num_vectors}
+                    metadata={"num_vectors": num_vectors, "mode": mode}
+                ))
+                print(f" ERROR: {str(e)[:50]}")
+
+            gc.collect()
+
+        # 2. Benchmark Approximate Mode (Sqrt) - Only for supported engines
+        for engine in engines_approx:
+            mode = "sqrt"
+            engine_label = f"{engine} (approx)"
+            print(f"    Vector benchmark: {engine.upper()} ({mode}) ({num_vectors:,} vectors)...", end="", flush=True)
+
+            try:
+                data_dir = os.path.join(temp_dir, f"vector_{engine}_{mode}_{num_vectors}")
+                os.makedirs(data_dir, exist_ok=True)
+
+                # Use context manager for proper cleanup
+                with proximadb.ProximaDB(
+                    data_dirs=data_dir,
+                    metadata_dir=os.path.join(data_dir, "metadata"),
+                    cache_size_mb=128,
+                    enable_wal=False,
+                    prune_mode=mode
+                ) as db:
+
+                    collection_name = f"bench_{engine}_{mode}"
+                    db.create_collection(collection_name, config.vector_dimension, engine)
+
+                    # Insert benchmark
+                    ids = [f"vec_{i}" for i in range(num_vectors)]
+
+                    start = time.perf_counter()
+                    if hasattr(db, 'insert_numpy'):
+                        db.insert_numpy(collection_name, ids, vectors)
+                    else:
+                        vectors_list = [v.tolist() for v in vectors]
+                        db.insert(collection_name, ids, vectors_list, None)
+                    insert_time = (time.perf_counter() - start) * 1000
+
+                    results.append(BenchmarkResult(
+                        "vector_insert",
+                        engine_label,
+                        insert_time,
+                        throughput=num_vectors / (insert_time / 1000),
+                        metadata={"num_vectors": num_vectors, "mode": mode}
+                    ))
+
+                    # Search benchmark
+                    search_times = []
+                    for _ in range(10):
+                        start = time.perf_counter()
+                        if hasattr(db, 'search_numpy'):
+                            _ = db.search_numpy(collection_name, vectors[0], 10)
+                        else:
+                            _ = db.search(collection_name, vectors[0].tolist(), 10)
+                        search_times.append((time.perf_counter() - start) * 1000)
+
+                    results.append(BenchmarkResult(
+                        "vector_search",
+                        engine_label,
+                        float(np.mean(search_times)),
+                        p50_ms=float(np.percentile(search_times, 50)),
+                        p95_ms=float(np.percentile(search_times, 95)),
+                        p99_ms=float(np.percentile(search_times, 99)),
+                        metadata={"num_vectors": num_vectors, "mode": mode}
+                    ))
+
+                    print(f" {insert_time:.2f}ms insert, {np.mean(search_times):.3f}ms search")
+
+            except Exception as e:
+                results.append(BenchmarkResult(
+                    "vector_ops",
+                    engine_label,
+                    0,
+                    error=str(e),
+                    metadata={"num_vectors": num_vectors, "mode": mode}
                 ))
                 print(f" ERROR: {str(e)[:50]}")
 
@@ -1156,25 +1248,34 @@ def benchmark_vector_competitors(config: BenchmarkConfig, temp_dir: str) -> List
     """Benchmark competitive vector databases."""
     results = []
 
+    competitor_defs = [
+        ("chromadb", benchmark_chromadb, CHROMADB_AVAILABLE, "ChromaDB not available"),
+        ("lancedb", benchmark_lancedb, LANCEDB_AVAILABLE, "LanceDB not available"),
+        ("faiss", benchmark_faiss, FAISS_AVAILABLE, "FAISS not available"),
+        ("qdrant", benchmark_qdrant, QDRANT_AVAILABLE, "Qdrant not available"),
+        ("usearch", benchmark_usearch_quick, USEARCH_AVAILABLE, "USearch not available"),
+        ("annoy", benchmark_annoy_quick, ANNOY_AVAILABLE, "Annoy not available"),
+        ("milvus", benchmark_milvus_quick, MILVUS_AVAILABLE, "Milvus not available"),
+    ]
+
     for num_vectors in config.vector_sizes:
         vectors = generate_vectors(num_vectors, config.vector_dimension)
 
-        competitors = [
-            ("chromadb", benchmark_chromadb),
-            ("lancedb", benchmark_lancedb),
-            ("faiss", benchmark_faiss),
-            ("qdrant", benchmark_qdrant),
-        ]
-
-        for name, bench_fn in competitors:
+        for name, bench_fn, available, reason in competitor_defs:
             print(f"    Vector competitor: {name.upper()} ({num_vectors:,} vectors)...", end="", flush=True)
+
+            if not available:
+                results.append(BenchmarkResult("vector_insert", name, 0, error=reason))
+                print(f" SKIP: {reason}")
+                gc.collect()
+                continue
 
             with tempfile.TemporaryDirectory() as comp_temp:
                 result = bench_fn(vectors, comp_temp)
 
             if "error" in result:
                 results.append(BenchmarkResult("vector_insert", name, 0, error=result["error"]))
-                print(f" SKIP: {result['error'][:30]}")
+                print(f" SKIP: {result['error'][:60]}")
             else:
                 results.append(BenchmarkResult(
                     "vector_insert", name, result["insert_time_ms"],
@@ -1189,6 +1290,125 @@ def benchmark_vector_competitors(config: BenchmarkConfig, temp_dir: str) -> List
             gc.collect()
 
     return results
+
+
+def benchmark_usearch_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+    """Quick USearch benchmark for consolidated/quick runs."""
+    if not USEARCH_AVAILABLE:
+        return {"error": "USearch not available"}
+
+    try:
+        from usearch.index import Index as USearchIndex  # Local import to avoid NameError when unavailable
+
+        dim = vectors.shape[1]
+        index = USearchIndex(ndim=dim, metric="l2sq")
+
+        start = time.perf_counter()
+        index.add(range(len(vectors)), vectors)
+        insert_time = (time.perf_counter() - start) * 1000
+
+        search_times = []
+        num_queries = min(100, len(vectors))
+        for i in range(num_queries):
+            start = time.perf_counter()
+            _ = index.search(vectors[i], 10)
+            search_times.append((time.perf_counter() - start) * 1000)
+
+        avg_search = float(np.mean(search_times))
+        p95_search = float(np.percentile(search_times, 95))
+
+        return {
+            "insert_time_ms": insert_time,
+            "throughput": len(vectors) / (insert_time / 1000),
+            "search_time_ms": avg_search,
+            "p95_ms": p95_search,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def benchmark_annoy_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+    """Quick Annoy benchmark for consolidated/quick runs."""
+    if not ANNOY_AVAILABLE:
+        return {"error": "Annoy not available"}
+
+    try:
+        from annoy import AnnoyIndex  # Local import to avoid NameError when unavailable
+
+        dim = vectors.shape[1]
+        index = AnnoyIndex(dim, "euclidean")
+
+        start = time.perf_counter()
+        for i, vec in enumerate(vectors):
+            index.add_item(i, vec.tolist())
+        index.build(10)
+        insert_time = (time.perf_counter() - start) * 1000
+
+        search_times = []
+        num_queries = min(100, len(vectors))
+        for i in range(num_queries):
+            start = time.perf_counter()
+            _ = index.get_nns_by_vector(vectors[i].tolist(), 10, include_distances=False)
+            search_times.append((time.perf_counter() - start) * 1000)
+
+        avg_search = float(np.mean(search_times))
+        p95_search = float(np.percentile(search_times, 95))
+
+        return {
+            "insert_time_ms": insert_time,
+            "throughput": len(vectors) / (insert_time / 1000),
+            "search_time_ms": avg_search,
+            "p95_ms": p95_search,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def benchmark_milvus_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+    """Quick Milvus Lite benchmark for consolidated/quick runs."""
+    if not MILVUS_AVAILABLE:
+        return {"error": "Milvus not available"}
+
+    try:
+        from pymilvus import MilvusClient  # Local import to avoid NameError when unavailable
+
+        milvus_file = os.path.join(temp_dir, "milvus_quick.db")
+        client = MilvusClient(milvus_file)
+        dim = vectors.shape[1]
+        client.create_collection("quick", dimension=dim, metric_type="L2")
+
+        # Milvus Lite expects dict-based rows aligned to the default schema (id + vector)
+        data = [{"id": i, "vector": vec.tolist()} for i, vec in enumerate(vectors)]
+
+        # Insert
+        start = time.perf_counter()
+        client.insert(collection_name="quick", data=data)
+        insert_time = (time.perf_counter() - start) * 1000
+
+        # Search
+        search_times = []
+        num_queries = min(100, len(vectors))
+        for i in range(num_queries):
+            start = time.perf_counter()
+            _ = client.search(
+                collection_name="quick",
+                data=[vectors[i].tolist()],
+                limit=10,
+                search_params={"metric_type": "L2"},
+            )
+            search_times.append((time.perf_counter() - start) * 1000)
+
+        avg_search = float(np.mean(search_times))
+        p95_search = float(np.percentile(search_times, 95))
+
+        return {
+            "insert_time_ms": insert_time,
+            "throughput": len(vectors) / (insert_time / 1000),
+            "search_time_ms": avg_search,
+            "p95_ms": p95_search,
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # =============================================================================
@@ -1331,10 +1551,13 @@ def benchmark_graph_competitors(config: BenchmarkConfig, temp_dir: str) -> List[
 # Graph Store Benchmarks
 # =============================================================================
 
-def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str) -> List[BenchmarkResult]:
+def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str, graph_engines: List[str] = None) -> List[BenchmarkResult]:
     """Benchmark graph database operations."""
     if not PROXIMADB_AVAILABLE:
         return [BenchmarkResult("init", "orion", 0, error="ProximaDB not available")]
+
+    if graph_engines is None:
+        graph_engines = ["orion"] # Default to Orion if not specified
 
     results = []
 
@@ -1342,89 +1565,110 @@ def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str) -> List[Benchm
         num_edges = int(num_nodes * config.edge_density)
         nodes_data, edges_data = generate_graph_data(num_nodes, config.edge_density)
 
-        print(f"    Graph benchmark: ORION ({num_nodes:,} nodes, {num_edges:,} edges)...", end="", flush=True)
+        for engine in graph_engines:
+            engine_label = engine.upper()
+            print(f"    Graph benchmark: {engine_label} ({num_nodes:,} nodes, {num_edges:,} edges)...", end="", flush=True)
 
-        try:
-            data_dir = os.path.join(temp_dir, f"graph_{num_nodes}")
-            os.makedirs(data_dir, exist_ok=True)
+            def run_engine():
+                data_dir = os.path.join(temp_dir, f"graph_{engine}_{num_nodes}")
+                os.makedirs(data_dir, exist_ok=True)
 
-            db = proximadb.ProximaDB(
-                data_dirs=data_dir,
-                metadata_dir=os.path.join(data_dir, "metadata"),
-                cache_size_mb=128,
-                enable_wal=False
-            )
+                with proximadb.ProximaDB(
+                    data_dirs=data_dir,
+                    metadata_dir=os.path.join(data_dir, "metadata"),
+                    cache_size_mb=128,
+                    enable_wal=False
+                ) as db:
 
-            db.create_graph("benchmark_graph")
+                    db.create_graph("benchmark_graph", engine=engine) # Pass engine here
 
-            # Node insert
-            nodes = [
-                proximadb.GraphNode(n["id"], labels=n["labels"], properties=n["properties"])
-                for n in nodes_data
-            ]
-            start = time.perf_counter()
-            db.create_nodes("benchmark_graph", nodes)
-            insert_nodes_time = (time.perf_counter() - start) * 1000
+                    # Node insert
+                    nodes = [
+                        proximadb.GraphNode(n["id"], labels=n["labels"], properties=n["properties"])
+                        for n in nodes_data
+                    ]
+                    start = time.perf_counter()
+                    db.create_nodes("benchmark_graph", nodes)
+                    insert_nodes_time = (time.perf_counter() - start) * 1000
 
-            results.append(BenchmarkResult(
-                "graph_insert_nodes",
-                "orion",
-                insert_nodes_time,
-                throughput=num_nodes / (insert_nodes_time / 1000),
-                metadata={"num_nodes": num_nodes}
-            ))
+                    results.append(BenchmarkResult(
+                        "graph_insert_nodes",
+                        engine_label,
+                        insert_nodes_time,
+                        throughput=num_nodes / (insert_nodes_time / 1000),
+                        metadata={"num_nodes": num_nodes, "engine": engine}
+                    ))
 
-            # Edge insert
-            edges = [
-                proximadb.GraphEdge(e["from_node_id"], e["to_node_id"], e["edge_type"], weight=e.get("weight"))
-                for e in edges_data
-            ]
-            start = time.perf_counter()
-            db.create_edges("benchmark_graph", edges)
-            insert_edges_time = (time.perf_counter() - start) * 1000
+                    # Edge insert
+                    edges = [
+                        proximadb.GraphEdge(e["from_node_id"], e["to_node_id"], e["edge_type"], weight=e.get("weight"))
+                        for e in edges_data
+                    ]
+                    start = time.perf_counter()
+                    db.create_edges("benchmark_graph", edges)
+                    insert_edges_time = (time.perf_counter() - start) * 1000
 
-            results.append(BenchmarkResult(
-                "graph_insert_edges",
-                "orion",
-                insert_edges_time,
-                throughput=len(edges_data) / (insert_edges_time / 1000),
-                metadata={"num_edges": len(edges_data)}
-            ))
+                    results.append(BenchmarkResult(
+                        "graph_insert_edges",
+                        engine_label,
+                        insert_edges_time,
+                        throughput=len(edges_data) / (insert_edges_time / 1000),
+                        metadata={"num_edges": len(edges_data), "engine": engine}
+                    ))
 
-            # 1-hop traversal
-            traversal_times = []
-            for _ in range(100):
-                node_id = f"entity_{random.randint(0, num_nodes - 1)}"
-                start = time.perf_counter()
-                _ = db.get_outgoing_edges("benchmark_graph", node_id)
-                traversal_times.append((time.perf_counter() - start) * 1000)
+                    # 1-hop traversal
+                    traversal_times = []
+                    for _ in range(100):
+                        node_id = f"entity_{random.randint(0, num_nodes - 1)}"
+                        start = time.perf_counter()
+                        _ = db.get_outgoing_edges("benchmark_graph", node_id)
+                        traversal_times.append((time.perf_counter() - start) * 1000)
 
-            results.append(BenchmarkResult(
-                "graph_1hop_traversal",
-                "orion",
-                float(np.mean(traversal_times)),
-                throughput=1000 / np.mean(traversal_times),
-                p50_ms=float(np.percentile(traversal_times, 50)),
-                p95_ms=float(np.percentile(traversal_times, 95)),
-                p99_ms=float(np.percentile(traversal_times, 99)),
-                metadata={"num_nodes": num_nodes}
-            ))
+                    results.append(BenchmarkResult(
+                        "graph_1hop_traversal",
+                        engine_label,
+                        float(np.mean(traversal_times)),
+                        throughput=1000 / np.mean(traversal_times),
+                        p50_ms=float(np.percentile(traversal_times, 50)),
+                        p95_ms=float(np.percentile(traversal_times, 95)),
+                        p99_ms=float(np.percentile(traversal_times, 99)),
+                        metadata={"num_nodes": num_nodes, "engine": engine}
+                    ))
 
-            print(f" {insert_nodes_time:.2f}ms nodes, {insert_edges_time:.2f}ms edges, {np.mean(traversal_times):.3f}ms traversal")
+                    print(f" {insert_nodes_time:.2f}ms nodes, {insert_edges_time:.2f}ms edges, {np.mean(traversal_times):.3f}ms traversal")
 
-            db.delete_graph("benchmark_graph")
+                    db.delete_graph("benchmark_graph")
 
-        except Exception as e:
-            results.append(BenchmarkResult(
-                "graph_ops",
-                "orion",
-                0,
-                error=str(e),
-                metadata={"num_nodes": num_nodes}
-            ))
-            print(f" ERROR: {str(e)[:50]}")
+            try:
+                # Guard graph engine hangs with a timeout so the benchmark can proceed
+                result_holder = {}
+                exc_holder = {}
 
-        gc.collect()
+                def runner():
+                    try:
+                        result_holder["ok"] = run_engine()
+                    except Exception as e:
+                        exc_holder["err"] = e
+
+                t = threading.Thread(target=runner, daemon=True)
+                t.start()
+                t.join(timeout=180)  # 180s per-engine safeguard
+                if t.is_alive():
+                    raise TimeoutError(f"{engine_label} graph benchmark timed out")
+                if "err" in exc_holder:
+                    raise exc_holder["err"]
+
+            except Exception as e:
+                results.append(BenchmarkResult(
+                    "graph_ops",
+                    engine_label,
+                    0,
+                    error=str(e),
+                    metadata={"num_nodes": num_nodes, "engine": engine}
+                ))
+                print(f" ERROR: {str(e)[:80]}")
+
+            gc.collect()
 
     return results
 
@@ -1453,83 +1697,83 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
             data_dir = os.path.join(temp_dir, f"sks_{num_entities}")
             os.makedirs(data_dir, exist_ok=True)
 
-            db = proximadb.ProximaDB(
+            with proximadb.ProximaDB(
                 data_dirs=data_dir,
                 metadata_dir=os.path.join(data_dir, "metadata"),
                 cache_size_mb=128,
                 enable_wal=False
-            )
+            ) as db:
 
-            # Create both vector collection and graph
-            db.create_collection("sks_vectors", 128, "sst")
-            db.create_graph("sks_graph")
+                # Create both vector collection and graph
+                db.create_collection("sks_vectors", 128, "sst")
+                db.create_graph("sks_graph")
 
-            # Insert vectors - use zero-copy if available
-            ids = [e["id"] for e in entities]
-            start = time.perf_counter()
-            if hasattr(db, 'insert_numpy'):
-                # Zero-copy numpy insert (faster)
-                vectors_array = np.array([e["embedding"] for e in entities], dtype=np.float32)
-                db.insert_numpy("sks_vectors", ids, vectors_array)
-            else:
-                vectors_list = [e["embedding"] for e in entities]
-                db.insert("sks_vectors", ids, vectors_list, None)
-            vector_insert_time = (time.perf_counter() - start) * 1000
-
-            # Insert graph nodes
-            nodes = [
-                proximadb.GraphNode(e["id"], labels=e["labels"], properties=e["properties"])
-                for e in entities
-            ]
-            start = time.perf_counter()
-            db.create_nodes("sks_graph", nodes)
-            node_insert_time = (time.perf_counter() - start) * 1000
-
-            # Insert graph edges
-            edges = [
-                proximadb.GraphEdge(r["from_entity_id"], r["to_entity_id"], r["relation_type"])
-                for r in relations
-            ]
-            start = time.perf_counter()
-            db.create_edges("sks_graph", edges)
-            edge_insert_time = (time.perf_counter() - start) * 1000
-
-            results.append(BenchmarkResult(
-                "sks_ingest",
-                "sks",
-                vector_insert_time + node_insert_time + edge_insert_time,
-                throughput=num_entities / ((vector_insert_time + node_insert_time + edge_insert_time) / 1000),
-                metadata={"num_entities": num_entities, "num_relations": len(relations)}
-            ))
-
-            # Hybrid query simulation: vector search + graph expansion
-            hybrid_times = []
-            for _ in range(50):
-                query_vector = vectors[random.randint(0, num_entities - 1)].tolist()
-
+                # Insert vectors - use zero-copy if available
+                ids = [e["id"] for e in entities]
                 start = time.perf_counter()
-                # Step 1: Vector search
-                vector_results = db.search("sks_vectors", query_vector, 10)
+                if hasattr(db, 'insert_numpy'):
+                    # Zero-copy numpy insert (faster)
+                    vectors_array = np.array([e["embedding"] for e in entities], dtype=np.float32)
+                    db.insert_numpy("sks_vectors", ids, vectors_array)
+                else:
+                    vectors_list = [e["embedding"] for e in entities]
+                    db.insert("sks_vectors", ids, vectors_list, None)
+                vector_insert_time = (time.perf_counter() - start) * 1000
 
-                # Step 2: Graph expansion (get related entities)
-                for result in vector_results[:5]:
-                    edges = db.get_outgoing_edges("sks_graph", result.id)
+                # Insert graph nodes
+                nodes = [
+                    proximadb.GraphNode(e["id"], labels=e["labels"], properties=e["properties"])
+                    for e in entities
+                ]
+                start = time.perf_counter()
+                db.create_nodes("sks_graph", nodes)
+                node_insert_time = (time.perf_counter() - start) * 1000
 
-                hybrid_times.append((time.perf_counter() - start) * 1000)
+                # Insert graph edges
+                edges = [
+                    proximadb.GraphEdge(r["from_entity_id"], r["to_entity_id"], r["relation_type"])
+                    for r in relations
+                ]
+                start = time.perf_counter()
+                db.create_edges("sks_graph", edges)
+                edge_insert_time = (time.perf_counter() - start) * 1000
 
-            results.append(BenchmarkResult(
-                "sks_hybrid_query",
-                "sks",
-                float(np.mean(hybrid_times)),
-                p50_ms=float(np.percentile(hybrid_times, 50)),
-                p95_ms=float(np.percentile(hybrid_times, 95)),
-                p99_ms=float(np.percentile(hybrid_times, 99)),
-                metadata={"num_entities": num_entities}
-            ))
+                results.append(BenchmarkResult(
+                    "sks_ingest",
+                    "sks",
+                    vector_insert_time + node_insert_time + edge_insert_time,
+                    throughput=num_entities / ((vector_insert_time + node_insert_time + edge_insert_time) / 1000),
+                    metadata={"num_entities": num_entities, "num_relations": len(relations)}
+                ))
 
-            print(f" {vector_insert_time + node_insert_time + edge_insert_time:.2f}ms ingest, {np.mean(hybrid_times):.3f}ms hybrid query")
+                # Hybrid query simulation: vector search + graph expansion
+                hybrid_times = []
+                for _ in range(50):
+                    query_vector = vectors[random.randint(0, num_entities - 1)].tolist()
 
-            db.delete_graph("sks_graph")
+                    start = time.perf_counter()
+                    # Step 1: Vector search
+                    vector_results = db.search("sks_vectors", query_vector, 10)
+
+                    # Step 2: Graph expansion (get related entities)
+                    for result in vector_results[:5]:
+                        edges = db.get_outgoing_edges("sks_graph", result.id)
+
+                    hybrid_times.append((time.perf_counter() - start) * 1000)
+
+                results.append(BenchmarkResult(
+                    "sks_hybrid_query",
+                    "sks",
+                    float(np.mean(hybrid_times)),
+                    p50_ms=float(np.percentile(hybrid_times, 50)),
+                    p95_ms=float(np.percentile(hybrid_times, 95)),
+                    p99_ms=float(np.percentile(hybrid_times, 99)),
+                    metadata={"num_entities": num_entities}
+                ))
+
+                print(f" {vector_insert_time + node_insert_time + edge_insert_time:.2f}ms ingest, {np.mean(hybrid_times):.3f}ms hybrid query")
+
+                db.delete_graph("sks_graph")
 
         except Exception as e:
             results.append(BenchmarkResult(
@@ -1595,26 +1839,47 @@ def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
     # Graph engine table
     graph_results = [r for r in results if r.operation.startswith("graph_")]
     if graph_results:
-        print("\n### GRAPH DATABASE ENGINE (ORION)")
+        print("\n### GRAPH DATABASE ENGINES")
 
         if RICH_AVAILABLE:
             console = Console()
-            table = Table(title="Graph Engine Performance", expand=True)
-            table.add_column("Operation", style="cyan")
-            table.add_column("Time (ms)", justify="right")
-            table.add_column("Throughput (/s)", justify="right")
-            table.add_column("p95 (ms)", justify="right")
+            
+            # Group results by engine
+            graph_engines = sorted(list(set(r.engine for r in graph_results)))
+            for engine_name in graph_engines:
+                table = Table(title=f"Graph Engine Performance: {engine_name}", expand=True)
+                table.add_column("Operation", style="cyan")
+                table.add_column("Time (ms)", justify="right")
+                table.add_column("Throughput (/s)", justify="right")
+                table.add_column("p95 (ms)", justify="right")
 
-            ops = ["graph_insert_nodes", "graph_insert_edges", "graph_1hop_traversal"]
-            for op in ops:
-                result = next((r for r in graph_results if r.operation == op and not r.error), None)
-                if result:
-                    table.add_row(
-                        op.replace("graph_", ""),
-                        f"{result.time_ms:.2f}",
-                        f"{result.throughput:,.0f}" if result.throughput else "-",
-                        f"{result.p95_ms:.3f}" if result.p95_ms else "-"
-                    )
+                ops = ["graph_insert_nodes", "graph_insert_edges", "graph_1hop_traversal"]
+                for op in ops:
+                    result = next((r for r in graph_results if r.engine == engine_name and r.operation == op and not r.error), None)
+                    if result:
+                        table.add_row(
+                            op.replace("graph_", ""),
+                            f"{result.time_ms:.2f}",
+                            f"{result.throughput:,.0f}" if result.throughput else "-",
+                            f"{result.p95_ms:.3f}" if result.p95_ms else "-"
+                        )
+                    else:
+                        table.add_row(op.replace("graph_", ""), "[red]ERROR[/red]", "N/A", "N/A")
+                console.print(table)
+        else:
+            # Simple print fallback for graph engines
+            print(f"{'Engine':<10} {'Operation':<20} {'Time (ms)':<15} {'Throughput':<15}")
+            print("-" * 60)
+            graph_engines = sorted(list(set(r.engine for r in graph_results)))
+            for engine_name in graph_engines:
+                ops = ["graph_insert_nodes", "graph_insert_edges", "graph_1hop_traversal"]
+                for op in ops:
+                    result = next((r for r in graph_results if r.engine == engine_name and r.operation == op and not r.error), None)
+                    if result:
+                        tput_str = f"{result.throughput:,.0f}" if result.throughput else "-"
+                        print(f"{engine_name:<10} {op.replace('graph_', ''):<20} {result.time_ms:<15.2f} {tput_str:<15}")
+                    else:
+                        print(f"{engine_name:<10} {op.replace('graph_', ''):<20} {'ERROR':<15} {'N/A':<15}")
 
             console.print(table)
 
@@ -1763,9 +2028,11 @@ def run_consolidated_benchmark(config: BenchmarkConfig = None, include_competito
             print("\n[2/5] VECTOR STORE BENCHMARKS (Competitors) - SKIPPED")
 
         # Graph store benchmarks (ProximaDB ORION)
-        print("\n[3/5] GRAPH STORE BENCHMARKS (ProximaDB ORION)")
+        print("\n[3/5] GRAPH STORE BENCHMARKS (ProximaDB ORION/PULSAR/QUASAR)")
         print("-" * 50)
-        graph_results = benchmark_graph_store(config, temp_dir)
+        graph_engines_to_test = ["orion", "pulsar", "quasar"]
+
+        graph_results = benchmark_graph_store(config, temp_dir, graph_engines=graph_engines_to_test)
         all_results.extend(graph_results)
         gc.collect()
 
@@ -1797,7 +2064,8 @@ def run_consolidated_benchmark(config: BenchmarkConfig = None, include_competito
 # Standard Dataset Benchmarks
 # =============================================================================
 
-def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: int = 768, engines: str = "all") -> List[BenchmarkResult]:
+def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: int = 768, engines: str = "all",
+                      approximate_only: bool = False, exact_only: bool = False) -> List[BenchmarkResult]:
     """
     Benchmark ProximaDB against SIFT-1M dataset.
 
@@ -2435,79 +2703,61 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         gc.collect()
 
     # =========================================================================
-    # PHASE 2: ProximaDB SST-APPROX (LanceDB-style approximate search)
-    # Placed immediately after competitors to show competitive performance
+    # PHASE 2: ProximaDB ENGINES
     # =========================================================================
     if not PROXIMADB_AVAILABLE:
         print("\n  --- ProximaDB NOT AVAILABLE ---")
         return results
 
-    if run_sst_approx:
-        print("\n  --- SST-APPROX (LanceDB-style centroid pruning) ---")
-        result = _benchmark_proximadb_engine(
-            "sst_approx", base_vectors, query_vectors, metadata, temp_dir,
-            ground_truth=ground_truth, k=k, search_mode="approximate",
-            display_name="SST-APPROX"
-        )
-        results.extend(result)
-        gc.collect()
+    # Define engine configurations
+    # Exact mode: Supported by all engines
+    engines_exact = ["sst", "helix", "viper", "nova", "swift", "raptor"]
+    # Approximate (sqrt) mode: Supported by specific engines
+    engines_approx = ["sst", "helix", "swift"]
 
-    # =========================================================================
-    # PHASE 3: ProximaDB engines with 100% recall (exact mode)
-    # =========================================================================
-    proximadb_search_times = []  # Track for RAPTOR timeout calculation
+    # Filter engines based on user input
+    selected_engines_exact = [e for e in engines_exact if e in selected_engines]
+    selected_engines_approx = [e for e in engines_approx if e in selected_engines]
 
-    if proximadb_engines_to_run:
+    run_approximate = not exact_only  # Run unless --exact-only flag is set
+    run_exact = not approximate_only  # Run unless --approximate-only flag is set
+
+    # 1. Benchmark Exact Mode (All Engines)
+    if selected_engines_exact and run_exact:
         print("\n  --- PROXIMADB ENGINES (100% recall, exact mode) ---")
+        print("  Large blocks for minimal overhead (SST: 4MB, HELIX: 512 vec/block)")
+        print("  ")
 
-        for engine in proximadb_engines_to_run:
+        for engine in selected_engines_exact:
+            # Use "exact" search_mode which maps to prune_mode="exact" in ProximaDB init
             result = _benchmark_proximadb_engine(
                 engine, base_vectors, query_vectors, metadata, temp_dir,
-                ground_truth=ground_truth, k=k, search_mode="exact"
+                ground_truth=ground_truth, k=k, search_mode="exact",
+                display_name=f"{engine.upper()}"
             )
             results.extend(result)
-
-            # Track search times for RAPTOR timeout
-            for r in result:
-                if r.operation == "sift_search" and r.error is None:
-                    proximadb_search_times.append(r.time_ms)
-
             gc.collect()
 
-    # =========================================================================
-    # PHASE 4: RAPTOR with 3x timeout check
-    # =========================================================================
-    if run_raptor:
-        print("\n  --- RAPTOR (with 3x timeout check) ---")
+    # 2. Benchmark Approximate Mode (Sqrt) - Only for supported engines
+    if selected_engines_approx and run_approximate:
+        print("\n  --- PROXIMADB ENGINES (Approximate mode with sqrt block pruning) ---")
+        print("  ")
+        print("  Block pruning: ENABLED for SST, SWIFT, HELIX (centroid-based blocks)")
+        print("  ")
+        print("  SST:   256KB blocks → ~6,000 blocks → sqrt(6000)=77 scanned (98.7% pruned)")
+        print("  HELIX: 64 vec/block, 32D PCA, 20-bit Hilbert → ~625 blocks → sqrt(625)=25 scanned (96% pruned)")
+        print("  SWIFT: 512KB blocks → centroid-based pruning")
+        print("  ")
 
-        if proximadb_search_times:
-            avg_search_time = np.mean(proximadb_search_times)
-            raptor_timeout_ms = avg_search_time * 3 * 1000  # 3x average, per query * 1000 queries
-            print(f"  Average search time: {avg_search_time:.2f}ms, RAPTOR timeout: {raptor_timeout_ms/1000:.0f}ms total")
-
+        for engine in selected_engines_approx:
+            # Use "sqrt" search_mode which maps to prune_mode="sqrt" in ProximaDB init
             result = _benchmark_proximadb_engine(
-                "raptor", base_vectors, query_vectors, metadata, temp_dir,
-                timeout_ms=raptor_timeout_ms, ground_truth=ground_truth, k=k
+                engine, base_vectors, query_vectors, metadata, temp_dir,
+                ground_truth=ground_truth, k=k, search_mode="sqrt",
+                display_name=f"{engine.upper()} (approx)"
             )
             results.extend(result)
-
-            # Check if RAPTOR timed out or is slow
-            for r in result:
-                if r.operation == "sift_search":
-                    if r.error and "timeout" in r.error.lower():
-                        print(f"\n  *** RAPTOR TIMEOUT: Investigating performance issue...")
-                        _investigate_raptor_performance()
-                    elif r.time_ms > avg_search_time * 3:
-                        print(f"\n  *** RAPTOR SLOW ({r.time_ms:.2f}ms > {avg_search_time*3:.2f}ms): Investigating...")
-                        _investigate_raptor_performance()
-        else:
-            # No baseline from other engines, run RAPTOR without timeout check
-            print("  Running RAPTOR (no baseline from other engines)")
-            result = _benchmark_proximadb_engine(
-                "raptor", base_vectors, query_vectors, metadata, temp_dir,
-                ground_truth=ground_truth, k=k
-            )
-            results.extend(result)
+            gc.collect()
 
     return results
 
@@ -2532,6 +2782,12 @@ def _benchmark_proximadb_engine(
     # Handle special engine aliases (e.g., sst_approx -> sst for different search modes)
     actual_engine = "sst" if engine == "sst_approx" else engine
 
+    # Determine prune_mode from search_mode for DB initialization
+    # "exact" -> "exact", "sqrt" -> "sqrt", "approximate" -> "sqrt" (default approx)
+    prune_mode = search_mode
+    if search_mode == "approximate":
+        prune_mode = "sqrt"
+
     try:
         # Phase 1: Create DB and insert all data
         phase1_start = logger.log_start(name, "Create + Insert")
@@ -2539,149 +2795,128 @@ def _benchmark_proximadb_engine(
         if temp_dir is None:
             temp_dir = tempfile.mkdtemp()
 
-        data_dir = os.path.join(temp_dir, f"sift_{engine}")  # Keep unique dir per alias
+        data_dir = os.path.join(temp_dir, f"sift_{engine}_{search_mode}")  # Keep unique dir per alias
         os.makedirs(data_dir, exist_ok=True)
 
-        db = proximadb.ProximaDB(
+        # Use context manager for proper cleanup
+        with proximadb.ProximaDB(
             data_dirs=data_dir,
             metadata_dir=os.path.join(data_dir, "metadata"),
             cache_size_mb=512,
-            enable_wal=True  # Enable WAL for proper disk persistence
-        )
+            enable_wal=True,  # Enable WAL for proper disk persistence
+            prune_mode=prune_mode
+        ) as db:
 
-        collection_name = f"sift_{engine}"  # Keep unique collection name per alias
-        db.create_collection(collection_name, metadata['dimension'], actual_engine)
+            collection_name = f"sift_{engine}_{search_mode}"  # Keep unique collection name per alias
 
-        # Insert all data at once
-        ids = [f"sift_{i}" for i in range(len(base_vectors))]
-        start = time.perf_counter()
-        if hasattr(db, 'insert_numpy'):
-            db.insert_numpy(collection_name, ids, base_vectors)
-        else:
-            vectors_list = [v.tolist() for v in base_vectors]
-            db.insert(collection_name, ids, vectors_list, None)
-        insert_time = (time.perf_counter() - start) * 1000
+            # Create collection (uses engine defaults)
+            db.create_collection(collection_name, metadata['dimension'], actual_engine)
 
-        logger.log_end(
-            f"{name} (Insert)",
-            phase1_start,
-            {
-                "vectors": len(base_vectors),
-                "throughput_v/s": len(base_vectors) / (insert_time / 1000),
-                "time_ms": insert_time
-            }
-        )
-
-        results.append(BenchmarkResult(
-            "sift_insert", engine, insert_time,
-            throughput=len(base_vectors) / (insert_time / 1000),
-            metadata={"num_vectors": len(base_vectors), "dimension": metadata['dimension']}
-        ))
-
-        # Phase 1.5: WARM CACHE SEARCH (DB still open, file handles valid)
-        # This measures true algorithm performance without cold I/O penalty
-        phase_warm_start = logger.log_start(name, "Search (Warm Cache)")
-
-        search_times_warm = []
-        recalls_warm = []
-        num_queries = min(len(query_vectors), 1000)
-
-        for i in range(num_queries):
+            # Insert all data at once
+            ids = [f"sift_{i}" for i in range(len(base_vectors))]
             start = time.perf_counter()
-            if hasattr(db, 'search_numpy'):
-                search_results = db.search_numpy(collection_name, query_vectors[i], k, search_mode=search_mode)
+            if hasattr(db, 'insert_numpy'):
+                db.insert_numpy(collection_name, ids, base_vectors)
             else:
-                search_results = db.search(collection_name, query_vectors[i].tolist(), k, search_mode=search_mode)
-            search_times_warm.append((time.perf_counter() - start) * 1000)
+                vectors_list = [v.tolist() for v in base_vectors]
+                db.insert(collection_name, ids, vectors_list, None)
+            insert_time = (time.perf_counter() - start) * 1000
 
-            # Compute recall@k
-            if ground_truth and i < len(ground_truth):
-                result_ids = [r.id if hasattr(r, 'id') else r.get('id', '') for r in search_results]
-                recalls_warm.append(compute_recall_at_k(ground_truth[i], result_ids, k))
+            logger.log_end(
+                f"{name} (Insert)",
+                phase1_start,
+                {
+                    "vectors": len(base_vectors),
+                    "throughput_v/s": len(base_vectors) / (insert_time / 1000),
+                    "time_ms": insert_time
+                }
+            )
 
-        avg_search_warm = float(np.mean(search_times_warm))
-        p50_search_warm = float(np.percentile(search_times_warm, 50))
-        p95_search_warm = float(np.percentile(search_times_warm, 95))
-        qps_warm = 1000 / avg_search_warm
-        avg_recall_warm = float(np.mean(recalls_warm)) * 100 if recalls_warm else None
+            results.append(BenchmarkResult(
+                "sift_insert", name, insert_time,
+                throughput=len(base_vectors) / (insert_time / 1000),
+                metadata={"num_vectors": len(base_vectors), "dimension": metadata['dimension'], "mode": search_mode}
+            ))
 
-        logger.log_end(
-            f"{name} (Warm {num_queries}q)",
-            phase_warm_start,
-            {
-                "avg_ms": avg_search_warm,
-                "p50_ms": p50_search_warm,
-                "p95_ms": p95_search_warm,
-                "qps": qps_warm,
-                "recall": f"{avg_recall_warm:.1f}%" if avg_recall_warm else "N/A"
-            }
-        )
+            # Phase 1.5: WARM CACHE SEARCH (DB still open, file handles valid)
+            # This measures true algorithm performance without cold I/O penalty
+            phase_warm_start = logger.log_start(name, "Search (Warm Cache)")
 
-        results.append(BenchmarkResult(
-            "sift_search_warm", engine, avg_search_warm,
-            throughput=qps_warm, p50_ms=p50_search_warm, p95_ms=p95_search_warm,
-            recall_at_k=avg_recall_warm,
-            metadata={"cache_state": "warm", "num_queries": num_queries}
-        ))
+            search_times_warm = []
+            recalls_warm = []
+            num_queries = min(len(query_vectors), 1000)
 
-        # Phase 2: Force flush memtable to SST files before close
-        phase2_start = logger.log_start(name, "Flush + Close")
+            for i in range(num_queries):
+                start = time.perf_counter()
+                if hasattr(db, 'search_numpy'):
+                    search_results = db.search_numpy(collection_name, query_vectors[i], k, search_mode=search_mode)
+                else:
+                    search_results = db.search(collection_name, query_vectors[i].tolist(), k, search_mode=search_mode)
+                search_times_warm.append((time.perf_counter() - start) * 1000)
 
-        # This is critical for:
-        # 1. Creating SST files with centroid indexes (enables approximate search)
-        # 2. Avoiding WAL replay overhead on reopen
-        # 3. Getting accurate disk size measurements
+                # Compute recall@k
+                if ground_truth and i < len(ground_truth):
+                    result_ids = [r.id if hasattr(r, 'id') else r.get('id', '') for r in search_results]
+                    recalls_warm.append(compute_recall_at_k(ground_truth[i], result_ids, k))
 
-        # Note: close() internally calls flush(), so we don't need to call flush() explicitly.
-        # Calling both flush() and close() causes DUPLICATE SST files (2x instead of 1x).
-        if hasattr(db, 'close'):
-            db.close()  # close() internally flushes all collections
+            avg_search_warm = float(np.mean(search_times_warm))
+            p50_search_warm = float(np.percentile(search_times_warm, 50))
+            p95_search_warm = float(np.percentile(search_times_warm, 95))
+            qps_warm = 1000 / avg_search_warm
+            avg_recall_warm = float(np.mean(recalls_warm)) * 100 if recalls_warm else None
 
-        # Release reference
-        del db
+            logger.log_end(
+                f"{name} (Warm {num_queries}q)",
+                phase_warm_start,
+                {
+                    "avg_ms": avg_search_warm,
+                    "p50_ms": p50_search_warm,
+                    "p95_ms": p95_search_warm,
+                    "qps": qps_warm,
+                    "recall": f"{avg_recall_warm:.1f}%"
+                    if avg_recall_warm is not None
+                    else "N/A"
+                }
+            )
+
+            results.append(BenchmarkResult(
+                "sift_search_warm", name, avg_search_warm,
+                throughput=qps_warm, p50_ms=p50_search_warm, p95_ms=p95_search_warm,
+                recall_at_k=avg_recall_warm,
+                metadata={"cache_state": "warm", "num_queries": num_queries, "mode": search_mode}
+            ))
+
+            # Phase 2: Force flush memtable to SST files before close
+            phase2_start = logger.log_start(name, "Flush + Close")
+
+            # Note: close() internally calls flush(), so we don't need to call flush() explicitly.
+            # Context manager will handle closing
+            pass
+
+        # DB is closed here by context manager
         gc.collect()
-        time.sleep(1.0)  # Allow OS to flush file handles (increased from 0.5s)
+        time.sleep(1.0)  # Allow OS to flush file handles
 
         logger.log_end(f"{name} (Flush+Close)", phase2_start)
 
         # Calculate disk space - scan ACTUAL ProximaDB write location and filter by collection
-        # ProximaDB writes to ./data/write_buffer/ regardless of data_dirs parameter
         phase_disk_start = logger.log_start(name, "Disk Analysis")
-
-        proximadb_write_dir = "./data/write_buffer"
-        collection_prefix = f"sift_{engine}/"  # Files for this engine's collection
 
         total_size = 0
         file_count = 0
-        file_details = []
 
-        # Scan both data_dir (where we expect) and proximadb_write_dir (where ProximaDB actually writes)
-        scan_dirs = [data_dir]
-        if os.path.exists(proximadb_write_dir):
-            scan_dirs.append(proximadb_write_dir)
+        # All data for this run is isolated under the per-engine data_dir. Count everything there.
+        for root, dirs, files in os.walk(data_dir):
+            for f in files:
+                fpath = os.path.join(root, f)
+                try:
+                    fsize = os.path.getsize(fpath)
+                    total_size += fsize
+                    file_count += 1
+                except OSError:
+                    pass
 
-        for scan_dir in scan_dirs:
-            for root, dirs, files in os.walk(scan_dir):
-                for f in files:
-                    fpath = os.path.join(root, f)
-                    try:
-                        # Get path relative to scan directory
-                        rel_path = os.path.relpath(fpath, scan_dir)
-
-                        # Only count files belonging to THIS engine's collection
-                        # Filter strictly by collection name in the path
-                        engine_pattern = f"sift_{engine}"
-                        if engine_pattern in rel_path:
-                            fsize = os.path.getsize(fpath)
-                            total_size += fsize
-                            file_count += 1
-                            file_details.append((rel_path, fsize / 1024))  # KB
-                    except OSError:
-                        pass
-
-        # For ProximaDB engines, disk size is the total (not delta) since we filter by collection
-        disk_size_bytes = total_size
-        disk_size_mb = disk_size_bytes / (1024 * 1024)
+        disk_size_mb = total_size / (1024 * 1024)
 
         logger.log_end(
             f"{name} (Disk Analysis)",
@@ -2689,76 +2924,68 @@ def _benchmark_proximadb_engine(
             {"files": file_count, "disk_mb": disk_size_mb}
         )
 
-        # Print file details if disk size > 0
-        # if disk_size_mb > 0.1 and file_count > 0:
-        #     print(f"\n    📁 Engine files ({file_count} files, {disk_size_mb:.2f}MB for {collection_prefix}):")
-        #     for rel_path, size_kb in sorted(file_details, key=lambda x: -x[1])[:5]:  # Top 5 files
-        #         print(f"       - {rel_path}: {size_kb:.1f}KB")
-
         # Phase 3: Reopen DB for search (loads indexes from disk)
         phase3_start = logger.log_start(name, "Reopen + Search")
 
-        db = proximadb.ProximaDB(
+        with proximadb.ProximaDB(
             data_dirs=data_dir,
             metadata_dir=os.path.join(data_dir, "metadata"),
             cache_size_mb=512,
-            enable_wal=True
-        )
+            enable_wal=True,
+            prune_mode=prune_mode
+        ) as db:
 
-        # Search benchmark with optional timeout
-        # Use "exact" search mode for 100% recall (default behavior)
-        search_times = []
-        recalls = []
-        num_queries = min(len(query_vectors), 1000)
-        start_total = time.perf_counter()
+            # Search benchmark with optional timeout
+            search_times = []
+            recalls = []
+            num_queries = min(len(query_vectors), 1000)
+            start_total = time.perf_counter()
 
-        for i in range(num_queries):
-            # Check timeout
-            if timeout_ms and (time.perf_counter() - start_total) * 1000 > timeout_ms:
-                raise TimeoutError(f"RAPTOR timeout after {i} queries")
+            for i in range(num_queries):
+                # Check timeout
+                if timeout_ms and (time.perf_counter() - start_total) * 1000 > timeout_ms:
+                    raise TimeoutError(f"RAPTOR timeout after {i} queries")
 
-            start = time.perf_counter()
-            if hasattr(db, 'search_numpy'):
-                # Use the specified search mode (exact for 100% recall, approximate for speed)
-                search_results = db.search_numpy(collection_name, query_vectors[i], k, search_mode=search_mode)
-            else:
-                search_results = db.search(collection_name, query_vectors[i].tolist(), k, search_mode=search_mode)
-            search_times.append((time.perf_counter() - start) * 1000)
+                start = time.perf_counter()
+                if hasattr(db, 'search_numpy'):
+                    # Use the specified search mode (exact for 100% recall, approximate for speed)
+                    search_results = db.search_numpy(collection_name, query_vectors[i], k, search_mode=search_mode)
+                else:
+                    search_results = db.search(collection_name, query_vectors[i].tolist(), k, search_mode=search_mode)
+                search_times.append((time.perf_counter() - start) * 1000)
 
-            # Compute recall@k if ground truth is available
-            if ground_truth and i < len(ground_truth):
-                result_ids = [r.id if hasattr(r, 'id') else r.get('id', '') for r in search_results]
-                recalls.append(compute_recall_at_k(ground_truth[i], result_ids, k))
+                # Compute recall@k if ground truth is available
+                if ground_truth and i < len(ground_truth):
+                    result_ids = [r.id if hasattr(r, 'id') else r.get('id', '') for r in search_results]
+                    recalls.append(compute_recall_at_k(ground_truth[i], result_ids, k))
 
-        avg_search = float(np.mean(search_times))
-        p50_search = float(np.percentile(search_times, 50))
-        p95_search = float(np.percentile(search_times, 95))
-        p99_search = float(np.percentile(search_times, 99))
-        qps = 1000 / avg_search
-        avg_recall = float(np.mean(recalls)) * 100 if recalls else None
+            avg_search = float(np.mean(search_times))
+            p50_search = float(np.percentile(search_times, 50))
+            p95_search = float(np.percentile(search_times, 95))
+            p99_search = float(np.percentile(search_times, 99))
+            qps = 1000 / avg_search
+            avg_recall = float(np.mean(recalls)) * 100 if recalls else None
 
-        logger.log_end(
-            f"{name} (Search {num_queries}q)",
-            phase3_start,
-            {
-                "avg_ms": avg_search,
-                "p50_ms": p50_search,
-                "p95_ms": p95_search,
-                "qps": qps,
-                "recall": f"{avg_recall:.1f}%" if avg_recall else "N/A"
-            }
-        )
+            logger.log_end(
+                f"{name} (Search {num_queries}q)",
+                phase3_start,
+                {
+                    "avg_ms": avg_search,
+                    "p50_ms": p50_search,
+                    "p95_ms": p95_search,
+                    "qps": qps,
+                    "recall": f"{avg_recall:.1f}%"
+                    if avg_recall is not None
+                    else "N/A"
+                }
+            )
 
-        results.append(BenchmarkResult(
-            "sift_search", engine, avg_search,
-            throughput=qps, p50_ms=p50_search, p95_ms=p95_search, p99_ms=p99_search,
-            recall_at_k=avg_recall,
-            metadata={"num_queries": num_queries, "top_k": k, "disk_size_mb": disk_size_mb}
-        ))
-
-        recall_str = f", Recall@{k}: {avg_recall:.1f}%" if avg_recall is not None else ""
-        # print(f" Insert: {insert_time:.0f}ms ({len(base_vectors)/(insert_time/1000):,.0f}/s), "
-        #       f"Search: {avg_search:.3f}ms ({qps:.0f} QPS), p99: {p99_search:.3f}ms{recall_str}, Disk: {disk_size_mb:.1f}MB")
+            results.append(BenchmarkResult(
+                "sift_search", name, avg_search,
+                throughput=qps, p50_ms=p50_search, p95_ms=p95_search, p99_ms=p99_search,
+                recall_at_k=avg_recall,
+                metadata={"num_queries": num_queries, "top_k": k, "disk_size_mb": disk_size_mb, "mode": search_mode}
+            ))
 
     except TimeoutError as e:
         logger.log_error(name, e)
@@ -3308,7 +3535,9 @@ def run_standard_dataset_benchmarks(
     ldbc_scale: int = 1,
     rag_documents: int = 5_000,
     dimension: int = 768,
-    engines: str = "all"
+    engines: str = "all",
+    approximate_only: bool = False,
+    exact_only: bool = False
 ) -> List[BenchmarkResult]:
     """
     Run benchmarks using standard datasets.
@@ -3339,7 +3568,8 @@ def run_standard_dataset_benchmarks(
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # SIFT-1M benchmark
-        sift_results = benchmark_sift_1m(max_vectors=sift_vectors, temp_dir=temp_dir, dimension=dimension, engines=engines)
+        sift_results = benchmark_sift_1m(max_vectors=sift_vectors, temp_dir=temp_dir, dimension=dimension, engines=engines,
+                                          approximate_only=approximate_only, exact_only=exact_only)
         all_results.extend(sift_results)
         gc.collect()
 
@@ -3385,6 +3615,13 @@ if __name__ == "__main__":
     parser.add_argument("--engines", type=str, default="all",
                         help="Comma-separated list of engines to benchmark (e.g., raptor,sst) or 'all' for everything. "
                              "Available: sst,sst_approx,helix,viper,nova,swift,raptor. Use 'proximadb' for all ProximaDB engines only.")
+
+    # Search mode control (NEW)
+    parser.add_argument("--approximate-only", action="store_true",
+                        help="Run ONLY approximate mode (block pruning with sqrt mode, ~8-15ms queries, 90-95%% recall)")
+    parser.add_argument("--exact-only", action="store_true",
+                        help="Run ONLY exact mode (100%% recall, ~45ms queries)")
+
     args = parser.parse_args()
 
     if args.standard_datasets:
@@ -3394,7 +3631,9 @@ if __name__ == "__main__":
             ldbc_scale=args.ldbc_scale,
             rag_documents=args.rag_documents,
             dimension=args.dimension,
-            engines=args.engines
+            engines=args.engines,
+            approximate_only=args.approximate_only,
+            exact_only=args.exact_only
         )
     else:
         # Run consolidated benchmark

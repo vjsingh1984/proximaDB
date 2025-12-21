@@ -19,6 +19,7 @@
 use crate::network::auth::{
     AuthError, AuthResult, AuthService, Permission, PermissionContext, ResourceType,
 };
+use crate::security::{AuthenticationData, SecurityCoordinator};
 use axum::{
     extract::State,
     http::{Request, StatusCode},
@@ -40,6 +41,39 @@ pub struct AuthErrorResponse {
     pub error: String,
     pub message: String,
     pub code: u16,
+}
+
+/// Unified auth middleware using SecurityCoordinator
+pub async fn auth_middleware_unified<B>(
+    State(security_coordinator): State<Arc<SecurityCoordinator>>,
+    mut request: Request<B>,
+    next: Next<B>,
+) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
+    let path = request.uri().path();
+
+    if should_skip_auth(path) {
+        return Ok(next.run(request).await);
+    }
+
+    let auth_header = extract_auth_header(&request)?;
+    let auth_data = map_header_to_auth_data(&auth_header)?;
+
+    let user_context = security_coordinator
+        .authenticate_request(auth_data)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(AuthErrorResponse {
+                    error: "authentication_failed".to_string(),
+                    message: format!("{}", e),
+                    code: 401,
+                }),
+            )
+        })?;
+
+    request.extensions_mut().insert(user_context);
+    Ok(next.run(request).await)
 }
 
 /// Middleware to authenticate and authorize requests
@@ -119,6 +153,23 @@ fn extract_auth_header<B>(
     })?;
 
     Ok(auth_str.to_string())
+}
+
+fn map_header_to_auth_data(
+    auth_header: &str,
+) -> Result<AuthenticationData, (StatusCode, Json<AuthErrorResponse>)> {
+    if let Some(token) = auth_header.strip_prefix("Bearer ") {
+        return Ok(AuthenticationData::JWTToken(token.to_string()));
+    }
+    if let Some(key) = auth_header.strip_prefix("API-Key ") {
+        return Ok(AuthenticationData::ApiKey(key.to_string()));
+    }
+    if let Some(key) = auth_header.strip_prefix("Api-Key ") {
+        return Ok(AuthenticationData::ApiKey(key.to_string()));
+    }
+
+    // Treat raw value as API key
+    Ok(AuthenticationData::ApiKey(auth_header.to_string()))
 }
 
 /// Determine if authentication should be skipped for this path
@@ -374,7 +425,25 @@ pub async fn check_permission(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::{Method, Uri};
+    use axum::body::Body;
+    use axum::extract::Extension;
+    use axum::http::{Method, Request, Uri};
+    use axum::middleware;
+    use axum::routing::get;
+    use axum::Router;
+    use hyper::body::to_bytes;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    use crate::network::auth::jwt::{Claims, JwtService, TokenType};
+    use crate::network::auth::config::JwtAlgorithm;
+    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
+    use crate::security::unified_auth::{
+        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, SSOConfig,
+    };
+    use crate::security::unified_rbac::RBACConfig;
+    use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header};
 
     #[test]
     fn test_should_skip_auth() {
@@ -438,5 +507,327 @@ mod tests {
             extract_resource_id("/collections/test/vectors/search"),
             Some("test".to_string())
         );
+    }
+
+    fn build_security_config_with_api_key() -> SecurityConfig {
+        let mut api_keys = HashMap::new();
+        api_keys.insert(
+            "test-key".to_string(),
+            ApiKeyInfo {
+                user_id: "user1".to_string(),
+                tenant_id: None,
+                permissions: vec!["search".to_string()],
+                created_at: None,
+                expires_at: None,
+                rate_limit_per_minute: None,
+                ip_restrictions: vec![],
+            },
+        );
+
+        SecurityConfig {
+            enabled: true,
+            mode: SecurityMode::Development,
+            authentication: AuthenticationConfig {
+                enabled: true,
+                methods: vec![AuthenticationMethod::ApiKey],
+                require_authentication: true,
+                default_session_timeout_minutes: 60,
+                api_keys,
+                jwt: JwtConfig {
+                    enabled: false,
+                    secret: "dev-secret".to_string(),
+                    access_token_expiration_minutes: 15,
+                    refresh_token_expiration_days: 7,
+                    issuer: "test".to_string(),
+                    audience: "test".to_string(),
+                    algorithm: "HS256".to_string(),
+                },
+                sso: SSOConfig {
+                    enabled: false,
+                    providers: vec![],
+                    token_cache_ttl_minutes: 5,
+                    aws_iam: None,
+                    azure_ad: None,
+                },
+            },
+            rbac: RBACConfig::default(),
+            audit: AuditConfig::default(),
+            tls: TlsConfig {
+                enabled: false,
+                require_client_certificates: false,
+                cert_file: None,
+                key_file: None,
+                ca_file: None,
+            },
+            compliance: ComplianceConfig {
+                frameworks: vec![],
+                data_residency: None,
+                encryption_at_rest: false,
+                encryption_in_transit: false,
+            },
+        }
+    }
+
+    fn build_security_config_with_jwt() -> SecurityConfig {
+        SecurityConfig {
+            enabled: true,
+            mode: SecurityMode::Development,
+            authentication: AuthenticationConfig {
+                enabled: true,
+                methods: vec![AuthenticationMethod::JWT],
+                require_authentication: true,
+                default_session_timeout_minutes: 60,
+                api_keys: HashMap::new(),
+                jwt: JwtConfig {
+                    enabled: true,
+                    secret: "dev-jwt-secret".to_string(),
+                    access_token_expiration_minutes: 15,
+                    refresh_token_expiration_days: 7,
+                    issuer: "proximadb-dev".to_string(),
+                    audience: "proximadb-clients".to_string(),
+                    algorithm: "HS256".to_string(),
+                },
+                sso: SSOConfig {
+                    enabled: false,
+                    providers: vec![],
+                    token_cache_ttl_minutes: 5,
+                    aws_iam: None,
+                    azure_ad: None,
+                },
+            },
+            rbac: RBACConfig::default(),
+            audit: AuditConfig::default(),
+            tls: TlsConfig {
+                enabled: false,
+                require_client_certificates: false,
+                cert_file: None,
+                key_file: None,
+                ca_file: None,
+            },
+            compliance: ComplianceConfig {
+                frameworks: vec![],
+                data_residency: None,
+                encryption_at_rest: false,
+                encryption_in_transit: false,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_unified_allows_valid_api_key() {
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(build_security_config_with_api_key())
+                .await
+                .unwrap(),
+        );
+
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .header("Authorization", "Api-Key test-key")
+            .body(Body::empty())
+            .unwrap();
+
+        let app = Router::new()
+            .route(
+                "/api/v1/search",
+                get(
+                    |Extension(ctx): Extension<crate::security::UnifiedUserContext>| async move {
+                        if ctx.user_id == "user1" {
+                            "ok"
+                        } else {
+                            "forbidden"
+                        }
+                    },
+                ),
+            )
+            .layer(middleware::from_fn_with_state(
+                coordinator.clone(),
+                auth_middleware_unified,
+            ));
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        assert_eq!(&body[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_unified_rejects_missing_header() {
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(build_security_config_with_api_key())
+                .await
+                .unwrap(),
+        );
+
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .body(Body::empty())
+            .unwrap();
+
+        let app = Router::new()
+            .route("/api/v1/search", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                coordinator.clone(),
+                auth_middleware_unified,
+            ));
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("Authorization header is required"));
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_unified_accepts_jwt() {
+        // Build a JWT that matches the security configuration
+        let cfg = build_security_config_with_jwt();
+        let jwt_service = JwtService::new(crate::network::auth::config::JwtConfig {
+            secret: Some(cfg.authentication.jwt.secret.clone()),
+            expiration_secs: cfg.authentication.jwt.access_token_expiration_minutes * 60,
+            refresh_expiration_secs: cfg.authentication.jwt.refresh_token_expiration_days * 24 * 3600,
+            issuer: cfg.authentication.jwt.issuer.clone(),
+            audience: cfg.authentication.jwt.audience.clone(),
+            algorithm: JwtAlgorithm::HS256,
+        })
+        .unwrap();
+
+        let token_pair = jwt_service
+            .generate_token_pair("jwt-user", None, vec!["reader".to_string()])
+            .await
+            .unwrap();
+
+        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .header("Authorization", format!("Bearer {}", token_pair.access_token))
+            .body(Body::empty())
+            .unwrap();
+
+        let app = Router::new()
+            .route(
+                "/api/v1/search",
+                get(
+                    |Extension(ctx): Extension<crate::security::UnifiedUserContext>| async move {
+                        format!("hello {}", ctx.user_id)
+                    },
+                ),
+            )
+            .layer(middleware::from_fn_with_state(
+                coordinator.clone(),
+                auth_middleware_unified,
+            ));
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("jwt-user"));
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_unified_rejects_invalid_jwt() {
+        let cfg = build_security_config_with_jwt();
+        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .header("Authorization", "Bearer invalid-token")
+            .body(Body::empty())
+            .unwrap();
+
+        let app = Router::new()
+            .route("/api/v1/search", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                coordinator.clone(),
+                auth_middleware_unified,
+            ));
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_unified_rejects_expired_jwt() {
+        let cfg = build_security_config_with_jwt();
+        let secret = cfg.authentication.jwt.secret.clone();
+
+        // Build an already-expired token that matches audience/issuer
+        let now = chrono::Utc::now().timestamp();
+        let claims = crate::network::auth::jwt::Claims {
+            sub: "jwt-user".to_string(),
+            iat: now - 300,
+            exp: now - 60,
+            nbf: now - 300,
+            iss: cfg.authentication.jwt.issuer.clone(),
+            aud: cfg.authentication.jwt.audience.clone(),
+            jti: "expired-token".to_string(),
+            tenant_id: None,
+            roles: vec!["reader".to_string()],
+            typ: crate::network::auth::jwt::TokenType::Access,
+        };
+        let expired_token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+
+        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .header("Authorization", format!("Bearer {}", expired_token))
+            .body(Body::empty())
+            .unwrap();
+
+        let app = Router::new()
+            .route("/api/v1/search", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                coordinator.clone(),
+                auth_middleware_unified,
+            ));
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_unified_rejects_jwt_with_wrong_issuer() {
+        // Coordinator expects issuer proximadb-dev; we mint a token with a mismatched issuer
+        let cfg = build_security_config_with_jwt();
+        let bad_jwt_service = JwtService::new(crate::network::auth::config::JwtConfig {
+            secret: Some(cfg.authentication.jwt.secret.clone()),
+            expiration_secs: cfg.authentication.jwt.access_token_expiration_minutes * 60,
+            refresh_expiration_secs: cfg.authentication.jwt.refresh_token_expiration_days * 24 * 3600,
+            issuer: "unexpected-issuer".to_string(),
+            audience: cfg.authentication.jwt.audience.clone(),
+            algorithm: JwtAlgorithm::HS256,
+        })
+        .unwrap();
+        let bad_token = bad_jwt_service
+            .generate_token_pair("jwt-user", None, vec!["reader".to_string()])
+            .await
+            .unwrap()
+            .access_token;
+
+        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+
+        let request = Request::builder()
+            .uri("/api/v1/search")
+            .header("Authorization", format!("Bearer {}", bad_token))
+            .body(Body::empty())
+            .unwrap();
+
+        let app = Router::new()
+            .route("/api/v1/search", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                coordinator.clone(),
+                auth_middleware_unified,
+            ));
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

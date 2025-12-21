@@ -9,8 +9,15 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn, error};
 
-use super::{CompactionResult, OperationType};
-use crate::storage::engines::StorageEngineType;
+// Import from parent operations module
+use crate::storage::operations::{CompactionResult, OperationType};
+use crate::storage::types::StorageEngineType;
+
+// Import from our strategies module (unused but kept for future integration)
+#[allow(unused_imports)]
+use super::strategies::{
+    CompactionPlan, CompactionStrategyRegistry, FileMetadata, CompactionExecutionResult,
+};
 
 /// Compaction manager coordinates optimization operations across storage engines
 pub struct CompactionManager {
@@ -49,7 +56,7 @@ impl Default for CompactionConfig {
             max_concurrent_compactions: 3,
             minor_compaction_threshold: 4,
             major_compaction_threshold: 10,
-            max_compaction_interval: Duration::from_hours(24),
+            max_compaction_interval: Duration::from_secs(24 * 60 * 60), // 24 hours
             target_file_size_mb: 128,
         }
     }
@@ -391,7 +398,8 @@ pub struct CompactionStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::StorageEngineType;
+    #[allow(unused_imports)]
+    use crate::storage::types::StorageEngineType;
 
     #[tokio::test]
     async fn test_compaction_manager_creation() {

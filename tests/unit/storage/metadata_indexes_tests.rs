@@ -17,7 +17,7 @@
 //! Unit tests for metadata memory indexes functionality
 
 use proximadb::proto::proximadb_v1::{
-    Collection, CollectionConfig, CollectionStats, DistanceMetric, IndexingAlgorithm, StorageEngine,
+    Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine,
 };
 use proximadb::storage::metadata::indexes::MetadataMemoryIndexes;
 

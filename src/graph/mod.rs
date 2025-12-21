@@ -66,7 +66,7 @@ pub mod service;
 pub use engines::orion::OrionGraphEngine;
 pub use engines::pulsar::PulsarGraphEngine;
 pub use engines::quasar::QuasarGraphEngine;
-pub use engines::{EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType};
+pub use engines::{EmbeddingMode, EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType};
 pub use hybrid::HybridQueryEngine;
 pub use monitoring::GraphMonitor;
 pub use query::{PatternMatcher, QueryPlanner};

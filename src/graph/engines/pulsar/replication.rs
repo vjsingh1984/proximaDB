@@ -23,6 +23,7 @@ use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::graph::engines::pulsar::sharding::ConsistentHashRing;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,6 +39,8 @@ pub struct ReplicationManager {
     replica_mapping: Arc<RwLock<HashMap<u32, Vec<u32>>>>,
     /// Reference to all shard engines
     shards: Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
+    /// Consistent hash ring for primary selection
+    hash_ring: Arc<RwLock<ConsistentHashRing>>,
     /// Replication statistics
     stats: Arc<RwLock<ReplicationStats>>,
 }
@@ -65,7 +68,11 @@ pub enum ReplicationStrategy {
 
 impl ReplicationManager {
     /// Create a new replication manager
-    pub fn new(replication_factor: u8, shards: &Arc<DashMap<u32, Arc<OrionGraphEngine>>>) -> Self {
+    pub fn new(
+        replication_factor: u8,
+        shards: &Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
+        hash_ring: Arc<RwLock<ConsistentHashRing>>,
+    ) -> Self {
         if replication_factor == 0 || replication_factor > 3 {
             panic!("Replication factor must be between 1 and 3");
         }
@@ -76,6 +83,7 @@ impl ReplicationManager {
             replication_factor,
             replica_mapping: Arc::new(RwLock::new(replica_mapping)),
             shards: Arc::clone(shards),
+            hash_ring,
             stats: Arc::new(RwLock::new(ReplicationStats::default())),
         }
     }
@@ -186,8 +194,20 @@ impl ReplicationManager {
 
         if replicas.is_empty() {
             // No replication needed
+            tracing::debug!(
+                "Replication skipped (replication_factor=1) for primary shard {}",
+                primary_shard
+            );
             return Ok(());
         }
+
+        tracing::debug!(
+            "Replicating operation {:?} from primary shard {} to replicas {:?} via {:?}",
+            operation,
+            primary_shard,
+            replicas,
+            strategy
+        );
 
         match strategy {
             ReplicationStrategy::Synchronous => {
@@ -364,8 +384,7 @@ impl ReplicationManager {
 
     /// Get primary shard for an operation (for determining replicas)
     fn get_primary_shard_for_operation(&self, operation: &ReplicationOperation) -> Result<u32> {
-        // For now, simple hash-based assignment
-        // In a real implementation, this would use the consistent hash ring
+        // Use consistent hash ring for primary selection
         let key = match operation {
             ReplicationOperation::InsertNode(node) => &node.id,
             ReplicationOperation::UpdateNode(node) => &node.id,
@@ -375,11 +394,10 @@ impl ReplicationManager {
             ReplicationOperation::DeleteEdge(edge_id) => edge_id,
         };
 
-        // Simple hash function for demo purposes
-        let hash = key.chars().map(|c| c as u32).sum::<u32>();
-        let shard_count = self.shards.len() as u32;
-
-        Ok(hash % shard_count)
+        let ring = self.hash_ring.try_read().map_err(|_| {
+            ProximaDBError::Internal("Failed to acquire hash ring lock for replication".into())
+        })?;
+        Ok(ring.get_shard(key))
     }
 
     /// Get replication statistics
@@ -473,7 +491,8 @@ mod tests {
     #[tokio::test]
     async fn test_replication_manager_creation() {
         let shards = create_test_shards(4);
-        let manager = ReplicationManager::new(2, &shards);
+        let hash_ring = Arc::new(RwLock::new(ConsistentHashRing::new(4)));
+        let manager = ReplicationManager::new(2, &shards, hash_ring);
 
         assert_eq!(manager.replication_factor, 2);
 
@@ -486,7 +505,8 @@ mod tests {
     #[tokio::test]
     async fn test_node_replication() {
         let shards = create_test_shards(3);
-        let manager = ReplicationManager::new(2, &shards);
+        let hash_ring = Arc::new(RwLock::new(ConsistentHashRing::new(3)));
+        let manager = ReplicationManager::new(2, &shards, hash_ring);
 
         let test_node = Node {
             id: "test_node".to_string(),
@@ -510,7 +530,8 @@ mod tests {
     #[tokio::test]
     async fn test_replica_health_check() {
         let shards = create_test_shards(2);
-        let manager = ReplicationManager::new(2, &shards);
+        let hash_ring = Arc::new(RwLock::new(ConsistentHashRing::new(2)));
+        let manager = ReplicationManager::new(2, &shards, hash_ring);
 
         // Initially no replication history
         let health = manager.check_replica_health().await.unwrap();

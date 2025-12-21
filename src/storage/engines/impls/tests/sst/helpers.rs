@@ -434,6 +434,7 @@ pub fn create_test_search_params() -> SearchParams {
         progressive_recalls: None,
         optimization_hint: None,
         search_mode: crate::core::search::SearchMode::default(),
+        block_prune: crate::core::search::BlockPruneConfig::default(),
     }
 }
 

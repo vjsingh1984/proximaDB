@@ -422,13 +422,20 @@ impl GraphEngine for QuasarGraphEngine {
     }
 
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        // Simple sync implementation: check hot tier first for test compatibility
+        // Check hot tier first (non-blocking)
         if let Ok(Some(node)) = self.hot_tier.get_node(id) {
-            Ok(Some(node))
-        } else {
-            // For tests, just return None if not in hot tier to avoid async complexity
-            Ok(None)
+            let access_cache = Arc::clone(&self.access_cache);
+            let node_id = id.clone();
+            tokio::spawn(async move {
+                let _ = access_cache
+                    .record_access(node_id.as_str(), Instant::now())
+                    .await;
+            });
+            return Ok(Some(node));
         }
+
+        // Cold-tier access is intentionally skipped in this sync path to avoid blocking
+        Ok(None)
     }
 
     async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
@@ -495,8 +502,15 @@ impl GraphEngine for QuasarGraphEngine {
     }
 
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        // Return hot-tier edge synchronously; skip cold tier to avoid blocking
-        self.hot_tier.get_edge(id)
+        if let Ok(Some(edge)) = self.hot_tier.get_edge(id) {
+            let _ = self
+                .access_cache
+                .record_access(id.as_str(), Instant::now());
+            return Ok(Some(edge));
+        }
+
+        // Cold-tier access is intentionally skipped in this sync path to avoid blocking
+        Ok(None)
     }
 
     async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
@@ -596,13 +610,11 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn node_count(&self) -> Result<usize> {
         let hot_count = self.hot_tier.node_count()?;
-        // For test compatibility, only count hot tier to avoid async complexity
         Ok(hot_count)
     }
 
     fn edge_count(&self) -> Result<usize> {
         let hot_count = self.hot_tier.edge_count()?;
-        // For test compatibility, only count hot tier to avoid async complexity
         Ok(hot_count)
     }
 
@@ -611,6 +623,60 @@ impl GraphEngine for QuasarGraphEngine {
         // Cold-tier enumeration is skipped here to keep this method safe for sync contexts
         // (benchmarks and other non-async callers).
         self.hot_tier.get_all_nodes()
+    }
+
+    // ===== Bulk Operations - Delegate to hot tier (ORION) for performance =====
+
+    async fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+        let count = nodes.len();
+        let results = self.hot_tier.bulk_insert_nodes(nodes).await?;
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_nodes += count as u64;
+        }
+
+        Ok(results)
+    }
+
+    async fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+        let count = edges.len();
+        let results = self.hot_tier.bulk_insert_edges(edges).await?;
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_edges += count as u64;
+        }
+
+        Ok(results)
+    }
+
+    async fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
+        let results = self.hot_tier.bulk_delete_nodes(node_ids).await?;
+
+        // Update stats for deleted nodes
+        let deleted_count = results.iter().filter(|r| r.is_some()).count();
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_nodes = stats.hot_tier_nodes.saturating_sub(deleted_count as u64);
+        }
+
+        Ok(results)
+    }
+
+    async fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
+        let results = self.hot_tier.bulk_delete_edges(edge_ids).await?;
+
+        // Update stats for deleted edges
+        let deleted_count = results.iter().filter(|r| r.is_some()).count();
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_edges = stats.hot_tier_edges.saturating_sub(deleted_count as u64);
+        }
+
+        Ok(results)
     }
 }
 
@@ -691,5 +757,45 @@ mod tests {
         assert_eq!(config.hot_tier_max_nodes, 100);
         assert_eq!(config.cold_migration_threshold, Duration::from_secs(10));
         assert_eq!(config.hot_promotion_threshold, Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_cold_hit_promotes_to_hot() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = QuasarConfig {
+            cold_tier_path: temp_dir.path().to_path_buf(),
+            hot_tier_max_nodes: 1,
+            ..QuasarConfig::default()
+        };
+
+        let engine = QuasarGraphEngine::new(config).await.unwrap();
+
+        // Insert a node directly into cold tier to simulate eviction
+        let cold_node = Node {
+            id: "cold_node".to_string(),
+            labels: vec!["Cold".to_string()],
+            properties: std::collections::HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        engine.cold_tier.store_node(cold_node.clone()).await.unwrap();
+        {
+            let mut stats = engine.stats.write().await;
+            stats.cold_tier_nodes += 1;
+        }
+
+        // Should miss hot, hit cold, and schedule promotion
+        // Use get_node_from_tiers which checks both tiers (sync get_node skips cold tier)
+        let retrieved = engine.get_node_from_tiers(&"cold_node".to_string()).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().id, "cold_node");
+
+        // Give promotion task a moment to complete
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Verify hot tier has the node now
+        let hot_has = engine.hot_tier.get_node(&"cold_node".to_string()).unwrap().is_some();
+        assert!(hot_has, "Node should have been promoted to hot tier");
     }
 }

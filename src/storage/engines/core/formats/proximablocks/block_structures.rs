@@ -335,6 +335,183 @@ pub struct ProximaBlockMetadata {
     pub metadata_checksum: u32,
 }
 
+impl ProximaBlockMetadata {
+    /// Serialize metadata robustly handling JSON values
+    pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
+        use std::io::Write;
+        let mut buffer = Vec::new();
+        
+        // Version 1
+        buffer.write_all(b"PBMB")?;
+        buffer.write_all(&1u32.to_le_bytes())?;
+        
+        // Basic fields
+        buffer.write_all(&self.record_count.to_le_bytes())?;
+        buffer.write_all(&self.size_bytes.to_le_bytes())?;
+        buffer.write_all(&self.compressed_size.to_le_bytes())?;
+        buffer.write_all(&self.timestamp.to_le_bytes())?;
+        buffer.write_all(&[self.compaction_level])?;
+        buffer.write_all(&[if self.has_deletes { 1u8 } else { 0u8 }])?;
+        buffer.write_all(&[if self.has_updates { 1u8 } else { 0u8 }])?;
+        buffer.write_all(&self.version_range.0.to_le_bytes())?;
+        buffer.write_all(&self.version_range.1.to_le_bytes())?;
+        
+        // Column Stats
+        buffer.write_all(&(self.column_stats.len() as u32).to_le_bytes())?;
+        for (name, stat) in &self.column_stats {
+            let name_bytes = name.as_bytes();
+            buffer.write_all(&(name_bytes.len() as u32).to_le_bytes())?;
+            buffer.write_all(name_bytes)?;
+            
+            // Serialize stat fields
+            let stat_name_bytes = stat.name.as_bytes();
+            buffer.write_all(&(stat_name_bytes.len() as u32).to_le_bytes())?;
+            buffer.write_all(stat_name_bytes)?;
+            buffer.write_all(&stat.null_count.to_le_bytes())?;
+            buffer.write_all(&stat.distinct_count.to_le_bytes())?;
+            buffer.write_all(&stat.avg_size_bytes.to_le_bytes())?;
+            buffer.write_all(&[if stat.bloom_filter_enabled { 1u8 } else { 0u8 }])?;
+            
+            // JSON values using safe serializer
+            crate::core::search::json_value_serde::serialize_json_value(&stat.min_value.clone().unwrap_or(serde_json::Value::Null), &mut buffer)?;
+            crate::core::search::json_value_serde::serialize_json_value(&stat.max_value.clone().unwrap_or(serde_json::Value::Null), &mut buffer)?;
+        }
+        
+        // Quantization stats (safe for bincode as no JSON)
+        let q_stats = bincode::serialize(&self.quantization_stats)?;
+        buffer.write_all(&(q_stats.len() as u32).to_le_bytes())?;
+        buffer.write_all(&q_stats)?;
+        
+        // Checksums
+        buffer.write_all(&self.data_checksum.to_le_bytes())?;
+        buffer.write_all(&self.metadata_checksum.to_le_bytes())?;
+        
+        Ok(buffer)
+    }
+
+    /// Deserialize metadata
+    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
+        use std::io::Read;
+        let mut cursor = std::io::Cursor::new(data);
+        
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+        if &magic != b"PBMB" {
+            // Fallback for old bincode format if needed, but for now strict
+             return Err(anyhow::anyhow!("Invalid ProximaBlockMetadata magic"));
+        }
+        
+        let mut u32_buf = [0u8; 4];
+        cursor.read_exact(&mut u32_buf)?;
+        let _version = u32::from_le_bytes(u32_buf);
+        
+        cursor.read_exact(&mut u32_buf)?;
+        let record_count = u32::from_le_bytes(u32_buf);
+        
+        let mut u64_buf = [0u8; 8];
+        cursor.read_exact(&mut u64_buf)?;
+        let size_bytes = u64::from_le_bytes(u64_buf);
+        
+        cursor.read_exact(&mut u64_buf)?;
+        let compressed_size = u64::from_le_bytes(u64_buf);
+        
+        let mut i64_buf = [0u8; 8];
+        cursor.read_exact(&mut i64_buf)?;
+        let timestamp = i64::from_le_bytes(i64_buf);
+        
+        let mut u8_buf = [0u8; 1];
+        cursor.read_exact(&mut u8_buf)?;
+        let compaction_level = u8_buf[0];
+        
+        cursor.read_exact(&mut u8_buf)?;
+        let has_deletes = u8_buf[0] != 0;
+        
+        cursor.read_exact(&mut u8_buf)?;
+        let has_updates = u8_buf[0] != 0;
+        
+        cursor.read_exact(&mut i64_buf)?;
+        let v_start = i64::from_le_bytes(i64_buf);
+        cursor.read_exact(&mut i64_buf)?;
+        let v_end = i64::from_le_bytes(i64_buf);
+        
+        // Column Stats
+        cursor.read_exact(&mut u32_buf)?;
+        let col_count = u32::from_le_bytes(u32_buf);
+        let mut column_stats = HashMap::new();
+        
+        for _ in 0..col_count {
+            cursor.read_exact(&mut u32_buf)?;
+            let name_len = u32::from_le_bytes(u32_buf) as usize;
+            let mut name_bytes = vec![0u8; name_len];
+            cursor.read_exact(&mut name_bytes)?;
+            let key_name = String::from_utf8(name_bytes)?;
+            
+            cursor.read_exact(&mut u32_buf)?;
+            let stat_name_len = u32::from_le_bytes(u32_buf) as usize;
+            let mut stat_name_bytes = vec![0u8; stat_name_len];
+            cursor.read_exact(&mut stat_name_bytes)?;
+            let stat_name = String::from_utf8(stat_name_bytes)?;
+            
+            cursor.read_exact(&mut u32_buf)?;
+            let null_count = u32::from_le_bytes(u32_buf);
+            
+            cursor.read_exact(&mut u32_buf)?;
+            let distinct_count = u32::from_le_bytes(u32_buf);
+            
+            cursor.read_exact(&mut u64_buf)?;
+            let avg_size_bytes = u64::from_le_bytes(u64_buf);
+            
+            cursor.read_exact(&mut u8_buf)?;
+            let bloom_filter_enabled = u8_buf[0] != 0;
+            
+            let min_value = crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+            let max_value = crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+            
+            // Convert Null to None
+            let min_value = if let Some(serde_json::Value::Null) = min_value { None } else { min_value };
+            let max_value = if let Some(serde_json::Value::Null) = max_value { None } else { max_value };
+
+            column_stats.insert(key_name, ColumnStatistics {
+                name: stat_name,
+                null_count,
+                distinct_count,
+                min_value,
+                max_value,
+                avg_size_bytes,
+                bloom_filter_enabled,
+            });
+        }
+        
+        // Quantization stats
+        cursor.read_exact(&mut u32_buf)?;
+        let q_len = u32::from_le_bytes(u32_buf) as usize;
+        let mut q_bytes = vec![0u8; q_len];
+        cursor.read_exact(&mut q_bytes)?;
+        let quantization_stats = bincode::deserialize(&q_bytes)?;
+        
+        cursor.read_exact(&mut u64_buf)?;
+        let data_checksum = u64::from_le_bytes(u64_buf);
+        
+        cursor.read_exact(&mut u32_buf)?;
+        let metadata_checksum = u32::from_le_bytes(u32_buf);
+        
+        Ok(Self {
+            record_count,
+            size_bytes,
+            compressed_size,
+            timestamp,
+            compaction_level,
+            has_deletes,
+            has_updates,
+            version_range: (v_start, v_end),
+            column_stats,
+            quantization_stats,
+            data_checksum,
+            metadata_checksum,
+        })
+    }
+}
+
 /// Column statistics for optimization
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColumnStatistics {
@@ -1590,25 +1767,28 @@ impl ProximaDataBlock {
                     // Set bit in presence bitmap
                     presence_bitmap[idx / 8] |= 1 << (idx % 8);
 
-                    // Serialize value
+                    // Serialize value WITH TYPE TAG for unambiguous deserialization
+                    // Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
                     if let Some(value) = &sql_value.value {
-                        // Encode the metadata value based on its type
-                        let value_bytes = match value {
+                        let (type_tag, value_bytes): (u8, Vec<u8>) = match value {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                                s.as_bytes().to_vec()
+                                (0x01, s.as_bytes().to_vec())
                             }
                             crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                                n.to_le_bytes().to_vec()
+                                (0x02, n.to_le_bytes().to_vec())
                             }
                             crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                                i.to_le_bytes().to_vec()
+                                (0x03, i.to_le_bytes().to_vec())
                             }
                             crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                                vec![if *b { 1 } else { 0 }]
+                                (0x04, vec![if *b { 1 } else { 0 }])
                             }
-                            _ => vec![], // Handle other variants
+                            _ => (0x00, vec![]), // Handle other variants
                         };
-                        sparse_values.write_all(&(value_bytes.len() as u32).to_le_bytes())?;
+                        // Write: [u32 total_len][u8 type_tag][value_bytes]
+                        let total_len = 1 + value_bytes.len();
+                        sparse_values.write_all(&(total_len as u32).to_le_bytes())?;
+                        sparse_values.write_all(&[type_tag])?;
                         sparse_values.write_all(&value_bytes)?;
                     } else {
                         sparse_values.write_all(&0u32.to_le_bytes())?;
@@ -1869,7 +2049,7 @@ impl ProximaDataBlock {
         // No serialization needed for input records
 
         // ============ STEP 8: Write block metadata ============
-        let metadata_bytes = bincode::serialize(&self.metadata)?;
+        let metadata_bytes = self.metadata.serialize()?;
         result.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
         result.write_all(&metadata_bytes)?;
         debug!(
@@ -2006,20 +2186,82 @@ impl ProximaDataBlock {
         Self::deserialize_metadata_value_heuristic(val_bytes)
     }
 
-    /// Heuristic-based deserialization for non-filterable metadata
-    /// Similar to Parquet's extra_meta approach (best-effort type guessing)
+    /// Type-tagged deserialization for metadata values
+    /// New format (v2): [type_tag:1][value_bytes:N]
+    /// Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
+    /// Falls back to heuristic for legacy data without type tags
     fn deserialize_metadata_value_heuristic(
         val_bytes: &[u8],
     ) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
-        // For non-filterable metadata, we use heuristics (no type info available)
-        // Could also just store everything as strings like Parquet's extra_meta
+        if val_bytes.is_empty() {
+            return SqlValue { value: None };
+        }
+
+        // Check for type tag format (new v2 format)
+        let type_tag = val_bytes[0];
+        let payload = &val_bytes[1..];
+
+        match type_tag {
+            0x01 => {
+                // String
+                let s = String::from_utf8_lossy(payload).to_string();
+                SqlValue {
+                    value: Some(Value::StringValue(s)),
+                }
+            }
+            0x02 if payload.len() == 8 => {
+                // Number (f64)
+                let num = f64::from_le_bytes(payload.try_into().unwrap_or([0u8; 8]));
+                SqlValue {
+                    value: Some(Value::NumberValue(num)),
+                }
+            }
+            0x03 if payload.len() == 8 => {
+                // Int64
+                let i = i64::from_le_bytes(payload.try_into().unwrap_or([0u8; 8]));
+                SqlValue {
+                    value: Some(Value::Int64Value(i)),
+                }
+            }
+            0x04 if payload.len() == 1 => {
+                // Bool
+                SqlValue {
+                    value: Some(Value::BoolValue(payload[0] != 0)),
+                }
+            }
+            0x00 => {
+                // None
+                SqlValue { value: None }
+            }
+            _ => {
+                // Legacy format fallback (no type tag) - use old heuristic
+                // This ensures backward compatibility with existing SST files
+                Self::deserialize_metadata_value_legacy_heuristic(val_bytes)
+            }
+        }
+    }
+
+    /// Legacy heuristic for data without type tags (backward compatibility)
+    fn deserialize_metadata_value_legacy_heuristic(
+        val_bytes: &[u8],
+    ) -> crate::proto::proximadb_v1::SqlValue {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+
         let val_len = val_bytes.len();
 
         if val_len == 8 {
-            // 8 bytes: could be f64 or i64
-            // Default to f64 (most common for non-filterable metadata)
+            // 8 bytes: could be f64 or i64 - check if it looks like valid UTF-8 string first
+            if let Ok(s) = std::str::from_utf8(val_bytes) {
+                if s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                    // Looks like a string identifier (e.g., "inactive", "category")
+                    return SqlValue {
+                        value: Some(Value::StringValue(s.to_string())),
+                    };
+                }
+            }
+            // Default to f64 for numeric data
             let num = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
             SqlValue {
                 value: Some(Value::NumberValue(num)),
@@ -2784,7 +3026,7 @@ impl ProximaDataBlock {
 
         let mut metadata_bytes = vec![0u8; metadata_len];
         cursor.read_exact(&mut metadata_bytes)?;
-        let metadata: ProximaBlockMetadata = bincode::deserialize(&metadata_bytes)?;
+        let metadata = ProximaBlockMetadata::deserialize(&metadata_bytes)?;
         trace!("[DECODE] Block metadata deserialized successfully");
 
         // ============ RECONSTRUCT COMPLETE VECTORRECORDS FROM COLUMNAR DATA ============

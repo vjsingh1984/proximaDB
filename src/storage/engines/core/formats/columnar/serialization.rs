@@ -107,13 +107,26 @@ pub enum VectorizationStrategy {
 }
 
 impl Default for MemoryOptimizationConfig {
+    /// Default memory optimization configuration (Audited December 2024)
+    ///
+    /// ## Best Practices Applied:
+    /// - Memory pools: Reduce allocation overhead by reusing buffers
+    /// - Zero-copy: Use bytemuck::cast_slice for FP32 serialization
+    /// - Mmap: Enable memory-mapped I/O for large arrays
+    /// - SIMD alignment: 64-byte cache-line boundaries for AVX2/AVX-512/NEON
+    ///
+    /// ## Performance Impact:
+    /// - Memory pools reduce GC pressure and allocation latency
+    /// - Zero-copy eliminates buffer copies during serialization
+    /// - Mmap enables OS-level caching and prefetching
+    /// - 64-byte alignment enables direct SIMD operations without realignment
     fn default() -> Self {
         Self {
             enable_memory_pools: true,
             enable_zero_copy: true,
             batch_size: 1024,
             enable_mmap: true,
-            simd_alignment: 64, // Cache line aligned
+            simd_alignment: 64, // Cache-line aligned for AVX2/AVX-512/NEON
         }
     }
 }
@@ -1038,6 +1051,7 @@ impl From<FormatPreference> for SelectedFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::BinaryArray;
 
     #[tokio::test]
     async fn test_fp32_serialization() {

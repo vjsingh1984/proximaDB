@@ -382,6 +382,7 @@ pub async fn start_wal_compaction_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::axis::eventlog::{EventType, StorageEngineType};
     use tempfile::TempDir;
 
     #[tokio::test]

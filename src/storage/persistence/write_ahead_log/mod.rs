@@ -73,6 +73,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::cell::UnsafeCell;
 use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
 
@@ -108,6 +109,8 @@ pub mod manifest; // Global WAL manifest system (unified)
 pub mod memtable_manager; // New centralized memtable operations
 pub mod optimized_write_buffer_writer;
 pub mod parallel_search;
+pub mod pitr; // Point-in-Time Recovery manager
+pub mod backup; // Incremental backup coordinator
 pub mod proto_serialization_strategy; // Clean architecture proto implementation
 pub mod recovery_manager; // New centralized recovery operations
 pub mod recovery_thread_pool; // Thread pool for parallel recovery
@@ -949,11 +952,37 @@ impl WriteAheadLogManagerRegistry {
     }
 }
 
+/// Minimal resettable wrapper around OnceLock to support tests that create multiple embedded instances.
+struct ResettableOnceLock<T> {
+    inner: UnsafeCell<std::sync::OnceLock<T>>,
+}
+
+impl<T> ResettableOnceLock<T> {
+    const fn new() -> Self {
+        Self {
+            inner: UnsafeCell::new(std::sync::OnceLock::new()),
+        }
+    }
+
+    fn get(&self) -> &std::sync::OnceLock<T> {
+        // Safety: OnceLock provides interior mutability; reset is gated by test-only API.
+        unsafe { &*self.inner.get() }
+    }
+
+    unsafe fn reset(&self) {
+        unsafe {
+            *self.inner.get() = std::sync::OnceLock::new();
+        }
+    }
+}
+
+unsafe impl<T: Send + Sync> Sync for ResettableOnceLock<T> {}
+
 /// Global WALBehaviorWrapper singleton for shared memtable access across all WriteAheadLogManager instances
 /// This is the key to efficient shared access - one memtable, many managers
 pub struct GlobalWriteBufferBehaviorSingleton {
     /// The singleton WALBehaviorWrapper with GlobalPartitionedMemtable
-    wal_behavior: std::sync::OnceLock<
+    wal_behavior: ResettableOnceLock<
         Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
     >,
 }
@@ -964,7 +993,7 @@ impl GlobalWriteBufferBehaviorSingleton {
         &self,
         config: &crate::storage::memtable::core::MemtableConfig,
     ) -> Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper> {
-        self.wal_behavior.get_or_init(|| {
+        self.wal_behavior.get().get_or_init(|| {
             tracing::info!("🎯 Creating SINGLETON WALBehaviorWrapper with GlobalPartitionedMemtable for all WriteAheadLogManager instances");
             Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(config.clone()))
         }).clone()
@@ -974,23 +1003,35 @@ impl GlobalWriteBufferBehaviorSingleton {
 /// Global singleton instance - shared across all WriteAheadLogManager instances
 static GLOBAL_WRITE_BUFFER_BEHAVIOR: GlobalWriteBufferBehaviorSingleton =
     GlobalWriteBufferBehaviorSingleton {
-        wal_behavior: std::sync::OnceLock::new(),
+        wal_behavior: ResettableOnceLock::new(),
     };
 
 /// Global registry instance for WriteAheadLogManager per collection architecture
-static WAL_MANAGER_REGISTRY: std::sync::OnceLock<WriteAheadLogManagerRegistry> =
-    std::sync::OnceLock::new();
+static WAL_MANAGER_REGISTRY: ResettableOnceLock<WriteAheadLogManagerRegistry> =
+    ResettableOnceLock::new();
 
 /// Global metadata provider singleton - shared across ALL WriteAheadLogManager instances
 /// This ensures that pool instances created after set_metadata_provider() can still access
 /// the provider. Without this, pool instances would have their own empty Arc<RwLock<None>>.
-static GLOBAL_METADATA_PROVIDER: std::sync::OnceLock<
-    Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>
-> = std::sync::OnceLock::new();
+type GlobalMetadataValue = Arc<
+    tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>,
+>;
+
+static GLOBAL_METADATA_PROVIDER: ResettableOnceLock<GlobalMetadataValue> =
+    ResettableOnceLock::new();
+
+/// Internal helper to reset global singletons (tests/embedded only)
+pub(crate) unsafe fn reset_global_wal_state_for_tests() {
+    unsafe {
+        GLOBAL_METADATA_PROVIDER.reset();
+        GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.reset();
+        WAL_MANAGER_REGISTRY.reset();
+    }
+}
 
 /// Get or initialize the global metadata provider
 fn get_global_metadata_provider() -> Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>> {
-    GLOBAL_METADATA_PROVIDER.get_or_init(|| {
+    GLOBAL_METADATA_PROVIDER.get().get_or_init(|| {
         Arc::new(tokio::sync::RwLock::new(None))
     }).clone()
 }
@@ -1042,12 +1083,12 @@ pub async fn wait_for_global_metadata_provider(timeout: std::time::Duration) -> 
 /// This is used during graceful shutdown to access unflushed data and flush
 /// all collections to their respective storage engines.
 pub fn get_global_write_buffer_behavior() -> Option<Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>> {
-    GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.get().cloned()
+    GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.get().get().cloned()
 }
 
 /// Get the global WriteAheadLogManager registry
 pub fn get_write_ahead_log_manager_registry() -> &'static WriteAheadLogManagerRegistry {
-    WAL_MANAGER_REGISTRY.get_or_init(|| {
+    WAL_MANAGER_REGISTRY.get().get_or_init(|| {
         tracing::info!("🎯 Initializing WriteAheadLogManager Registry for per-collection scaling");
         WriteAheadLogManagerRegistry::new()
     })

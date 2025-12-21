@@ -59,6 +59,7 @@ use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
 use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
+use crate::security::SecurityCoordinator;
 use crate::storage::StorageEngine;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -818,6 +819,12 @@ impl SharedServices {
         let mut graph_service_inst = crate::graph::GraphOperationsService::new_with_collection_service(
             graph_collection_service.clone()
         );
+        // Wire the storage root so graph engines persist under the same base path as vectors
+        if let Some(first_loc) = storage_config.storage_locations.first() {
+            graph_service_inst.set_base_storage_url(first_loc.url.clone());
+        } else {
+            graph_service_inst.set_base_storage_url(storage_config.metadata_url.clone());
+        }
 
         // Create a simple file-backed metrics updater under data_root/metrics
         let filesystem_factory =
@@ -1064,13 +1071,20 @@ impl SharedServices {
 pub struct MultiServer {
     config: MultiServerConfig,
     pub shared_services: SharedServices, // Made public for recovery access
+    security_coordinator: Option<Arc<SecurityCoordinator>>,
+    rest_auth_enabled: bool,
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl MultiServer {
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
-    pub fn new(config: MultiServerConfig, shared_services: SharedServices) -> Self {
+    pub fn new(
+        config: MultiServerConfig,
+        shared_services: SharedServices,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+        rest_auth_enabled: bool,
+    ) -> Self {
         info!("🚀 MultiServer: Initializing network orchestrator");
         info!(
             "📡 MultiServer: gRPC port: {}, REST port: {}",
@@ -1081,6 +1095,8 @@ impl MultiServer {
         Self {
             config,
             shared_services,
+            security_coordinator,
+            rest_auth_enabled,
             server_handles: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -1227,20 +1243,28 @@ impl MultiServer {
             let rest_bind_addr = self.config.http_bind_address();
             let unified_handlers = services.unified_handlers.clone();
             let metrics_collector = services.metrics_collector.clone();
+            let security_coordinator = self.security_coordinator.clone();
+            let rest_auth_enabled = self.rest_auth_enabled;
 
             let api_config = self.config.api_config.clone();
             // Compression disabled by default (field doesn't exist in config)
             let enable_compression = false;
             let rest_handle = tokio::spawn(async move {
-                use crate::network::rest::server::RestServer;
+                use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
-                match RestServer::new(
+                let mut rest_security = RestServerSecurityConfig::default();
+                let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
+                rest_security.auth.enabled = auth_enabled;
+
+                match RestServer::with_security(
                     rest_bind_addr,
                     unified_handlers,
                     max_request_size_mb,
                     enable_compression,
                     metrics_collector,
+                    security_coordinator,
+                    rest_security,
                 )
                 .start()
                 .await

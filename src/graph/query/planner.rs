@@ -57,6 +57,30 @@ pub struct PlannerConfig {
     pub optimizations: OptimizationFlags,
 }
 
+/// Trait for extensible cost estimation
+pub trait CostEstimator: Send + Sync {
+    /// Estimate cost of node scan
+    fn estimate_scan_cost(&self, cardinality: usize) -> f64;
+
+    /// Estimate cost of index seek
+    fn estimate_index_seek_cost(&self, cardinality: usize) -> f64;
+
+    /// Estimate cost of edge expansion
+    fn estimate_expand_cost(&self, input_card: usize, avg_degree: f64) -> f64;
+
+    /// Estimate cost of pattern matching
+    fn estimate_pattern_cost(&self, pattern: &CompiledPattern, stats: &GraphStatistics) -> f64;
+
+    /// Estimate selectivity of node pattern
+    fn estimate_node_selectivity(&self, pattern: &super::ast::NodePattern, stats: &GraphStatistics) -> f64;
+
+    /// Estimate selectivity of edge pattern
+    fn estimate_edge_selectivity(&self, pattern: &super::ast::EdgePattern, stats: &GraphStatistics) -> f64;
+
+    /// Estimate selectivity of WHERE clause
+    fn estimate_where_selectivity(&self, clause: &super::ast::WhereClause, stats: &GraphStatistics) -> f64;
+}
+
 /// Cost model parameters for estimation
 #[derive(Debug, Clone)]
 pub struct CostModel {
@@ -333,6 +357,193 @@ impl CostEstimate {
             self.io_cost + other.io_cost,
             self.memory_cost + other.memory_cost,
         )
+    }
+}
+
+/// Implementation of CostEstimator trait for CostModel
+impl CostEstimator for CostModel {
+    fn estimate_scan_cost(&self, cardinality: usize) -> f64 {
+        cardinality as f64 * self.node_access_cost
+    }
+
+    fn estimate_index_seek_cost(&self, cardinality: usize) -> f64 {
+        self.index_seek_cost + (cardinality as f64 * self.index_scan_cost)
+    }
+
+    fn estimate_expand_cost(&self, input_card: usize, avg_degree: f64) -> f64 {
+        input_card as f64 * avg_degree * self.edge_traversal_cost
+    }
+
+    fn estimate_pattern_cost(&self, pattern: &CompiledPattern, stats: &GraphStatistics) -> f64 {
+        let mut total_cost = 0.0;
+
+        // Estimate node pattern costs
+        for node_pattern in &pattern.nodes {
+            let selectivity = self.estimate_node_selectivity(node_pattern, stats);
+            let cardinality = (stats.node_count as f64 * selectivity).max(1.0) as usize;
+            total_cost += self.estimate_scan_cost(cardinality);
+        }
+
+        // Estimate edge pattern costs
+        for edge_pattern in &pattern.edges {
+            let selectivity = self.estimate_edge_selectivity(edge_pattern, stats);
+            let cardinality = (stats.edge_count as f64 * selectivity).max(1.0) as usize;
+            total_cost += self.edge_traversal_cost * cardinality as f64;
+        }
+
+        // Estimate WHERE clause costs
+        for where_clause in &pattern.where_clauses {
+            let selectivity = self.estimate_where_selectivity(where_clause, stats);
+            total_cost += self.cpu_cost * selectivity;
+        }
+
+        total_cost
+    }
+
+    fn estimate_node_selectivity(&self, pattern: &super::ast::NodePattern, stats: &GraphStatistics) -> f64 {
+        let mut selectivity = 1.0;
+
+        // Apply label selectivity
+        if !pattern.labels.is_empty() {
+            for label in &pattern.labels {
+                if let Some(&count) = stats.label_selectivity.get(label) {
+                    let label_sel = if stats.node_count > 0 {
+                        count as f64 / stats.node_count as f64
+                    } else {
+                        0.1
+                    };
+                    selectivity *= label_sel;
+                } else {
+                    // Unknown label, assume 10% selectivity
+                    selectivity *= 0.1;
+                }
+            }
+        }
+
+        // Apply property constraint selectivity
+        if !pattern.properties.is_empty() {
+            // Each property constraint reduces result set
+            // Use histogram-based estimation if available, otherwise default to 0.1 per constraint
+            for (prop_name, _constraint) in &pattern.properties {
+                if let Some(&distinct_values) = stats.property_selectivity.get(prop_name) {
+                    // Selectivity = 1 / distinct_values (assuming uniform distribution)
+                    let prop_sel = if distinct_values > 0 {
+                        1.0 / distinct_values as f64
+                    } else {
+                        0.1
+                    };
+                    selectivity *= prop_sel;
+                } else {
+                    selectivity *= 0.1;
+                }
+            }
+        }
+
+        selectivity.max(0.001) // Minimum selectivity of 0.1%
+    }
+
+    fn estimate_edge_selectivity(&self, pattern: &super::ast::EdgePattern, stats: &GraphStatistics) -> f64 {
+        let mut selectivity = 1.0;
+
+        // Apply edge type selectivity
+        if !pattern.edge_types.is_empty() {
+            for edge_type in &pattern.edge_types {
+                if let Some(&count) = stats.edge_type_selectivity.get(edge_type) {
+                    let type_sel = if stats.edge_count > 0 {
+                        count as f64 / stats.edge_count as f64
+                    } else {
+                        0.1
+                    };
+                    selectivity *= type_sel;
+                } else {
+                    selectivity *= 0.1;
+                }
+            }
+        }
+
+        // Apply property constraint selectivity
+        if !pattern.properties.is_empty() {
+            selectivity *= 0.1_f64.powi(pattern.properties.len() as i32);
+        }
+
+        selectivity.max(0.001)
+    }
+
+    fn estimate_where_selectivity(&self, clause: &super::ast::WhereClause, stats: &GraphStatistics) -> f64 {
+        use super::ast::WhereClause;
+
+        match clause {
+            WhereClause::Property { property, constraint, .. } => {
+                // Estimate based on property statistics and constraint type
+                if let Some(&distinct_values) = stats.property_selectivity.get(property) {
+                    match constraint {
+                        super::ast::PropertyConstraint::Equals(_) => {
+                            // Equality: 1 / distinct_values
+                            if distinct_values > 0 {
+                                1.0 / distinct_values as f64
+                            } else {
+                                0.1
+                            }
+                        }
+                        super::ast::PropertyConstraint::GreaterThan(_) |
+                        super::ast::PropertyConstraint::LessThan(_) => {
+                            // Range: assume 30% selectivity
+                            0.3
+                        }
+                        super::ast::PropertyConstraint::GreaterThanOrEqual(_) |
+                        super::ast::PropertyConstraint::GreaterOrEqual(_) |
+                        super::ast::PropertyConstraint::LessThanOrEqual(_) |
+                        super::ast::PropertyConstraint::LessOrEqual(_) => {
+                            // Range with equality: assume 35% selectivity
+                            0.35
+                        }
+                        super::ast::PropertyConstraint::NotEquals(_) => {
+                            // Not equals: (distinct_values - 1) / distinct_values
+                            if distinct_values > 1 {
+                                (distinct_values - 1) as f64 / distinct_values as f64
+                            } else {
+                                0.9
+                            }
+                        }
+                        super::ast::PropertyConstraint::In(values) => {
+                            // IN clause: values.len() / distinct_values
+                            if distinct_values > 0 {
+                                (values.len() as f64 / distinct_values as f64).min(1.0)
+                            } else {
+                                0.5
+                            }
+                        }
+                        super::ast::PropertyConstraint::Contains(_) |
+                        super::ast::PropertyConstraint::StartsWith(_) |
+                        super::ast::PropertyConstraint::EndsWith(_) => {
+                            // String operations: assume 20% selectivity
+                            0.2
+                        }
+                        _ => 0.1,
+                    }
+                } else {
+                    // Unknown property, assume 10% selectivity
+                    0.1
+                }
+            }
+            WhereClause::And(left, right) => {
+                // AND: multiply selectivities
+                let left_sel = self.estimate_where_selectivity(left, stats);
+                let right_sel = self.estimate_where_selectivity(right, stats);
+                left_sel * right_sel
+            }
+            WhereClause::Or(left, right) => {
+                // OR: use inclusion-exclusion principle
+                let left_sel = self.estimate_where_selectivity(left, stats);
+                let right_sel = self.estimate_where_selectivity(right, stats);
+                left_sel + right_sel - (left_sel * right_sel)
+            }
+            WhereClause::Not(inner) => {
+                // NOT: 1 - selectivity
+                let inner_sel = self.estimate_where_selectivity(inner, stats);
+                1.0 - inner_sel
+            }
+        }
     }
 }
 
@@ -734,203 +945,285 @@ impl QueryPlanner {
         self.plan_traversal_query(&dijkstra_params, TraversalAlgorithm::Dijkstra)
     }
 
-    /// Plan a pattern query from a CompiledPattern
+    /// Plan a pattern query from a CompiledPattern with advanced join order optimization
     pub fn plan_pattern_query(&self, pattern: &CompiledPattern) -> QueryResult<QueryPlan> {
         let stats = self.stats.read().map_err(|_| {
             VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
 
-        let mut best_plan: Option<QueryPlan> = None;
-        let mut min_cost = f64::MAX;
+        if pattern.nodes.is_empty() {
+            return Err(VectorDBError::InvalidInput(
+                "Pattern must contain at least one node".to_string(),
+            ));
+        }
 
-        // Iterate through all node patterns as potential starting points
-        for starting_node_pattern in &pattern.nodes {
-            let mut current_steps = Vec::new();
-            let mut current_estimated_cost = CostEstimate::zero();
-            let mut current_estimated_result_size = 0;
+        // Use CostEstimator trait for selectivity estimation
+        let cost_estimator = &self.config.cost_model;
 
-            let node_count = stats.node_count as f64;
-            let mut initial_cardinality = node_count;
-            let mut steps = Vec::new();
-            let mut estimated_cost = CostEstimate::zero();
-            let mut estimated_result_size = 0;
+        // Find the most selective starting node pattern
+        let (start_idx, start_selectivity) = pattern
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(idx, node_pattern)| {
+                let selectivity = cost_estimator.estimate_node_selectivity(node_pattern, &stats);
+                (idx, selectivity)
+            })
+            .min_by(|(_, sel1), (_, sel2)| {
+                sel1.partial_cmp(sel2).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap();
 
-            // Estimate selectivity based on labels
-            if !starting_node_pattern.labels.is_empty() {
-                // Use the most selective label if multiple are present
-                let mut label_selectivity = 1.0;
-                for label in &starting_node_pattern.labels {
-                    if let Some(&count) = stats.label_selectivity.get(label) {
-                        label_selectivity *= (count as f64 / node_count).min(1.0);
-                    } else {
-                        // If label not found in stats, assume low selectivity (e.g., 10%)
-                        label_selectivity *= 0.1;
-                    }
-                }
-                initial_cardinality *= label_selectivity;
-            }
+        let starting_node = &pattern.nodes[start_idx];
+        let start_cardinality = (stats.node_count as f64 * start_selectivity).max(1.0) as usize;
 
-            // Estimate selectivity based on properties (simplified)
-            if !starting_node_pattern.properties.is_empty() {
-                // For each property, assume a default selectivity (e.g., 10%)
-                // TODO: Use actual property selectivity from stats
-                initial_cardinality *= 0.1_f64.powi(starting_node_pattern.properties.len() as i32);
-            }
+        // Build execution plan
+        let mut steps = Vec::new();
+        let mut total_cost = CostEstimate::zero();
+        let mut current_cardinality = start_cardinality;
 
-            let estimated_output_cardinality = initial_cardinality.max(1.0) as usize;
+        // Step 1: Initial node access (most selective)
+        let (node_step, node_cost) = self.plan_node_access(starting_node, start_cardinality, &stats)?;
+        steps.push(node_step);
+        total_cost = total_cost.add(&node_cost);
 
-            // Choose strategy based on selectivity and index availability
-            let step_cost;
-            let step_type;
+        // Step 2: Optimize edge traversal order if edges exist
+        if !pattern.edges.is_empty() && self.config.optimizations.optimize_joins {
+            let (edge_steps, edge_cost, edge_cardinality) =
+                self.optimize_edge_join_order(&pattern.edges, current_cardinality, &stats, cost_estimator)?;
+            steps.extend(edge_steps);
+            total_cost = total_cost.add(&edge_cost);
+            current_cardinality = edge_cardinality;
+        }
 
-            // Simplified logic: if labels are present, assume index seek is possible
-            if self.config.optimizations.use_indexes && !starting_node_pattern.labels.is_empty() {
-                step_type = PlanStepType::IndexSeek {
-                    index_name: format!(
-                        "label_index_{}",
-                        starting_node_pattern.labels.first().unwrap()
+        // Step 3: Apply WHERE clauses with predicate pushdown
+        if !pattern.where_clauses.is_empty() {
+            for where_clause in &pattern.where_clauses {
+                let where_selectivity = cost_estimator.estimate_where_selectivity(where_clause, &stats);
+                let filter_cardinality = (current_cardinality as f64 * where_selectivity).max(1.0) as usize;
+
+                let filter_step = PlanStep {
+                    step_type: PlanStepType::Filter {
+                        condition: FilterCondition::And(Vec::new()), // Simplified
+                    },
+                    parameters: HashMap::new(),
+                    cost: CostEstimate::new(
+                        current_cardinality as f64 * self.config.cost_model.cpu_cost,
+                        0.0,
+                        0.0,
                     ),
-                    key_value: serde_json::Value::String(
-                        starting_node_pattern.labels.first().unwrap().clone(),
-                    ),
+                    output_cardinality: filter_cardinality,
                 };
-                step_cost = CostEstimate::new(
+                total_cost = total_cost.add(&filter_step.cost);
+                current_cardinality = filter_cardinality;
+                steps.push(filter_step);
+            }
+        }
+
+        // Step 4: Handle ORDER BY
+        if !pattern.return_spec.order_by.is_empty() {
+            let sort_fields: Vec<SortField> = pattern
+                .return_spec
+                .order_by
+                .iter()
+                .map(|(field, ascending)| SortField {
+                    field_name: field.clone(),
+                    ascending: *ascending,
+                })
+                .collect();
+
+            let sort_step = PlanStep {
+                step_type: PlanStepType::Sort { fields: sort_fields },
+                parameters: HashMap::new(),
+                cost: CostEstimate::new(
+                    // O(n log n) sort cost
+                    current_cardinality as f64 * (current_cardinality as f64).log2() * self.config.cost_model.cpu_cost,
+                    0.0,
+                    0.0,
+                ),
+                output_cardinality: current_cardinality,
+            };
+            total_cost = total_cost.add(&sort_step.cost);
+            steps.push(sort_step);
+        }
+
+        // Step 5: Handle projections
+        if !pattern.return_spec.variables.is_empty() || !pattern.return_spec.projections.is_empty() {
+            let project_step = PlanStep {
+                step_type: PlanStepType::Project {
+                    fields: pattern.return_spec.variables.clone(),
+                },
+                parameters: HashMap::new(),
+                cost: CostEstimate::new(
+                    current_cardinality as f64 * self.config.cost_model.cpu_cost * 0.1, // Projection is cheap
+                    0.0,
+                    0.0,
+                ),
+                output_cardinality: current_cardinality,
+            };
+            total_cost = total_cost.add(&project_step.cost);
+            steps.push(project_step);
+        }
+
+        // Step 6: Handle LIMIT/SKIP
+        if let Some(limit) = pattern.return_spec.limit {
+            let skip = pattern.return_spec.skip.unwrap_or(0);
+            let final_cardinality = limit.min(current_cardinality.saturating_sub(skip));
+
+            let limit_step = PlanStep {
+                step_type: PlanStepType::Limit {
+                    count: limit,
+                    offset: pattern.return_spec.skip,
+                },
+                parameters: HashMap::new(),
+                cost: CostEstimate::zero(), // Limit is essentially free
+                output_cardinality: final_cardinality,
+            };
+            total_cost = total_cost.add(&limit_step.cost);
+            current_cardinality = final_cardinality;
+            steps.push(limit_step);
+        }
+
+        Ok(QueryPlan {
+            id: Uuid::new_v4().to_string(),
+            steps,
+            estimated_cost: total_cost,
+            estimated_result_size: current_cardinality,
+            created_at: std::time::SystemTime::now(),
+        })
+    }
+
+    /// Plan node access with index selection
+    fn plan_node_access(
+        &self,
+        node_pattern: &super::ast::NodePattern,
+        cardinality: usize,
+        stats: &GraphStatistics,
+    ) -> QueryResult<(PlanStep, CostEstimate)> {
+        let step_type;
+        let cost;
+
+        // Choose between index seek and full scan
+        if self.config.optimizations.use_indexes && !node_pattern.labels.is_empty() {
+            let label = &node_pattern.labels[0];
+            let selectivity = if let Some(&count) = stats.label_selectivity.get(label) {
+                if stats.node_count > 0 {
+                    count as f64 / stats.node_count as f64
+                } else {
+                    0.1
+                }
+            } else {
+                0.1
+            };
+
+            // Use index if selectivity < 30%
+            if selectivity < 0.3 {
+                step_type = PlanStepType::IndexSeek {
+                    index_name: format!("label_index_{}", label),
+                    key_value: serde_json::Value::String(label.clone()),
+                };
+                cost = CostEstimate::new(
                     self.config.cost_model.index_seek_cost,
                     0.0,
-                    estimated_output_cardinality as f64 * self.config.cost_model.memory_cost_factor,
+                    cardinality as f64 * self.config.cost_model.memory_cost_factor,
                 );
             } else {
                 step_type = PlanStepType::NodeScan {
-                    labels: if !starting_node_pattern.labels.is_empty() {
-                        Some(starting_node_pattern.labels.clone())
-                    } else {
-                        None
-                    },
-                    property_filters: Vec::new(), // TODO: Convert PropertyConstraint to PropertyFilter
+                    labels: Some(node_pattern.labels.clone()),
+                    property_filters: Vec::new(),
                 };
-                step_cost = CostEstimate::new(
-                    node_count * self.config.cost_model.node_access_cost,
+                cost = CostEstimate::new(
+                    stats.node_count as f64 * self.config.cost_model.node_access_cost,
                     0.0,
-                    estimated_output_cardinality as f64 * self.config.cost_model.memory_cost_factor,
+                    cardinality as f64 * self.config.cost_model.memory_cost_factor,
                 );
             }
+        } else {
+            step_type = PlanStepType::NodeScan {
+                labels: if !node_pattern.labels.is_empty() {
+                    Some(node_pattern.labels.clone())
+                } else {
+                    None
+                },
+                property_filters: Vec::new(),
+            };
+            cost = CostEstimate::new(
+                stats.node_count as f64 * self.config.cost_model.node_access_cost,
+                0.0,
+                cardinality as f64 * self.config.cost_model.memory_cost_factor,
+            );
+        }
 
-            let node_scan_step = PlanStep {
+        Ok((
+            PlanStep {
                 step_type,
                 parameters: HashMap::new(),
-                cost: step_cost,
-                output_cardinality: estimated_output_cardinality,
+                cost: cost.clone(),
+                output_cardinality: cardinality,
+            },
+            cost,
+        ))
+    }
+
+    /// Optimize edge join order using greedy algorithm
+    fn optimize_edge_join_order(
+        &self,
+        edges: &[super::ast::EdgePattern],
+        input_cardinality: usize,
+        stats: &GraphStatistics,
+        cost_estimator: &dyn CostEstimator,
+    ) -> QueryResult<(Vec<PlanStep>, CostEstimate, usize)> {
+        let mut remaining_edges: Vec<_> = edges.iter().enumerate().collect();
+        let mut steps = Vec::new();
+        let mut total_cost = CostEstimate::zero();
+        let mut current_cardinality = input_cardinality;
+
+        // Greedy algorithm: pick edge with lowest cost at each step
+        while !remaining_edges.is_empty() {
+            let mut best_idx = 0;
+            let mut best_cost = f64::MAX;
+            let mut best_output_cardinality = 0;
+
+            // Evaluate cost of each remaining edge
+            for (i, (_, edge)) in remaining_edges.iter().enumerate() {
+                let edge_selectivity = cost_estimator.estimate_edge_selectivity(edge, stats);
+                let edge_output = (current_cardinality as f64 * stats.avg_node_degree * edge_selectivity).max(1.0) as usize;
+                let edge_cost = cost_estimator.estimate_expand_cost(current_cardinality, stats.avg_node_degree * edge_selectivity);
+
+                if edge_cost < best_cost {
+                    best_idx = i;
+                    best_cost = edge_cost;
+                    best_output_cardinality = edge_output;
+                }
+            }
+
+            // Add best edge to plan
+            let (_, best_edge) = remaining_edges.remove(best_idx);
+
+            let edge_step = PlanStep {
+                step_type: PlanStepType::Traverse {
+                    algorithm: TraversalAlgorithm::BFS,
+                    max_depth: Some(1), // Single hop
+                    edge_filters: if !best_edge.edge_types.is_empty() {
+                        vec![EdgeFilter {
+                            edge_type: Some(best_edge.edge_types[0].clone()),
+                            property_filters: Vec::new(),
+                        }]
+                    } else {
+                        vec![]
+                    },
+                },
+                parameters: HashMap::new(),
+                cost: CostEstimate::new(best_cost, 0.0, 0.0),
+                output_cardinality: best_output_cardinality,
             };
-            estimated_cost = estimated_cost.add(&node_scan_step.cost);
-            estimated_result_size = node_scan_step.output_cardinality;
-            steps.push(node_scan_step);
 
-            // Step 2: Handle Edge Patterns (simplified to a generic traversal for now)
-            if !pattern.edges.is_empty() || !pattern.paths.is_empty() {
-                let avg_degree = stats.avg_node_degree;
-                let traversal_cost = estimated_result_size as f64
-                    * avg_degree
-                    * self.config.cost_model.edge_traversal_cost;
-                let traversal_output_cardinality =
-                    (estimated_result_size as f64 * avg_degree).max(1.0) as usize;
+            total_cost = total_cost.add(&edge_step.cost);
+            current_cardinality = best_output_cardinality;
+            steps.push(edge_step);
+        }
 
-                let traversal_step = PlanStep {
-                    step_type: PlanStepType::Traverse {
-                        algorithm: TraversalAlgorithm::BFS, // Default to BFS
-                        max_depth: None,                    // TODO: Infer from path patterns
-                        edge_filters: Vec::new(), // TODO: Convert EdgePattern properties to EdgeFilter
-                    },
-                    parameters: HashMap::new(),
-                    cost: CostEstimate::new(
-                        traversal_cost,
-                        0.0,
-                        traversal_output_cardinality as f64
-                            * self.config.cost_model.memory_cost_factor,
-                    ),
-                    output_cardinality: traversal_output_cardinality,
-                };
-                estimated_cost = estimated_cost.add(&traversal_step.cost);
-                steps.push(traversal_step);
-            }
-
-            // Step 3: Handle WHERE clauses
-            if !pattern.where_clauses.is_empty() {
-                // Assume WHERE clause reduces cardinality by 50% (simplified)
-                let filter_cardinality = (estimated_result_size as f64 * 0.5).max(1.0) as usize;
-                let filter_step = PlanStep {
-                    step_type: PlanStepType::Filter {
-                        condition: FilterCondition::And(Vec::new()), // TODO: Convert WhereClause to FilterCondition
-                    },
-                    parameters: HashMap::new(),
-                    cost: CostEstimate::new(
-                        filter_cardinality as f64 * self.config.cost_model.cpu_cost,
-                        0.0,
-                        0.0,
-                    ), // CPU cost for filtering
-                    output_cardinality: filter_cardinality,
-                };
-                estimated_cost = estimated_cost.add(&filter_step.cost);
-                estimated_result_size = filter_cardinality;
-                steps.push(filter_step);
-            }
-
-            // Step 4: Handle RETURN clause (simplified to Project and Limit)
-            if !pattern.return_spec.variables.is_empty()
-                || !pattern.return_spec.projections.is_empty()
-            {
-                let project_step = PlanStep {
-                    step_type: PlanStepType::Project {
-                        fields: pattern.return_spec.variables.clone(), // Simplified
-                    },
-                    parameters: HashMap::new(),
-                    cost: CostEstimate::new(
-                        estimated_result_size as f64 * self.config.cost_model.cpu_cost,
-                        0.0,
-                        0.0,
-                    ),
-                    output_cardinality: estimated_result_size,
-                };
-                estimated_cost = estimated_cost.add(&project_step.cost);
-                steps.push(project_step);
-            }
-
-            if let Some(limit) = pattern.return_spec.limit {
-                let limit_step = PlanStep {
-                    step_type: PlanStepType::Limit {
-                        count: limit as usize,
-                        offset: pattern.return_spec.skip.map(|s| s as usize),
-                    },
-                    parameters: HashMap::new(),
-                    cost: CostEstimate::zero(), // Minimal cost
-                    output_cardinality: limit as usize,
-                };
-                estimated_cost = estimated_cost.add(&limit_step.cost);
-                steps.push(limit_step);
-            }
-
-            // Set current_steps and current_estimated_cost for comparison
-            current_steps = steps;
-            current_estimated_cost = estimated_cost;
-            current_estimated_result_size = estimated_result_size;
-
-            // Compare with best plan found so far
-            if current_estimated_cost.total_cost < min_cost {
-                min_cost = current_estimated_cost.total_cost;
-                best_plan = Some(QueryPlan {
-                    id: Uuid::new_v4().to_string(),
-                    steps: current_steps,
-                    estimated_cost: current_estimated_cost,
-                    estimated_result_size: current_estimated_result_size,
-                    created_at: std::time::SystemTime::now(),
-                });
-            }
-        } // End of the for loop
-
-        best_plan.ok_or_else(|| {
-            VectorDBError::InvalidInput(
-                "Could not generate a plan for the given pattern".to_string(),
-            )
-        })
+        Ok((steps, total_cost, current_cardinality))
     }
 
     /// Plan a pattern matching query (simplified for now)
@@ -1072,6 +1365,10 @@ impl Default for QueryPlanner {
 mod tests {
     use super::*;
     use crate::graph::GraphMemoryPool;
+    use crate::graph::query::ast::{
+        NodePattern, EdgePattern, EdgeDirection, WhereClause, PropertyConstraint,
+        CompiledPattern, ReturnSpec,
+    };
 
     #[test]
     fn test_query_planner_creation() {
@@ -1158,5 +1455,551 @@ mod tests {
             }
             _ => panic!("Unexpected plan step type"),
         }
+    }
+
+    // ===== Tests for CostEstimator trait implementation =====
+
+    #[test]
+    fn test_cost_estimator_scan_cost() {
+        let cost_model = CostModel::default();
+        let cardinality = 1000;
+
+        let cost = cost_model.estimate_scan_cost(cardinality);
+
+        // Should be cardinality * node_access_cost
+        let expected = cardinality as f64 * cost_model.node_access_cost;
+        assert_eq!(cost, expected);
+        assert!(cost > 0.0);
+    }
+
+    #[test]
+    fn test_cost_estimator_index_seek_cost() {
+        let cost_model = CostModel::default();
+        let cardinality = 100;
+
+        let cost = cost_model.estimate_index_seek_cost(cardinality);
+
+        // Should be fixed seek cost + cardinality * index_scan_cost
+        let expected = cost_model.index_seek_cost + (cardinality as f64 * cost_model.index_scan_cost);
+        assert_eq!(cost, expected);
+        assert!(cost > cost_model.index_seek_cost);
+    }
+
+    #[test]
+    fn test_cost_estimator_expand_cost() {
+        let cost_model = CostModel::default();
+        let input_card = 10;
+        let avg_degree = 5.0;
+
+        let cost = cost_model.estimate_expand_cost(input_card, avg_degree);
+
+        // Should be input_card * avg_degree * edge_traversal_cost
+        let expected = input_card as f64 * avg_degree * cost_model.edge_traversal_cost;
+        assert_eq!(cost, expected);
+        assert!(cost > 0.0);
+    }
+
+    #[test]
+    fn test_estimate_node_selectivity_no_constraints() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.node_count = 1000;
+
+        let pattern = NodePattern {
+            variable: "n".to_string(),
+            labels: vec![],
+            properties: HashMap::new(),
+            optional: false,
+        };
+
+        let selectivity = cost_model.estimate_node_selectivity(&pattern, &stats);
+
+        // No labels or properties = 100% selectivity
+        assert_eq!(selectivity, 1.0);
+    }
+
+    #[test]
+    fn test_estimate_node_selectivity_with_label() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.node_count = 1000;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+
+        let pattern = NodePattern {
+            variable: "n".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            optional: false,
+        };
+
+        let selectivity = cost_model.estimate_node_selectivity(&pattern, &stats);
+
+        // Label selectivity = 300/1000 = 0.3
+        assert_eq!(selectivity, 0.3);
+    }
+
+    #[test]
+    fn test_estimate_node_selectivity_multiple_labels() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.node_count = 1000;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+        stats.label_selectivity.insert("Employee".to_string(), 200);
+
+        let pattern = NodePattern {
+            variable: "n".to_string(),
+            labels: vec!["Person".to_string(), "Employee".to_string()],
+            properties: HashMap::new(),
+            optional: false,
+        };
+
+        let selectivity = cost_model.estimate_node_selectivity(&pattern, &stats);
+
+        // Multiple labels: multiply selectivities (0.3 * 0.2 = 0.06), min 0.001
+        assert_eq!(selectivity, 0.06);
+    }
+
+    #[test]
+    fn test_estimate_node_selectivity_with_property_equals() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.node_count = 1000;
+        stats.property_selectivity.insert("name".to_string(), 500);
+
+        let mut properties = HashMap::new();
+        properties.insert(
+            "name".to_string(),
+            PropertyConstraint::Equals(serde_json::json!("Alice")),
+        );
+
+        let pattern = NodePattern {
+            variable: "n".to_string(),
+            labels: vec![],
+            properties,
+            optional: false,
+        };
+
+        let selectivity = cost_model.estimate_node_selectivity(&pattern, &stats);
+
+        // Property equals selectivity = 1/500 = 0.002
+        assert_eq!(selectivity, 0.002);
+    }
+
+    #[test]
+    fn test_estimate_edge_selectivity_with_type() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.edge_count = 5000;
+        stats.edge_type_selectivity.insert("KNOWS".to_string(), 1500);
+
+        let pattern = EdgePattern {
+            variable: Some("r".to_string()),
+            from_variable: "a".to_string(),
+            to_variable: "b".to_string(),
+            edge_types: vec!["KNOWS".to_string()],
+            properties: HashMap::new(),
+            direction: EdgeDirection::Outgoing,
+            optional: false,
+        };
+
+        let selectivity = cost_model.estimate_edge_selectivity(&pattern, &stats);
+
+        // Edge type selectivity = 1500/5000 = 0.3
+        assert_eq!(selectivity, 0.3);
+    }
+
+    #[test]
+    fn test_estimate_where_selectivity_equals() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.property_selectivity.insert("age".to_string(), 100);
+
+        let clause = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "age".to_string(),
+            constraint: PropertyConstraint::Equals(serde_json::json!(30)),
+        };
+
+        let selectivity = cost_model.estimate_where_selectivity(&clause, &stats);
+
+        // Equals selectivity = 1/100 = 0.01
+        assert_eq!(selectivity, 0.01);
+    }
+
+    #[test]
+    fn test_estimate_where_selectivity_greater_than() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        // Add property to stats to trigger the 0.3 selectivity path
+        stats.property_selectivity.insert("age".to_string(), 100);
+
+        let clause = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "age".to_string(),
+            constraint: PropertyConstraint::GreaterThan(serde_json::json!(30)),
+        };
+
+        let selectivity = cost_model.estimate_where_selectivity(&clause, &stats);
+
+        // Range predicates with known property return 0.3
+        assert_eq!(selectivity, 0.3);
+    }
+
+    #[test]
+    fn test_estimate_where_selectivity_and() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.property_selectivity.insert("age".to_string(), 100);
+        stats.property_selectivity.insert("name".to_string(), 200);
+
+        let clause1 = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "age".to_string(),
+            constraint: PropertyConstraint::Equals(serde_json::json!(30)),
+        };
+
+        let clause2 = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "name".to_string(),
+            constraint: PropertyConstraint::Equals(serde_json::json!("Alice")),
+        };
+
+        let and_clause = WhereClause::And(Box::new(clause1), Box::new(clause2));
+
+        let selectivity = cost_model.estimate_where_selectivity(&and_clause, &stats);
+
+        // AND: multiply selectivities (1/100 * 1/200 = 0.00005)
+        assert_eq!(selectivity, 0.00005);
+    }
+
+    #[test]
+    fn test_estimate_where_selectivity_or() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.property_selectivity.insert("age".to_string(), 100);
+        stats.property_selectivity.insert("name".to_string(), 200);
+
+        let clause1 = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "age".to_string(),
+            constraint: PropertyConstraint::Equals(serde_json::json!(30)),
+        };
+
+        let clause2 = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "name".to_string(),
+            constraint: PropertyConstraint::Equals(serde_json::json!("Alice")),
+        };
+
+        let or_clause = WhereClause::Or(Box::new(clause1), Box::new(clause2));
+
+        let selectivity = cost_model.estimate_where_selectivity(&or_clause, &stats);
+
+        // OR: P(A) + P(B) - P(A∩B) = 0.01 + 0.005 - (0.01 * 0.005) = 0.01495
+        assert_eq!(selectivity, 0.01495);
+    }
+
+    #[test]
+    fn test_estimate_where_selectivity_not() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.property_selectivity.insert("age".to_string(), 100);
+
+        let clause = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "age".to_string(),
+            constraint: PropertyConstraint::Equals(serde_json::json!(30)),
+        };
+
+        let not_clause = WhereClause::Not(Box::new(clause));
+
+        let selectivity = cost_model.estimate_where_selectivity(&not_clause, &stats);
+
+        // NOT: 1 - selectivity = 1 - 0.01 = 0.99
+        assert_eq!(selectivity, 0.99);
+    }
+
+    #[test]
+    fn test_estimate_where_selectivity_in_clause() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.property_selectivity.insert("age".to_string(), 100);
+
+        let clause = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "age".to_string(),
+            constraint: PropertyConstraint::In(vec![
+                serde_json::json!(30),
+                serde_json::json!(40),
+                serde_json::json!(50),
+            ]),
+        };
+
+        let selectivity = cost_model.estimate_where_selectivity(&clause, &stats);
+
+        // IN: values.len() / distinct_values = 3/100 = 0.03
+        assert_eq!(selectivity, 0.03);
+    }
+
+    #[test]
+    fn test_estimate_pattern_cost() {
+        let cost_model = CostModel::default();
+        let mut stats = GraphStatistics::default();
+        stats.node_count = 1000;
+        stats.edge_count = 5000;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+        stats.edge_type_selectivity.insert("KNOWS".to_string(), 1500);
+
+        let node1 = NodePattern {
+            variable: "a".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            optional: false,
+        };
+
+        let node2 = NodePattern {
+            variable: "b".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            optional: false,
+        };
+
+        let edge = EdgePattern {
+            variable: Some("r".to_string()),
+            from_variable: "a".to_string(),
+            to_variable: "b".to_string(),
+            edge_types: vec!["KNOWS".to_string()],
+            properties: HashMap::new(),
+            direction: EdgeDirection::Outgoing,
+            optional: false,
+        };
+
+        let pattern = CompiledPattern {
+            nodes: vec![node1, node2],
+            edges: vec![edge],
+            paths: vec![],
+            where_clauses: vec![],
+            return_spec: ReturnSpec {
+                variables: vec!["a".to_string(), "b".to_string()],
+                projections: vec![],
+                distinct: false,
+                order_by: vec![],
+                limit: None,
+                skip: None,
+            },
+            variables: HashMap::new(),
+        };
+
+        let cost = cost_model.estimate_pattern_cost(&pattern, &stats);
+
+        // Should be positive and account for nodes + edges
+        assert!(cost > 0.0);
+    }
+
+    #[test]
+    fn test_plan_pattern_query_single_node() {
+        let planner = QueryPlanner::new();
+        let mut stats = planner.stats.write().unwrap();
+        stats.node_count = 1000;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+        drop(stats);
+
+        let pattern = CompiledPattern {
+            nodes: vec![NodePattern {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                optional: false,
+            }],
+            edges: vec![],
+            paths: vec![],
+            where_clauses: vec![],
+            return_spec: ReturnSpec {
+                variables: vec!["n".to_string()],
+                projections: vec![],
+                distinct: false,
+                order_by: vec![],
+                limit: None,
+                skip: None,
+            },
+            variables: HashMap::new(),
+        };
+
+        let plan = planner.plan_pattern_query(&pattern).unwrap();
+
+        assert!(!plan.id.is_empty());
+        assert!(!plan.steps.is_empty());
+        assert!(plan.estimated_cost.total_cost > 0.0);
+        assert!(plan.estimated_result_size > 0);
+    }
+
+    #[test]
+    fn test_plan_pattern_query_with_edge() {
+        let planner = QueryPlanner::new();
+        let mut stats = planner.stats.write().unwrap();
+        stats.node_count = 1000;
+        stats.edge_count = 5000;
+        stats.avg_node_degree = 5.0;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+        stats.edge_type_selectivity.insert("KNOWS".to_string(), 1500);
+        drop(stats);
+
+        let pattern = CompiledPattern {
+            nodes: vec![
+                NodePattern {
+                    variable: "a".to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::new(),
+                    optional: false,
+                },
+                NodePattern {
+                    variable: "b".to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::new(),
+                    optional: false,
+                },
+            ],
+            edges: vec![EdgePattern {
+                variable: Some("r".to_string()),
+                from_variable: "a".to_string(),
+                to_variable: "b".to_string(),
+                edge_types: vec!["KNOWS".to_string()],
+                properties: HashMap::new(),
+                direction: EdgeDirection::Outgoing,
+                optional: false,
+            }],
+            paths: vec![],
+            where_clauses: vec![],
+            return_spec: ReturnSpec {
+                variables: vec!["a".to_string(), "b".to_string()],
+                projections: vec![],
+                distinct: false,
+                order_by: vec![],
+                limit: None,
+                skip: None,
+            },
+            variables: HashMap::new(),
+        };
+
+        let plan = planner.plan_pattern_query(&pattern).unwrap();
+
+        assert!(!plan.id.is_empty());
+        assert!(plan.steps.len() >= 2); // At least node access + expand
+        assert!(plan.estimated_cost.total_cost > 0.0);
+    }
+
+    #[test]
+    fn test_plan_pattern_query_with_where_clause() {
+        let planner = QueryPlanner::new();
+        let mut stats = planner.stats.write().unwrap();
+        stats.node_count = 1000;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+        stats.property_selectivity.insert("age".to_string(), 100);
+        drop(stats);
+
+        let pattern = CompiledPattern {
+            nodes: vec![NodePattern {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                optional: false,
+            }],
+            edges: vec![],
+            paths: vec![],
+            where_clauses: vec![WhereClause::Property {
+                variable: "n".to_string(),
+                property: "age".to_string(),
+                constraint: PropertyConstraint::GreaterThan(serde_json::json!(30)),
+            }],
+            return_spec: ReturnSpec {
+                variables: vec!["n".to_string()],
+                projections: vec![],
+                distinct: false,
+                order_by: vec![],
+                limit: None,
+                skip: None,
+            },
+            variables: HashMap::new(),
+        };
+
+        let plan = planner.plan_pattern_query(&pattern).unwrap();
+
+        assert!(!plan.id.is_empty());
+        // Should include filter step for WHERE clause
+        let has_filter = plan.steps.iter().any(|step| matches!(step.step_type, PlanStepType::Filter { .. }));
+        assert!(has_filter);
+    }
+
+    #[test]
+    fn test_plan_pattern_query_with_order_by() {
+        let planner = QueryPlanner::new();
+        let mut stats = planner.stats.write().unwrap();
+        stats.node_count = 1000;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+        drop(stats);
+
+        let pattern = CompiledPattern {
+            nodes: vec![NodePattern {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                optional: false,
+            }],
+            edges: vec![],
+            paths: vec![],
+            where_clauses: vec![],
+            return_spec: ReturnSpec {
+                variables: vec!["n".to_string()],
+                projections: vec![],
+                distinct: false,
+                order_by: vec![("n".to_string(), true)],
+                limit: None,
+                skip: None,
+            },
+            variables: HashMap::new(),
+        };
+
+        let plan = planner.plan_pattern_query(&pattern).unwrap();
+
+        assert!(!plan.id.is_empty());
+        // Should include sort step for ORDER BY
+        let has_sort = plan.steps.iter().any(|step| matches!(step.step_type, PlanStepType::Sort { .. }));
+        assert!(has_sort);
+    }
+
+    #[test]
+    fn test_plan_pattern_query_with_limit() {
+        let planner = QueryPlanner::new();
+        let mut stats = planner.stats.write().unwrap();
+        stats.node_count = 1000;
+        stats.label_selectivity.insert("Person".to_string(), 300);
+        drop(stats);
+
+        let pattern = CompiledPattern {
+            nodes: vec![NodePattern {
+                variable: "n".to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                optional: false,
+            }],
+            edges: vec![],
+            paths: vec![],
+            where_clauses: vec![],
+            return_spec: ReturnSpec {
+                variables: vec!["n".to_string()],
+                projections: vec![],
+                distinct: false,
+                order_by: vec![],
+                limit: Some(10),
+                skip: None,
+            },
+            variables: HashMap::new(),
+        };
+
+        let plan = planner.plan_pattern_query(&pattern).unwrap();
+
+        assert!(!plan.id.is_empty());
+        // Estimated result size should respect limit
+        assert!(plan.estimated_result_size <= 10);
     }
 }

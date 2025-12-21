@@ -82,7 +82,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | 030 | Hardware Acceleration | Performance | ⚠️ Partial | SIMD complete; GPU feature-gated; `src/compute/distance_computation/`, `src/compute/gpu/`
 | 031 | Progressive Cascade Search | Performance | ✅ | `src/core/search/integrated_search_optimization.rs`; benches: `bench_10_query_progressive.rs`
 | 032 | Codebook Caching | Performance | ✅ | `src/compute/quantization/global_cache.rs`
-| 033 | k-means++ Clustering | Performance | ❌ | Not found
+| 033 | k-means++ Clustering | Performance | ✅ | Implemented in IVF & Raptor
 | 034 | SIMD Distance Compute | Performance | ✅ | AVX2/AVX512/NEON in `src/compute/distance_computation/` + benches
 | 035 | Bloom Filters | Performance | ✅ | Found in SSTable
 
@@ -91,7 +91,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 | 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine; `src/graph/engines/quasar/` (wiring pending)
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
 
-| 040 | UnifiedAuthService | Security | ⚠️ Partial | Basic auth only
+| 040 | UnifiedAuthService | Security | ⚠️ Partial | SSO, JWT, API Key support. mTLS pending.
 | 041 | ConsolidatedRBACManager | Security | ✅ | RBAC exists
 | 042 | Multi-Factor Authentication | Security | ❌ | Not implemented
 | 043 | Enterprise SSO | Security | ❌ | Not implemented
@@ -233,7 +233,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 
 ==== Platform Development
 * **076**: Multi-Modal Search (75% complete)
-  - Location: `in-progress/51-multi-modal-search.adoc`
+  - Location: `in-progress/076-multi-modal-search.adoc`
   - Target: Q1 2025
   - Remaining: Fusion algorithms, reranking
 

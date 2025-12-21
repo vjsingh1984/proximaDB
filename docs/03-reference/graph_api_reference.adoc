@@ -756,48 +756,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 == 🎯 Technical Specifications
 
-=== Performance Benchmarks
+=== Performance Benchmarks (December 2025)
+
+==== All Three Engines Performance
 
 [cols="2,2,2,2,2"]
 |===
-|Operation Type |Latency P50 |Latency P99 |Throughput |Memory Usage
+|Engine |Architecture |Node Insert |Edge Insert |1-hop Traversal
 
-|**Node Creation**
-|0.8ms
-|2.1ms
-|5K ops/sec
-|Minimal
+|**ORION**
+|In-memory CSR
+|63K ops/sec
+|414K ops/sec
+|159K ops/sec
 
-|**Edge Creation**
-|1.2ms
-|3.5ms
-|3K ops/sec
-|Adjacency list updates
+|**PULSAR**
+|Distributed sharded
+|254K ops/sec
+|381K ops/sec
+|103K ops/sec
 
-|**Single-Hop Traversal**
-|0.5ms
-|1.8ms
-|8K ops/sec
-|Index lookup
-
-|**Multi-Hop Path (depth 3)**
-|3.2ms
-|7.5ms
-|1.5K ops/sec
-|Breadth-first search
-
-|**Complex Analytics**
-|25ms
-|65ms
-|200 ops/sec
-|Full graph analysis
-
-|**Hybrid Queries**
-|8.5ms
-|18ms
-|800 ops/sec
-|Combined processing
+|**QUASAR**
+|Hot/cold tiered
+|345K ops/sec
+|471K ops/sec
+|144K ops/sec
 |===
+
+==== Operation Latencies
+
+[cols="2,2,2,2"]
+|===
+|Operation Type |Throughput |Latency |Notes
+
+|**Bulk Node Insert**
+|63-345K nodes/sec
+|~3-15µs per node
+|With WAL durability
+
+|**Bulk Edge Insert**
+|381K-471K edges/sec
+|2-3µs per edge
+|With WAL durability
+
+|**Node Lookup**
+|63K+ ops/sec
+|<10µs
+|O(1) DashMap access
+
+|**1-hop Traversal**
+|103K-159K ops/sec
+|~6-10µs
+|CSR format traversal
+
+|**Semantic Search**
+|11K+ ops/sec
+|0.09ms
+|Vector + graph combined
+|===
+
+==== Competitive Comparison
+
+[cols="3,2,2,2"]
+|===
+|Database |Edge Insert |1-hop Traversal |WAL Durability
+
+|**ProximaDB (ORION)**
+|414K ops/sec
+|159K ops/sec
+|Yes (default)
+
+|**ProximaDB (PULSAR)**
+|381K ops/sec
+|103K ops/sec
+|Yes (per-shard)
+
+|**ProximaDB (QUASAR)**
+|471K ops/sec
+|144K ops/sec
+|Yes (hot tier)
+
+|**NetworkX**
+|1.69M ops/sec
+|N/A
+|No
+
+|**igraph**
+|15M ops/sec
+|N/A
+|No
+|===
+
+NOTE: ProximaDB provides ACID durability via WAL that NetworkX/igraph lack. All three engines (ORION, PULSAR, QUASAR) use optimized bulk operations for high-throughput insertion.
 
 === Scalability Characteristics
 

@@ -4,9 +4,13 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{
-    DetectedEnvironment, PlatformType,
+    BackupStrategy, CapacityEstimate, DeploymentRecommendation, DeploymentStrategy,
+    DetectedEnvironment, EncryptionRequirements, MonitoringConfig, OptimalConfig,
+    PerformanceProfile, PlatformType, ResourceAvailability, ScalingConfig, SecurityConstraints,
 };
-use anyhow::{Result, anyhow};
+use crate::server::NetworkConfig;
+use crate::storage::tenant::ComplianceFramework;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -965,6 +969,12 @@ pub struct TroubleshootingInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deployment::discovery::{
+        ResourceAvailability, CapacityEstimate, NetworkConfig, SecurityConstraints,
+        EncryptionRequirements, OptimalConfig, DeploymentRecommendation,
+        DeploymentStrategy, ScalingConfig, BackupStrategy, PerformanceProfile,
+        ComplianceFramework
+    };
 
     #[tokio::test]
     async fn test_deployment_provisioner_creation() {

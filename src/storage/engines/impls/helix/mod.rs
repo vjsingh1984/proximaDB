@@ -143,7 +143,8 @@ pub struct HelixConfig {
     pub max_levels: usize,
     /// Size ratio between levels
     pub size_ratio: f64,
-    /// PCA dimensions for clustering
+    /// Maximum PCA dimensions for clustering (actual dimensions selected adaptively based on vector dimensionality)
+    /// Default: 64 (supports 8-64 dims adaptively for BGE-768, OpenAI-1536, etc.)
     pub pca_dimensions: usize,
     /// Proxima block size (number of vectors per block)
     pub proxima_block_size: usize,
@@ -181,7 +182,7 @@ impl Default for HelixConfig {
             level0_file_num_compaction_trigger: 4,
             max_levels: 7,
             size_ratio: 10.0,
-            pca_dimensions: 16,
+            pca_dimensions: 64, // Max PCA dims (actual dims selected adaptively: 8-64 based on vector dim)
             proxima_block_size: 128,
             enable_liquid_clustering: true,
             storage_quantization: false,
@@ -750,12 +751,16 @@ impl HelixEngine {
     }
 
     /// Load existing SSTable levels from disk
+    ///
+    /// Reads actual metadata from file headers/footers for proper Hilbert pruning.
     async fn load_levels(
         filesystem: &Arc<
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
         >,
         data_dir: &Path,
     ) -> Result<HashMap<usize, Vec<SStableMetadata>>> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
         let mut levels = HashMap::new();
 
         // List all files in directory
@@ -771,12 +776,22 @@ impl HelixEngine {
                 let codec = FilenameCodec::new();
                 let level = codec.parse_level(file_name) as usize;
 
-                // Load metadata (would read from file footer in production)
+                // Read Hilbert range from file footer for proper spatial pruning
+                let hilbert_range = Self::read_hilbert_range_static(filesystem, &file.url)
+                    .await
+                    .ok();
+
+                // Read num_vectors from file header
+                let num_vectors =
+                    Self::read_num_vectors_static(filesystem, &file.url)
+                        .await
+                        .unwrap_or(0) as usize;
+
                 let metadata = SStableMetadata {
                     path: PathBuf::from(&file.url),
                     level,
-                    hilbert_range: None, // Would load from file
-                    num_vectors: 0,      // Would load from file
+                    hilbert_range,
+                    num_vectors,
                     size_bytes: file.metadata.size,
                     created_at: chrono::Utc::now(),
                     blocks: Vec::new(),
@@ -788,6 +803,46 @@ impl HelixEngine {
         }
 
         Ok(levels)
+    }
+
+    /// Read Hilbert range from file footer (static version for load_levels)
+    async fn read_hilbert_range_static(
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        file_path: &str,
+    ) -> Result<(u64, u64)> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        let file_size = filesystem.metadata(file_path).await?.size;
+        if file_size < 16 {
+            return Err(anyhow::anyhow!("File too small to contain Hilbert range"));
+        }
+
+        let footer_bytes = filesystem.read_range(file_path, file_size - 16, 16).await?;
+        if footer_bytes.len() < 16 {
+            return Err(anyhow::anyhow!("Failed to read Hilbert range from footer"));
+        }
+
+        let min_key = u64::from_le_bytes(footer_bytes[0..8].try_into()?);
+        let max_key = u64::from_le_bytes(footer_bytes[8..16].try_into()?);
+
+        Ok((min_key, max_key))
+    }
+
+    /// Read num_vectors from file header (static version for load_levels)
+    async fn read_num_vectors_static(
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        file_path: &str,
+    ) -> Result<u64> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Read header: [magic:4][version:4][num_vectors:4][dimension:4]...
+        let header_bytes = filesystem.read_range(file_path, 0, 16).await?;
+        if header_bytes.len() < 12 {
+            return Err(anyhow::anyhow!("File too small to contain header"));
+        }
+
+        let num_vectors = u32::from_le_bytes(header_bytes[8..12].try_into()?) as u64;
+        Ok(num_vectors)
     }
 
     /// Generate a new SSTable filename for the given level
@@ -878,7 +933,22 @@ impl HelixEngine {
             return Ok(());
         }
 
-        let new_model = PCAModel::train(vectors, self.config.pca_dimensions)?;
+        // Use adaptive PCA configuration to determine optimal dimensions
+        use crate::storage::engines::core::formats::proximablocks::spatial_clustering::AdaptivePcaConfig;
+
+        let vector_dim = vectors[0].vector.len();
+        let pca_config = AdaptivePcaConfig::for_vector_dim(vector_dim);
+
+        // Use adaptive dimensions but respect config maximum if set lower
+        let n_components = pca_config.n_components.min(self.config.pca_dimensions);
+
+        tracing::debug!(
+            "HELIX: Training PCA model with {} dimensions (adaptive from {}-dim vectors)",
+            n_components,
+            vector_dim
+        );
+
+        let new_model = PCAModel::train(vectors, n_components)?;
         *self.pca_model.write().await = Some(new_model);
 
         // Update metrics
@@ -1227,11 +1297,18 @@ impl UnifiedStorageEngine for HelixEngine {
             }
         } else if let Some(ref model) = pca_model {
             // Use PCA model for larger batches
+            // Prevent overflow: for high dims (>16), we must reduce bits/dim (max 8)
+            let bits = if model.n_components > 16 {
+                self.config.hilbert_bits_per_dimension.min(8)
+            } else {
+                self.config.hilbert_bits_per_dimension
+            };
+
             for record in &records {
                 let reduced = model.transform(&record.vector)?;
                 let hilbert_key = clustering::compute_hilbert_key_with_config(
                     &reduced,
-                    self.config.hilbert_bits_per_dimension,
+                    bits,
                 );
                 hilbert_keys.push(hilbert_key);
             }

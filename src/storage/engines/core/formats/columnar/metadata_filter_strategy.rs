@@ -312,6 +312,7 @@ impl FilterPerformanceMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::engines::core::formats::columnar::FilterLogic;
 
     #[test]
     fn test_strategy_selection() {

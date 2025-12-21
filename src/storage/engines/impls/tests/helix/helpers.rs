@@ -581,6 +581,7 @@ pub fn create_zone_map_config(vectors_per_block: usize) -> HelixConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::traits::UnifiedStorageEngine;
 
     #[test]
     fn test_create_test_records() {
@@ -649,22 +650,20 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "engine_name() method not found"]
     async fn test_create_test_engine() {
         let result = create_test_engine().await;
         assert!(result.is_ok());
-        // let engine = result.unwrap();
-        // assert_eq!(engine.engine_name(), "helix");
+        let engine = result.unwrap();
+        assert_eq!(engine.engine_name(), "helix");
     }
 
     #[tokio::test]
-    #[ignore = "engine_name() method not found"]
     async fn test_setup_test_environment() {
         let result = setup_test_environment("test_collection", 128).await;
         assert!(result.is_ok());
 
         let (engine, _temp_dir, collection) = result.unwrap();
-        // assert_eq!(engine.engine_name(), "helix");
+        assert_eq!(engine.engine_name(), "helix");
         assert_eq!(collection.id, "test_collection");
         assert_eq!(collection.config.as_ref().unwrap().dimension, 128);
     }

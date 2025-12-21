@@ -117,7 +117,20 @@ mod encoding_markers {
     pub const RUN_LENGTH: u8 = 0x60; // Proxima RunLength
 }
 
-/// Cache alignment constant
+/// Cache-line alignment constant (64 bytes)
+///
+/// ## Why 64-byte alignment?
+/// - Modern CPUs use 64-byte cache lines (Intel/AMD/ARM)
+/// - SIMD operations (AVX2/AVX-512/NEON) work best on aligned data
+/// - Memory-mapped reads can be used directly without copying to aligned buffers
+///
+/// ## Overhead Analysis (Audited December 2024)
+/// - Typical 263KB block with 51 bytes padding = 0.019% overhead
+/// - This negligible overhead enables direct SIMD operations on mmap'd data
+///
+/// ## Wire Format
+/// Each block is written as: [length:4][data:N][padding:0-63]
+/// Reader must skip padding after each block (see sst_query_engine.rs:3803-3810)
 const CACHE_LINE_SIZE: usize = 64;
 
 /// Block index entry for random access
@@ -480,6 +493,41 @@ impl SstableWriter {
             data_blocks.len()
         );
 
+        // === NEW: Cluster blocks using PCA + Z-Order for spatial locality and pruning ===
+        // PCA reduces high-dimensional vectors (768D/1536D) → 32D (aligns with proximablocks chunks)
+        // Z-Order (Morton code) maps 32D → 1D while preserving spatial locality
+        // This enables both cache-friendly ordering AND range-based pruning
+
+        // Determine target dimensions: min(32, actual_dimension)
+        // 32D aligns with proximablocks chunking and provides excellent clustering
+        let target_dims = if let Some(first_entry) = index_entries.first() {
+            first_entry.block_centroid.len().min(32)
+        } else {
+            32
+        };
+
+        info!("🔬 SST: Applying PCA + Z-Order clustering to {} blocks (target: {}D)",
+            data_blocks.len(), target_dims);
+        let (data_blocks, mut layout_index_entries, zorder_codes) =
+            crate::storage::engines::core::formats::proximablocks::spatial_clustering::cluster_blocks_pca_zorder(
+                data_blocks,
+                index_entries,
+                |entry: &IndexEntry| &entry.block_centroid,
+                target_dims,  // Use min(32, dimension) for optimal clustering
+            );
+
+        // Populate Z-Order codes in index entries for pruning
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+        for (entry, code) in layout_index_entries.iter_mut().zip(zorder_codes.iter()) {
+            entry.zorder_code = Some(code.clone());
+        }
+
+        let default_code = SpatialCode::Code64(0);
+        info!("🔬 SST: Z-Order clustering complete - codes range: {} to {}",
+            zorder_codes.iter().min().unwrap_or(&default_code),
+            zorder_codes.iter().max().unwrap_or(&default_code)
+        );
+
         // Continue with rest of the write process (reuse existing logic)
         // MIGRATION: Apply quantization using universal adapter
         info!(
@@ -583,7 +631,7 @@ impl SstableWriter {
             bloom_filter_offset: current_offset as u32,
             bloom_filter_size: combined_bloom_filter.serialize()?.len() as u32,
             index_offset: 0, // Will be set after bloom filter
-            index_size: index_entries
+            index_size: layout_index_entries
                 .iter()
                 .map(|e| 4 + e.serialize().unwrap().len())  // Include 4-byte length prefix!
                 .sum::<usize>() as u32,
@@ -674,52 +722,65 @@ impl SstableWriter {
             serialized_blocks.push(serialized_block);
         }
 
-        // Calculate block offsets before writing index
-        // Blocks will be written after header + bloom + index
-        // First, calculate size of index to know where blocks start
-        let index_size_estimate: usize = index_entries
-            .iter()
-            .map(|e| 4 + e.serialize().unwrap().len()) // 4 bytes length prefix + entry data
-            .sum();
+        // Calculate block offsets and build index (two-pass to resolve index size dependency)
+        let mut index_bytes: Vec<u8> = Vec::new();
+        let mut sorted_index_entries: Vec<IndexEntry> = Vec::new();
+        let mut blocks_start_offset: u64 = 0;
+        for _ in 0..2 {
+            blocks_start_offset = (output_data.len() + 4 + index_bytes.len()) as u64; // +4 for index length prefix
 
-        let blocks_start_offset = output_data.len() + 4 + index_size_estimate; // +4 for index length prefix
+            // Update offsets in index entries based on current index size guess
+            let mut current_block_offset = blocks_start_offset;
+            for (i, entry) in layout_index_entries.iter_mut().enumerate() {
+                entry.offset = current_block_offset;
 
-        // Update offsets in index entries
-        let mut current_block_offset = blocks_start_offset as u64;
-        for (i, entry) in index_entries.iter_mut().enumerate() {
-            entry.offset = current_block_offset;
+                // Use pre-serialized block size
+                let serialized_block = &serialized_blocks[i];
+                let block_total_size = 4 + serialized_block.len(); // length prefix + data
 
-            // Use pre-serialized block size
-            let serialized_block = &serialized_blocks[i];
-            let block_total_size = 4 + serialized_block.len(); // length prefix + data
+                // Account for cache line padding
+                let aligned_size =
+                    ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE)
+                        * CACHE_LINE_SIZE;
+                let padding = aligned_size - serialized_block.len();
+                let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {
+                    block_total_size + padding
+                } else {
+                    block_total_size
+                };
 
-            // Account for cache line padding
-            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE)
-                * CACHE_LINE_SIZE;
-            let padding = aligned_size - serialized_block.len();
-            let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {
-                block_total_size + padding
-            } else {
-                block_total_size
+                current_block_offset += total_with_padding as u64;
+            }
+
+            // Sort index entries by key for range lookups (keeps correct offsets to clustered blocks)
+            sorted_index_entries = layout_index_entries.clone();
+            sorted_index_entries.sort_by(|a, b| a.key.cmp(&b.key));
+
+            // Build B+ tree over sorted entries
+            let bpt = crate::storage::engines::impls::sst::BPlusTreeIndex::build(
+                &sorted_index_entries,
+                128,
+            );
+
+            // Compose SstableIndex for serialization
+            let index_struct = crate::storage::engines::impls::sst::SstableIndex {
+                entries: sorted_index_entries.clone(),
+                metadata_stats: std::collections::HashMap::new(),
+                vector_count: processed_count,
+                min_key: min_key.clone(),
+                max_key: max_key.clone(),
+                bplus_tree: Some(bpt),
             };
 
-            current_block_offset += total_with_padding as u64;
+            index_bytes = index_struct.serialize()?;
         }
 
-        // Write index entries (IndexEntry format, not BlockIndexEntry)
-        let mut index_data = Vec::new();
-        for entry in &index_entries {
-            let entry_bytes = entry.serialize()?;
-            // Write length prefix + entry data
-            index_data.extend_from_slice(&(entry_bytes.len() as u32).to_le_bytes());
-            index_data.extend_from_slice(&entry_bytes);
-        }
-        output_data.extend_from_slice(&(index_data.len() as u32).to_le_bytes());
-        output_data.extend_from_slice(&index_data);
+        output_data.extend_from_slice(&(index_bytes.len() as u32).to_le_bytes());
+        output_data.extend_from_slice(&index_bytes);
         debug!(
             "✅ Wrote index: {} bytes for {} entries",
-            index_data.len(),
-            index_entries.len()
+            index_bytes.len(),
+            sorted_index_entries.len()
         );
         // Use shared Proxima serialization for data blocks with optimizations
         debug!(
@@ -757,11 +818,11 @@ impl SstableWriter {
         // Calculate actual offsets based on what we wrote
         let actual_bloom_offset = 8 + header_len; // After SST1 magic + header_len + header_bytes
         let actual_index_offset = actual_bloom_offset + 4 + bloom_bytes.len() as u32;
-        let actual_blocks_offset = actual_index_offset + 4 + index_data.len() as u32;
+        let actual_blocks_offset = actual_index_offset + 4 + index_bytes.len() as u32;
 
         // Update header fields with correct values
         header.block_index_offset = actual_index_offset as u64;
-        header.block_index_size = index_data.len() as u32;
+        header.block_index_size = index_bytes.len() as u32;
         header.data_blocks_offset = actual_blocks_offset as u64;
         header.global_bloom_offset = actual_bloom_offset as u64;
         header.global_bloom_size = bloom_bytes.len() as u32;
@@ -909,6 +970,7 @@ impl SstableWriter {
                     .as_ref()
                     .and_then(|f| f.serialize().ok()),
                 vector_format,
+                zorder_code: None,  // Will be populated during clustering
             });
         }
 

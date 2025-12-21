@@ -4216,6 +4216,193 @@ pub struct CycleCheckResponse {
     #[prost(bool, tag = "1")]
     pub has_cycle: bool,
 }
+/// Graph query request using declarative query language
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphQueryRequest {
+    /// Graph ID to execute query against
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Query language (Cypher, Gremlin, or Native)
+    #[prost(enumeration = "QueryLanguage", tag = "2")]
+    pub language: i32,
+    /// Query string (e.g., "MATCH (n:Person) WHERE n.age > 30 RETURN n")
+    #[prost(string, tag = "3")]
+    pub query: ::prost::alloc::string::String,
+    /// Optional query parameters (for parameterized queries)
+    #[prost(map = "string, message", tag = "4")]
+    pub parameters: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        PropertyValue,
+    >,
+    /// Optional query timeout in milliseconds
+    #[prost(uint32, optional, tag = "5")]
+    pub timeout_ms: ::core::option::Option<u32>,
+    /// Optional execution options (e.g., explain, profile)
+    #[prost(message, optional, tag = "6")]
+    pub options: ::core::option::Option<QueryExecutionOptions>,
+}
+/// Query execution options
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryExecutionOptions {
+    /// Return query execution plan instead of results
+    #[prost(bool, tag = "1")]
+    pub explain: bool,
+    /// Return query execution plan with profiling statistics
+    #[prost(bool, tag = "2")]
+    pub profile: bool,
+    /// Read-only mode (prevents mutations)
+    #[prost(bool, tag = "3")]
+    pub read_only: bool,
+    /// Maximum result rows to return
+    #[prost(uint32, optional, tag = "4")]
+    pub max_rows: ::core::option::Option<u32>,
+}
+/// Graph query response containing result rows
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphQueryResponse {
+    /// Result rows from query execution
+    #[prost(message, repeated, tag = "1")]
+    pub rows: ::prost::alloc::vec::Vec<ResultRow>,
+    /// Query execution statistics
+    #[prost(message, optional, tag = "2")]
+    pub stats: ::core::option::Option<QueryExecutionStats>,
+    /// Optional execution plan (if explain=true or profile=true)
+    #[prost(message, optional, tag = "3")]
+    pub query_plan: ::core::option::Option<QueryPlan>,
+    /// Optional error message if query failed
+    #[prost(string, optional, tag = "4")]
+    pub error_message: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// A single result row with column bindings
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResultRow {
+    /// Column values keyed by variable name or projection alias
+    #[prost(map = "string, message", tag = "1")]
+    pub columns: ::std::collections::HashMap<::prost::alloc::string::String, QueryValue>,
+}
+/// Value type for query results (supports nodes, edges, paths, primitives, lists)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryValue {
+    #[prost(oneof = "query_value::Value", tags = "1, 2, 3, 4, 5, 6, 7")]
+    pub value: ::core::option::Option<query_value::Value>,
+}
+/// Nested message and enum types in `QueryValue`.
+pub mod query_value {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        /// Graph element types
+        #[prost(message, tag = "1")]
+        Node(super::Node),
+        #[prost(message, tag = "2")]
+        Edge(super::Edge),
+        #[prost(message, tag = "3")]
+        Path(super::GraphPath),
+        /// Primitive types
+        #[prost(message, tag = "4")]
+        Property(super::PropertyValue),
+        /// Collection types
+        #[prost(message, tag = "5")]
+        List(super::QueryValueList),
+        #[prost(message, tag = "6")]
+        Map(super::QueryValueMap),
+        /// Null value
+        ///
+        /// true means NULL
+        #[prost(bool, tag = "7")]
+        Null(bool),
+    }
+}
+/// List of query values
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryValueList {
+    #[prost(message, repeated, tag = "1")]
+    pub values: ::prost::alloc::vec::Vec<QueryValue>,
+}
+/// Map of query values
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryValueMap {
+    #[prost(map = "string, message", tag = "1")]
+    pub entries: ::std::collections::HashMap<::prost::alloc::string::String, QueryValue>,
+}
+/// Query execution statistics
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryExecutionStats {
+    /// Execution time in microseconds
+    #[prost(uint64, tag = "1")]
+    pub execution_time_microseconds: u64,
+    /// Number of result rows returned
+    #[prost(uint32, tag = "2")]
+    pub rows_returned: u32,
+    /// Number of nodes accessed
+    #[prost(uint32, tag = "3")]
+    pub nodes_accessed: u32,
+    /// Number of edges traversed
+    #[prost(uint32, tag = "4")]
+    pub edges_traversed: u32,
+    /// Number of indexes used
+    #[prost(uint32, tag = "5")]
+    pub indexes_used: u32,
+    /// Compilation time (parsing + planning) in microseconds
+    #[prost(uint64, tag = "6")]
+    pub compilation_time_microseconds: u64,
+    /// Whether results were cached
+    #[prost(bool, tag = "7")]
+    pub cache_hit: bool,
+}
+/// Query execution plan (for EXPLAIN/PROFILE)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryPlan {
+    /// Plan ID
+    #[prost(string, tag = "1")]
+    pub plan_id: ::prost::alloc::string::String,
+    /// Root plan step
+    #[prost(message, optional, tag = "2")]
+    pub root_step: ::core::option::Option<PlanStep>,
+    /// Estimated total cost
+    #[prost(double, tag = "3")]
+    pub estimated_cost: f64,
+    /// Estimated result size
+    #[prost(uint32, tag = "4")]
+    pub estimated_result_size: u32,
+    /// Plan creation timestamp (milliseconds)
+    #[prost(int64, tag = "5")]
+    pub created_at_ms: i64,
+}
+/// A step in the query execution plan
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PlanStep {
+    /// Step type (e.g., "NodeScan", "Expand", "Filter", "Project")
+    #[prost(string, tag = "1")]
+    pub step_type: ::prost::alloc::string::String,
+    /// Step description (human-readable)
+    #[prost(string, tag = "2")]
+    pub description: ::prost::alloc::string::String,
+    /// Estimated cost for this step
+    #[prost(double, tag = "3")]
+    pub estimated_cost: f64,
+    /// Estimated cardinality (rows) for this step
+    #[prost(uint32, tag = "4")]
+    pub estimated_cardinality: u32,
+    /// Child plan steps
+    #[prost(message, repeated, tag = "5")]
+    pub children: ::prost::alloc::vec::Vec<PlanStep>,
+    /// Actual execution statistics (only present in PROFILE mode)
+    #[prost(message, optional, tag = "6")]
+    pub profile: ::core::option::Option<PlanStepProfile>,
+}
+/// Profiling statistics for a plan step (only available with profile=true)
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PlanStepProfile {
+    /// Actual execution time in microseconds
+    #[prost(uint64, tag = "1")]
+    pub actual_time_microseconds: u64,
+    /// Actual rows produced
+    #[prost(uint32, tag = "2")]
+    pub actual_rows: u32,
+    /// Number of times this step was executed
+    #[prost(uint32, tag = "3")]
+    pub executions: u32,
+}
 /// Supported property filter operators
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -4362,6 +4549,42 @@ impl ShortestPathAlgorithm {
             "SHORTEST_PATH_ALGORITHM_UNSPECIFIED" => Some(Self::Unspecified),
             "SHORTEST_PATH_ALGORITHM_DIJKSTRA" => Some(Self::Dijkstra),
             "SHORTEST_PATH_ALGORITHM_ASTAR" => Some(Self::Astar),
+            _ => None,
+        }
+    }
+}
+/// Supported query languages for declarative graph queries
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum QueryLanguage {
+    Unspecified = 0,
+    /// Existing property-based API (using NodeQuery, EdgeQuery, etc.)
+    Native = 1,
+    /// openCypher-compatible queries
+    Cypher = 2,
+    /// Future: Gremlin support
+    Gremlin = 3,
+}
+impl QueryLanguage {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "QUERY_LANGUAGE_UNSPECIFIED",
+            Self::Native => "QUERY_LANGUAGE_NATIVE",
+            Self::Cypher => "QUERY_LANGUAGE_CYPHER",
+            Self::Gremlin => "QUERY_LANGUAGE_GREMLIN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUERY_LANGUAGE_UNSPECIFIED" => Some(Self::Unspecified),
+            "QUERY_LANGUAGE_NATIVE" => Some(Self::Native),
+            "QUERY_LANGUAGE_CYPHER" => Some(Self::Cypher),
+            "QUERY_LANGUAGE_GREMLIN" => Some(Self::Gremlin),
             _ => None,
         }
     }
@@ -4669,6 +4892,31 @@ pub mod graph_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "QueryEdges"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Declarative query language support
+        pub async fn execute_query(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GraphQueryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GraphQueryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/ExecuteQuery",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "ExecuteQuery"));
             self.inner.unary(req, path, codec).await
         }
         /// Graph operations
@@ -5030,6 +5278,14 @@ pub mod graph_service_server {
             &self,
             request: tonic::Request<super::EdgeQuery>,
         ) -> std::result::Result<tonic::Response<super::BatchResponse>, tonic::Status>;
+        /// Declarative query language support
+        async fn execute_query(
+            &self,
+            request: tonic::Request<super::GraphQueryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GraphQueryResponse>,
+            tonic::Status,
+        >;
         /// Graph operations
         async fn get_neighbors(
             &self,
@@ -5624,6 +5880,51 @@ pub mod graph_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = QueryEdgesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/ExecuteQuery" => {
+                    #[allow(non_camel_case_types)]
+                    struct ExecuteQuerySvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GraphQueryRequest>
+                    for ExecuteQuerySvc<T> {
+                        type Response = super::GraphQueryResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GraphQueryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::execute_query(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ExecuteQuerySvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

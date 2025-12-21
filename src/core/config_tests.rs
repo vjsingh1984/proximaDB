@@ -35,6 +35,7 @@ mod tests {
             }),
             filesystem_config: Default::default(),
             compaction_config: Default::default(),
+            prune_mode: None,
         };
 
         let storage_urls = config.storage_urls();

@@ -1201,7 +1201,14 @@ impl RaptorReader {
         Ok(final_candidates)
     }
 
-    /// Search within a single rowgroup using P² matrix
+    /// Search within a single rowgroup using P² matrix with P×K spillover filtering
+    ///
+    /// OPTIMIZATION: Uses P×K matrix for triangle inequality filtering to reduce
+    /// the number of vectors that need full distance computation.
+    ///
+    /// Triangle inequality: d(query, vector) >= |d(query, centroid) - d(vector, centroid)|
+    ///
+    /// If the minimum possible distance exceeds our threshold, we skip the vector entirely.
     async fn search_within_rowgroup_p2(
         &self,
         rowgroup_id: u16,
@@ -1218,29 +1225,80 @@ impl RaptorReader {
         let ids = self.load_rowgroup_ids(&self.base_path, rowgroup_id).await?;
 
         let distance_compute = UnifiedDistanceCompute::new(metric.clone());
-        let mut candidates = Vec::with_capacity(vectors.len());
 
-        // Calculate distances to all vectors in rowgroup
+        // Step 1: Compute query-to-centroid distance once
+        // Get the centroid for this rowgroup from footer
+        let footer = self.get_footer(&self.base_path).await?;
+        let centroids = footer.centroids.decode_all();
+        let centroid = centroids
+            .iter()
+            .find(|(rg_id, _)| *rg_id == rowgroup_id)
+            .map(|(_, c)| c.clone());
+
+        let query_to_centroid = centroid
+            .as_ref()
+            .map(|c| {
+                distance_compute
+                    .calculate_distance(query, c, metric)
+                    .raw_value
+            })
+            .unwrap_or(0.0);
+
+        // Step 2: Use P×K filtering with triangle inequality
+        // Track filtering statistics
+        let total_vectors = vectors.len();
+        let mut filtered_count = 0usize;
+
+        // Dynamic threshold: start high and tighten as we find good candidates
+        let mut threshold = f32::MAX;
+        let mut candidates = Vec::with_capacity(vectors.len().min(k * 4)); // Pre-allocate for ~4k expected
+
         for (idx, vector) in vectors.iter().enumerate() {
+            // P×K FILTERING: Check if vector can possibly be close enough
+            if let Ok(vector_to_centroid) = pxk_matrix.get_distance(idx, rowgroup_id as usize) {
+                // Triangle inequality lower bound
+                let min_possible_dist = (query_to_centroid - vector_to_centroid).abs();
+
+                // Skip if minimum possible distance exceeds threshold
+                if min_possible_dist > threshold {
+                    filtered_count += 1;
+                    continue;
+                }
+            }
+
+            // Compute exact distance only for vectors that pass the filter
             let dist = distance_compute
                 .calculate_distance(query, vector, metric)
                 .raw_value;
 
-            // Optional: Apply P×K boosting based on vector's distance to centroids
-            let boosted_dist =
-                if let Ok(centroid_dist) = pxk_matrix.get_distance(idx, rowgroup_id as usize) {
-                    dist * 0.9 + centroid_dist * 0.1 // Weighted combination
-                } else {
-                    dist
-                };
+            // Update threshold based on k-th best distance seen so far
+            if candidates.len() >= k {
+                // Sort and keep only top-k
+                candidates.sort_by(|a: &(String, f32), b: &(String, f32)| {
+                    a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                candidates.truncate(k);
+                // Update threshold to k-th best + margin
+                threshold = candidates.last().map(|(_, d)| *d * 1.2).unwrap_or(f32::MAX);
+            }
 
             if idx < ids.len() {
-                candidates.push((ids[idx].clone(), boosted_dist));
+                candidates.push((ids[idx].clone(), dist));
             }
         }
 
+        // Log filtering efficiency
+        if filtered_count > 0 {
+            tracing::debug!(
+                "P×K filtering: skipped {}/{} vectors ({}% reduction)",
+                filtered_count,
+                total_vectors,
+                (filtered_count * 100) / total_vectors.max(1)
+            );
+        }
+
         // Sort and return top-k from this rowgroup
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         candidates.truncate(k);
 
         Ok(candidates)
@@ -1432,8 +1490,10 @@ impl RaptorReader {
         Ok(final_centroids)
     }
 
-    /// Step 2: Search within a specific rowgroup using P² matrix + P×K boosting
-    /// This implements the intra-rowgroup navigation phase
+    /// Search within a rowgroup using Matrix Trinity (K², P×K, P²) with spillover filtering
+    ///
+    /// OPTIMIZATION: Uses P×K matrix for triangle inequality pruning before
+    /// computing full vector distances, significantly reducing computation.
     async fn search_rowgroup_with_matrices(
         &mut self,
         query: &[f32],
@@ -1443,35 +1503,75 @@ impl RaptorReader {
         metric: &DistanceMetric,
     ) -> Result<Vec<f32>> {
         // Load P² matrix for this rowgroup
-        let p2_matrix = self.load_p2_matrix_for_rowgroup(rowgroup_id).await?;
+        let _p2_matrix = self.load_p2_matrix_for_rowgroup(rowgroup_id).await?;
 
-        // Load P×K matrix for vector-to-centroid distances (for boosting)
+        // Load P×K matrix for vector-to-centroid distances (for filtering)
         let pxk_matrix = self.load_pxk_matrix_for_rowgroup(rowgroup_id).await?;
 
         // Load vectors from rowgroup for distance computation
         let vectors = self.load_vectors_for_rowgroup(rowgroup_id).await?;
 
         let distance_compute = UnifiedDistanceCompute::new(metric.clone());
-        let mut candidate_distances = Vec::new();
 
-        // For each vector in rowgroup, compute boosted distance
+        // Step 1: Get rowgroup centroid and compute query-to-centroid distance
+        let footer = self.get_footer(&self.base_path).await?;
+        let centroids = footer.centroids.decode_all();
+        let centroid = centroids
+            .iter()
+            .find(|(rg_id, _)| *rg_id == rowgroup_id)
+            .map(|(_, c)| c.clone());
+
+        let query_to_centroid = centroid
+            .as_ref()
+            .map(|c| {
+                distance_compute
+                    .calculate_distance(query, c, metric)
+                    .raw_value
+            })
+            .unwrap_or(0.0);
+
+        // Step 2: Use P×K filtering with triangle inequality
+        let total_vectors = vectors.len();
+        let mut filtered_count = 0usize;
+        let mut candidate_distances = Vec::with_capacity(ef * 2);
+        let mut threshold = f32::MAX;
+
         for (vector_idx, vector) in vectors.iter().enumerate() {
-            // Base distance from query to vector
+            // P×K FILTERING: Use triangle inequality to skip distant vectors
+            if let Ok(vector_to_centroid) = pxk_matrix.get_distance(vector_idx, centroid_id) {
+                let min_possible_dist = (query_to_centroid - vector_to_centroid).abs();
+
+                // Skip if minimum possible distance exceeds our best threshold
+                if min_possible_dist > threshold {
+                    filtered_count += 1;
+                    continue;
+                }
+            }
+
+            // Compute exact distance for vectors that pass the filter
             let base_distance = distance_compute
-                .calculate_distance(query, vector, &metric)
+                .calculate_distance(query, vector, metric)
                 .raw_value;
 
-            // Get P×K distance for boosting (vector to its assigned centroid)
-            let pxk_distance = pxk_matrix.get_distance(vector_idx, centroid_id)?;
+            // Get P×K distance for boosting
+            let pxk_distance = pxk_matrix
+                .get_distance(vector_idx, centroid_id)
+                .unwrap_or(0.0);
 
-            // Apply simple boosting formula: base + centroid_penalty
-            let boosted_distance = base_distance + (pxk_distance * 0.1); // α weight
+            // Apply boosting formula: base + centroid_penalty
+            let boosted_distance = base_distance + (pxk_distance * 0.1);
 
             candidate_distances.push(boosted_distance);
 
-            // Early exit if we have enough candidates
-            if candidate_distances.len() >= ef * 2 {
-                break;
+            // Update dynamic threshold
+            if candidate_distances.len() >= ef {
+                candidate_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                candidate_distances.truncate(ef);
+                threshold = candidate_distances
+                    .last()
+                    .copied()
+                    .map(|d| d * 1.2)
+                    .unwrap_or(f32::MAX);
             }
         }
 
@@ -1480,10 +1580,12 @@ impl RaptorReader {
         candidate_distances.truncate(ef);
 
         tracing::debug!(
-            "P² matrix search in rowgroup {}: {} candidates from {} vectors",
+            "P×K filtered search in rowgroup {}: {} candidates, filtered {}/{} ({:.0}%)",
             rowgroup_id,
             candidate_distances.len(),
-            vectors.len()
+            filtered_count,
+            total_vectors,
+            (filtered_count as f32 * 100.0) / total_vectors.max(1) as f32
         );
 
         Ok(candidate_distances)
@@ -1491,18 +1593,72 @@ impl RaptorReader {
 
     // ====== Matrix Trinity Helper Methods ======
 
-    /// Load P² matrix for a specific rowgroup (used by Matrix Trinity search)
+    /// Load P² matrix for a specific rowgroup from disk
+    ///
+    /// The P² matrix stores intra-rowgroup vector distances for efficient
+    /// local navigation during search. Uses upper-triangle storage to save 50%.
     async fn load_p2_matrix_for_rowgroup(&self, rowgroup_id: u16) -> Result<Arc<P2Matrix>> {
-        // This is a simplified version - in production would load from actual file
-        let default_matrix = P2Matrix {
-            num_vectors: 1000,
-            distances: vec![128; (1000 * 999) / 2], // Default quantized distances
-            min_distance: 0.0,
-            max_distance: 2.0,
-            compression: ProximaScheme::BitPacked { bits: 8 },
-            compressed_size: 64000,
-        };
-        Ok(Arc::new(default_matrix))
+        // Try to load from disk first
+        match self.load_p2_matrix_from_file(rowgroup_id).await {
+            Ok(matrix) => Ok(Arc::new(matrix)),
+            Err(e) => {
+                tracing::debug!(
+                    "P² matrix not found for rowgroup {}, using fallback: {}",
+                    rowgroup_id,
+                    e
+                );
+                // Fallback to placeholder for compatibility during development
+                let default_matrix = P2Matrix {
+                    num_vectors: 1000,
+                    distances: vec![128; (1000 * 999) / 2],
+                    min_distance: 0.0,
+                    max_distance: 2.0,
+                    compression: ProximaScheme::BitPacked { bits: 8 },
+                    compressed_size: 64000,
+                };
+                Ok(Arc::new(default_matrix))
+            }
+        }
+    }
+
+    /// Load P² matrix from file for a specific rowgroup
+    async fn load_p2_matrix_from_file(&self, rg_id: u16) -> Result<P2Matrix> {
+        // Get metadata to find P² matrix offset
+        let metadata = self.read_metadata(&self.base_path).await?;
+        let rowgroup_metadata = metadata
+            .row_groups
+            .get(rg_id as usize)
+            .ok_or_else(|| anyhow::anyhow!("Row group {} not found in metadata", rg_id))?;
+
+        // Get P² matrix location from column pages
+        let p2_metadata = rowgroup_metadata
+            .column_pages
+            .get(&ColumnType::P2Matrix)
+            .ok_or_else(|| anyhow::anyhow!("No P² matrix column for row group {}", rg_id))?;
+
+        let p2_offset = p2_metadata.offset;
+        let p2_size = p2_metadata.compressed_size;
+
+        // Read compressed P² matrix data
+        let compressed_data = self
+            .read_p2_matrix_bytes(&self.base_path, p2_offset, p2_size)
+            .await?;
+
+        // Decompress
+        let decompressed = self.decompress_p2_matrix(&compressed_data)?;
+
+        // Deserialize P² matrix
+        let p2_matrix: P2Matrix =
+            bincode::deserialize(&decompressed).context("Failed to deserialize P² matrix")?;
+
+        tracing::debug!(
+            "Loaded P² matrix for rowgroup {}: {} vectors, {:.1}KB compressed",
+            rg_id,
+            p2_matrix.num_vectors,
+            p2_size as f32 / 1024.0
+        );
+
+        Ok(p2_matrix)
     }
 
     /// Load P×K matrix for a specific rowgroup (used by Matrix Trinity search)
@@ -3195,86 +3351,78 @@ impl RaptorReader {
 
         // Step 2: Use hierarchical navigation for large collections
         if k >= 1000 {
-            // Hierarchical approach: explore neighbors of top candidates
+            // OPTIMIZED: Use K² matrix for neighbor discovery with triangle inequality pruning
+            let k2_matrix = &footer.inter_centroid_distances;
+
+            // Build a map from rowgroup_id to index for K² lookups
+            let rg_to_idx: std::collections::HashMap<u16, usize> = all_centroids
+                .iter()
+                .enumerate()
+                .map(|(idx, (rg_id, _))| (*rg_id, idx))
+                .collect();
+
             let mut visited = std::collections::HashSet::new();
-            let mut candidates = std::collections::BinaryHeap::new();
+            let mut result_with_dist: Vec<(f32, u16)> = Vec::new();
 
-            // Start with top-3 closest rowgroups
+            // Start with top-3 closest rowgroups as seeds
             for &(dist, rg_id) in centroid_distances.iter().take(3) {
-                candidates.push(OrdFloat(-dist)); // Negative for max-heap to min-heap
-                visited.insert(rg_id);
+                if !visited.contains(&rg_id) {
+                    result_with_dist.push((dist, rg_id));
+                    visited.insert(rg_id);
+                }
+            }
 
-                // Explore neighbors of this rowgroup
-                if let Some(rg_metadata) = footer
-                    .file_metadata
-                    .row_groups
-                    .iter()
-                    .find(|rg| rg.id == rg_id)
-                {
-                    if let Some(ref stats) = rg_metadata.centroid_stats {
-                        for neighbor in &stats.neighbor_rowgroups {
-                            if !visited.contains(&neighbor.rowgroup_id) {
-                                // Compute distance to neighbor (on-demand)
-                                if let Some((_, neighbor_centroid)) = all_centroids
-                                    .iter()
-                                    .find(|(id, _)| *id == neighbor.rowgroup_id)
-                                {
-                                    let neighbor_dist = self
-                                        .distance_compute
-                                        .calculate_distance(
-                                            query_vector,
-                                            neighbor_centroid,
-                                            distance_metric,
-                                        )
-                                        .raw_value;
+            // Use K² matrix to find neighbors of seeds
+            // Triangle inequality: query_to_neighbor >= |query_to_seed - seed_to_neighbor|
+            let expansion_threshold = centroid_distances
+                .get(top_k_rowgroups.min(k - 1))
+                .map(|(d, _)| d * 1.5)  // 50% margin beyond kth best
+                .unwrap_or(f32::MAX);
 
-                                    // Add based on neighbor type
-                                    match neighbor.neighbor_type {
-                                        NeighborType::IntraSuperCluster => {
-                                            // Local neighbors - always explore
-                                            candidates.push(OrdFloat(-neighbor_dist));
-                                            visited.insert(neighbor.rowgroup_id);
-                                        }
-                                        NeighborType::InterSuperCluster => {
-                                            // Global neighbors - explore if promising
-                                            if neighbor_dist < dist * 1.5 {
-                                                // Within 50% of current
-                                                candidates.push(OrdFloat(-neighbor_dist));
-                                                visited.insert(neighbor.rowgroup_id);
-                                            }
-                                        }
-                                        NeighborType::Direct => {
-                                            // For small collections
-                                            candidates.push(OrdFloat(-neighbor_dist));
-                                            visited.insert(neighbor.rowgroup_id);
-                                        }
-                                    }
-                                }
-                            }
+            for &(seed_dist, seed_rg) in centroid_distances.iter().take(3) {
+                if let Some(&seed_idx) = rg_to_idx.get(&seed_rg) {
+                    // Use K² to find all centroids close to this seed
+                    for (neighbor_idx, (neighbor_rg, neighbor_centroid)) in all_centroids.iter().enumerate() {
+                        if visited.contains(neighbor_rg) {
+                            continue;
+                        }
+
+                        // Get seed-to-neighbor distance from K² matrix (O(1) lookup!)
+                        let k2_dist = k2_matrix.get_distance(seed_idx, neighbor_idx);
+
+                        // Triangle inequality lower bound: query_to_neighbor >= |seed_dist - k2_dist|
+                        let min_possible_dist = (seed_dist - k2_dist).abs();
+
+                        // Prune if minimum possible distance exceeds threshold
+                        if min_possible_dist > expansion_threshold {
+                            continue;
+                        }
+
+                        // Promising neighbor - compute exact distance
+                        let neighbor_dist = self
+                            .distance_compute
+                            .calculate_distance(query_vector, neighbor_centroid, distance_metric)
+                            .raw_value;
+
+                        if neighbor_dist < expansion_threshold {
+                            result_with_dist.push((neighbor_dist, *neighbor_rg));
+                            visited.insert(*neighbor_rg);
                         }
                     }
                 }
             }
 
-            // Extract top-k rowgroups from candidates
-            let mut result = Vec::new();
-            while result.len() < top_k_rowgroups && !candidates.is_empty() {
-                if let Some(OrdFloat(neg_dist)) = candidates.pop() {
-                    // Find the rowgroup_id for this distance
-                    for &(dist, rg_id) in &centroid_distances {
-                        if (dist + neg_dist).abs() < 0.0001 {
-                            // Float comparison tolerance
-                            if !result.contains(&rg_id) {
-                                result.push(rg_id);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            // Sort by distance and take top-k
+            result_with_dist.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            let result: Vec<u16> = result_with_dist
+                .into_iter()
+                .take(top_k_rowgroups)
+                .map(|(_, rg_id)| rg_id)
+                .collect();
 
             tracing::debug!(
-                "Hierarchical search: explored {} rowgroups, selected top {}",
+                "Hierarchical search with K² pruning: explored {} rowgroups, selected top {}",
                 visited.len(),
                 result.len()
             );

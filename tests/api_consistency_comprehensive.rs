@@ -4,8 +4,7 @@
 //! and that both APIs provide identical functionality.
 
 use proximadb::proto::proximadb_v1::{
-    CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
-    LogicalOp, MetadataFilter, SearchQuery, SqlValue, StorageEngine, VectorBatchRequest,
+    CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric, SearchQuery, SqlValue, StorageEngine, VectorBatchRequest,
     VectorOperationResponse, VectorRecord, VectorSearchRequest, sql_value,
 };
 use proximadb::utils::uuid::Uuid;

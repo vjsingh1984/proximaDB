@@ -268,7 +268,6 @@ embedded-all = ["python", "java", "nodejs", "c_ffi"]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
 debug = false
 strip = false  # Keep symbols for profiling
 incremental = false

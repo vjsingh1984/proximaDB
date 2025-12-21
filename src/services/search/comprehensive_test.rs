@@ -467,15 +467,7 @@ mod tests {
                 top_k: Some(test_case.top_k),
                 distance_metric: Some(test_case.distance_metric.clone()),
                 filter_expression: test_case.filter_expression.clone(),
-                accuracy_threshold: Some(0.95),
-                include_expired: Some(false),
-                timeout_ms: Some(5000),
-                requires_ordering: None,
-                enable_two_stage: Some(true),
-                quantization_hint: None,
-                enable_clustering_hint: Some(true),
-                enable_metadata_filtering_hint: Some(true),
-                custom_hints: None,
+                ..Default::default()
             };
 
             // Test hardware acceleration in distance computation
@@ -538,15 +530,7 @@ mod tests {
                 top_k: Some(test_case.top_k),
                 distance_metric: Some(test_case.distance_metric.clone()),
                 filter_expression: test_case.filter_expression.clone(),
-                accuracy_threshold: Some(0.95),
-                include_expired: Some(false),
-                timeout_ms: Some(5000),
-                requires_ordering: None,
-                enable_two_stage: Some(true),
-                quantization_hint: None,
-                enable_clustering_hint: Some(true),
-                enable_metadata_filtering_hint: Some(true),
-                custom_hints: None,
+                ..Default::default()
             };
 
             // Test hardware acceleration in distance computation

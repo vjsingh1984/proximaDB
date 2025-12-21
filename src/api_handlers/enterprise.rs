@@ -363,6 +363,7 @@ mod tests {
     use super::*;
     use crate::auth::sso::SSOIntegrationManager;
     use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies};
+    use crate::storage::tenant::resources::ResourceLimits;
 
     async fn create_test_enterprise_handler() -> EnterpriseAPIHandler {
         let tenant_manager = Arc::new(TenantManager::new());
@@ -385,7 +386,7 @@ mod tests {
             organization_name: "Global Investment Bank".to_string(),
             industry: Industry::Financial,
             compliance_requirements: vec![ComplianceFramework::SOC2, ComplianceFramework::SOX],
-            resource_limits: ResourceLimits::default(),
+            resource_limits: crate::storage::tenant::context::ResourceLimits::default(),
             security_policies: SecurityPolicies::default(),
         };
 

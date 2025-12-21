@@ -13,6 +13,7 @@ pub mod query_preprocessing;
 pub mod results;
 pub mod smart_execution_strategy;
 pub mod sql_value_filter;
+pub mod strategies;
 pub mod typesafe_filter;
 pub mod unified_interface;
 pub mod unified_progressive_pipeline;
@@ -175,6 +176,44 @@ pub struct SearchParams {
     /// Search mode for accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
     /// Defaults to Exact (100% recall). Use Approximate for faster queries with ~95-98% recall.
     pub search_mode: SearchMode,
+
+    /// Block-level pruning configuration (applies to SST/HELIX/SWIFT engines)
+    pub block_prune: BlockPruneConfig,
+}
+
+/// Configuration for block-level centroid pruning.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BlockPruneConfig {
+    /// Disable all block-level pruning (force brute-force scan).
+    pub force_exact: bool,
+    /// Pruning mode: "sqrt" (default), "ratio", or "fixed".
+    pub mode: BlockPruneMode,
+    /// Ratio of blocks to keep when mode == Ratio (0.0–1.0).
+    pub ratio: f32,
+    /// Minimum number of blocks to keep.
+    pub min_keep: usize,
+    /// Maximum number of blocks to keep (0 = no cap).
+    pub max_keep: usize,
+}
+
+impl Default for BlockPruneConfig {
+    fn default() -> Self {
+        Self {
+            force_exact: false,
+            mode: BlockPruneMode::Sqrt,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+        }
+    }
+}
+
+/// Block pruning mode.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum BlockPruneMode {
+    Sqrt,
+    Ratio,
+    Fixed(usize),
 }
 
 impl Default for SearchParams {
@@ -201,6 +240,7 @@ impl Default for SearchParams {
             progressive_recalls: None,
             optimization_hint: None,
             search_mode: SearchMode::default(), // Exact mode by default for 100% recall
+            block_prune: BlockPruneConfig::default(),
         }
     }
 }
@@ -321,6 +361,13 @@ pub use unified_interface::{
 
 // Provide a distinct export for the advanced optimizer to avoid name collisions
 pub use integrated_search_optimization::{AdvancedSearchOptimizer, SearchOptimizer};
+
+// Re-export search strategy pattern (Phase 2 of ISP compliance)
+pub use strategies::{
+    AdaptiveSearchStrategy, ApproximateSearchStrategy, CandidateProvider, ExactSearchStrategy,
+    ScoredCandidate, SearchContext, SearchContextImpl, SearchCostEstimate, SearchStrategy,
+    SearchStrategyRegistry,
+};
 
 /// JSON Value Comparison Utilities
 ///

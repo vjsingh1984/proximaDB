@@ -10,12 +10,12 @@
 
 use proximadb::core::memory::{PoolConfig, VectorMemoryPool};
 use proximadb::core::serialization::{
-    CompressionAlgorithm, SerializationFormat, VectorAnalysis, VectorHeader,
+    CompressionAlgorithm, SerializationFormat, VectorHeader,
     VectorSerializationConfig,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 /// Generate test vectors with specific characteristics
 fn generate_test_vector(size: usize, sparsity: f32, pattern: &str) -> Vec<f32> {
@@ -83,7 +83,7 @@ fn test_bytemuck_serialization_basic() {
 
 #[test]
 fn test_zstd_compression_effectiveness() {
-    let mut config = VectorSerializationConfig {
+    let config = VectorSerializationConfig {
         use_bytemuck: true,
         compression_threshold: 100, // Low threshold to ensure compression
         compression_algorithm: CompressionAlgorithm::Zstd,
@@ -519,7 +519,7 @@ mod streaming_compression_tests {
 mod fixed_length_tests {
     use super::*;
     use proximadb::core::serialization::fixed_length::{
-        Dim128, Dim512, Dim1024, FixedLengthSerializer, FixedVector,
+        Dim128, Dim512, FixedLengthSerializer, FixedVector,
     };
 
     #[test]

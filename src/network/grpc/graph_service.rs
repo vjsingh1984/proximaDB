@@ -75,6 +75,8 @@ use crate::proto::proximadb_v1::{
     // Common types
     GetNodeRequest,
     GetStatsRequest,
+    GraphQueryRequest,
+    GraphQueryResponse,
     GraphStats,
     HybridSearchRequest,
     HybridSearchResponse,
@@ -898,5 +900,28 @@ impl GraphService for GraphServiceImpl {
                 )))
             }
         }
+    }
+
+    /// Execute declarative graph query (Cypher/Gremlin)
+    async fn execute_query(
+        &self,
+        request: Request<GraphQueryRequest>,
+    ) -> Result<Response<GraphQueryResponse>, Status> {
+        let req = request.into_inner();
+        debug!(
+            "gRPC ExecuteQuery request for graph: {} language: {:?}",
+            req.graph_id,
+            req.language()
+        );
+
+        // TODO: Implement query parsing, planning, and execution
+        // This is a stub for Phase 1 Task 5 - full implementation in future phases
+
+        // For now, return unimplemented error
+        Err(Status::unimplemented(
+            "Declarative query execution not yet implemented. \
+             Use QueryNodes/QueryEdges for property-based queries, \
+             or TraverseGraph for graph traversal."
+        ))
     }
 }

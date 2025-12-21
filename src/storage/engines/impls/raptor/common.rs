@@ -1273,9 +1273,10 @@ impl InterCentroidMatrix {
         };
 
         for chunk in quantized_values.chunks(batch_size) {
-            // Create temporary vectors for dequantization
+            // Dequantize: d = min + q / scale_factor
             for &quantized_u16 in chunk {
-                let dequantized = quantized_u16 as f32 / self.compression_metadata.scale_factor;
+                let dequantized = self.compression_metadata.min_distance
+                    + quantized_u16 as f32 / self.compression_metadata.scale_factor;
                 results.push(dequantized);
             }
         }
@@ -1328,7 +1329,9 @@ impl InterCentroidMatrix {
     }
 
     /// Decompress single distance value at specific linear index in upper triangle
-    /// Uses Proxima bit-unpacking with 16-bit quantization reconstruction
+    /// Uses 16-bit quantization reconstruction
+    /// Quantization: q = (d - min) * scale, where scale = 65535 / (max - min)
+    /// Dequantization: d = min + q / scale
     fn decompress_single_distance_at_index(&self, linear_index: usize) -> f32 {
         if linear_index * 2 >= self.compressed_data.len() {
             return 0.0; // Out of bounds
@@ -1342,8 +1345,9 @@ impl InterCentroidMatrix {
         ]);
 
         // Reconstruct f32 distance from quantized value
+        // Formula: d = min + q / scale_factor (scale_factor = 65535 / range)
         self.compression_metadata.min_distance
-            + (quantized as f32 * self.compression_metadata.scale_factor)
+            + (quantized as f32 / self.compression_metadata.scale_factor)
     }
 
     /// Compress upper triangle data using 16-bit quantization + optional Proxima

@@ -279,6 +279,85 @@ graph LR
 | **Enterprise AI + production scale**
 |===
 
+=== **Graph-Enabled Semantic Knowledge Search (SKS)**
+
+ProximaDB uniquely combines graph database capabilities with vector embeddings for SKS workloads.
+
+==== Performance Benchmarks (December 2025)
+
+[cols="2,2,2,2,2", options="header"]
+|===
+| Operation | ProximaDB | NetworkX | igraph | ProximaDB Advantage
+
+| **Bulk Insert (60K ops)**
+| 259K ops/sec
+| 753K ops/sec
+| 1.77M ops/sec
+| +WAL durability
+
+| **Node Lookup**
+| 585K ops/sec
+| 1.41M ops/sec
+| 966K ops/sec
+| O(1) access
+
+| **Semantic Search**
+| 11K ops/sec
+| N/A
+| N/A
+| **Unique capability**
+
+| **Graph+Vector Hybrid**
+| Native
+| Manual
+| Not supported
+| **Unified platform**
+|===
+
+==== SKS Use Case Performance
+
+[cols="2,3,2", options="header"]
+|===
+| Use Case | ProximaDB Capability | Traditional Approach
+
+| **Code Intelligence**
+| Graph traversal + semantic similarity in single query
+| Separate graph DB + vector DB + orchestration
+
+| **Knowledge Graph RAG**
+| Vector search + graph expansion for context
+| Multiple services, complex data sync
+
+| **Social Network Analysis**
+| Community detection + user similarity
+| Graph algorithms only, no semantic understanding
+
+| **Recommendation Systems**
+| Collaborative + content-based in unified query
+| Multiple specialized systems
+|===
+
+==== Embedding Tiering Architecture
+
+[cols="2,3,2", options="header"]
+|===
+| Mode | Description | Memory Impact
+
+| **none** (default)
+| Pure graph, no embeddings
+| Minimal (CSR only)
+
+| **cold**
+| Embeddings in vector engine (SST/HELIX/VIPER)
+| Zero additional memory
+
+| **memory**
+| Embeddings in CSR memory
+| +3KB per 768D vector
+|===
+
+**Cold Tier Benefits**: Scale to billions of nodes without memory constraints by storing embeddings in optimized vector engines while keeping CSR lean for fast traversal.
+
 == Enterprise Readiness Comparison
 
 === **Platform Maturity Assessment**

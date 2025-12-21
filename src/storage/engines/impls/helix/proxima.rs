@@ -236,6 +236,65 @@ pub struct HelixBlockMetadata {
     pub clustering_hints: Option<ClusteringHints>,
 }
 
+impl HelixBlockMetadata {
+    /// Custom serialization to handle nested Proxima metadata safely
+    pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
+        use std::io::Write;
+        let mut buffer = Vec::new();
+        
+        // Header
+        buffer.write_all(b"HLX1")?;
+        
+        // Proxima Metadata (custom serialize)
+        let proxima_bytes = self.proxima_metadata.serialize()?;
+        buffer.write_all(&(proxima_bytes.len() as u32).to_le_bytes())?;
+        buffer.write_all(&proxima_bytes)?;
+        
+        // Other fields (safe for bincode)
+        let rest = bincode::serialize(&(
+            &self.hilbert_range,
+            &self.block_centroid,
+            &self.pca_stats,
+            &self.clustering_hints
+        ))?;
+        buffer.write_all(&rest)?;
+        
+        Ok(buffer)
+    }
+
+    /// Custom deserialization
+    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
+        use std::io::Read;
+        let mut cursor = std::io::Cursor::new(data);
+        
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+        if &magic != b"HLX1" {
+             return Err(anyhow::anyhow!("Invalid HelixBlockMetadata magic"));
+        }
+        
+        let mut len_buf = [0u8; 4];
+        cursor.read_exact(&mut len_buf)?;
+        let proxima_len = u32::from_le_bytes(len_buf) as usize;
+        
+        let mut proxima_bytes = vec![0u8; proxima_len];
+        cursor.read_exact(&mut proxima_bytes)?;
+        let proxima_metadata = ProximaBlockMetadata::deserialize(&proxima_bytes)?;
+        
+        let mut rest = Vec::new();
+        cursor.read_to_end(&mut rest)?;
+        let (hilbert_range, block_centroid, pca_stats, clustering_hints) = bincode::deserialize(&rest)?;
+        
+        Ok(Self {
+            proxima_metadata,
+            hilbert_range,
+            block_centroid,
+            pca_stats,
+            clustering_hints,
+        })
+    }
+}
+
 /// PCA projection statistics for a block
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PCAStats {
@@ -459,8 +518,17 @@ pub async fn write_helix_sstable(
     // 4. Number of blocks
     header_bytes.put_u32_le(num_blocks as u32);
 
-    // 5. Block metadata (bincode-serialized Vec)
-    let block_metadata_bytes = bincode::serialize(&block_metadata)?;
+    // 5. Block metadata (custom serialized Vec)
+    let mut block_metadata_bytes = Vec::new();
+    // Write count
+    block_metadata_bytes.extend_from_slice(&(block_metadata.len() as u64).to_le_bytes());
+    // Write entries
+    for meta in &block_metadata {
+        let meta_bytes = meta.serialize()?;
+        block_metadata_bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+        block_metadata_bytes.extend_from_slice(&meta_bytes);
+    }
+    
     header_bytes.put_u32_le(block_metadata_bytes.len() as u32);
     header_bytes.put_slice(&block_metadata_bytes);
 
@@ -612,8 +680,27 @@ pub(crate) async fn read_helix_header_optimized(
 
     let mut metadata_bytes = vec![0u8; metadata_len];
     std::io::Read::read_exact(&mut cursor, &mut metadata_bytes)?;
-    let block_metadata: Vec<HelixBlockMetadata> = bincode::deserialize(&metadata_bytes)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize block_metadata: {}", e))?;
+    
+    // Custom deserialization loop
+    let mut meta_cursor = std::io::Cursor::new(&metadata_bytes);
+    let mut u64_buf = [0u8; 8];
+    std::io::Read::read_exact(&mut meta_cursor, &mut u64_buf)
+        .map_err(|e| anyhow::anyhow!("Failed to read metadata count: {}", e))?;
+    let meta_count = u64::from_le_bytes(u64_buf) as usize;
+    
+    let mut block_metadata = Vec::with_capacity(meta_count);
+    for _ in 0..meta_count {
+        let mut len_buf = [0u8; 4];
+        std::io::Read::read_exact(&mut meta_cursor, &mut len_buf)
+            .map_err(|e| anyhow::anyhow!("Failed to read metadata entry length: {}", e))?;
+        let entry_len = u32::from_le_bytes(len_buf) as usize;
+        
+        let mut entry_bytes = vec![0u8; entry_len];
+        std::io::Read::read_exact(&mut meta_cursor, &mut entry_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to read metadata entry data: {}", e))?;
+        
+        block_metadata.push(HelixBlockMetadata::deserialize(&entry_bytes)?);
+    }
 
     // 6. Read block_offsets
     let mut offsets_len_bytes = [0u8; 4];

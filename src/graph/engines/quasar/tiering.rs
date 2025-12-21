@@ -221,7 +221,14 @@ impl TieringManager {
             match result {
                 Ok(()) => {
                     migration_count += 1;
-                    tracing::debug!("Migrated {} to cold storage", candidate.item_id);
+                    tracing::debug!(
+                        "Migrated {} ({:?}) to cold storage (priority_score={}, last_access={:?}, freq={})",
+                        candidate.item_id,
+                        candidate.item_type,
+                        candidate.priority_score,
+                        candidate.last_access,
+                        candidate.access_frequency
+                    );
                 }
                 Err(e) => {
                     tracing::warn!("Failed to migrate {}: {:?}", candidate.item_id, e);
@@ -234,6 +241,11 @@ impl TieringManager {
         if migration_count > 0 {
             let mut stats = self.stats.write().await;
             stats.cold_migrations += migration_count;
+            tracing::info!(
+                "Migration cycle moved {} items to cold tier (total_migrations={})",
+                migration_count,
+                stats.cold_migrations
+            );
         }
 
         Ok(())
@@ -242,17 +254,21 @@ impl TieringManager {
     /// Migrate a node from hot to cold storage
     async fn migrate_node_to_cold(&self, node_id: &str) -> Result<()> {
         // Get node from hot tier
-        // TODO: Implement node migration when OrionGraphEngine get_node is available
-        // if let Ok(Some(node)) = self.hot_tier.get_node(node_id) {
-        if false {
-            // Temporarily disabled
-            // Store in cold tier
-            // self.cold_tier.store_node((*node).clone()).await?;
+        let node_id_string = node_id.to_string();
+        if let Ok(Some(node)) = self.hot_tier.get_node(&node_id_string) {
+            // Store in cold tier (clone Arc's inner Node)
+            self.cold_tier.store_node((*node).clone()).await?;
 
             // Remove from hot tier
-            // TODO: Implement when OrionGraphEngine delete_node is available
-            // self.hot_tier.delete_node(node_id)?;
+            self.hot_tier.delete_node(&node_id_string).await?;
 
+            // Update stats
+            {
+                let mut stats = self.stats.write().await;
+                stats.cold_migrations += 1;
+            }
+
+            tracing::debug!("Migrated node {} to cold tier", node_id);
             Ok(())
         } else {
             Err(ProximaDBError::Internal(format!(
@@ -265,17 +281,21 @@ impl TieringManager {
     /// Migrate an edge from hot to cold storage
     async fn migrate_edge_to_cold(&self, edge_id: &str) -> Result<()> {
         // Get edge from hot tier
-        // TODO: Implement edge migration when OrionGraphEngine get_edge is available
-        // if let Ok(Some(edge)) = self.hot_tier.get_edge(edge_id) {
-        if false {
-            // Temporarily disabled
-            // Store in cold tier
-            // self.cold_tier.store_edge((*edge).clone()).await?;
+        let edge_id_string = edge_id.to_string();
+        if let Ok(Some(edge)) = self.hot_tier.get_edge(&edge_id_string) {
+            // Store in cold tier (clone Arc's inner Edge)
+            self.cold_tier.store_edge((*edge).clone()).await?;
 
             // Remove from hot tier
-            // TODO: Implement when OrionGraphEngine delete_edge is available
-            // self.hot_tier.delete_edge(edge_id)?;
+            self.hot_tier.delete_edge(&edge_id_string).await?;
 
+            // Update stats
+            {
+                let mut stats = self.stats.write().await;
+                stats.cold_migrations += 1;
+            }
+
+            tracing::debug!("Migrated edge {} to cold tier", edge_id);
             Ok(())
         } else {
             Err(ProximaDBError::Internal(format!(
@@ -288,16 +308,14 @@ impl TieringManager {
     /// Promote a node to hot tier
     pub async fn promote_to_hot(&self, node: &Node) -> Result<()> {
         // Check if hot tier has space
-        // TODO: Implement when OrionGraphEngine node_count is available
-        let current_count = 0; // self.hot_tier.node_count()?;
+        let current_count = self.hot_tier.node_count()?;
         if current_count >= self.config.hot_tier_max_nodes {
             // Make space by migrating cold candidates
             self.migrate_cold_candidates().await?;
         }
 
         // Insert into hot tier
-        // TODO: Implement when OrionGraphEngine insert_node is available
-        // self.hot_tier.insert_node(node.clone())?;
+        self.hot_tier.insert_node(node.clone()).await?;
 
         // Remove from cold tier
         self.cold_tier.delete_node(&node.id).await?;
@@ -385,9 +403,18 @@ impl TieringManager {
                 DataMovement::PromoteEdge(edge_id) => {
                     // Similar to node promotion, but for edges
                     if let Ok(Some(edge)) = self.cold_tier.get_edge(&edge_id).await {
-                        // TODO: Implement when OrionGraphEngine insert_edge is available
-                        // self.hot_tier.insert_edge((*edge).clone())?;
+                        // Insert edge into hot tier
+                        self.hot_tier.insert_edge((*edge).clone()).await?;
+                        // Remove from cold tier
                         self.cold_tier.delete_edge(&edge_id).await?;
+
+                        // Update stats
+                        {
+                            let mut stats = self.stats.write().await;
+                            stats.hot_promotions += 1;
+                        }
+
+                        tracing::debug!("Promoted edge {} to hot tier", edge_id);
                         Ok(())
                     } else {
                         Err(ProximaDBError::Internal(format!(
@@ -502,8 +529,6 @@ mod tests {
         let (manager, hot_tier) = create_test_setup().await;
 
         // Add some nodes to hot tier
-        // TODO: Enable when OrionGraphEngine insert_node is available
-        /*
         for i in 0..5 {
             let node = Node {
                 id: format!("node_{}", i),
@@ -513,17 +538,15 @@ mod tests {
                 created_at_ms: chrono::Utc::now().timestamp_millis(),
                 updated_at_ms: chrono::Utc::now().timestamp_millis(),
             };
-            // TODO: Implement insert_node method on hot_tier
-            // hot_tier.insert_node(node).unwrap();
+            hot_tier.insert_node(node).await.unwrap();
         }
-        */
 
         // Update utilization
         manager.update_hot_tier_utilization().await.unwrap();
 
         let stats = manager.get_stats().await;
-        // Since nodes are not actually added (commented out), utilization should be 0.0
-        assert_eq!(stats.hot_tier_utilization, 0.0); // 0/10 = 0.0 (nodes not implemented yet)
+        // 5 nodes out of max 10 = 50% utilization
+        assert_eq!(stats.hot_tier_utilization, 0.5);
     }
 
     #[tokio::test]
@@ -551,7 +574,7 @@ mod tests {
         let (manager, hot_tier) = create_test_setup().await;
 
         // Fill up hot tier to trigger recommendations
-        for i in 0..9 {
+        for i in 0..10 {
             let node = Node {
                 id: format!("node_{}", i),
                 labels: vec!["Test".to_string()],
@@ -560,23 +583,21 @@ mod tests {
                 created_at_ms: chrono::Utc::now().timestamp_millis(),
                 updated_at_ms: chrono::Utc::now().timestamp_millis(),
             };
-            // TODO: Implement insert_node method on hot_tier
-            // hot_tier.insert_node(node).unwrap();
+            hot_tier.insert_node(node).await.unwrap();
         }
 
         manager.update_hot_tier_utilization().await.unwrap();
 
         let recommendations = manager.get_tiering_recommendations().await.unwrap();
-        // Since nodes are not actually added (commented out), utilization should be 0.0
-        assert_eq!(recommendations.hot_tier_utilization, 0.0); // 0/10 = 0.0 (nodes not implemented yet)
-        // With 0% utilization, the recommendation should be about low usage rather than high usage
+        // 10 nodes out of max 10 = 100% utilization
+        assert_eq!(recommendations.hot_tier_utilization, 1.0);
+        // With 100% utilization, should recommend migration to cold tier
         assert!(
-            recommendations
-                .recommendation_reason
-                .contains("Utilization is low")
-                || recommendations.recommendation_reason.contains("under")
-                || recommendations.recommendation_reason.len() > 0
+            recommendations.recommendation_reason.contains("over 90% full"),
+            "Expected recommendation to contain 'over 90% full', but got: '{}'",
+            recommendations.recommendation_reason
         );
+        // Note: should_migrate_to_cold may be empty in this test because nodes have no access tracking
     }
 
     #[test]

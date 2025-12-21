@@ -409,4 +409,72 @@ mod tests {
         assert!(ttl > 0);
         assert!(ttl <= 3600); // Should be less than or equal to expiration time
     }
+
+    #[tokio::test]
+    async fn test_expired_token_is_rejected() {
+        let config = test_jwt_config();
+        let secret = config.secret.clone().unwrap();
+        let jwt_service = JwtService::new(config.clone()).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "expired_user".to_string(),
+            iat: now - 120,
+            exp: now - 60, // Already expired
+            nbf: now - 180,
+            iss: config.issuer.clone(),
+            aud: config.audience.clone(),
+            jti: "expired-token".to_string(),
+            tenant_id: None,
+            roles: vec![],
+            typ: TokenType::Access,
+        };
+
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+
+        let err = jwt_service
+            .verify_token(&token)
+            .await
+            .expect_err("expired token should be rejected");
+        assert!(matches!(err, AuthError::TokenExpired));
+    }
+
+    #[tokio::test]
+    async fn test_issuer_mismatch_is_rejected() {
+        let config = test_jwt_config();
+        let secret = config.secret.clone().unwrap();
+        let jwt_service = JwtService::new(config.clone()).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "issuer_user".to_string(),
+            iat: now - 10,
+            exp: now + 300,
+            nbf: now - 10,
+            iss: "unexpected-issuer".to_string(),
+            aud: config.audience.clone(),
+            jti: "issuer-mismatch".to_string(),
+            tenant_id: None,
+            roles: vec![],
+            typ: TokenType::Access,
+        };
+
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+
+        let err = jwt_service
+            .verify_token(&token)
+            .await
+            .expect_err("issuer mismatch should be rejected");
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
 }

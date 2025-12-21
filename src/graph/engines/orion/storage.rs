@@ -49,7 +49,7 @@
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::EdgeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// CSR storage for efficient edge representation
 #[derive(Debug, Clone)]
@@ -69,6 +69,16 @@ pub struct CsrStorage {
 
     /// Temporary edge storage for efficient batch operations
     temp_edges: HashMap<usize, Vec<(usize, EdgeId)>>,
+
+    /// Fast O(1) duplicate detection set: (from_index, to_index, edge_id)
+    /// This enables O(1) duplicate checks instead of O(degree) scans
+    edge_set: HashSet<(usize, usize, EdgeId)>,
+
+    /// Flag indicating CSR needs rebuild (has temp_edges)
+    needs_rebuild: bool,
+
+    /// Count of temp edges for threshold-based compaction
+    temp_edge_count: usize,
 }
 
 impl CsrStorage {
@@ -80,6 +90,9 @@ impl CsrStorage {
             edge_ids: Vec::new(),
             node_count: 0,
             temp_edges: HashMap::new(),
+            edge_set: HashSet::new(),
+            needs_rebuild: false,
+            temp_edge_count: 0,
         }
     }
 
@@ -94,6 +107,9 @@ impl CsrStorage {
             edge_ids: Vec::with_capacity(edge_capacity),
             node_count: 0,
             temp_edges: HashMap::new(),
+            edge_set: HashSet::with_capacity(edge_capacity),
+            needs_rebuild: false,
+            temp_edge_count: 0,
         }
     }
 
@@ -119,27 +135,33 @@ impl CsrStorage {
     }
 
     /// Add an edge from source to target
+    /// Uses O(1) HashSet lookup for duplicate detection instead of O(degree) scan
     pub fn add_edge(&mut self, from_index: usize, to_index: usize, edge_id: EdgeId) -> Result<()> {
         // Ensure capacity for both nodes
         self.ensure_node_capacity(from_index);
         self.ensure_node_capacity(to_index);
 
-        // Check if edge already exists
-        let neighbors = self.get_neighbors(from_index)?;
-        for (i, &target) in neighbors.iter().enumerate() {
-            if target == to_index && self.get_edge_id(from_index, i)? == &edge_id {
-                return Err(ProximaDBError::InvalidInput(format!(
-                    "Edge {} already exists",
-                    edge_id
-                )));
-            }
+        // O(1) duplicate check using edge_set
+        let edge_key = (from_index, to_index, edge_id.clone());
+        if self.edge_set.contains(&edge_key) {
+            return Err(ProximaDBError::InvalidInput(format!(
+                "Edge {} already exists",
+                edge_id
+            )));
         }
 
-        // Add to temporary storage for batch processing
+        // Add to edge_set for O(1) future duplicate checks
+        self.edge_set.insert(edge_key);
+
+        // Add to temporary storage for batch processing (O(1) operation)
         self.temp_edges
             .entry(from_index)
             .or_insert_with(Vec::new)
             .push((to_index, edge_id));
+
+        // Mark that CSR needs rebuild and increment temp count
+        self.needs_rebuild = true;
+        self.temp_edge_count += 1;
 
         Ok(())
     }
@@ -154,6 +176,10 @@ impl CsrStorage {
         if from_index >= self.node_count {
             return Ok(()); // Node doesn't exist, nothing to remove
         }
+
+        // Remove from edge_set for O(1) duplicate tracking
+        self.edge_set
+            .remove(&(from_index, to_index, edge_id.clone()));
 
         // Find and remove from temporary storage first
         if let Some(temp_list) = self.temp_edges.get_mut(&from_index) {
@@ -322,6 +348,29 @@ impl CsrStorage {
         self.offsets = new_offsets;
         self.temp_edges.clear();
 
+        // Reset rebuild flags
+        self.needs_rebuild = false;
+        self.temp_edge_count = 0;
+
+        Ok(())
+    }
+
+    /// Check if CSR needs rebuild (has temporary edges)
+    pub fn needs_rebuild(&self) -> bool {
+        self.needs_rebuild
+    }
+
+    /// Get count of temporary edges waiting for compaction
+    pub fn temp_edge_count(&self) -> usize {
+        self.temp_edge_count
+    }
+
+    /// Trigger rebuild if needed (lazy rebuild for read path)
+    pub fn rebuild_if_needed(&mut self) -> Result<()> {
+        if self.needs_rebuild {
+            tracing::debug!("Lazy rebuild triggered: {} temp edges", self.temp_edge_count);
+            self.rebuild()?;
+        }
         Ok(())
     }
 

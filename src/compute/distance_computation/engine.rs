@@ -70,6 +70,10 @@ impl DistanceMetricExt for DistanceMetric {
     }
 }
 use crate::core::hardware_capabilities::get_hardware_capabilities;
+#[cfg(feature = "gpu")]
+use crate::compute::gpu::distance::create_gpu_accelerator;
+#[cfg(feature = "gpu")]
+use tokio::runtime::{Builder as TokioRuntimeBuilder, Handle as TokioHandle};
 
 // Re-export HardwareBackend for public use
 pub use crate::core::hardware_capabilities::HardwareBackend;
@@ -638,28 +642,35 @@ impl UnifiedDistanceCompute {
     fn get_gpu_accelerator(&self) -> Option<&Arc<dyn GpuAccelerator>> {
         self.gpu_accelerator_lazy
             .get_or_init(|| {
-                if !self.gpu_enabled {
-                    return None;
-                }
+                #[cfg(feature = "gpu")]
+                {
+                    if !self.gpu_enabled {
+                        return None;
+                    }
 
-                // Try to create GPU accelerator based on detected hardware
-                match self.preferred_backend {
-                    HardwareBackend::CUDA => {
-                        trace!("Initializing CUDA GPU accelerator");
-                        // TODO: Implement CUDA accelerator
-                        None
+                    // Try to create GPU accelerator based on detected hardware
+                    match create_gpu_accelerator() {
+                        Ok(accel) => {
+                            if accel.is_available() {
+                                trace!(
+                                    "GPU accelerator initialized for backend: {:?}",
+                                    accel.backend()
+                                );
+                                Some(accel as Arc<dyn GpuAccelerator>)
+                            } else {
+                                tracing::warn!("GPU accelerator unavailable after initialization");
+                                None
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!("Failed to initialize GPU accelerator: {:?}", err);
+                            None
+                        }
                     }
-                    HardwareBackend::ROCm => {
-                        trace!("Initializing ROCm GPU accelerator");
-                        // TODO: Implement ROCm accelerator
-                        None
-                    }
-                    HardwareBackend::MPS => {
-                        trace!("Initializing Metal Performance Shaders accelerator");
-                        // TODO: Implement MPS accelerator
-                        None
-                    }
-                    _ => None,
+                }
+                #[cfg(not(feature = "gpu"))]
+                {
+                    None
                 }
             })
             .as_ref()
@@ -1266,6 +1277,11 @@ impl UnifiedDistanceCompute {
         vectors: &[&[f32]],
         metric: &DistanceMetric,
     ) -> Vec<SimilarityResult> {
+        // Prefer GPU if available and recommended for workload size
+        if let Some(gpu_results) = self.try_gpu_batch(query, vectors, metric) {
+            return gpu_results;
+        }
+
         // Step 1: Acquire pooled buffer for results
         let mut pooled_results = self.memory_pool.vector_buffers.acquire();
         pooled_results.clear();
@@ -1309,6 +1325,97 @@ impl UnifiedDistanceCompute {
             metric: *metric,
             compute: self.clone(),
         }
+    }
+
+    /// Attempt GPU-accelerated batch distance when beneficial
+    #[cfg(feature = "gpu")]
+    fn try_gpu_batch(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+    ) -> Option<Vec<SimilarityResult>> {
+        if !self.gpu_enabled {
+            return None;
+        }
+
+        let caps = get_hardware_capabilities();
+
+        // Avoid GPU setup cost on small workloads
+        if !caps.should_use_gpu_distance(query.len()) || !caps.should_use_gpu_batch(vectors.len())
+        {
+            return None;
+        }
+
+        let accel = self.get_gpu_accelerator()?;
+        if !accel.is_available() {
+            return None;
+        }
+
+        // Materialize data for GPU kernel
+        let query_vec = query.to_vec();
+        let batch: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();
+        let backend = accel.backend();
+        let batch_len = batch.len();
+        let dim = query_vec.len();
+
+        // Spawn/block on GPU execution using existing runtime if present
+        let accel = Arc::clone(accel);
+        let fut = async move { accel.calculate_batch_gpu(&query_vec, &batch, *metric).await };
+
+        let gpu_distances = match TokioHandle::try_current() {
+            Ok(handle) => handle.block_on(fut),
+            Err(_) => {
+                match TokioRuntimeBuilder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt.block_on(fut),
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to build tokio runtime for GPU batch distance: {:?}",
+                            err
+                        );
+                        return None;
+                    }
+                }
+            }
+        };
+
+        match gpu_distances {
+            Ok(distances) => {
+                tracing::debug!(
+                    "Using GPU backend {:?} for batch distance (n_vectors={}, dim={})",
+                    backend,
+                    batch_len,
+                    dim
+                );
+                Some(
+                    distances
+                        .into_iter()
+                        .map(|d| SimilarityResult::new(d, *metric))
+                        .collect(),
+                )
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "GPU batch distance failed (backend {:?}), falling back to SIMD: {:?}",
+                    backend,
+                    err
+                );
+                None
+            }
+        }
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    fn try_gpu_batch(
+        &self,
+        _query: &[f32],
+        _vectors: &[&[f32]],
+        _metric: &DistanceMetric,
+    ) -> Option<Vec<SimilarityResult>> {
+        None
     }
 
     /// Batch distance calculation with external buffer reuse

@@ -43,6 +43,7 @@
 //! - **Index Layer**: AXIS engine coordinates with storage for vector retrieval
 //! - **Compaction**: Background processes use this trait for maintenance operations
 
+use crate::core::search::BlockPruneMode;
 use crate::proto::proximadb_v1::Collection;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -50,6 +51,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+// Re-export decomposed traits from trait_components module for ISP compliance
+// Users can import from either `storage::traits` or `storage::trait_components`
+pub use crate::storage::trait_components::{
+    StorageCompactor, StorageIdentity, StorageLifecycle, StorageMetrics, StorageReader,
+    StorageScan, StorageWriter,
+};
 
 /// Performance tier hint for storage engines
 ///
@@ -1698,6 +1706,31 @@ impl StorageQueryContext {
         let config = collection.config.as_ref();
         let storage_assignment = collection.storage_assignment.as_ref();
 
+        let storage_strategy = config
+            .map(|c| match c.storage_engine {
+                Some(0) => StorageEngineStrategy::Viper,  // VIPER
+                Some(1) => StorageEngineStrategy::Sst,    // SST
+                Some(2) => StorageEngineStrategy::Nova,   // NOVA
+                Some(3) => StorageEngineStrategy::Swift,  // SWIFT
+                Some(4) => StorageEngineStrategy::Raptor, // RAPTOR
+                _ => StorageEngineStrategy::Viper,
+            })
+            .unwrap_or(StorageEngineStrategy::Viper);
+
+        let mut adjusted_params = (*search_params).clone();
+        if matches!(
+            storage_strategy,
+            StorageEngineStrategy::Viper
+                | StorageEngineStrategy::Nova
+                | StorageEngineStrategy::Raptor
+        ) {
+            adjusted_params.block_prune.force_exact = true;
+            adjusted_params.block_prune.mode = BlockPruneMode::Sqrt;
+            adjusted_params.block_prune.ratio = 0.0;
+            adjusted_params.block_prune.min_keep = 0;
+            adjusted_params.block_prune.max_keep = 0;
+        }
+
         let metadata = StorageQueryMetadata {
             collection_id: collection.id.clone(),
             use_axis_indexes: config
@@ -1719,16 +1752,7 @@ impl StorageQueryContext {
                     _ => crate::compute::distance_computation::DistanceMetric::Cosine,
                 })
                 .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
-            storage_strategy: config
-                .map(|c| match c.storage_engine {
-                    Some(0) => StorageEngineStrategy::Viper,  // VIPER
-                    Some(1) => StorageEngineStrategy::Sst,    // SST
-                    Some(2) => StorageEngineStrategy::Nova,   // NOVA
-                    Some(3) => StorageEngineStrategy::Swift,  // SWIFT
-                    Some(4) => StorageEngineStrategy::Raptor, // RAPTOR
-                    _ => StorageEngineStrategy::Viper,
-                })
-                .unwrap_or(StorageEngineStrategy::Viper),
+            storage_strategy,
             storage_path: storage_assignment
                 .map(|sa| sa.base_location.clone())
                 .unwrap_or_else(|| "./data".to_string()),
@@ -1752,7 +1776,7 @@ impl StorageQueryContext {
         };
 
         Self {
-            search_params,
+            search_params: Arc::new(adjusted_params),
             collection,
             metadata,
         }

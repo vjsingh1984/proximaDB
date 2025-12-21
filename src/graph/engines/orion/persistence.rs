@@ -227,8 +227,14 @@ impl OrionPersistence {
             .collect::<Vec<_>>();
 
         // Get CSR data
-        let csr_outgoing = engine.csr_outgoing.read().await;
-        let csr_incoming = engine.csr_incoming.read().await;
+        let csr_outgoing = engine
+            .csr_outgoing
+            .read()
+            .expect("CSR outgoing read lock poisoned");
+        let csr_incoming = engine
+            .csr_incoming
+            .read()
+            .expect("CSR incoming read lock poisoned");
 
         // Build node_to_index mapping
         let node_to_index = engine
@@ -351,13 +357,19 @@ impl OrionPersistence {
 
         // Restore CSR structures
         {
-            let mut csr_out = engine.csr_outgoing.write().await;
+            let mut csr_out = engine
+                .csr_outgoing
+                .write()
+                .expect("CSR outgoing write lock poisoned");
             csr_out.offsets = snapshot.csr_outgoing_offsets;
             csr_out.targets = snapshot.csr_outgoing_targets;
         }
 
         {
-            let mut csr_in = engine.csr_incoming.write().await;
+            let mut csr_in = engine
+                .csr_incoming
+                .write()
+                .expect("CSR incoming write lock poisoned");
             csr_in.offsets = snapshot.csr_incoming_offsets;
             csr_in.targets = snapshot.csr_incoming_sources;
         }
@@ -369,7 +381,10 @@ impl OrionPersistence {
 
         // Rebuild index_to_node
         {
-            let mut index_to_node = engine.index_to_node.write().await;
+            let mut index_to_node = engine
+                .index_to_node
+                .write()
+                .expect("index_to_node write lock poisoned");
             index_to_node.clear();
             let mut node_indices: Vec<(NodeId, usize)> = engine
                 .node_to_index
@@ -385,7 +400,7 @@ impl OrionPersistence {
 
         // Update stats
         {
-            let mut stats = engine.stats.write().await;
+            let mut stats = engine.stats.write().expect("stats write lock poisoned");
             stats.nodes_created = engine.memory_pool.nodes.len() as u64;
             stats.edges_created = engine.edge_metadata.len() as u64;
         }
@@ -443,6 +458,80 @@ impl OrionPersistence {
             };
 
             let unified_op = UnifiedWALOperation::GraphOp(graph_op);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a batch of edge operations to WAL in a single record
+    pub async fn write_edge_batch_operation(&self, edges: &[Edge]) -> Result<()> {
+        if edges.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            // Wrap all CreateEdge operations in a single batch GraphOp to reduce WAL traffic
+            let batch = GraphOperation::BatchOperation {
+                operations: edges
+                    .iter()
+                    .cloned()
+                    .map(|edge| GraphOperation::CreateEdge {
+                        graph_id: self.graph_id.clone(),
+                        edge,
+                    })
+                    .collect(),
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(batch);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a batch of node operations to WAL in a single record
+    pub async fn write_node_batch_operation(&self, nodes: &[Node]) -> Result<()> {
+        if nodes.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            // Wrap all CreateNode operations in a single batch GraphOp to reduce WAL traffic
+            let batch = GraphOperation::BatchOperation {
+                operations: nodes
+                    .iter()
+                    .cloned()
+                    .map(|node| GraphOperation::CreateNode {
+                        graph_id: self.graph_id.clone(),
+                        node,
+                    })
+                    .collect(),
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(batch);
             wal_writer
                 .lock()
                 .await

@@ -52,6 +52,10 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
+// Submodules
+pub mod semantic_traversal;
+pub mod ranking;
+
 use crate::core::error::{ProximaDBError, QueryError, VectorDBError};
 use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,

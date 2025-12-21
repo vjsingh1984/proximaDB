@@ -1,17 +1,16 @@
 //! Comprehensive tests for SST engine optimizations
 //! Tests bytemuck vector serialization and ZSTD ProximaDataBlock compression
 
-use anyhow::Result;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
-use proximadb::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord};
 use proximadb::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, ProximaDataBlock,
 };
-use proximadb::storage::engines::impls::sst::{SstEngine, SstEntry, SstMetadata};
+use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 /// Create test vector with specific characteristics
 fn create_test_vector(dimension: usize, sparsity: f32) -> Vec<f32> {

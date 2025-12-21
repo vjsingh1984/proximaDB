@@ -1,4 +1,5 @@
 use crate::network::NetworkConfig;
+use crate::security::SecurityConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
@@ -14,6 +15,8 @@ pub struct Config {
     pub tls: Option<TlsConfig>,
     pub hardware: Option<HardwareConfig>,
     pub sks: Option<SksConfig>,
+    /// Unified security configuration (optional)
+    pub security: Option<SecurityConfig>,
     /// Global cache runtime configuration (optional)
     pub cache: Option<CacheRuntimeConfig>,
     /// Graph runtime configuration (optional)
@@ -183,6 +186,7 @@ impl Default for Config {
             tls: None,
             hardware: Some(HardwareConfig::default()),
             sks: None, // SKS disabled by default
+            security: None,
             cache: None,
             graph: Some(GraphRuntimeConfig::default()),
             hybrid: Some(HybridRuntimeConfig::default()),
@@ -370,6 +374,19 @@ pub struct GraphRuntimeConfig {
     pub prefetch_budget: usize,
     /// Select graph engine ("ORION"|"PULSAR"|"QUASAR")
     pub engine: String,
+    /// Embedding storage mode: "none" (default), "cold", "memory"
+    /// - "none": No embeddings stored (pure graph, best performance)
+    /// - "cold": Embeddings in vector engine (SST/HELIX/VIPER)
+    /// - "memory": Embeddings cached in memory (for SKS-heavy workloads)
+    #[serde(default = "default_embedding_mode")]
+    pub embedding_mode: String,
+    /// Vector engine for cold tier embeddings (only if embedding_mode = "cold")
+    /// Options: "sst", "helix", "viper"
+    #[serde(default = "default_embedding_engine")]
+    pub embedding_engine: String,
+    /// Memory cache size in MB for embeddings (only if embedding_mode = "memory")
+    #[serde(default)]
+    pub embedding_memory_cache_mb: Option<usize>,
 }
 
 impl Default for GraphRuntimeConfig {
@@ -378,12 +395,23 @@ impl Default for GraphRuntimeConfig {
             enable_prefetch: true,
             prefetch_budget: 8,
             engine: default_graph_engine(),
+            embedding_mode: default_embedding_mode(),
+            embedding_engine: default_embedding_engine(),
+            embedding_memory_cache_mb: None,
         }
     }
 }
 
 fn default_graph_engine() -> String {
     "ORION".to_string()
+}
+
+fn default_embedding_mode() -> String {
+    "none".to_string()
+}
+
+fn default_embedding_engine() -> String {
+    "sst".to_string()
 }
 
 /// Hybrid query runtime configuration
@@ -423,6 +451,7 @@ impl Default for StorageConfig {
             metadata_url: "file://./metadata".to_string(),
             assignment_config: AssignmentConfig::default(),
             wal_config: WriteBufferUserConfig::default(),
+            prune_mode: None,
             mmap_enabled: true,
             sst_config: Some(SstConfig::default()),
             viper_config: Some(ViperConfig::default()),
@@ -458,6 +487,10 @@ pub struct StorageConfig {
     /// Write buffer configuration (global memtable settings)
     pub wal_config: WriteBufferUserConfig,
 
+    /// Search pruning configuration
+    #[serde(default)]
+    pub prune_mode: Option<PruneModeConfig>,
+
     /// Storage engine configurations
     pub mmap_enabled: bool,
     pub sst_config: Option<SstConfig>,
@@ -472,6 +505,29 @@ pub struct StorageConfig {
     /// Filesystem optimization settings
     pub filesystem_config: FilesystemOptimizationConfig,
 }
+
+/// Configuration for search pruning, allowing for simple or advanced setup.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum PruneModeConfig {
+    Simple(String),
+    Advanced(AdvancedPruneConfig),
+}
+
+/// Advanced configuration for search pruning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AdvancedPruneConfig {
+    #[serde(default = "default_prune_type")]
+    pub r#type: String,
+    pub min_keep: Option<usize>,
+    pub max_keep: Option<usize>,
+    pub ratio: Option<f32>,
+}
+
+fn default_prune_type() -> String {
+    "sqrt".to_string()
+}
+
 
 /// Storage location configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -972,7 +1028,7 @@ pub struct ViperConfig {
 impl Default for ViperConfig {
     fn default() -> Self {
         Self {
-            row_group_size: 100_000,
+            row_group_size: 65536,            // ~32MB row groups for 128D vectors
             compression: "zstd".to_string(), // ZSTD for better compression
             compression_level: 3,            // Balanced speed/compression
             enable_statistics: true,
@@ -1000,7 +1056,7 @@ impl Default for SstConfig {
             level_count: 7,
             compaction_threshold: 5,
             compaction_config: None, // Use common config by default
-            block_size_kb: 1024, // 1MB default - balanced for random access and sequential scans
+            block_size_kb: 256, // 256KB default - optimized for low-latency random access on NVMe
             compaction_strategy: "leveled".to_string(),
             compression: "lz4".to_string(), // LZ4 default - 7% faster than no compression (measured)
             compression_level: 3,           // LZ4 compression level

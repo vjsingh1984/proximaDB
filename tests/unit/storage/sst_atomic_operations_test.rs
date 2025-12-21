@@ -5,21 +5,13 @@
 mod common;
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
-use common::unique_collection_id;
-use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
-use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
-use std::sync::Arc;
-use tempfile::TempDir;
+use proximadb::storage::traits::UnifiedStorageEngine;
 use tokio;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 // Use unified test utilities instead of duplicated sst_test_config
-use proximadb::storage::persistence::filesystem::FilesystemConfig;
 
 #[tokio::test]
 async fn test_sst_atomic_flush_creates_staging_directory() {

@@ -23,6 +23,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("🔨 Building ProximaDB protobuf schemas");
 
+    // Only rerun if build script changes
+    println!("cargo:rerun-if-changed=build.rs");
+
     // Compile CUDA kernels if feature is enabled
     #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
     compile_cuda_kernels()?;
@@ -493,13 +496,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     tracing::info!("✅ Protobuf compilation complete");
 
-    debug!("cargo:rerun-if-changed=proto/proximadb/v1/graph.proto");
-    debug!("cargo:rerun-if-changed=proto/proximadb/v1/vector.proto");
-    debug!("cargo:rerun-if-changed=proto/proximadb/v1/types.proto");
-    debug!("cargo:rerun-if-changed=proto/proximadb/v1/sql.proto");
-    debug!("cargo:rerun-if-changed=proto/proximadb/v1/vector_types.proto");
-    debug!("cargo:rerun-if-changed=proto/proximadb/v1/collection_types.proto");
-    debug!("cargo:rerun-if-changed=proto/proximadb/v1/collection.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/graph.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/vector.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/types.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/sql.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/vector_types.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/collection_types.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/collection.proto");
     Ok(())
 }
 

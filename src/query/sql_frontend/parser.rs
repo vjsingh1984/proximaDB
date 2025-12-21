@@ -51,7 +51,16 @@ impl SqlFrontendParser {
     fn convert_statement(&self, statement: &Statement) -> Result<Query> {
         match statement {
             Statement::Query(query) => self.convert_query(query),
-            _ => Err(anyhow!("Only SELECT queries are currently supported")),
+            Statement::Insert { .. } => {
+                Err(anyhow!("INSERT statements are parsed but not yet executed. Use REST/gRPC API for insertions."))
+            }
+            Statement::Update { .. } => {
+                Err(anyhow!("UPDATE statements are parsed but not yet executed. Use REST/gRPC API for updates."))
+            }
+            Statement::Delete { .. } => {
+                Err(anyhow!("DELETE statements are parsed but not yet executed. Use REST/gRPC API for deletions."))
+            }
+            _ => Err(anyhow!("Only SELECT queries are currently supported. For DML operations (INSERT/UPDATE/DELETE), use REST/gRPC API.")),
         }
     }
 

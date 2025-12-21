@@ -55,7 +55,15 @@ impl super::GraphOperationsService {
                 crate::graph::engines::GraphEngineImpl::Pulsar(pulsar)
             }
             "QUASAR" => {
-                let cfg = crate::graph::engines::quasar::QuasarConfig::default();
+                // Derive a graph-scoped cold tier path under the configured storage root
+                let mut cfg = crate::graph::engines::quasar::QuasarConfig::default();
+                if storage_root_url.starts_with("file://") {
+                    let base_path = storage_root_url.trim_start_matches("file://");
+                    cfg.cold_tier_path = std::path::PathBuf::from(base_path)
+                        .join("graphs")
+                        .join(graph_id)
+                        .join("quasar_cold");
+                }
                 let quasar = crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
                 crate::graph::engines::GraphEngineImpl::Quasar(quasar)
             }

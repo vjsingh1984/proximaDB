@@ -16,18 +16,20 @@
 //! The module automatically detects available GPU backends and selects
 //! the most appropriate one for optimal performance.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 // Import DistanceMetric from proto module
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};
-use crate::core::hardware_capabilities::GpuBackend;
+use crate::core::hardware_capabilities::{
+    get_hardware_capabilities, GpuBackend, GpuDevice, HardwareCapabilities,
+};
 use crate::proto::proximadb_v1::DistanceMetric;
 
 // Using central GpuBackend enum from hardware_capabilities module
 
-// Using central GpuDevice struct from hardware_capabilities module
+// Re-export the central GpuDevice struct so callers don’t create a divergent type.
 pub use crate::core::hardware_capabilities::GpuDevice;
 
 /// GPU distance computation manager
@@ -45,6 +47,43 @@ pub struct GpuDistanceCompute {
 /// Detect and return the best available GPU accelerator
 pub fn detect_best_gpu() -> Result<impl GpuAccelerator> {
     GpuDistanceCompute::new()
+}
+
+/// Detect available GPU backend and devices without initializing the accelerator
+pub fn detect_gpu_capabilities() -> Result<(GpuBackend, Vec<GpuDevice>)> {
+    GpuDistanceCompute::detect_gpu_backend()
+}
+
+/// Create a GPU accelerator wrapped in an Arc for reuse
+pub fn create_gpu_accelerator() -> Result<Arc<dyn GpuAccelerator>> {
+    let caps = get_hardware_capabilities();
+
+    if !caps.has_gpu_distance() {
+        return Err(anyhow!(
+            "GPU acceleration disabled or unavailable in hardware configuration"
+        ));
+    }
+
+    // Prefer cached detection results to avoid redundant probing
+    if let Some(accel) = GpuDistanceCompute::from_capabilities(&caps) {
+        if accel.is_available() {
+            return Ok(Arc::new(accel));
+        }
+        warn!(
+            "Cached GPU backend {:?} reported but no usable devices were found",
+            accel.backend
+        );
+    }
+
+    // Fall back to a fresh detection pass
+    let accel = GpuDistanceCompute::new()?;
+    if accel.is_available() {
+        return Ok(Arc::new(accel));
+    }
+
+    Err(anyhow!(
+        "GPU acceleration requested but no GPU devices are available after detection"
+    ))
 }
 
 // Implement GpuAccelerator trait for GpuDistanceCompute
@@ -114,8 +153,27 @@ impl GpuDistanceCompute {
         })
     }
 
+    /// Construct from already-detected hardware capabilities (avoids re-running probes).
+    pub fn from_capabilities(caps: &HardwareCapabilities) -> Option<Self> {
+        if !caps.has_gpu_distance() || caps.gpu.backend == GpuBackend::None {
+            return None;
+        }
+        if caps.gpu.devices.is_empty() {
+            return None;
+        }
+
+        let selected_device = caps.gpu.primary_device.or_else(|| Some(0));
+
+        Some(Self {
+            backend: caps.gpu.backend,
+            devices: caps.gpu.devices.clone(),
+            selected_device,
+            memory_pool_size: 1024 * 1024 * 1024, // Align with default; tune later via config
+        })
+    }
+
     /// Detect available GPU backend and devices
-    fn detect_gpu_backend() -> Result<(GpuBackend, Vec<GpuDevice>)> {
+    pub(crate) fn detect_gpu_backend() -> Result<(GpuBackend, Vec<GpuDevice>)> {
         // Try CUDA first (most common)
         #[cfg(feature = "cuda")]
         if let Ok(devices) = Self::detect_cuda_devices() {

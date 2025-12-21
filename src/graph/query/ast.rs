@@ -102,12 +102,16 @@ pub enum PropertyConstraint {
     NotEquals(serde_json::Value),
     /// Greater than
     GreaterThan(serde_json::Value),
-    /// Greater than or equal
+    /// Greater than or equal (alias for compatibility)
     GreaterThanOrEqual(serde_json::Value),
+    /// Greater or equal (canonical name)
+    GreaterOrEqual(serde_json::Value),
     /// Less than
     LessThan(serde_json::Value),
-    /// Less than or equal
+    /// Less than or equal (alias for compatibility)
     LessThanOrEqual(serde_json::Value),
+    /// Less or equal (canonical name)
+    LessOrEqual(serde_json::Value),
     /// Value in list
     In(Vec<serde_json::Value>),
     /// Value not in list
@@ -137,17 +141,21 @@ pub enum EdgeDirection {
     Bidirectional,
 }
 
-/// Where clause for additional filtering
+/// Where clause for additional filtering (supports complex conditions)
 #[derive(Debug, Clone)]
-pub struct WhereClause {
-    /// Variable name
-    pub variable: String,
-    /// Property name
-    pub property: String,
-    /// Constraint
-    pub constraint: PropertyConstraint,
-    /// Logical operator for combining with next clause
-    pub logical_op: Option<LogicalOperator>,
+pub enum WhereClause {
+    /// Simple property constraint
+    Property {
+        variable: String,
+        property: String,
+        constraint: PropertyConstraint,
+    },
+    /// Logical AND of two conditions
+    And(Box<WhereClause>, Box<WhereClause>),
+    /// Logical OR of two conditions
+    Or(Box<WhereClause>, Box<WhereClause>),
+    /// Logical NOT of a condition
+    Not(Box<WhereClause>),
 }
 
 /// Logical operators for WHERE clauses
@@ -162,27 +170,50 @@ pub enum LogicalOperator {
 pub struct ReturnSpec {
     /// Variables to return
     pub variables: Vec<String>,
-    /// Property projections (variable.property)
+    /// Property projections (variable.property) or aggregations
     pub projections: Vec<PropertyProjection>,
     /// Whether to return distinct results
     pub distinct: bool,
-    /// Order by specifications
-    pub order_by: Vec<OrderBy>,
+    /// Order by specifications (variable_name, ascending)
+    pub order_by: Vec<(String, bool)>,
     /// Limit
-    pub limit: Option<u32>,
+    pub limit: Option<usize>,
     /// Skip/offset
-    pub skip: Option<u32>,
+    pub skip: Option<usize>,
 }
 
-/// Property projection in RETURN clause
+/// Property projection in RETURN clause (supports aggregations)
 #[derive(Debug, Clone)]
-pub struct PropertyProjection {
-    /// Variable name
-    pub variable: String,
-    /// Property name
-    pub property: String,
-    /// Alias for the projection
-    pub alias: Option<String>,
+pub enum PropertyProjection {
+    /// Simple variable (e.g., RETURN n)
+    Variable(String),
+    /// Property access (e.g., RETURN n.name)
+    Property {
+        variable: String,
+        property: String,
+    },
+    /// COUNT(*) aggregation
+    Count,
+    /// SUM(variable.property) aggregation
+    Sum {
+        variable: String,
+        property: String,
+    },
+    /// AVG(variable.property) aggregation
+    Avg {
+        variable: String,
+        property: String,
+    },
+    /// MIN(variable.property) aggregation
+    Min {
+        variable: String,
+        property: String,
+    },
+    /// MAX(variable.property) aggregation
+    Max {
+        variable: String,
+        property: String,
+    },
 }
 
 /// Order by specification

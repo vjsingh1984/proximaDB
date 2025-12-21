@@ -219,6 +219,21 @@ pub struct ProximaBlockMetadata {
     pub bloom_filter: Option<Vec<u8>>,
 }
 
+impl Default for ProximaBlockMetadata {
+    fn default() -> Self {
+        ProximaBlockMetadata {
+            min_id: String::new(),
+            max_id: String::new(),
+            min_timestamp: 0,
+            max_timestamp: 0,
+            record_count: 0,
+            compressed_size: None,
+            uncompressed_size: 0,
+            bloom_filter: None,
+        }
+    }
+}
+
 /// Quantized data for a block
 #[derive(Debug, Clone)]
 pub struct QuantizedBlockData {

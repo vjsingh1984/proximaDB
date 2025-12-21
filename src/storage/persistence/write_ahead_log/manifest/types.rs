@@ -41,7 +41,7 @@ use tracing::{debug, info, warn};
 use crate::storage::persistence::write_ahead_log::{BatchId, serialization::SerializationFormat};
 
 /// Status of a WAL entry in the global manifest
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WalEntryStatus {
     /// Active WAL file, not yet flushed to storage engine
     Active,
@@ -49,6 +49,8 @@ pub enum WalEntryStatus {
     Flushed,
     /// Archived to long-term storage, can be deleted
     Archived,
+    /// Rolled back during PITR recovery (not to be recovered)
+    RolledBack,
 }
 
 /// Global manifest entry tracking a single WAL batch across all collections

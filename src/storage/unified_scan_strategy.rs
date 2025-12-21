@@ -84,7 +84,7 @@ pub enum ScanStrategy {
 }
 
 /// Scan capabilities derived from actual engine implementations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ScanCapabilities {
     // From VIPER/NOVA (columnar engines)
     pub supports_predicate_pushdown: bool,

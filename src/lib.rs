@@ -189,6 +189,7 @@ pub struct ProximaDB {
     // consensus: consensus::ConsensusEngine,  // Disabled - requires raft dependency
     multi_server: Option<network::MultiServer>,
     _config: core::Config,
+    security: Option<Arc<security::SecurityCoordinator>>,
 }
 
 impl ProximaDB {
@@ -327,11 +328,38 @@ impl ProximaDB {
             .map_err(|e| format!("Failed to create server config: {}", e))?;
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
+        // Initialize security coordinator if configured
+        let security: Option<Arc<security::SecurityCoordinator>> =
+            if let Some(sec_cfg) = config.security.clone() {
+                match security::initialize_security(sec_cfg).await {
+                    Ok(coordinator) => Some(Arc::new(coordinator)),
+                    Err(err) => {
+                        tracing::warn!(
+                            "Security initialization failed, continuing with security disabled: {:?}",
+                            err
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
         // SharedServices and metrics collector already created above
 
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
-        let multi_server = network::MultiServer::new(multi_config, shared_services);
+        let rest_auth_enabled = config
+            .security
+            .as_ref()
+            .map(|s| s.authentication.enabled)
+            .unwrap_or(false);
+        let multi_server = network::MultiServer::new(
+            multi_config,
+            shared_services,
+            security.clone(),
+            rest_auth_enabled,
+        );
         tracing::debug!("✅ ProximaDB::new - MultiServer created successfully");
 
         Ok(Self {
@@ -339,6 +367,7 @@ impl ProximaDB {
             // consensus,  // Disabled
             multi_server: Some(multi_server),
             _config: config,
+            security,
         })
     }
 
