@@ -77,6 +77,7 @@ impl EntityNodeMapper {
 
         // Store flexible metadata (convert SqlValue to PropertyValue)
         if !entity.flexible_metadata.is_empty() {
+            // Store JSON blob for backward compatibility and full restoration
             let flexible_json = serde_json::to_string(&entity.flexible_metadata)
                 .context("Failed to serialize flexible_metadata")?;
             properties.insert(
@@ -85,6 +86,31 @@ impl EntityNodeMapper {
                     value: Some(property_value::Value::StringValue(flexible_json)),
                 },
             );
+
+            // Also store individual fields as direct node properties for efficient filtering
+            // This enables matches_metadata_filter to work without deserializing JSON
+            for (key, sql_value) in &entity.flexible_metadata {
+                if let Some(ref value) = sql_value.value {
+                    let prop_value = match value {
+                        sql_value::Value::StringValue(s) => {
+                            Some(property_value::Value::StringValue(s.clone()))
+                        }
+                        sql_value::Value::NumberValue(n) => {
+                            Some(property_value::Value::DoubleValue(*n))
+                        }
+                        sql_value::Value::Int64Value(i) => {
+                            Some(property_value::Value::IntValue(*i))
+                        }
+                        sql_value::Value::BoolValue(b) => {
+                            Some(property_value::Value::BoolValue(*b))
+                        }
+                        _ => None, // Skip unsupported types
+                    };
+                    if let Some(pv) = prop_value {
+                        properties.insert(key.clone(), PropertyValue { value: Some(pv) });
+                    }
+                }
+            }
         }
 
         // Store provenance

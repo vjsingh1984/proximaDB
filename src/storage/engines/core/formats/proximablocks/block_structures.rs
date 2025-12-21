@@ -2136,44 +2136,61 @@ impl ProximaDataBlock {
     ) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{FilterableDataType, SqlValue, sql_value::Value};
 
+        // Metadata values are stored with type tags: [type_tag:1][value_bytes:N]
+        // Skip the type tag byte (index 0) to get the actual payload
+        let payload = if val_bytes.len() > 1 { &val_bytes[1..] } else { &[] };
+
         // Try to get type from collection config for filterable columns
         if let Some(config) = collection_config {
             if let Some(cfg) = config.config.as_ref() {
                 // Check if this key is a declared filterable column
                 if let Some(col_spec) = cfg.filterable_columns.iter().find(|c| c.name == key_name) {
                     // Use declared type from config (single source of truth!)
+                    // Payload excludes the type tag - read actual values from payload
                     return match col_spec.data_type() {
                         FilterableDataType::FilterableInteger => {
-                            let i = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            let i = if payload.len() >= 8 {
+                                i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                            } else {
+                                0
+                            };
                             SqlValue {
                                 value: Some(Value::Int64Value(i)),
                             }
                         }
                         FilterableDataType::FilterableFloat => {
-                            let f = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            let f = if payload.len() >= 8 {
+                                f64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                            } else {
+                                0.0
+                            };
                             SqlValue {
                                 value: Some(Value::NumberValue(f)),
                             }
                         }
                         FilterableDataType::FilterableBoolean => SqlValue {
                             value: Some(Value::BoolValue(
-                                val_bytes.get(0).map(|&b| b != 0).unwrap_or(false),
+                                payload.get(0).map(|&b| b != 0).unwrap_or(false),
                             )),
                         },
                         FilterableDataType::FilterableString => {
-                            let s = String::from_utf8_lossy(val_bytes).to_string();
+                            let s = String::from_utf8_lossy(payload).to_string();
                             SqlValue {
                                 value: Some(Value::StringValue(s)),
                             }
                         }
                         FilterableDataType::FilterableDatetime => {
-                            let ts = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            let ts = if payload.len() >= 8 {
+                                i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                            } else {
+                                0
+                            };
                             SqlValue {
                                 value: Some(Value::Int64Value(ts)),
                             }
                         }
                         _ => {
-                            // Unknown type, fall back to heuristic
+                            // Unknown type, fall back to heuristic (which handles type tags)
                             Self::deserialize_metadata_value_heuristic(val_bytes)
                         }
                     };
@@ -2182,7 +2199,7 @@ impl ProximaDataBlock {
         }
 
         // Not a filterable column or no config available: use heuristic
-        // This is the same approach as Parquet's extra_meta (stores as strings)
+        // The heuristic function handles type tags internally
         Self::deserialize_metadata_value_heuristic(val_bytes)
     }
 

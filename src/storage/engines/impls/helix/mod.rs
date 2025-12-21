@@ -1811,6 +1811,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 distance_metric,
                 self.distance_compute.clone(),
                 filter_expression.cloned(),
+                Some(ctx.collection.clone()), // Pass collection for type-safe metadata filtering
             )
             .await?;
 

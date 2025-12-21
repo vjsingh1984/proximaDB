@@ -316,12 +316,22 @@ async fn benchmark_bulk_operations() {
     println!("    Throughput: {:.0} nodes/sec", node_count as f64 / duration.as_secs_f64());
 
     // Benchmark bulk edge insertion
+    // Use unique edge IDs to avoid duplicates when from/to pairs repeat
     let edge_count = 5000;
     let edges: Vec<Edge> = (0..edge_count)
         .map(|i| {
             let from = i % node_count;
             let to = (i + 1) % node_count;
-            generate_edge(from, to)
+            Edge {
+                id: format!("e_bulk_{}", i), // Unique ID per edge
+                from_node_id: format!("n_{}", from),
+                to_node_id: format!("n_{}", to),
+                edge_type: "CONNECTS_TO".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            }
         })
         .collect();
 

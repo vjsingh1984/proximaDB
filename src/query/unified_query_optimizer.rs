@@ -1219,17 +1219,77 @@ pub fn migrate_universal_filter(
 }
 
 impl UnifiedQueryOptimizer {
-    /// Analyze query components (stub implementation)
+    /// Analyze query components with real complexity assessment
     fn analyze_query_components(&self, context: &UnifiedQueryContext<'_>) -> Result<QueryAnalysis> {
-        let top_k = context.search_params.and_then(|p| p.top_k).unwrap_or(10); // Default to 10 if not specified
+        let top_k = context.search_params.and_then(|p| p.top_k).unwrap_or(10);
+
+        // Determine query complexity based on actual filter structure
+        let (filter_depth, filter_count) = if let Some(filter) = context.filter_params {
+            Self::analyze_filter_complexity(filter)
+        } else {
+            (0, 0)
+        };
+
+        // Calculate complexity based on multiple factors
+        let query_complexity = {
+            let vector_complexity = if context.search_params.is_some() { 1 } else { 0 };
+            let filter_complexity = filter_count.min(10); // Cap at 10 for scoring
+            let depth_penalty = filter_depth.min(5); // Cap depth penalty
+            let data_scale_factor = if context.total_vectors > 1_000_000 {
+                3
+            } else if context.total_vectors > 100_000 {
+                2
+            } else {
+                1
+            };
+
+            let complexity_score =
+                vector_complexity + filter_complexity + depth_penalty + data_scale_factor;
+
+            if complexity_score <= 3 {
+                QueryComplexity::Simple
+            } else if complexity_score <= 7 {
+                QueryComplexity::Moderate
+            } else {
+                QueryComplexity::Complex
+            }
+        };
+
+        trace!(
+            "Query analysis: filter_depth={}, filter_count={}, complexity={:?}",
+            filter_depth,
+            filter_count,
+            query_complexity
+        );
 
         Ok(QueryAnalysis {
             has_vector_search: context.search_params.is_some(),
             has_metadata_filter: context.filter_params.is_some(),
             has_aggregation: false,
-            query_complexity: QueryComplexity::Simple,
+            query_complexity,
             top_k,
         })
+    }
+
+    /// Recursively analyze filter complexity
+    fn analyze_filter_complexity(filter: &FilterExpression) -> (usize, usize) {
+        match filter {
+            FilterExpression::Comparison { .. } => (1, 1),
+            FilterExpression::And(expressions) | FilterExpression::Or(expressions) => {
+                let mut max_depth = 0;
+                let mut total_count = 0;
+                for expr in expressions {
+                    let (depth, count) = Self::analyze_filter_complexity(expr);
+                    max_depth = max_depth.max(depth);
+                    total_count += count;
+                }
+                (max_depth + 1, total_count)
+            }
+            FilterExpression::Not(inner) => {
+                let (depth, count) = Self::analyze_filter_complexity(inner);
+                (depth + 1, count)
+            }
+        }
     }
 
     /// Extract filter conditions from cost analysis
@@ -1333,83 +1393,587 @@ impl UnifiedQueryOptimizer {
         }
     }
 
-    /// Build cost analysis (stub implementation)
+    /// Build cost analysis with real statistics and filter analysis
     fn build_cost_analysis(
         &self,
         context: &UnifiedQueryContext<'_>,
-        _analysis: &QueryAnalysis,
+        analysis: &QueryAnalysis,
     ) -> Result<CostAnalysis> {
-        Ok(CostAnalysis {
-            total_cost: 1.0,
-            filter_cost: Some(0.5),
-            search_cost: Some(0.5),
-            index_cost: None,
-            filter_selectivity: Some(0.8),
-            filters: vec![],
-            has_bloom_filters: false,
-            dataset_size: context
+        // Get dataset size from collection stats or estimate
+        let dataset_size = context
+            .collection
+            .stats
+            .as_ref()
+            .map(|s| s.vector_count as usize)
+            .unwrap_or(context.total_vectors.max(10000));
+
+        // Analyze filters and compute selectivity
+        let (filters, combined_selectivity) = if let Some(filter_expr) = context.filter_params {
+            self.analyze_filters(filter_expr, context)
+        } else {
+            (vec![], 1.0)
+        };
+
+        // Calculate filter cost based on complexity and selectivity
+        let filter_cost = if analysis.has_metadata_filter {
+            let base_filter_cost = match analysis.query_complexity {
+                QueryComplexity::Simple => 0.1,
+                QueryComplexity::Moderate => 0.3,
+                QueryComplexity::Complex => 0.6,
+            };
+            // Adjust for dataset size (log scale)
+            let size_factor = (dataset_size as f64 / 10000.0).log2().max(1.0);
+            Some(base_filter_cost * size_factor * combined_selectivity)
+        } else {
+            None
+        };
+
+        // Calculate search cost based on vector operations
+        let search_cost = if analysis.has_vector_search {
+            let dimension = context
                 .collection
-                .stats
+                .config
                 .as_ref()
-                .map(|s| s.vector_count as usize)
-                .unwrap_or(10000),
-            estimated_memory_mb: 64.0, // Reasonable default
-            estimated_io_ops: 100,     // Default estimate
+                .map(|c| c.dimension as usize)
+                .unwrap_or(128);
+
+            // Base cost: O(n * d) for exhaustive search, reduced by quantization
+            let base_search_cost = (dataset_size as f64 * dimension as f64) / 1_000_000.0;
+
+            // Adjust for selectivity if filter is applied first
+            let effective_dataset = if combined_selectivity < 1.0 {
+                base_search_cost * combined_selectivity
+            } else {
+                base_search_cost
+            };
+
+            // Top-k factor (larger k = more work)
+            let top_k_factor = (analysis.top_k as f64 / 10.0).log2().max(1.0);
+
+            Some(effective_dataset * top_k_factor)
+        } else {
+            None
+        };
+
+        // Check for available bloom filters
+        let has_bloom_filters = context
+            .collection
+            .config
+            .as_ref()
+            .and_then(|c| c.bloom_filter_config.as_ref())
+            .map(|bf| bf.enabled)
+            .unwrap_or(false);
+
+        // Estimate memory usage
+        let dimension = context
+            .collection
+            .config
+            .as_ref()
+            .map(|c| c.dimension as usize)
+            .unwrap_or(128);
+        let bytes_per_vector = dimension * 4; // FP32
+        let estimated_memory_mb = (dataset_size * bytes_per_vector) as f64 / (1024.0 * 1024.0);
+
+        // Estimate I/O operations (files to read)
+        let estimated_io_ops = context.available_files.len().max(1)
+            * (1.0 / combined_selectivity).ceil() as usize;
+
+        // Total cost combines all components
+        let total_cost = filter_cost.unwrap_or(0.0) + search_cost.unwrap_or(0.0) + 0.1; // Base overhead
+
+        debug!(
+            "Cost analysis: dataset={}, filter_selectivity={:.3}, filter_cost={:?}, search_cost={:?}, total={:.3}",
+            dataset_size, combined_selectivity, filter_cost, search_cost, total_cost
+        );
+
+        Ok(CostAnalysis {
+            total_cost,
+            filter_cost,
+            search_cost,
+            index_cost: None, // Could be populated from index_capabilities cache
+            filter_selectivity: Some(combined_selectivity),
+            filters,
+            has_bloom_filters,
+            dataset_size,
+            estimated_memory_mb,
+            estimated_io_ops,
         })
     }
 
-    /// Allocate resources (stub implementation)
-    fn allocate_resources(
+    /// Analyze filters and estimate selectivity
+    fn analyze_filters(
         &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
-    ) -> Result<ResourceAllocation> {
-        Ok(ResourceAllocation {
-            memory_budget_mb: 1024,
-            cpu_cores: 4,
-            io_threads: 2,
-        })
+        filter: &FilterExpression,
+        context: &UnifiedQueryContext<'_>,
+    ) -> (Vec<FilterAnalysis>, f64) {
+        let mut analyses = Vec::new();
+        let mut combined_selectivity = 1.0;
+
+        self.extract_filter_analyses(filter, context, &mut analyses, &mut combined_selectivity);
+
+        (analyses, combined_selectivity)
     }
 
-    /// Estimate unified performance (stub implementation)
-    fn estimate_unified_performance(
+    /// Extract filter analyses recursively
+    fn extract_filter_analyses(
         &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
-        _allocation: &ResourceAllocation,
-    ) -> Result<UnifiedPerformanceEstimate> {
-        Ok(UnifiedPerformanceEstimate {
-            estimated_latency_ms: 100,
-            estimated_memory_mb: 100,
-            estimated_io_ops: 10,
-            estimated_recall: 0.95,
-            estimated_precision: 0.98,
-            // confidence removed -  0.8,
-        })
-    }
+        filter: &FilterExpression,
+        context: &UnifiedQueryContext<'_>,
+        analyses: &mut Vec<FilterAnalysis>,
+        combined_selectivity: &mut f64,
+    ) {
+        match filter {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                // Convert to FilterCondition for selectivity estimation
+                let condition = self.convert_to_filter_condition(field, operator, value);
+                let selectivity = self.cost_model.estimate_selectivity(&condition);
 
-    /// Configure parallelism (stub implementation)
-    fn configure_parallelism(
-        &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
-    ) -> ParallelismConfig {
-        ParallelismConfig {
-            file_parallelism: 4,
-            vector_parallelism: 4,
-            filter_parallelism: 2,
-            use_simd: true,
+                // Check if we can push to index
+                let can_push_to_index = self.check_index_availability(field, context);
+                let can_push_to_storage = self.check_storage_pushdown(operator);
+
+                analyses.push(FilterAnalysis {
+                    condition,
+                    selectivity,
+                    can_push_to_storage,
+                    can_push_to_index,
+                    best_index: if can_push_to_index {
+                        Some(format!("idx_{}", field))
+                    } else {
+                        None
+                    },
+                });
+
+                // AND semantics: multiply selectivities
+                *combined_selectivity *= selectivity;
+            }
+            FilterExpression::And(expressions) => {
+                for expr in expressions {
+                    self.extract_filter_analyses(expr, context, analyses, combined_selectivity);
+                }
+            }
+            FilterExpression::Or(expressions) => {
+                // OR: take max selectivity (conservative estimate)
+                let mut or_selectivity = 0.0;
+                for expr in expressions {
+                    let mut temp_selectivity = 1.0;
+                    self.extract_filter_analyses(expr, context, analyses, &mut temp_selectivity);
+                    or_selectivity = or_selectivity.max(temp_selectivity);
+                }
+                *combined_selectivity *= or_selectivity.min(1.0);
+            }
+            FilterExpression::Not(inner) => {
+                let mut inner_selectivity = 1.0;
+                self.extract_filter_analyses(inner, context, analyses, &mut inner_selectivity);
+                // NOT inverts selectivity
+                *combined_selectivity *= 1.0 - inner_selectivity;
+            }
         }
     }
 
-    /// Configure fallbacks (stub implementation)
+    /// Convert FilterExpression comparison to FilterCondition
+    fn convert_to_filter_condition(
+        &self,
+        field: &str,
+        operator: &crate::core::search::ComparisonOperator,
+        value: &serde_json::Value,
+    ) -> FilterCondition {
+        use crate::core::search::ComparisonOperator;
+
+        match operator {
+            ComparisonOperator::Equals => FilterCondition::Equals {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::NotEquals => FilterCondition::NotEquals {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::GreaterThan => FilterCondition::GreaterThan {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::LessThan => FilterCondition::LessThan {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::In => FilterCondition::In {
+                column: field.to_string(),
+                values: match value {
+                    serde_json::Value::Array(arr) => arr.clone(),
+                    _ => vec![value.clone()],
+                },
+            },
+            _ => FilterCondition::Equals {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+        }
+    }
+
+    /// Check if an index exists for a field
+    fn check_index_availability(&self, field: &str, _context: &UnifiedQueryContext<'_>) -> bool {
+        // Check our index capabilities cache
+        self.index_capabilities.contains_key(field)
+    }
+
+    /// Check if operator supports storage-level pushdown
+    fn check_storage_pushdown(&self, operator: &crate::core::search::ComparisonOperator) -> bool {
+        use crate::core::search::ComparisonOperator;
+        matches!(
+            operator,
+            ComparisonOperator::Equals
+                | ComparisonOperator::NotEquals
+                | ComparisonOperator::GreaterThan
+                | ComparisonOperator::LessThan
+                | ComparisonOperator::GreaterThanOrEqual
+                | ComparisonOperator::LessThanOrEqual
+                | ComparisonOperator::In
+        )
+    }
+
+    /// Allocate resources based on query complexity and hardware capabilities
+    fn allocate_resources(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
+    ) -> Result<ResourceAllocation> {
+        // Get hardware capabilities
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let available_cores = hardware.cpu_cores.max(1);
+        let available_memory_mb = hardware.available_memory_mb.max(512);
+
+        // Calculate resource needs based on execution steps
+        let mut memory_budget_mb = 256; // Base allocation
+        let mut cpu_cores = 1;
+        let mut io_threads = 1;
+
+        for step in steps {
+            match step {
+                ExecutionStep::VectorSearch { candidates, .. } => {
+                    // Vector search needs more memory and CPU
+                    memory_budget_mb += (*candidates as usize * 4) / 1024; // 4 bytes per float
+                    cpu_cores = cpu_cores.max(available_cores / 2);
+                }
+                ExecutionStep::CombinedFilterSearch { .. } => {
+                    // Combined operations need balanced resources
+                    memory_budget_mb += 512;
+                    cpu_cores = cpu_cores.max(available_cores * 3 / 4);
+                    io_threads = io_threads.max(2);
+                }
+                ExecutionStep::MetadataFilter { estimated_cost, .. } => {
+                    // Filter cost scales with data size
+                    if *estimated_cost > 1.0 {
+                        cpu_cores = cpu_cores.max(2);
+                    }
+                }
+                ExecutionStep::IndexLookup { .. } => {
+                    // Index lookups are memory-intensive
+                    memory_budget_mb += 256;
+                }
+                ExecutionStep::BloomFilterCheck { .. } => {
+                    // Bloom filters are very lightweight
+                    memory_budget_mb += 16;
+                }
+            }
+        }
+
+        // Scale based on dataset size
+        let dataset_scale = (context.total_vectors as f64 / 100_000.0).log2().max(1.0);
+        memory_budget_mb = (memory_budget_mb as f64 * dataset_scale) as usize;
+
+        // Cap at available resources
+        memory_budget_mb = memory_budget_mb.min(available_memory_mb / 2); // Use at most 50% of available
+        cpu_cores = cpu_cores.min(available_cores);
+        io_threads = io_threads.min(cpu_cores / 2).max(1);
+
+        trace!(
+            "Resource allocation: memory={}MB, cores={}, io_threads={}",
+            memory_budget_mb,
+            cpu_cores,
+            io_threads
+        );
+
+        Ok(ResourceAllocation {
+            memory_budget_mb,
+            cpu_cores,
+            io_threads,
+        })
+    }
+
+    /// Estimate unified performance based on cost model and historical data
+    fn estimate_unified_performance(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
+        allocation: &ResourceAllocation,
+    ) -> Result<UnifiedPerformanceEstimate> {
+        let mut total_latency_ms: f64 = 0.0;
+        let mut total_memory_mb = 0;
+        let mut total_io_ops = 0;
+        let mut min_recall = 1.0f32;
+        let mut min_precision = 1.0f32;
+
+        // Calculate estimates for each step
+        for step in steps {
+            match step {
+                ExecutionStep::VectorSearch {
+                    execution_method,
+                    candidates,
+                    ..
+                } => {
+                    // Latency depends on method
+                    let method_latency = match execution_method {
+                        SearchExecutionMethod::DirectFP32 => {
+                            // O(n) scan
+                            (context.total_vectors as f64 / 10000.0) * 10.0
+                        }
+                        SearchExecutionMethod::Progressive { stages } => {
+                            // Progressive reduces latency
+                            stages.len() as f64 * 5.0
+                        }
+                        SearchExecutionMethod::QuantizedOnly { .. } => {
+                            // Quantized is fast
+                            (context.total_vectors as f64 / 50000.0) * 5.0
+                        }
+                        SearchExecutionMethod::IndexBased { index_type } => {
+                            // Index-based is fastest
+                            match index_type {
+                                Index::HNSW => 2.0,
+                                Index::IVF => 5.0,
+                                Index::LSH => 3.0,
+                                _ => 10.0,
+                            }
+                        }
+                    };
+                    total_latency_ms += method_latency;
+                    total_memory_mb += *candidates * 4 / (1024 * 1024);
+
+                    // Recall/precision estimates based on method
+                    let (recall, precision) = match execution_method {
+                        SearchExecutionMethod::DirectFP32 => (1.0, 1.0),
+                        SearchExecutionMethod::Progressive { .. } => (0.98, 0.99),
+                        SearchExecutionMethod::QuantizedOnly { .. } => (0.90, 0.95),
+                        SearchExecutionMethod::IndexBased { .. } => (0.95, 0.97),
+                    };
+                    min_recall = min_recall.min(recall);
+                    min_precision = min_precision.min(precision);
+                }
+                ExecutionStep::MetadataFilter {
+                    estimated_cost,
+                    estimated_selectivity,
+                    ..
+                } => {
+                    // Filter latency based on cost and selectivity
+                    total_latency_ms += estimated_cost * 10.0;
+                    total_io_ops += (1.0 / estimated_selectivity.max(0.01)) as usize;
+                }
+                ExecutionStep::CombinedFilterSearch { .. } => {
+                    // Combined is optimized
+                    total_latency_ms += 15.0;
+                    total_io_ops += 5;
+                    min_recall = min_recall.min(0.95);
+                }
+                ExecutionStep::IndexLookup { .. } => {
+                    total_latency_ms += 2.0;
+                    total_io_ops += 1;
+                }
+                ExecutionStep::BloomFilterCheck { .. } => {
+                    total_latency_ms += 0.1;
+                }
+            }
+        }
+
+        // Adjust for parallelism
+        let parallelism_factor = (allocation.cpu_cores as f64).sqrt();
+        total_latency_ms /= parallelism_factor;
+
+        // Check historical performance for adjustments
+        let history = self.performance_history.read();
+        if history.total_queries > 100 {
+            // Use historical data to refine estimates
+            if let Some(perf) = history.strategy_performance.get("default") {
+                total_latency_ms = (total_latency_ms + perf.avg_latency_ms as f64) / 2.0;
+                min_recall = (min_recall + perf.avg_recall) / 2.0;
+            }
+        }
+
+        trace!(
+            "Performance estimate: latency={:.1}ms, memory={}MB, recall={:.3}",
+            total_latency_ms,
+            total_memory_mb,
+            min_recall
+        );
+
+        Ok(UnifiedPerformanceEstimate {
+            estimated_latency_ms: total_latency_ms.max(1.0) as u32,
+            estimated_memory_mb: total_memory_mb.max(1),
+            estimated_io_ops: total_io_ops.max(1),
+            estimated_recall: min_recall,
+            estimated_precision: min_precision,
+        })
+    }
+
+    /// Configure parallelism based on hardware and query characteristics
+    fn configure_parallelism(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
+    ) -> ParallelismConfig {
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let available_cores = hardware.cpu_cores.max(1);
+
+        // Determine parallelism based on query type and data size
+        let has_heavy_search = steps.iter().any(|s| {
+            matches!(
+                s,
+                ExecutionStep::VectorSearch { .. } | ExecutionStep::CombinedFilterSearch { .. }
+            )
+        });
+
+        let has_heavy_filter = steps.iter().any(|s| {
+            matches!(
+                s,
+                ExecutionStep::MetadataFilter {
+                    estimated_cost,
+                    ..
+                } if *estimated_cost > 0.5
+            )
+        });
+
+        // File parallelism based on available files
+        let file_parallelism = context
+            .available_files
+            .len()
+            .min(available_cores)
+            .max(1);
+
+        // Vector parallelism for search operations
+        let vector_parallelism = if has_heavy_search && context.total_vectors > 100_000 {
+            available_cores
+        } else if has_heavy_search {
+            available_cores / 2
+        } else {
+            1
+        }
+        .max(1);
+
+        // Filter parallelism
+        let filter_parallelism = if has_heavy_filter {
+            (available_cores / 2).max(2)
+        } else {
+            1
+        };
+
+        // SIMD support
+        let use_simd = hardware.has_avx2 || hardware.has_neon;
+
+        ParallelismConfig {
+            file_parallelism,
+            vector_parallelism,
+            filter_parallelism,
+            use_simd,
+        }
+    }
+
+    /// Configure fallback strategies based on query characteristics
     fn configure_fallbacks(
         &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
     ) -> Vec<FallbackStrategy> {
-        // Return empty fallback strategies for now
-        vec![]
+        let mut fallbacks = Vec::new();
+
+        // Only configure fallbacks for complex queries
+        let is_complex = steps.len() > 2 || context.total_vectors > 500_000;
+
+        if !is_complex {
+            return fallbacks;
+        }
+
+        // Memory pressure fallback: switch to streaming mode
+        let memory_threshold = (context.total_vectors * 4 / (1024 * 1024)).max(512);
+        if memory_threshold > 1024 {
+            fallbacks.push(FallbackStrategy {
+                trigger_condition: TriggerCondition::MemoryPressure {
+                    threshold_mb: memory_threshold,
+                },
+                fallback_plan: Box::new(UnifiedExecutionPlan {
+                    execution_steps: vec![ExecutionStep::MetadataFilter {
+                        conditions: vec![],
+                        execution_method: FilterExecutionMethod::SequentialScan,
+                        estimated_selectivity: 1.0,
+                        estimated_cost: 1.0,
+                    }],
+                    resource_allocation: ResourceAllocation {
+                        memory_budget_mb: 256,
+                        cpu_cores: 1,
+                        io_threads: 1,
+                    },
+                    performance_estimate: UnifiedPerformanceEstimate {
+                        estimated_latency_ms: 1000,
+                        estimated_memory_mb: 256,
+                        estimated_io_ops: 100,
+                        estimated_recall: 1.0,
+                        estimated_precision: 1.0,
+                    },
+                    parallelism: ParallelismConfig {
+                        file_parallelism: 1,
+                        vector_parallelism: 1,
+                        filter_parallelism: 1,
+                        use_simd: false,
+                    },
+                    fallback_strategies: vec![],
+                }),
+            });
+        }
+
+        // Latency fallback: use faster but less accurate method
+        fallbacks.push(FallbackStrategy {
+            trigger_condition: TriggerCondition::LatencyExceeded { threshold_ms: 1000 },
+            fallback_plan: Box::new(UnifiedExecutionPlan {
+                execution_steps: vec![ExecutionStep::VectorSearch {
+                    execution_method: SearchExecutionMethod::QuantizedOnly {
+                        quantization_type: QuantizationType::Binary,
+                    },
+                    quantization_strategy: Some(QuantizationStrategy {
+                        quantization_type: QuantizationType::Binary,
+                        use_two_stage: false,
+                        candidate_multiplier: 5,
+                    }),
+                    candidates: context
+                        .search_params
+                        .and_then(|p| p.top_k)
+                        .unwrap_or(10)
+                        * 20,
+                }],
+                resource_allocation: ResourceAllocation {
+                    memory_budget_mb: 128,
+                    cpu_cores: 2,
+                    io_threads: 1,
+                },
+                performance_estimate: UnifiedPerformanceEstimate {
+                    estimated_latency_ms: 50,
+                    estimated_memory_mb: 128,
+                    estimated_io_ops: 5,
+                    estimated_recall: 0.85,
+                    estimated_precision: 0.90,
+                },
+                parallelism: ParallelismConfig {
+                    file_parallelism: 2,
+                    vector_parallelism: 2,
+                    filter_parallelism: 1,
+                    use_simd: true,
+                },
+                fallback_strategies: vec![],
+            }),
+        });
+
+        fallbacks
     }
 
     /// Configure early termination settings

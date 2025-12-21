@@ -16,7 +16,11 @@ fn create_test_entries(count: usize) -> Vec<IndexEntry> {
             block_centroid_fp16: None,
             metadata_min_values: std::collections::HashMap::new(),
             metadata_max_values: std::collections::HashMap::new(),
-            vector_format: proximadb::storage::engines::impls::sst::VectorFormat::F32,
+            metadata_null_counts: std::collections::HashMap::new(),
+            block_key_bloom: None,
+            block_metadata_bloom: None,
+            vector_format: proximadb::storage::engines::impls::sst::VectorFormat::Fixed { dimension: 8 },
+            zorder_code: None,
         })
         .collect()
 }
@@ -66,8 +70,8 @@ fn test_leaf_for_key() {
 
     // Test exact match
     let leaf = tree.leaf_for_key("key_00032").unwrap();
-    assert!(leaf.start_key <= "key_00032");
-    assert!(leaf.end_key >= "key_00032");
+    assert!(leaf.start_key.as_str() <= "key_00032");
+    assert!(leaf.end_key.as_str() >= "key_00032");
 
     // Test first key
     let leaf = tree.leaf_for_key("key_00000").unwrap();
