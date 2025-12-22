@@ -269,23 +269,92 @@ impl ZOrderEncoder {
     }
 
     /// Encode to 64-bit Z-order code (1-8 dimensions).
+    ///
+    /// Optimized implementation using:
+    /// - Stack-based arrays (no heap allocation)
+    /// - BMI2 pdep instruction on x86_64 when available
+    /// - Lookup table fallback for other platforms
     fn encode_64(&self, coords: &[f32]) -> u64 {
         let max_val = (1u64 << self.bits_per_dim) - 1;
-        let quantized: Vec<u64> = coords
-            .iter()
-            .map(|&c| {
-                let clamped = c.clamp(0.0, 1.0);
-                (clamped * max_val as f32) as u64
-            })
-            .collect();
 
-        // Interleave bits using Morton encoding
+        // Stack-based quantization (max 8 dimensions for 64-bit)
+        let mut quantized = [0u64; 8];
+        for (i, &c) in coords.iter().enumerate().take(8) {
+            let clamped = c.clamp(0.0, 1.0);
+            quantized[i] = (clamped * max_val as f32) as u64;
+        }
+
+        // Use optimized bit interleaving
+        self.interleave_bits_64(&quantized[..self.dimensions])
+    }
+
+    /// Fast bit interleaving using platform-specific optimizations
+    #[inline(always)]
+    fn interleave_bits_64(&self, quantized: &[u64]) -> u64 {
+        // Try BMI2 pdep on x86_64
+        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+        {
+            return self.interleave_bits_64_bmi2(quantized);
+        }
+
+        // Fallback: optimized scalar with unrolled inner loop
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
+        {
+            self.interleave_bits_64_scalar(quantized)
+        }
+    }
+
+    /// BMI2-accelerated bit interleaving using pdep
+    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    #[inline(always)]
+    fn interleave_bits_64_bmi2(&self, quantized: &[u64]) -> u64 {
+        use std::arch::x86_64::_pdep_u64;
+
         let mut code = 0u64;
-        for bit in 0..self.bits_per_dim {
+        let dims = self.dimensions;
+
+        // Create deposit mask for each dimension
+        // For n dimensions, each dimension gets every nth bit
+        for (dim_idx, &val) in quantized.iter().enumerate() {
+            // Mask: bit at position dim_idx, then dim_idx + dims, then dim_idx + 2*dims, etc.
+            let mut mask = 0u64;
+            for bit in 0..self.bits_per_dim {
+                mask |= 1u64 << (bit * dims + dim_idx);
+            }
+            // Use pdep to scatter the bits
+            code |= unsafe { _pdep_u64(val, mask) };
+        }
+
+        code
+    }
+
+    /// Optimized scalar bit interleaving
+    #[inline(always)]
+    fn interleave_bits_64_scalar(&self, quantized: &[u64]) -> u64 {
+        let mut code = 0u64;
+        let dims = self.dimensions;
+        let bits = self.bits_per_dim;
+
+        // Process 4 bits at a time when possible
+        let full_iters = bits / 4;
+        let remaining = bits % 4;
+
+        for iter in 0..full_iters {
+            let base_bit = iter * 4;
+            for (dim_idx, &val) in quantized.iter().enumerate() {
+                // Unrolled: 4 bits per iteration
+                code |= ((val >> base_bit) & 1) << (base_bit * dims + dim_idx);
+                code |= ((val >> (base_bit + 1)) & 1) << ((base_bit + 1) * dims + dim_idx);
+                code |= ((val >> (base_bit + 2)) & 1) << ((base_bit + 2) * dims + dim_idx);
+                code |= ((val >> (base_bit + 3)) & 1) << ((base_bit + 3) * dims + dim_idx);
+            }
+        }
+
+        // Handle remaining bits
+        for bit in (full_iters * 4)..bits {
             for (dim_idx, &val) in quantized.iter().enumerate() {
                 let bit_val = (val >> bit) & 1;
-                let shift = bit * self.dimensions + dim_idx;
-                code |= bit_val << shift;
+                code |= bit_val << (bit * dims + dim_idx);
             }
         }
 
@@ -293,23 +362,39 @@ impl ZOrderEncoder {
     }
 
     /// Encode to 128-bit Z-order code (9-16 dimensions).
+    ///
+    /// Optimized with stack-based arrays and loop unrolling.
     fn encode_128(&self, coords: &[f32]) -> u128 {
         let max_val = (1u128 << self.bits_per_dim) - 1;
-        let quantized: Vec<u128> = coords
-            .iter()
-            .map(|&c| {
-                let clamped = c.clamp(0.0, 1.0);
-                (clamped * max_val as f32) as u128
-            })
-            .collect();
 
-        // Interleave bits using Morton encoding
+        // Stack-based quantization (max 16 dimensions for 128-bit)
+        let mut quantized = [0u128; 16];
+        for (i, &c) in coords.iter().enumerate().take(16) {
+            let clamped = c.clamp(0.0, 1.0);
+            quantized[i] = (clamped * max_val as f32) as u128;
+        }
+
+        // Optimized interleaving with loop unrolling
         let mut code = 0u128;
-        for bit in 0..self.bits_per_dim {
-            for (dim_idx, &val) in quantized.iter().enumerate() {
+        let dims = self.dimensions;
+        let bits = self.bits_per_dim;
+
+        // Process 2 bits at a time
+        let full_iters = bits / 2;
+
+        for iter in 0..full_iters {
+            let base_bit = iter * 2;
+            for (dim_idx, &val) in quantized[..dims].iter().enumerate() {
+                code |= ((val >> base_bit) & 1) << (base_bit * dims + dim_idx);
+                code |= ((val >> (base_bit + 1)) & 1) << ((base_bit + 1) * dims + dim_idx);
+            }
+        }
+
+        // Handle remaining bits
+        for bit in (full_iters * 2)..bits {
+            for (dim_idx, &val) in quantized[..dims].iter().enumerate() {
                 let bit_val = (val >> bit) & 1;
-                let shift = bit * self.dimensions + dim_idx;
-                code |= bit_val << shift;
+                code |= bit_val << (bit * dims + dim_idx);
             }
         }
 
@@ -573,6 +658,11 @@ where
     }
 
     let dimension = get_centroid(&index_entries[0]).len();
+
+    // Guard against empty vectors (dimension 0) - cannot perform spatial clustering
+    if dimension == 0 {
+        return (blocks, index_entries, vec![]);
+    }
 
     // Use adaptive PCA configuration
     let pca_config = AdaptivePcaConfig::with_target(dimension, target_dimensions);

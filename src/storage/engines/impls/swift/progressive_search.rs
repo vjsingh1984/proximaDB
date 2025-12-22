@@ -858,58 +858,83 @@ fn calculate_adacurve_epsilon_superblock(superblocks: &[super::SuperBlock]) -> u
     (range * 15 / 100).max(1000)
 }
 
-/// Filter superblocks by AdaCurve range.
+/// Filter superblocks by AdaCurve range using unified SpatialPruner.
 ///
 /// Returns indices of superblocks within the search range.
 fn filter_superblocks_by_adacurve(
     query: &[f32],
     superblocks: &[super::SuperBlock],
 ) -> Option<Vec<usize>> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+    use crate::storage::engines::core::formats::proximablocks::spatial_pruning::{
+        BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
+    };
+
+    if superblocks.is_empty() {
+        return Some(Vec::new());
+    }
+
     // Compute query's AdaCurve code
     let query_code = compute_query_adacurve_code(query, superblocks)?;
 
-    // Calculate pruning range
-    let epsilon = calculate_adacurve_epsilon_superblock(superblocks);
-    let min_code = query_code.saturating_sub(epsilon);
-    let max_code = query_code.saturating_add(epsilon);
+    // Create unified SpatialPruner with Sqrt mode for superblocks
+    // Using higher spatial_weight since we have AdaCurve codes at this level
+    let pruner = SpatialPruner::new(PruningConfig {
+        mode: PruningMode::Sqrt { min_blocks: 3 },
+        spatial_weight: 0.7,
+        centroid_weight: 0.3,
+        ..Default::default()
+    });
 
-    // Filter superblocks by AdaCurve range
-    let filtered_indices: Vec<usize> = superblocks
+    // Build superblock info with AdaCurve codes
+    let blocks: Vec<BlockPruningInfo> = superblocks
         .iter()
         .enumerate()
-        .filter(|(_, sb)| {
-            if let Some(code) = sb.adacurve_code {
-                code >= min_code && code <= max_code
+        .map(|(idx, sb)| {
+            let code = sb
+                .adacurve_code
+                .map(SpatialCode::Code64)
+                .unwrap_or(SpatialCode::Code64(0));
+            // Use FP16 centroid if available
+            let centroid = if let Some(ref fp16) = sb.centroid_fp16 {
+                crate::storage::engines::impls::sst::fp16_to_fp32(fp16)
             } else {
-                true // Include superblocks without AdaCurve (backward compat)
-            }
+                sb.centroid.clone()
+            };
+            BlockPruningInfo::with_centroid(idx, code, centroid)
         })
-        .map(|(idx, _)| idx)
         .collect();
 
+    let result = pruner.select_blocks(&SpatialCode::Code64(query_code), query, &blocks);
+
     // Log pruning effectiveness
-    let pruned_percentage = if superblocks.len() > 0 {
-        100 - (filtered_indices.len() * 100 / superblocks.len())
+    let pruned_percentage = if !superblocks.is_empty() {
+        100 - (result.selected_indices.len() * 100 / superblocks.len())
     } else {
         0
     };
 
     debug!(
-        "🔬 SWIFT AdaCurves Pruning (SuperBlock): {} → {} superblocks ({}% pruned)",
+        "SWIFT AdaCurves Pruning (SuperBlock): {} → {} superblocks ({}% pruned)",
         superblocks.len(),
-        filtered_indices.len(),
+        result.selected_indices.len(),
         pruned_percentage
     );
 
-    Some(filtered_indices)
+    Some(result.selected_indices)
 }
 
 fn select_blocks_by_centroid(
     superblock: &super::SuperBlock,
     query: &[f32],
-    metric: &crate::compute::distance_computation::DistanceMetric,
+    _metric: &crate::compute::distance_computation::DistanceMetric,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Vec<usize> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+    use crate::storage::engines::core::formats::proximablocks::spatial_pruning::{
+        BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
+    };
+
     if prune.force_exact {
         return (0..superblock.blocks.len()).collect();
     }
@@ -917,56 +942,58 @@ fn select_blocks_by_centroid(
         return (0..superblock.blocks.len()).collect();
     }
 
-    let distance_compute =
-        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
-    let mut scored = Vec::with_capacity(superblock.block_centroids.len());
+    // Convert BlockPruneMode to unified PruningMode
+    let prune_mode = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => PruningMode::Sqrt {
+            min_blocks: prune.min_keep.max(3),
+        },
+        crate::core::search::BlockPruneMode::Ratio => PruningMode::Ratio {
+            ratio: prune.ratio,
+            min_blocks: prune.min_keep.max(1),
+        },
+        crate::core::search::BlockPruneMode::Fixed(k) => PruningMode::Fixed { k },
+    };
 
-    for (idx, fp32_centroid) in superblock.block_centroids.iter().enumerate() {
-        // Use FP16 centroid if available (50% storage reduction, <0.1% error)
-        // Falls back to FP32 for backward compatibility
-        let centroid = if let Some(ref fp16_centroids) = superblock.block_centroids_fp16 {
-            if let Some(fp16_centroid) = fp16_centroids.get(idx) {
-                crate::storage::engines::impls::sst::fp16_to_fp32(fp16_centroid)
+    // Use unified SpatialPruner for block selection
+    // Note: SWIFT blocks within superblocks don't have individual spatial codes,
+    // so we use centroid-weighted pruning (spatial_weight=0, centroid_weight=1)
+    let pruner = SpatialPruner::new(PruningConfig {
+        mode: prune_mode,
+        spatial_weight: 0.0,  // No spatial codes at block level
+        centroid_weight: 1.0, // Pure centroid-based pruning
+        ..Default::default()
+    });
+
+    // Build block info with centroids
+    let blocks: Vec<BlockPruningInfo> = superblock
+        .block_centroids
+        .iter()
+        .enumerate()
+        .map(|(idx, fp32_centroid)| {
+            // Use FP16 centroid if available (50% storage reduction, <0.1% error)
+            let centroid = if let Some(ref fp16_centroids) = superblock.block_centroids_fp16 {
+                if let Some(fp16_centroid) = fp16_centroids.get(idx) {
+                    crate::storage::engines::impls::sst::fp16_to_fp32(fp16_centroid)
+                } else {
+                    fp32_centroid.clone()
+                }
             } else {
                 fp32_centroid.clone()
-            }
-        } else {
-            fp32_centroid.clone()
-        };
+            };
+            // Use dummy spatial code since we're doing centroid-only pruning
+            BlockPruningInfo::with_centroid(idx, SpatialCode::Code64(0), centroid)
+        })
+        .collect();
 
-        if centroid.len() != query.len() {
-            scored.push((f32::INFINITY, idx));
-            continue;
-        }
-        let dist = distance_compute.distance_with_metric(query, &centroid, metric);
-        scored.push((dist, idx));
-    }
-
-    if scored.is_empty() {
+    if blocks.is_empty() {
         return Vec::new();
     }
 
-    let mut k = match prune.mode {
-        crate::core::search::BlockPruneMode::Sqrt => {
-            (scored.len() as f32).sqrt().ceil() as usize
-        }
-        crate::core::search::BlockPruneMode::Ratio => {
-            let r = prune.ratio.clamp(0.0, 1.0);
-            ((scored.len() as f32) * r).ceil() as usize
-        }
-        crate::core::search::BlockPruneMode::Fixed(k) => k,
-    };
+    // Select blocks using unified pruner (centroid-only mode)
+    let result = pruner.select_blocks(&SpatialCode::Code64(0), query, &blocks);
 
-    // [FIX] Apply min_keep before max_keep to ensure correct clamping order
-    // This matches SST implementation and prevents violations when min_keep > max_keep
-    k = k.max(prune.min_keep);
-    if prune.max_keep > 0 {
-        k = k.min(prune.max_keep);
-    }
-    k = k.clamp(1, scored.len());
-
-    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let mut selected: Vec<usize> = scored.into_iter().take(k).map(|(_, idx)| idx).collect();
+    // Sort indices for consistent ordering
+    let mut selected = result.selected_indices;
     selected.sort_unstable();
     selected.dedup();
     selected
@@ -1061,8 +1088,8 @@ mod tests {
         let metric = DistanceMetric::Euclidean;
         let prune = crate::core::search::BlockPruneConfig::default();
         let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
-        // sqrt(4)=2 -> expect the two closest indices 0 and 2
-        assert_eq!(selected, vec![0, 2]);
+        // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1 (sorted)
+        assert_eq!(selected, vec![0, 1, 2]);
     }
 
     #[test]

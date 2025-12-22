@@ -2,6 +2,108 @@
 //!
 //! This module provides a production-ready n-dimensional Hilbert curve
 //! implementation for locality-preserving clustering.
+//!
+//! Optimizations:
+//! - Pre-computed lookup tables for 2D with 4-bit chunks
+//! - Unrolled loops for common dimensions
+//! - Stack-based arrays to avoid allocations
+
+use std::sync::OnceLock;
+
+/// Pre-computed Hilbert 2D lookup table for 4-bit chunks
+/// Maps (x4bit, y4bit, orientation) -> (hilbert_index, new_orientation)
+static HILBERT_2D_LUT: OnceLock<Hilbert2DLookup> = OnceLock::new();
+
+/// Lookup table for fast 2D Hilbert encoding
+struct Hilbert2DLookup {
+    /// For each (x_nibble, y_nibble, orientation): (partial_index, new_orientation)
+    /// orientation: 0=A, 1=B, 2=C, 3=D (4 Hilbert curve orientations)
+    table: [[(u8, u8); 256]; 4], // [orientation][x*16 + y] -> (index, new_orient)
+}
+
+impl Hilbert2DLookup {
+    fn new() -> Self {
+        let mut table = [[(0u8, 0u8); 256]; 4];
+
+        // Build lookup table for all orientations and 4x4 sub-grids
+        for orient in 0..4 {
+            for x in 0..16u8 {
+                for y in 0..16u8 {
+                    let (idx, new_orient) = Self::compute_4bit_hilbert(x, y, orient as u8);
+                    table[orient][(x as usize) * 16 + (y as usize)] = (idx, new_orient);
+                }
+            }
+        }
+
+        Self { table }
+    }
+
+    /// Compute Hilbert index for a 4-bit x,y pair with given orientation
+    fn compute_4bit_hilbert(x: u8, y: u8, orientation: u8) -> (u8, u8) {
+        let mut index = 0u8;
+        let mut orient = orientation;
+        let mut cx = x;
+        let mut cy = y;
+
+        // Process 4 bits (from high to low)
+        for s in (0..4).rev() {
+            let mask = 1u8 << s;
+            let rx = if (cx & mask) != 0 { 1 } else { 0 };
+            let ry = if (cy & mask) != 0 { 1 } else { 0 };
+
+            // Hilbert index contribution
+            let quadrant = match orient {
+                0 => (ry << 1) | (rx ^ ry),       // A orientation
+                1 => ((1 - rx) << 1) | (rx ^ ry), // B orientation
+                2 => ((1 - ry) << 1) | (rx ^ ry), // C orientation
+                _ => (rx << 1) | (rx ^ ry),       // D orientation
+            };
+            index = (index << 2) | quadrant;
+
+            // Update orientation for next level
+            orient = match (orient, rx, ry) {
+                (0, 0, 0) => 1,
+                (0, 0, 1) => 0,
+                (0, 1, 0) => 0,
+                (0, 1, 1) => 3,
+                (1, 0, 0) => 0,
+                (1, 0, 1) => 1,
+                (1, 1, 0) => 1,
+                (1, 1, 1) => 2,
+                (2, 0, 0) => 3,
+                (2, 0, 1) => 2,
+                (2, 1, 0) => 2,
+                (2, 1, 1) => 1,
+                (3, 0, 0) => 2,
+                (3, 0, 1) => 3,
+                (3, 1, 0) => 3,
+                (3, 1, 1) => 0,
+                _ => orient,
+            };
+
+            // Apply transformation
+            if ry == 0 {
+                if rx == 1 {
+                    cx ^= mask - 1;
+                    cy ^= mask - 1;
+                }
+                std::mem::swap(&mut cx, &mut cy);
+            }
+        }
+
+        (index, orient)
+    }
+
+    /// Fast lookup for 4-bit chunks
+    #[inline(always)]
+    fn lookup(&self, x_nibble: u8, y_nibble: u8, orientation: u8) -> (u8, u8) {
+        self.table[orientation as usize][(x_nibble as usize) * 16 + (y_nibble as usize)]
+    }
+}
+
+fn get_hilbert_2d_lut() -> &'static Hilbert2DLookup {
+    HILBERT_2D_LUT.get_or_init(Hilbert2DLookup::new)
+}
 
 /// Hilbert curve encoder for n-dimensional spaces
 pub struct HilbertCurve {
@@ -40,8 +142,40 @@ impl HilbertCurve {
         }
     }
 
-    /// Fast 2D Hilbert encoding using the correct algorithm
-    fn encode_2d(&self, mut x: u32, mut y: u32) -> u64 {
+    /// Fast 2D Hilbert encoding using lookup tables for 8-bit cases
+    fn encode_2d(&self, x: u32, y: u32) -> u64 {
+        // Use lookup table optimization for 8-bit (common case)
+        if self.bits_per_dim == 8 {
+            return self.encode_2d_lut(x as u8, y as u8);
+        }
+
+        // Fallback for other bit depths
+        self.encode_2d_scalar(x, y)
+    }
+
+    /// LUT-accelerated 2D encoding for 8-bit resolution
+    #[inline(always)]
+    fn encode_2d_lut(&self, x: u8, y: u8) -> u64 {
+        let lut = get_hilbert_2d_lut();
+
+        // Process in two 4-bit chunks (high nibble, then low nibble)
+        let x_high = (x >> 4) & 0x0F;
+        let y_high = (y >> 4) & 0x0F;
+        let x_low = x & 0x0F;
+        let y_low = y & 0x0F;
+
+        // High nibble (bits 4-7)
+        let (idx_high, orient) = lut.lookup(x_high, y_high, 0);
+
+        // Low nibble (bits 0-3) with orientation from high nibble
+        let (idx_low, _) = lut.lookup(x_low, y_low, orient);
+
+        // Combine: high nibble produces 8 bits, low nibble produces 8 bits
+        ((idx_high as u64) << 8) | (idx_low as u64)
+    }
+
+    /// Scalar 2D Hilbert encoding for arbitrary bit depths
+    fn encode_2d_scalar(&self, mut x: u32, mut y: u32) -> u64 {
         let mut d = 0u64;
 
         // Process bits from most significant to least significant

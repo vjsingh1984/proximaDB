@@ -493,39 +493,56 @@ impl SstableWriter {
             data_blocks.len()
         );
 
-        // === NEW: Cluster blocks using PCA + Z-Order for spatial locality and pruning ===
-        // PCA reduces high-dimensional vectors (768D/1536D) → 32D (aligns with proximablocks chunks)
+        // === Cluster blocks using unified PCA + Z-Order infrastructure ===
+        // Uses shared SpatialClusteringPipeline for all engines
+        // PCA reduces high-dimensional vectors (768D/1536D) → 32D
         // Z-Order (Morton code) maps 32D → 1D while preserving spatial locality
-        // This enables both cache-friendly ordering AND range-based pruning
+
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+        use crate::storage::engines::core::formats::proximablocks::spatial_traits::CurveType;
+        use crate::storage::engines::core::pca::cluster_blocks_sync;
 
         // Determine target dimensions: min(32, actual_dimension)
-        // 32D aligns with proximablocks chunking and provides excellent clustering
         let target_dims = if let Some(first_entry) = index_entries.first() {
             first_entry.block_centroid.len().min(32)
         } else {
             32
         };
 
-        info!("🔬 SST: Applying PCA + Z-Order clustering to {} blocks (target: {}D)",
+        info!("🔬 SST: Applying unified PCA + Z-Order clustering to {} blocks (target: {}D)",
             data_blocks.len(), target_dims);
-        let (data_blocks, mut layout_index_entries, zorder_codes) =
-            crate::storage::engines::core::formats::proximablocks::spatial_clustering::cluster_blocks_pca_zorder(
-                data_blocks,
-                index_entries,
-                |entry: &IndexEntry| &entry.block_centroid,
-                target_dims,  // Use min(32, dimension) for optimal clustering
-            );
 
-        // Populate Z-Order codes in index entries for pruning
-        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
-        for (entry, code) in layout_index_entries.iter_mut().zip(zorder_codes.iter()) {
-            entry.zorder_code = Some(code.clone());
+        // Extract centroids from index entries
+        let centroids: Vec<Vec<f32>> = index_entries
+            .iter()
+            .map(|e| e.block_centroid.clone())
+            .collect();
+
+        // Use unified clustering infrastructure
+        let clustering_result = cluster_blocks_sync(&centroids, CurveType::ZOrder, target_dims);
+
+        // Reorder blocks and entries by spatial code
+        let data_blocks: Vec<_> = clustering_result
+            .sorted_indices
+            .iter()
+            .map(|&i| data_blocks[i].clone())
+            .collect();
+
+        let mut layout_index_entries: Vec<_> = clustering_result
+            .sorted_indices
+            .iter()
+            .map(|&i| index_entries[i].clone())
+            .collect();
+
+        // Assign spatial codes to index entries (in sorted order)
+        for (entry, orig_idx) in layout_index_entries.iter_mut().zip(clustering_result.sorted_indices.iter()) {
+            entry.zorder_code = Some(clustering_result.spatial_codes[*orig_idx].clone());
         }
 
         let default_code = SpatialCode::Code64(0);
         info!("🔬 SST: Z-Order clustering complete - codes range: {} to {}",
-            zorder_codes.iter().min().unwrap_or(&default_code),
-            zorder_codes.iter().max().unwrap_or(&default_code)
+            clustering_result.spatial_codes.iter().min().unwrap_or(&default_code),
+            clustering_result.spatial_codes.iter().max().unwrap_or(&default_code)
         );
 
         // Continue with rest of the write process (reuse existing logic)

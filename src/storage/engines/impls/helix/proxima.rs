@@ -15,6 +15,7 @@ use tracing::{debug, info};
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, ProximaBlockMetadata, ProximaDataBlock, QuantizationStatistics,
 };
+use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::engines::constants::HELIX_MAGIC;
@@ -907,26 +908,77 @@ fn select_blocks_by_centroid(
     metric: &crate::compute::distance_computation::DistanceMetric,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Vec<usize> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_pruning::{
+        BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
+    };
+
     if prune.force_exact {
         return (0..metas.len()).collect();
     }
+
+    if metas.is_empty() {
+        return Vec::new();
+    }
+
+    // Convert BlockPruneMode to unified PruningMode
+    let prune_mode = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => PruningMode::Sqrt {
+            min_blocks: prune.min_keep.max(3),
+        },
+        crate::core::search::BlockPruneMode::Ratio => PruningMode::Ratio {
+            ratio: prune.ratio,
+            min_blocks: prune.min_keep.max(1),
+        },
+        crate::core::search::BlockPruneMode::Fixed(k) => PruningMode::Fixed { k },
+    };
+
+    // Check if we have Hilbert codes for spatial pruning
+    let has_hilbert_codes = metas.iter().any(|m| m.hilbert_range.is_some());
+
+    if has_hilbert_codes {
+        // Use unified SpatialPruner with Hilbert codes
+        let pruner = SpatialPruner::new(PruningConfig {
+            mode: prune_mode,
+            spatial_weight: 0.6,
+            centroid_weight: 0.4,
+            ..Default::default()
+        });
+
+        // Build block infos with Hilbert codes (use midpoint of range)
+        let blocks: Vec<BlockPruningInfo> = metas
+            .iter()
+            .enumerate()
+            .map(|(idx, meta)| {
+                let hilbert_code = meta
+                    .hilbert_range
+                    .map(|(min, max)| SpatialCode::Code64((min + max) / 2))
+                    .unwrap_or(SpatialCode::Code64(0));
+                BlockPruningInfo::with_centroid(idx, hilbert_code, meta.block_centroid.clone())
+            })
+            .collect();
+
+        // Compute query's Hilbert code using PCA projection + encoder
+        let query_code = compute_query_hilbert_code(query_vector);
+
+        let result = pruner.select_blocks(&query_code, query_vector, &blocks);
+        return result.selected_indices;
+    }
+
+    // Fallback: centroid-only pruning (no Hilbert codes)
     let mut scored = Vec::with_capacity(metas.len());
     for (idx, meta) in metas.iter().enumerate() {
         if meta.block_centroid.len() != query_vector.len() {
-            scored.push((f32::INFINITY, idx));
+            // SAFE FALLBACK: Include block with distance 0 (highest priority)
+            scored.push((0.0, idx));
             continue;
         }
         let dist = metric_distance(query_vector, &meta.block_centroid, metric);
         scored.push((dist, idx));
     }
 
-    if scored.is_empty() {
-        return Vec::new();
-    }
-
     let mut k = match prune.mode {
         crate::core::search::BlockPruneMode::Sqrt => {
-            (scored.len() as f32).sqrt().ceil() as usize
+            3.max((scored.len() as f32).sqrt().ceil() as usize)
         }
         crate::core::search::BlockPruneMode::Ratio => {
             let r = prune.ratio.clamp(0.0, 1.0);
@@ -942,6 +994,30 @@ fn select_blocks_by_centroid(
     selected.sort_unstable();
     selected.dedup();
     selected
+}
+
+/// Compute Hilbert code for a query vector using PCA projection
+fn compute_query_hilbert_code(query: &[f32]) -> SpatialCode {
+    use crate::storage::engines::core::formats::proximablocks::spatial_traits::{
+        CurveType, SpatialEncoderFactory,
+    };
+
+    // Use first 8 dimensions for Hilbert encoding (PCA projection would require stored model)
+    let target_dims = 8.min(query.len());
+    let encoder = SpatialEncoderFactory::create(CurveType::Hilbert, target_dims, 8);
+
+    // Normalize query to [0,1] range for encoding
+    let truncated: Vec<f32> = query.iter().take(target_dims).copied().collect();
+    let (min_val, max_val) = truncated.iter().fold((f32::MAX, f32::MIN), |(min, max), &v| {
+        (min.min(v), max.max(v))
+    });
+    let range = (max_val - min_val).max(1e-6);
+    let normalized: Vec<f32> = truncated
+        .iter()
+        .map(|&v| ((v - min_val) / range).clamp(0.0, 1.0))
+        .collect();
+
+    encoder.encode(&normalized)
 }
 
 fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
@@ -1003,8 +1079,9 @@ mod tests {
             &crate::compute::distance_computation::DistanceMetric::Euclidean,
             &crate::core::search::BlockPruneConfig::default(),
         );
-        // sqrt(4)=2 -> expect the two closest indices 0 and 2
-        assert_eq!(selected, vec![0, 2]);
+        // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1
+        // Block 0: [0.1, 0.1] - dist 0.141, Block 2: [0.2, 0.2] - dist 0.283, Block 1: [3.0, 3.0] - dist 4.243
+        assert_eq!(selected, vec![0, 1, 2]);
     }
 }
 

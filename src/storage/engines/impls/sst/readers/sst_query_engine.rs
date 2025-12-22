@@ -414,182 +414,8 @@ impl ModularBlockReader {
             .await
     }
 
-    // Progressive search is now handled at a higher level with unified quantization
-    #[allow(dead_code)]
-    async fn progressive_search_with_quantization_legacy(
-        &self,
-        query_vector: &[f32],
-        k: usize,
-        _filter: Option<&FilterExpression>,
-        distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
-        _adapter: &crate::compute::quantization::storage_engine::StorageQuantizationEngine,
-    ) -> Result<Vec<OptimizedSearchRecord>> {
-        use crate::compute::quantization::storage_engine::StorageQuantizedData;
-
-        info!(
-            "🔍 Starting progressive search with quantization for {} vectors",
-            k
-        );
-
-        // Read header and index
-        let mut reader_clone = self.clone();
-        let header = reader_clone.read_header_async().await?;
-        let index_entries = reader_clone.read_index_blocks(&header).await?;
-
-        info!("📋 Found {} blocks to search", index_entries.len());
-
-        // Stage 1: Collect quantized data from all blocks (minimal I/O)
-        let mut all_quantized_data = Vec::new();
-        let mut block_indices = Vec::new();
-
-        for (block_idx, index_entry) in index_entries.iter().enumerate() {
-            // Calculate actual block offset using data_blocks_offset if available
-            let block_offset = if index_entry.offset > 0 {
-                index_entry.offset
-            } else {
-                header.data_blocks_offset + (block_idx as u64 * 1024) // Rough estimate
-            };
-
-            // Read quantized section only (fast)
-            if let Ok(Some((pq_codes, quantization_level))) = self
-                .read_quantized_vectors_only(block_offset, index_entry.size)
-                .await
-            {
-                // Convert SST QuantizedSection to StorageQuantizedData format
-                for (record_idx, pq_code) in pq_codes.iter().enumerate() {
-                    let binary_sketch = pq_codes.get(record_idx);
-
-                    let storage_data = StorageQuantizedData {
-                        id: format!("block_{}_record_{}", block_idx, record_idx),
-                        primary: Some(crate::compute::quantization::unified::QuantizedVector {
-                            data: pq_code.clone(),
-                            metadata: Default::default(),
-                            quantization_level: crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(8),
-                        }),
-                        filter: binary_sketch.map(|sketch| crate::compute::quantization::unified::QuantizedVector {
-                            data: sketch.clone(),
-                            metadata: Default::default(),
-                            quantization_level: crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
-                        }),
-                        fast: None, // TODO: Add INT8 support
-                        dimension: query_vector.len(),
-                        metadata: Default::default(),
-                    };
-
-                    all_quantized_data.push(storage_data);
-                    block_indices.push((block_idx, record_idx));
-                }
-            }
-        }
-
-        info!(
-            "📊 Stage 1: Collected {} quantized vectors from {} blocks",
-            all_quantized_data.len(),
-            index_entries.len()
-        );
-
-        if all_quantized_data.is_empty() {
-            warn!("No quantized data found, falling back to traditional search");
-            return self
-                .traditional_search(query_vector, k, None, distance_metric)
-                .await;
-        }
-
-        // Stage 2: Progressive filtering would happen here with the unified engine
-        // For now, use all quantized data as candidates since this method is not used
-        let final_candidates = &all_quantized_data;
-
-        info!(
-            "📋 Final candidates: {} out of {} total vectors",
-            final_candidates.len(),
-            all_quantized_data.len()
-        );
-
-        // Stage 3: Load full vectors for top candidates and compute exact distances
-        // First, collect all vectors for batch processing
-        let mut loaded_vectors = Vec::new();
-        let mut indices_map = Vec::new();
-
-        for (idx, _candidate) in final_candidates.iter().enumerate().take(k) {
-            if let Some((block_idx, record_idx)) = block_indices.get(idx) {
-                // Load full vector from the specific block
-                if let Ok(full_vector) = self
-                    .load_full_vector(*block_idx, *record_idx, &index_entries)
-                    .await
-                {
-                    loaded_vectors.push(full_vector);
-                    indices_map.push((block_idx, record_idx));
-                }
-            }
-        }
-
-        // Batch compute distances using optimized method
-        let mut results = Vec::new();
-        if !loaded_vectors.is_empty() {
-            let vector_refs: Vec<&[f32]> = loaded_vectors.iter().map(|v| v.as_slice()).collect();
-            let compute =
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
-
-            // Use optimized batch distance computation
-            let distances =
-                compute.batch_distance_pooled_simd(query_vector, &vector_refs, distance_metric);
-
-            // Create results from batch distances
-            for (i, distance) in distances.into_iter().enumerate() {
-                if let Some((block_idx, record_idx)) = indices_map.get(i) {
-                    // Use normalized_score for consistency across all engines
-                    // Higher similarity = better match, VOS sorts descending
-                    results.push(
-                        OptimizedSearchRecord::new(
-                            format!("block_{}_record_{}", block_idx, record_idx),
-                            distance.normalized_score,
-                        )
-                        .with_similarity(distance.normalized_score)
-                        .add_vector(loaded_vectors[i].clone())
-                        .with_metadata(HashMap::new()),
-                    );
-                }
-            }
-        }
-
-        // Sort by distance and return top-k
-        results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
-        results.truncate(k);
-
-        info!("✅ Progressive search complete: {} results", results.len());
-
-        Ok(results)
-    }
-
-    /// Load full vector from a specific block and record index
-    async fn load_full_vector(
-        &self,
-        block_idx: usize,
-        record_idx: usize,
-        index_entries: &[IndexEntry],
-    ) -> Result<Vec<f32>> {
-        if let Some(index_entry) = index_entries.get(block_idx) {
-            // Read the full data block
-            let mut reader_clone = self.clone();
-            let data_block = reader_clone
-                .read_data_block_async(block_idx as u64, ReadMode::Direct)
-                .await?;
-
-            // Extract the specific record
-            if let Some(record) = data_block.records.get(record_idx) {
-                // TODO: Optimize - return reference or Arc
-                Ok(record.vector.clone())
-            } else {
-                Err(anyhow::anyhow!(
-                    "Record {} not found in block {}",
-                    record_idx,
-                    block_idx
-                ))
-            }
-        } else {
-            Err(anyhow::anyhow!("Block {} not found", block_idx))
-        }
-    }
+    // NOTE: progressive_search_with_quantization_legacy and load_full_vector removed in consolidation
+    // Progressive search is now handled at a higher level with unified quantization engine
 
     /// Traditional search fallback (when no quantization is available)
     async fn traditional_search(
@@ -782,49 +608,15 @@ impl ModularBlockReader {
                 )
             })?;
 
-        // Deserialize index - FIX: Read individual IndexEntry objects, not bincode
-
-        let mut cursor = std::io::Cursor::new(&index_data);
-        let mut entries = Vec::new();
-
-        // Read individual IndexEntry objects with length prefixes (as written by the writer)
-        while cursor.position() < index_data.len() as u64 {
-            // Read entry length
-            let mut len_buf = [0u8; 4];
-            if cursor.read_exact(&mut len_buf).is_err() {
-                break;
-            }
-            let entry_len = u32::from_le_bytes(len_buf) as usize;
-
-            // Read entry data
-            let mut entry_data = vec![0u8; entry_len];
-            if cursor.read_exact(&mut entry_data).is_err() {
-                break;
-            }
-
-            // Deserialize individual IndexEntry
-            match IndexEntry::deserialize(&entry_data) {
-                Ok(entry) => {
-                    entries.push(entry);
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to deserialize IndexEntry: {}", e));
-                }
-            }
-        }
-
-        // Build SstableIndex
-        let min_key = entries.first().map(|e| e.key.clone()).unwrap_or_default();
-        let max_key = entries.last().map(|e| e.key.clone()).unwrap_or_default();
-
-        let index = SstableIndex {
-            entries,
-            metadata_stats: HashMap::new(), // TODO: populate from entries if needed
-            vector_count: header.entry_count as usize,
-            min_key,
-            max_key,
-            bplus_tree: None,
-        };
+        // Deserialize index using SstableIndex::deserialize which handles the proper format
+        // (IDX1 magic header + min_key + max_key + vector_count + entries + bplus_tree)
+        let index = SstableIndex::deserialize(&index_data).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize SstableIndex at offset {}: {}",
+                index_offset,
+                e
+            )
+        })?;
 
         Ok(index)
     }
@@ -1377,32 +1169,21 @@ impl SstDirectReader {
 
         let index_data = fs.read_range(file_path, index_offset, index_size).await?;
 
-        // Parse index entries (enhanced format with block blooms)
-        let mut index_entries = Vec::new();
-        let mut cursor = std::io::Cursor::new(index_data);
-
-        while cursor.position() < cursor.get_ref().len() as u64 {
-            // Read entry length
-            let mut len_buf = [0u8; 4];
-            if std::io::Read::read_exact(&mut cursor, &mut len_buf).is_err() {
-                break; // End of data
-            }
-            let entry_len = u32::from_le_bytes(len_buf) as usize;
-
-            // Read entry data
-            let mut entry_data = vec![0u8; entry_len];
-            std::io::Read::read_exact(&mut cursor, &mut entry_data)?;
-
-            // Deserialize enhanced index entry
-            let entry = IndexEntry::deserialize(&entry_data)?;
-            index_entries.push(entry);
-        }
+        // Deserialize using SstableIndex::deserialize which handles the proper format
+        // (IDX1 magic header + min_key + max_key + vector_count + entries + bplus_tree)
+        let index = SstableIndex::deserialize(&index_data).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize SstableIndex at offset {}: {}",
+                index_offset,
+                e
+            )
+        })?;
 
         debug!(
             "✅ Loaded {} block index entries with hierarchical bloom support",
-            index_entries.len()
+            index.entries.len()
         );
-        Ok(index_entries)
+        Ok(index.entries)
     }
 
     /// Read all VectorRecords for compaction without caching (OPTIMIZED: Direct VectorRecord extraction)
@@ -4619,6 +4400,11 @@ impl UnifiedSstableReader {
         _index_blocks: &[IndexEntry],
         _params: &SearchParams,
     ) -> Vec<usize> {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+        use crate::storage::engines::core::formats::proximablocks::spatial_pruning::{
+            BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
+        };
+
         // Use block centroids when available to prune blocks before decompression.
         let query = _params
             .vector
@@ -4633,41 +4419,70 @@ impl UnifiedSstableReader {
             }
         };
 
+        // Check if we should use exact mode (no pruning)
+        if _params.block_prune.force_exact {
+            return (0.._index_blocks.len()).collect();
+        }
+
+        // Convert BlockPruneConfig to PruningConfig for unified pruner
+        let prune_mode = match _params.block_prune.mode {
+            crate::core::search::BlockPruneMode::Sqrt => PruningMode::Sqrt {
+                min_blocks: _params.block_prune.min_keep.max(3),
+            },
+            crate::core::search::BlockPruneMode::Ratio => PruningMode::Ratio {
+                ratio: _params.block_prune.ratio,
+                min_blocks: _params.block_prune.min_keep.max(1),
+            },
+            crate::core::search::BlockPruneMode::Fixed(k) => PruningMode::Fixed { k },
+        };
+
+        let pruner = SpatialPruner::new(PruningConfig {
+            mode: prune_mode,
+            spatial_weight: 0.6,
+            centroid_weight: 0.4,
+            ..Default::default()
+        });
+
+        // Try to compute query's spatial code for spatial pruning
+        let query_code = compute_query_zorder_code(query, _index_blocks);
+
+        // Check if blocks have spatial codes
+        let has_spatial_codes = _index_blocks
+            .iter()
+            .any(|e| e.zorder_code.is_some());
+
+        if has_spatial_codes && query_code.is_some() {
+            // Use unified SpatialPruner with spatial codes and centroids
+            let query_code = query_code.unwrap();
+
+            let blocks: Vec<BlockPruningInfo> = _index_blocks
+                .iter()
+                .enumerate()
+                .map(|(idx, entry)| {
+                    let spatial_code = entry
+                        .zorder_code
+                        .clone()
+                        .unwrap_or(SpatialCode::Code64(0));
+
+                    // Get centroid (FP16 -> FP32 if available)
+                    let centroid = super::super::get_centroid_fp32(
+                        &entry.block_centroid_fp16,
+                        &entry.block_centroid,
+                    );
+
+                    BlockPruningInfo::with_centroid(idx, spatial_code, centroid)
+                })
+                .collect();
+
+            let result = pruner.select_blocks(&query_code, query, &blocks);
+            return result.selected_indices;
+        }
+
+        // Fallback: No spatial codes, use centroid-based pruning only
         let metric = _params
             .distance_metric
             .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
 
-        // Two-stage pruning approach:
-        // 1. Z-Order spatial pruning (broad filter)
-        // 2. Centroid-based pruning (fine-grained distance filter)
-
-        // Stage 1: Z-Order pruning (if Z-Order codes are available)
-        if let Some(zorder_filtered) = filter_blocks_by_zorder(query, _index_blocks) {
-            // Apply Z-Order filtering
-            if zorder_filtered.len() < _index_blocks.len() {
-                // Create a filtered subset of index entries
-                let filtered_entries: Vec<IndexEntry> = zorder_filtered
-                    .iter()
-                    .filter_map(|&idx| _index_blocks.get(idx).cloned())
-                    .collect();
-
-                // Stage 2: Apply centroid-based pruning on the filtered set
-                let local_indices = select_blocks_by_centroid(
-                    query,
-                    &filtered_entries,
-                    metric,
-                    &_params.block_prune,
-                );
-
-                // Map local indices back to original indices
-                return local_indices
-                    .into_iter()
-                    .filter_map(|local_idx| zorder_filtered.get(local_idx).copied())
-                    .collect();
-            }
-        }
-
-        // Fallback: No Z-Order codes or no pruning benefit, use only centroid-based pruning
         select_blocks_by_centroid(query, _index_blocks, metric, &_params.block_prune)
     }
 

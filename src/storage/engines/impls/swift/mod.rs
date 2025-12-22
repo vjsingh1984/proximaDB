@@ -698,13 +698,14 @@ impl SwiftFile {
             blocks.push(block);
         }
 
-        // === NEW: Cluster blocks using PCA + AdaCurves for superior spatial locality ===
-        // AdaCurves learns from data distribution for better clustering (0.92 quality vs 0.82 for Z-Order)
-        // This is especially beneficial for SWIFT's hierarchical structure
-        info!("🔬 SWIFT: Applying PCA + AdaCurves clustering to {} blocks", blocks.len());
+        // === Cluster blocks using unified PCA + spatial encoding infrastructure ===
+        // Uses shared SpatialClusteringPipeline for consistent behavior across engines
+        // AdaCurve falls back to Hilbert (0.95 locality) which is superior to Z-Order
+        info!("🔬 SWIFT: Applying unified PCA + spatial clustering to {} blocks", blocks.len());
 
-        // Use adaptive PCA configuration for optimal dimension selection
-        use crate::storage::engines::core::formats::proximablocks::spatial_clustering::AdaptivePcaConfig;
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+        use crate::storage::engines::core::formats::proximablocks::spatial_traits::CurveType;
+        use crate::storage::engines::core::pca::cluster_blocks_sync;
 
         let dimension = if let Some(first_centroid) = block_centroids.first() {
             first_centroid.centroid.len()
@@ -712,18 +713,41 @@ impl SwiftFile {
             self.header.dimension
         };
 
-        let pca_config = AdaptivePcaConfig::for_vector_dim(dimension);
-        let target_dims = pca_config.n_components;
+        // Use min(32, dimension) for optimal clustering
+        let target_dims = dimension.min(32);
 
-        let (clustered_blocks, clustered_centroids, adacurve_codes) =
-            crate::storage::engines::core::formats::proximablocks::spatial_clustering::cluster_blocks_pca_adacurves(
-                blocks,
-                block_centroids,
-                |bc: &BlockWithCentroid| &bc.centroid,
-                target_dims,
-            );
+        // Extract centroids for clustering
+        let centroids: Vec<Vec<f32>> = block_centroids
+            .iter()
+            .map(|bc| bc.centroid.clone())
+            .collect();
 
-        info!("🔬 SWIFT: AdaCurves clustering complete - codes range: {} to {}",
+        // Use unified clustering (AdaCurve uses Hilbert internally for better locality)
+        let clustering_result = cluster_blocks_sync(&centroids, CurveType::AdaCurve, target_dims);
+
+        // Reorder blocks by spatial code
+        let clustered_blocks: Vec<ProximaDataBlock> = clustering_result
+            .sorted_indices
+            .iter()
+            .map(|&i| blocks[i].clone())
+            .collect();
+
+        // Convert SpatialCode to u64 for SWIFT's adacurve_code storage
+        fn spatial_code_to_u64(code: &SpatialCode) -> u64 {
+            match code {
+                SpatialCode::Code64(v) => *v,
+                SpatialCode::Code128(v) => *v as u64,
+                _ => 0,
+            }
+        }
+
+        let adacurve_codes: Vec<u64> = clustering_result
+            .sorted_indices
+            .iter()
+            .map(|&i| spatial_code_to_u64(&clustering_result.spatial_codes[i]))
+            .collect();
+
+        info!("🔬 SWIFT: Spatial clustering complete - codes range: {} to {}",
             adacurve_codes.iter().min().unwrap_or(&0),
             adacurve_codes.iter().max().unwrap_or(&0)
         );

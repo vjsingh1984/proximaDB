@@ -6,12 +6,13 @@
 
 pub mod adaptive_strategy_optimizer; // Intelligent strategy optimization and tuning
 pub mod constants; // Centralized constants for all storage engines
-pub mod filter_evaluator;
+pub mod filter_evaluator; // Unified filter evaluation for all engines
 pub mod formats; // Storage formats: row-based, columnar
 pub mod io; // I/O operations: zero-copy, filesystem abstractions
 pub mod ops; // Common operations: compression, encoding, optimization
+pub mod pca; // PCA model management for spatial clustering
 pub mod read_strategy; // Unified read access strategy for all engines
-pub mod search; // Search infrastructure: progressive search, filtering // Unified filter evaluation for all engines
+pub mod search; // Search infrastructure: progressive search, filtering
 
 // Re-export commonly used types for convenience
 pub use filter_evaluator::{
@@ -23,5 +24,6 @@ pub use formats::{
     proximablocks::{ProximaBlockMetadata, ProximaDataBlock, RowBasedUtilities},
 };
 pub use io::zero_copy::ZeroCopyIOSystem;
+pub use pca::{EnhancedPCAModel, PCAConfig, PCAManagerConfig, PCAModelManager};
 pub use search::{ProgressiveSearchEngine, SearchContext};
 // Common operations exports available from ops module directly

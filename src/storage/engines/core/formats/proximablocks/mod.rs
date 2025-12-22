@@ -244,6 +244,8 @@ pub mod swift_metadata;
 pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
 pub mod spatial_clustering; // PCA-based clustering and Z-Order spatial indexing
 pub mod spatial_encoding; // 512-bit spatial codes for high-dimensional embeddings
+pub mod spatial_pruning; // SpatialPruner for unified block selection
+pub mod spatial_traits; // SpatialCurveEncoder trait for unified block clustering
 pub mod constants;
 
 // Re-exports for common use
