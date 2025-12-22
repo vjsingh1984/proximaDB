@@ -1,0 +1,203 @@
+= Monitoring Guide
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.lead]
+Monitor ProximaDB health, performance, and resource usage.
+
+== Metrics Endpoint
+
+[source,bash]
+----
+curl http://localhost:5678/metrics
+----
+
+Returns Prometheus-format metrics.
+
+---
+
+== Key Metrics
+
+=== Request Metrics
+
+|===
+| Metric | Description | Alert Threshold
+
+| `proximadb_requests_total` | Total requests by endpoint | -
+| `proximadb_request_duration_seconds` | Request latency histogram | p99 > 100ms
+| `proximadb_requests_active` | In-flight requests | > 1000
+| `proximadb_errors_total` | Error count by type | > 10/min
+|===
+
+=== Storage Metrics
+
+|===
+| Metric | Description | Alert Threshold
+
+| `proximadb_vectors_total` | Total vectors stored | -
+| `proximadb_collections_total` | Number of collections | -
+| `proximadb_disk_bytes` | Disk usage | > 90% capacity
+| `proximadb_wal_size_bytes` | WAL size | > 10GB
+|===
+
+=== Memory Metrics
+
+|===
+| Metric | Description | Alert Threshold
+
+| `proximadb_memory_bytes` | Process memory | > 80% available
+| `proximadb_cache_hit_ratio` | Block cache hit rate | < 70%
+| `proximadb_memtable_bytes` | In-memory buffer size | > flush threshold
+|===
+
+---
+
+== Prometheus Configuration
+
+[source,yaml]
+----
+# prometheus.yml
+scrape_configs:
+  - job_name: 'proximadb'
+    static_configs:
+      - targets: ['localhost:5678']
+    scrape_interval: 15s
+    metrics_path: /metrics
+----
+
+---
+
+== Grafana Dashboard
+
+Import dashboard ID: `proximadb-overview`
+
+Key panels:
+- Request rate and latency
+- Vector count over time
+- Disk and memory usage
+- Error rate by type
+
+---
+
+== Logging
+
+=== Log Levels
+
+[source,bash]
+----
+# Production
+RUST_LOG=info ./proximadb-server
+
+# Debug specific component
+RUST_LOG=info,proximadb::storage=debug ./proximadb-server
+
+# Full trace
+RUST_LOG=trace ./proximadb-server
+----
+
+=== Log Format
+
+[source,text]
+----
+2025-01-15T10:30:00.123Z INFO proximadb::server: Server started on 0.0.0.0:5678
+2025-01-15T10:30:01.456Z INFO proximadb::storage: Collection 'documents' loaded (10000 vectors)
+2025-01-15T10:30:02.789Z DEBUG proximadb::search: Search completed in 3.2ms (top_k=10)
+----
+
+=== Structured Logging (JSON)
+
+[source,bash]
+----
+RUST_LOG_FORMAT=json ./proximadb-server
+----
+
+[source,json]
+----
+{"timestamp":"2025-01-15T10:30:00Z","level":"INFO","target":"proximadb::server","message":"Server started","port":5678}
+----
+
+---
+
+== Alerting Rules
+
+=== Prometheus Alerts
+
+[source,yaml]
+----
+groups:
+  - name: proximadb
+    rules:
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, proximadb_request_duration_seconds_bucket) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High request latency"
+
+      - alert: HighErrorRate
+        expr: rate(proximadb_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate"
+
+      - alert: DiskSpaceLow
+        expr: proximadb_disk_bytes / proximadb_disk_capacity_bytes > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space > 90%"
+----
+
+---
+
+== Performance Debugging
+
+=== Slow Query Analysis
+
+[source,bash]
+----
+# Enable query timing
+RUST_LOG=proximadb::services::operations::vectors=debug ./proximadb-server
+
+# Example output:
+# Search: collection=docs, top_k=10, filters=2, candidates=50000, time=15.2ms
+----
+
+=== Profiling
+
+[source,bash]
+----
+# CPU profiling
+perf record -g ./target/release/proximadb-server
+perf report
+
+# Memory profiling
+heaptrack ./target/release/proximadb-server
+----
+
+---
+
+== Health Dashboard
+
+Quick health check script:
+
+[source,bash]
+----
+#!/bin/bash
+echo "=== ProximaDB Health ==="
+curl -s http://localhost:5678/health | jq .
+
+echo "=== Collections ==="
+curl -s http://localhost:5678/api/v1/collections | jq '.collections | length'
+
+echo "=== Disk Usage ==="
+du -sh /var/lib/proximadb/*
+
+echo "=== Memory ==="
+ps aux | grep proximadb | grep -v grep
+----

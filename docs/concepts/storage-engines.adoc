@@ -1,0 +1,356 @@
+= Storage Engines
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.lead]
+ProximaDB provides 6 storage engines optimized for different workloads. This guide helps you choose and understand each engine.
+
+== Quick Decision Matrix
+
+[cols="1,2,2,1,1", options="header"]
+|===
+| Engine | Best For | Key Innovation | Write | Read
+
+| **SST**
+| Real-time writes, ACID
+| Three-stage bloom filtering
+| Fast
+| Medium
+
+| **HELIX**
+| Spatial/clustered data
+| Hilbert curve locality
+| Medium
+| Fast
+
+| **VIPER**
+| Analytics, data warehouse
+| Pure columnar Parquet
+| Slow
+| Fast
+
+| **SWIFT**
+| Multi-tenant enterprise
+| Three-tier hierarchy
+| Medium
+| Fast
+
+| **NOVA**
+| Mixed workloads
+| Hierarchical zone maps
+| Medium
+| Medium
+
+| **RAPTOR**
+| Unknown/evolving patterns
+| Adaptive Matrix Trinity
+| Medium
+| Adaptive
+|===
+
+== Visual Comparison
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph LR
+    subgraph WRITE["Write-Optimized"]
+        SST["SST<br/>LSM-tree"]
+    end
+
+    subgraph BALANCED["Balanced"]
+        NOVA["NOVA<br/>Zone maps"]
+        SWIFT["SWIFT<br/>Three-tier"]
+        RAPTOR["RAPTOR<br/>Adaptive"]
+    end
+
+    subgraph READ["Read-Optimized"]
+        HELIX["HELIX<br/>Hilbert"]
+        VIPER["VIPER<br/>Columnar"]
+    end
+
+    style WRITE fill:#ffd966,stroke:#cc9900
+    style BALANCED fill:#fff3e6,stroke:#f4a261
+    style READ fill:#e6ffe6,stroke:#93c47d
+----
+
+---
+
+== SST Engine
+
+**Problem solved**: High write throughput with real-time query requirements.
+
+**Key innovation**: Three-stage progressive filtering eliminates 99%+ candidates before expensive distance computation.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    A[1000 files] -->|Bloom filter| B[100 files]
+    B -->|Zone maps| C[20 files]
+    C -->|Row filter| D[500 vectors]
+    D -->|Distance| E[Top-K]
+
+    style A fill:#ffe6e6
+    style E fill:#e6ffe6
+----
+
+|===
+| Characteristic | Value
+
+| Architecture | LSM-tree with WAL
+| Write speed | 100K+ ops/sec
+| Read speed | <1ms p99 with selective filters
+| Compression | LZ4 (fast) or Zstd (ratio)
+| Best for | Real-time inserts + queries
+|===
+
+**Choose SST when**: Write throughput matters, queries have selective metadata filters.
+
+**Avoid SST when**: Pure analytics workload, spatial clustering would help.
+
+---
+
+== HELIX Engine
+
+**Problem solved**: Semantically similar vectors scattered randomly across storage.
+
+**Key innovation**: Hilbert space-filling curves preserve N-dimensional locality when mapping to 1D disk storage.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    A[768-dim vectors] -->|PCA| B[16-dim]
+    B -->|Hilbert curve| C[1D ordering]
+    C -->|Sort blocks| D[Adjacent = similar]
+
+    style A fill:#ffe6e6
+    style D fill:#e6ffe6
+----
+
+|===
+| Characteristic | Value
+
+| Architecture | Disk-only LSM with Hilbert sorting
+| Locality quality | 0.95 (vs 0.82 for Z-order)
+| Block pruning | 90%+ blocks skipped
+| PCA model | Per-collection, 80%+ variance captured
+| Best for | Clustered embeddings (images, text from same domain)
+|===
+
+**Choose HELIX when**: Data has natural clusters, read-heavy workload.
+
+**Avoid HELIX when**: High write throughput needed, data is uniformly distributed.
+
+---
+
+== VIPER Engine
+
+**Problem solved**: Storage efficiency for analytics and data warehouse integration.
+
+**Key innovation**: Pure columnar Parquet format achieves 69% compression by exploiting within-dimension correlations.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    subgraph ROW["Row storage"]
+        R["vec: [0.12, -0.34, 0.87]<br/>Mixed values = poor compression"]
+    end
+
+    subgraph COL["Columnar storage"]
+        C["dim_0: [0.12, 0.15, 0.13]<br/>Similar values = 69% compression"]
+    end
+
+    style ROW fill:#ffe6e6
+    style COL fill:#e6ffe6
+----
+
+|===
+| Characteristic | Value
+
+| Format | Apache Parquet
+| Compression ratio | 69.5% (vs ~16% hybrid)
+| Row group size | 50K vectors
+| Integration | Spark, Presto, DuckDB compatible
+| Best for | Batch analytics, archival, cloud storage
+|===
+
+**Choose VIPER when**: Analytics workload, Parquet ecosystem integration needed.
+
+**Avoid VIPER when**: Real-time inserts, low-latency queries required.
+
+---
+
+== SWIFT Engine
+
+**Problem solved**: Enterprise multi-tenant organization and isolation.
+
+**Key innovation**: Three-tier hierarchy (File → SuperBlock → Block) mirrors organizational structure for efficient scoped queries.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    F[File] --> S1[SuperBlock: Tenant A]
+    F --> S2[SuperBlock: Tenant B]
+    S1 --> B1[Blocks 0-63]
+    S2 --> B2[Blocks 0-63]
+
+    style S1 fill:#e6f3ff
+    style S2 fill:#fff3e6
+----
+
+|===
+| Characteristic | Value
+
+| Hierarchy | File → SuperBlock (64 blocks) → Block
+| Pruning | Two-level (tenant, then spatial)
+| Curve type | AdaCurve (learned, data-adaptive)
+| Best for | Multi-tenant SaaS, departmental isolation
+|===
+
+**Choose SWIFT when**: Multi-tenant application, queries scoped to organizational units.
+
+**Avoid SWIFT when**: Single-tenant, data doesn't have natural hierarchies.
+
+---
+
+== NOVA Engine
+
+**Problem solved**: Mixed workloads that need both write throughput and intelligent read pruning.
+
+**Key innovation**: Hierarchical zone maps (SuperBlock → RowGroup → Page) enable cascading pruning at each level.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    Q[Query] -->|Check bounds| SB[SuperBlock zone map]
+    SB -->|50% pruned| RG[RowGroup zone maps]
+    RG -->|80% pruned| P[Page zone maps]
+    P -->|50% pruned| V[Vectors: 10% of data]
+
+    style Q fill:#e6f3ff
+    style V fill:#e6ffe6
+----
+
+|===
+| Characteristic | Value
+
+| Zone map levels | 3 (SuperBlock 1GB → RowGroup 100MB → Page 1MB)
+| Progressive search | 5 stages (Zone → Binary → INT8 → PQ → FP32)
+| Write speed | 75K ops/sec
+| Best for | Analytics + real-time in same collection
+|===
+
+**Choose NOVA when**: Workload is mixed read/write, can't predict access patterns.
+
+**Avoid NOVA when**: Pure OLTP or pure OLAP would be better served by SST/VIPER.
+
+---
+
+== RAPTOR Engine
+
+**Problem solved**: Unknown or evolving query patterns that can't be optimized upfront.
+
+**Key innovation**: Matrix Trinity pre-computes three distance relationships and adaptively selects which to use.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    subgraph MATRICES["Matrix Trinity"]
+        P2["P-squared<br/>Intra-cluster"]
+        K2["K-squared<br/>Inter-centroid"]
+        PK["PxK<br/>Adaptive"]
+    end
+
+    Q[Query] --> K2
+    K2 --> P2
+    PK -->|Optimizes| K2
+    P2 --> R[Results]
+
+    style MATRICES fill:#e6f3ff
+----
+
+|===
+| Characteristic | Value
+
+| P² Matrix | All pairwise distances within row groups (O(1) lookup)
+| K² Matrix | Centroid-to-centroid (sparse for distant clusters)
+| P×K Matrix | Learns query patterns, adapts coverage
+| Row group size | Adaptive 500-5000 based on typical k
+|===
+
+**Choose RAPTOR when**: New application, access patterns unknown or changing.
+
+**Avoid RAPTOR when**: Patterns are known and stable (use specialized engine).
+
+---
+
+== Configuration Examples
+
+=== SST (Write-Heavy)
+
+[source,toml]
+----
+[storage]
+default_engine = "sst"
+
+[storage.sst]
+flush_threshold_mb = 128
+compaction_strategy = "tiered"
+compression = "lz4"
+----
+
+=== HELIX (Read-Heavy Clustered)
+
+[source,toml]
+----
+[storage]
+default_engine = "helix"
+
+[storage.helix]
+pca_dimensions = 16
+hilbert_bits = 8
+block_pruning_mode = "sqrt"
+----
+
+=== VIPER (Analytics)
+
+[source,toml]
+----
+[storage]
+default_engine = "viper"
+
+[storage.viper]
+row_group_size = 50000
+compression = "zstd"
+compression_level = 6
+----
+
+---
+
+== Performance Benchmarks
+
+Measured on 100K vectors, 768 dimensions:
+
+|===
+| Engine | Insert (ms) | Search p50 (ms) | Search p99 (ms) | Storage (MB)
+
+| SST | 45 | 5.3 | 12 | 312
+| HELIX | 120 | 3.1 | 8 | 298
+| VIPER | 890 | 4.2 | 15 | 95
+| SWIFT | 85 | 4.8 | 11 | 305
+| NOVA | 95 | 5.5 | 14 | 285
+| RAPTOR | 150 | 4.0 | 10 | 420
+|===
+
+---
+
+== Learn More
+
+For implementation details, see the engine deep-dives in link:../internals/[internals/].

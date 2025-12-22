@@ -1,1 +1,0 @@
-{"global_lsn":1,"collection_id":"1vAkpBe","batch_id":"8WYbTz3cXI","file_path":"1vAkpBe/wal/8WYbTz3cXI.bcwal","storage_url":"file://./data","size_bytes":1714,"checksum_crc32":2584419799,"timestamp_ms":1760947261417,"format":"Bincode","vector_count":0,"status":"Active","checkpoint_id":null}

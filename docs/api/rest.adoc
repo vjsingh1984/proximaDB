@@ -1,0 +1,282 @@
+= REST API Reference
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.lead]
+Complete REST API reference for ProximaDB. Base URL: `http://localhost:5678`
+
+== Quick Reference
+
+|===
+| Operation | Method | Endpoint
+
+| Health check | GET | `/health`
+| Create collection | POST | `/api/v1/collections`
+| List collections | GET | `/api/v1/collections`
+| Insert vectors | POST | `/api/v1/vectors/batch`
+| Search vectors | POST | `/api/v1/search`
+| Delete vectors | DELETE | `/api/v1/vectors/:id`
+|===
+
+---
+
+== Health & Status
+
+=== GET /health
+
+[source,bash]
+----
+curl http://localhost:5678/health
+----
+
+**Response:**
+[source,json]
+----
+{
+  "status": "healthy",
+  "version": "0.1.5",
+  "services": {
+    "rest_api": "operational",
+    "storage": "operational"
+  }
+}
+----
+
+---
+
+== Collections
+
+=== POST /api/v1/collections
+
+Create a new collection.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "documents",
+    "collection_config": {
+      "dimension": 768,
+      "storage_engine": "sst",
+      "distance_metric": "cosine"
+    }
+  }'
+----
+
+**Parameters:**
+
+|===
+| Field | Type | Required | Description
+
+| `collection_id` | string | Yes | Unique collection name
+| `dimension` | int | Yes | Vector dimension (1-65535)
+| `storage_engine` | string | No | `sst`, `helix`, `viper`, `swift`, `nova`, `raptor`
+| `distance_metric` | string | No | `cosine`, `euclidean`, `dot_product`
+|===
+
+=== GET /api/v1/collections
+
+List all collections.
+
+[source,bash]
+----
+curl http://localhost:5678/api/v1/collections
+----
+
+=== GET /api/v1/collections/:id
+
+Get collection details.
+
+[source,bash]
+----
+curl http://localhost:5678/api/v1/collections/documents
+----
+
+=== DELETE /api/v1/collections/:id
+
+Delete a collection.
+
+[source,bash]
+----
+curl -X DELETE http://localhost:5678/api/v1/collections/documents
+----
+
+---
+
+== Vectors
+
+=== POST /api/v1/vectors/batch
+
+Insert or update vectors.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/vectors/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "documents",
+    "operation": "insert",
+    "vectors": [
+      {
+        "id": "doc_001",
+        "vector": [0.1, 0.2, 0.3, ...],
+        "metadata": {
+          "category": {"stringValue": "technical"},
+          "year": {"numberValue": 2025}
+        }
+      }
+    ]
+  }'
+----
+
+**Operations:** `insert`, `upsert`, `update`
+
+=== GET /api/v1/vectors/:collection_id/:id
+
+Get a vector by ID.
+
+[source,bash]
+----
+curl http://localhost:5678/api/v1/vectors/documents/doc_001
+----
+
+=== DELETE /api/v1/vectors/:collection_id/:id
+
+Delete a vector.
+
+[source,bash]
+----
+curl -X DELETE http://localhost:5678/api/v1/vectors/documents/doc_001
+----
+
+---
+
+== Search
+
+=== POST /api/v1/search
+
+Search for similar vectors.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "documents",
+    "query_vector": [0.1, 0.2, 0.3, ...],
+    "top_k": 10,
+    "metadata_filters": [
+      {
+        "field": "category",
+        "operator": "EQUALS",
+        "value": {"stringValue": "technical"}
+      }
+    ]
+  }'
+----
+
+**Parameters:**
+
+|===
+| Field | Type | Required | Description
+
+| `collection_id` | string | Yes | Collection to search
+| `query_vector` | float[] | Yes | Query embedding
+| `top_k` | int | No | Results to return (default: 10)
+| `metadata_filters` | array | No | Filter conditions
+| `include_vectors` | bool | No | Return vectors in results
+| `include_metadata` | bool | No | Return metadata in results
+|===
+
+**Filter Operators:**
+
+|===
+| Operator | Description | Example
+
+| `EQUALS` | Exact match | `category = "tech"`
+| `NOT_EQUALS` | Not equal | `status != "deleted"`
+| `GREATER_THAN` | Greater than | `year > 2020`
+| `LESS_THAN` | Less than | `price < 100`
+| `IN` | In list | `tag IN ["a", "b"]`
+| `CONTAINS` | String contains | `title CONTAINS "AI"`
+|===
+
+**Response:**
+[source,json]
+----
+{
+  "results": [
+    {
+      "id": "doc_042",
+      "score": 0.95,
+      "metadata": {"category": "technical"}
+    },
+    {
+      "id": "doc_017",
+      "score": 0.89,
+      "metadata": {"category": "technical"}
+    }
+  ],
+  "search_time_ms": 3.2
+}
+----
+
+---
+
+== Error Handling
+
+All errors follow this format:
+
+[source,json]
+----
+{
+  "error": {
+    "code": "COLLECTION_NOT_FOUND",
+    "message": "Collection 'documents' does not exist",
+    "details": {}
+  }
+}
+----
+
+**Common Error Codes:**
+
+|===
+| Code | HTTP Status | Description
+
+| `COLLECTION_NOT_FOUND` | 404 | Collection doesn't exist
+| `VECTOR_NOT_FOUND` | 404 | Vector ID not found
+| `INVALID_DIMENSION` | 400 | Vector dimension mismatch
+| `INVALID_FILTER` | 400 | Malformed filter expression
+| `DUPLICATE_ID` | 409 | Vector ID already exists
+| `INTERNAL_ERROR` | 500 | Server error
+|===
+
+---
+
+== Authentication
+
+When authentication is enabled:
+
+[source,bash]
+----
+curl -H "Authorization: Bearer <token>" \
+  http://localhost:5678/api/v1/collections
+----
+
+See link:../operations/security.adoc[Security Guide] for token configuration.
+
+---
+
+== Rate Limits
+
+Default limits (configurable):
+
+|===
+| Limit | Default | Config Key
+
+| Requests/sec | 1000 | `api.rate_limit`
+| Max request size | 64MB | `api.max_request_size`
+| Max batch size | 10000 | `api.max_batch_size`
+|===

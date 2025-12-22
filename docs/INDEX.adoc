@@ -1,296 +1,101 @@
-= ProximaDB Documentation Index
+= ProximaDB Documentation
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :icons: font
-:source-highlighter: highlight.js
 
 [.lead]
-Complete documentation map for ProximaDB - High-Performance Vector Database
+Unified vector + graph database for AI applications.
 
-[NOTE]
-====
-- WAL recovery: All previously documented critical issues with WAL persistence (fire-and-forget writes and metadata propagation leading to incorrect file paths) have been **resolved** through significant architectural refactoring. The system now ensures full durability and correct path resolution.
-- Feature gating: Cloud backends (`aws`/`azure`/`gcp`) and GPU paths are disabled by default and experimental; enable explicitly with required toolchains/credentials.
-- Optional surfaces: AI endpoints, sales/trial endpoints, tenant access service, and executive intelligence are feature-gated and off by default to keep the core API lean. See `docs/feature_toggles.md` for enabling instructions.
-- Canonical build/test commands and standards live in `AGENTS.md`.
-====
+== Start Here
 
-== 🚀 Quick Start
-
-[cols="2,5a"]
 |===
-|Document |Description
+| Goal | Document | Time
 
-|link:01-getting-started/getting_started.adoc[**Getting Started Guide**]
-|Quick start tutorial - install, configure, and run your first queries
-
-|link:USE_CASES.adoc[**Use Cases & Examples**]
-|Real-world use cases and example applications
-
-|link:README.adoc[**Documentation README**]
-|Overview of documentation structure
+| **Get running** | link:../README.adoc[README] | 5 min
+| **Understand architecture** | link:concepts/architecture.adoc[Architecture] | 15 min
+| **Choose an engine** | link:concepts/storage-engines.adoc[Storage Engines] | 10 min
 |===
-
-== 📘 User Guides
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:02-guides/engine_selection_optimization_guide.adoc[**Engine Selection & Optimization**]
-|Choose the right storage engine for your workload
-
-|link:02-guides/sks_graph_first_migration_guide.adoc[**SKS Graph-First Migration**]
-|Migrate to Semantic Knowledge Store architecture
-
-|link:01-getting-started/getting_started.adoc[**Getting Started Tutorial**]
-|5-minute introduction to ProximaDB
-|===
-
-== 📖 API Reference
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:03-reference/rest-api-specification.adoc[**REST API Specification**]
-|Complete REST API reference with examples
-
-|link:03-reference/graph_api_reference.adoc[**Graph API Reference**]
-|Graph operations and traversal API
-
-|link:03-reference/sks_technical_reference.adoc[**SKS Technical Reference**]
-|Semantic Knowledge Store API and concepts
-
-|link:03-reference/api_reference.adoc[**General API Reference**]
-|Core API concepts and common patterns
-
-|link:03-reference/configuration-reference.adoc[**Configuration Reference**]
-|Server configuration options and tuning
-|===
-
-== 🛠️ Operations & Production
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:04-operations/PRODUCTION_RUNBOOK.adoc[**Production Runbook**]
-|Operations guide for production deployments
-
-|link:04-operations/benchmark_logging_guide.adoc[**Benchmark & Logging Guide**]
-|Performance benchmarking and logging best practices
-|===
-
-== ⚡ Performance
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:performance/README.adoc[**⭐ Performance Guide - START HERE**]
-|Single source of truth for all performance documentation
-
-|- Quick reference tables (1K and 10K scale)
-|- Engine selection flowcharts
-|- Compression decision trees
-|- Validated benchmarks (October 2024)
-|===
-
-== 🏗️ Architecture
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:technical/platform_architecture.adoc[**Platform Architecture Overview**]
-|High-level system architecture and design
-
-|link:architecture/storage-layer.adoc[**Storage Layer Architecture**]
-|Storage system design and components
-
-|link:architecture/CACHE_ARCHITECTURE.adoc[**Cache Architecture**]
-|Unified caching system and cross-cache orchestration
-|===
-
-=== Storage Engines
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:storage/sst-engine-deep-dive.adoc[**SST Engine Deep Dive**]
-|Real-time OLTP with hybrid columnar format, LSM-tree architecture
-
-|link:storage/helix-engine-deep-dive.adoc[**HELIX Engine Deep Dive**]
-|Spatial locality with Hilbert curves and PCA dimensionality reduction
-
-|link:storage/swift-engine-deep-dive.adoc[**SWIFT Engine Deep Dive**]
-|Three-tier hierarchy (SuperBlock → DataBlock → Records) with AdaCurve
-
-|link:storage/raptor-engine-deep-dive.adoc[**RAPTOR Engine Deep Dive**]
-|Matrix Trinity architecture (P² + K² + P×K) with GPU acceleration
-
-|link:storage/viper-engine-deep-dive.adoc[**VIPER Engine Deep Dive**]
-|Analytics/OLAP with columnar Parquet
-
-|link:storage/nova-engine-deep-dive.adoc[**NOVA Engine Deep Dive**]
-|Mixed workloads with progressive search
-
-|link:storage/hybrid-columnar-engines.adoc[**Hybrid Columnar Engines**]
-|Comparison of all storage engines
-
-|link:storage/columnar-storage-architecture.adoc[**Columnar Storage Architecture**]
-|ProximaBlocks format and design
-|===
-
-=== Graph Engines
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:graph/graph-engines-deep-dive.adoc[**Graph Engines Deep Dive**]
-|ORION (CSR), PULSAR (distributed), QUASAR (tiered) - comprehensive guide
-
-|link:03-reference/graph_api_reference.adoc[**Graph API Reference**]
-|Graph operations and traversal API
-
-|link:technical/graph_persistence_architecture.adoc[**Graph Persistence Architecture**]
-|WAL persistence and recovery
-|===
-
-=== Technical Deep-Dives
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:technical/proximacodec_technical_guide.adoc[**ProximaCodec Technical Guide**]
-|Lossless f32 compression with 15 encoding schemes
-
-|link:technical/unified-quantization-guide.adoc[**Unified Quantization Guide**]
-|Binary, INT8, PQ4/8/16/32 quantization strategies
-
-|link:technical/storage_engine_layouts.adoc[**Storage Engine Layouts**]
-|On-disk formats and data structures
-
-|link:technical/graph_persistence_architecture.adoc[**Graph Persistence Architecture**]
-|Orion graph engine persistence and WAL
-
-|link:technical/gpu_acceleration.adoc[**GPU Acceleration**]
-|CUDA and Metal GPU support
-
-|link:technical/compression_guide.adoc[**Compression Guide**]
-|Compression algorithms and selection
-
-|link:technical/ai_intelligence_platform.adoc[**AI Intelligence Platform**]
-|AI-powered features and AutoML
-
-|link:technical/VECTOR_DB_FORMAT_COMPARISON.adoc[**Vector DB Format Comparison**]
-|ProximaDB vs Lance vs Nimble analysis
-
-|link:technical/SST_COMPETITIVE_COMPARISON.adoc[**SST Competitive Comparison**]
-|SST engine vs competitors
-
-|link:technical/graph_collection_service_design.adoc[**Graph Collection Service Design**]
-|Multi-graph architecture and isolation
-|===
-
-==  Security
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:06-security/README.adoc[**Security Overview**]
-|Security features and best practices
-
-|link:06-security/unified_authentication_flow.adoc[**Unified Authentication Flow**]
-|Authentication and authorization
-|===
-
-== 🔧 Development
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:08-development/BUILD_OPTIMIZATION.adoc[**Build Optimization**]
-|Cargo profiles and build performance
-
-|link:08-development/OPTIMIZATION_INFRASTRUCTURE_REUSE.adoc[**Infrastructure Reuse**]
-|Code reuse patterns and shared utilities
-
-|link:testing/IGNORED_TESTS_ANALYSIS.adoc[**Test Coverage Analysis**]
-|Test suite analysis and ignored tests
-|===
-
-== 🗺️ Roadmap & Planning
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:09-roadmap/MASTER_FEATURE_DASHBOARD.adoc[**Master Feature Dashboard**]
-|Comprehensive roadmap and feature status
-
-|link:09-roadmap/in-progress/[**In-Progress Features**]
-|Currently under development
-
-|link:09-roadmap/completed/[**Completed Features**]
-|Delivered features and milestones
-
-|link:09-roadmap/future/[**Future Features**]
-|Planned enhancements
-|===
-
-== 💼 Business & Enterprise
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:10-business/competitive_advantages.adoc[**Competitive Advantages**]
-|ProximaDB vs competitors
-
-|link:enterprise/ENTERPRISE_OVERVIEW.adoc[**Enterprise Overview**]
-|Enterprise features and deployment
-
-|link:enterprise/enterprise_deployment.adoc[**Enterprise Deployment**]
-|Large-scale deployment guide
-
-|link:enterprise/production_deployment_guide.adoc[**Production Deployment Guide**]
-|Production best practices
-|===
-
-== 🤖 AutoML & Intelligence
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:automl/README.adoc[**AutoML Overview**]
-|Automated machine learning features
-|===
-
-== 📂 Archive
-
-Historical and development documentation moved to archive:
-
-* link:archive/sessions/[**Development Sessions**] - Session notes and progress reports
-* link:archive/migration-guides/[**Migration Guides**] - Legacy migration documentation
-* link:archive/deprecated/[**Deprecated Features**] - Removed functionality
-
-== 🔗 External Resources
-
-* https://github.com/vjsingh1984/proximaDB[**GitHub Repository**]
-* **Rust API Docs**: Run `cargo doc --open`
-* **Python SDK**: `clients/python/README.adoc`
-* **Examples**: `clients/python/examples/README.md`
 
 ---
 
-_Last Updated: {docdate}_
+== Documentation Map
 
-_Version: 0.1.5_
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    subgraph LEARN["LEARN (Concepts)"]
+        A1[Architecture]
+        A2[Storage Engines]
+        A3[Graph Engines]
+    end
+
+    subgraph USE["USE (API)"]
+        B1[REST API]
+        B2[Graph API]
+        B3[Configuration]
+    end
+
+    subgraph OPERATE["OPERATE (Ops)"]
+        C1[Deployment]
+        C2[Monitoring]
+        C3[Security]
+    end
+
+    style LEARN fill:#e6f3ff,stroke:#4a90e2
+    style USE fill:#fff3e6,stroke:#f4a261
+    style OPERATE fill:#e6ffe6,stroke:#93c47d
+----
+
+---
+
+== By Role
+
+=== I'm New Here
+
+|===
+| Document | Description
+
+| link:../README.adoc[README] | Why ProximaDB, quick start
+| link:concepts/architecture.adoc[Architecture] | System design overview
+|===
+
+=== I'm Building an App
+
+|===
+| Document | Description
+
+| link:api/rest.adoc[REST API] | Vector operations
+| link:api/graph.adoc[Graph API] | Node, edge, traversal
+| link:api/configuration.adoc[Configuration] | Settings reference
+|===
+
+=== I'm Operating Production
+
+|===
+| Document | Description
+
+| link:operations/deployment.adoc[Deployment] | Install, configure, scale
+| link:operations/monitoring.adoc[Monitoring] | Metrics, logging, alerts
+| link:operations/security.adoc[Security] | Auth, TLS, access control
+|===
+
+=== I'm Choosing Architecture
+
+|===
+| Document | Description
+
+| link:concepts/storage-engines.adoc[Storage Engines] | SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR comparison
+| link:concepts/graph-engines.adoc[Graph Engines] | ORION, PULSAR, QUASAR comparison
+|===
+
+---
+
+== Quick Links
+
+* **GitHub**: https://github.com/vjsingh1984/proximaDB
+* **Python SDK**: link:../clients/python/README.adoc[Client Documentation]
+
+---
+
+_Version 0.1.5_

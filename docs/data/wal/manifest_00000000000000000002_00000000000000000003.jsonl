@@ -1,2 +1,0 @@
-{"global_lsn":2,"collection_id":"1vAkpL2","batch_id":"8WYbUjv5I8","file_path":"1vAkpL2/wal/8WYbUjv5I8.bcwal","storage_url":"file://./data","size_bytes":84208,"checksum_crc32":4208817177,"timestamp_ms":1760947271983,"format":"Bincode","vector_count":0,"status":"Active","checkpoint_id":null}
-{"global_lsn":3,"collection_id":"1vAkpL2","batch_id":"8WYbUjzU4e","file_path":"1vAkpL2/wal/8WYbUjzU4e.bcwal","storage_url":"file://./data","size_bytes":84208,"checksum_crc32":627289027,"timestamp_ms":1760947271999,"format":"Bincode","vector_count":0,"status":"Active","checkpoint_id":null}

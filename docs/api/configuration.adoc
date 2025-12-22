@@ -1,0 +1,291 @@
+= Configuration Reference
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.lead]
+Complete configuration options for ProximaDB. Default config: `config/config.toml`
+
+== Quick Start
+
+Minimal configuration:
+
+[source,toml]
+----
+[server]
+bind_address = "127.0.0.1"
+port = 5678
+data_dir = "/var/lib/proximadb"
+
+[storage]
+default_engine = "sst"
+----
+
+---
+
+== Server Settings
+
+[source,toml]
+----
+[server]
+bind_address = "127.0.0.1"   # Listen address
+port = 5678                   # REST API port
+data_dir = "/var/lib/proximadb"  # Data directory
+log_level = "info"            # debug, info, warn, error
+----
+
+|===
+| Setting | Default | Description
+
+| `bind_address` | `127.0.0.1` | Listen address (`0.0.0.0` for all)
+| `port` | `5678` | REST API port
+| `data_dir` | `/tmp/proximadb` | Data storage directory
+| `log_level` | `info` | Logging verbosity
+|===
+
+---
+
+== API Settings
+
+[source,toml]
+----
+[api]
+rest_port = 5678
+grpc_port = 5679
+arrow_flight_port = 5680
+max_request_size = 67108864  # 64MB
+rate_limit = 1000            # requests/sec
+cors_enabled = true
+----
+
+|===
+| Setting | Default | Description
+
+| `rest_port` | `5678` | REST API port
+| `grpc_port` | `5679` | gRPC port
+| `arrow_flight_port` | `5680` | Arrow Flight port
+| `max_request_size` | `64MB` | Maximum request body
+| `rate_limit` | `1000` | Requests per second
+|===
+
+---
+
+== Storage Settings
+
+[source,toml]
+----
+[storage]
+default_engine = "sst"
+metadata_url = "file:///var/lib/proximadb/metadata"
+
+[[storage.storage_locations]]
+url = "file:///var/lib/proximadb/data"
+weight = 1
+----
+
+=== Engine-Specific Settings
+
+==== SST Engine
+
+[source,toml]
+----
+[storage.sst]
+flush_threshold_mb = 64       # Flush when memtable reaches this size
+compaction_strategy = "tiered" # tiered or leveled
+compression = "lz4"           # lz4, zstd, none
+bloom_filter_fpr = 0.01       # False positive rate
+----
+
+==== HELIX Engine
+
+[source,toml]
+----
+[storage.helix]
+pca_dimensions = 16           # PCA reduction dimensions
+hilbert_bits = 8              # Bits per dimension for Hilbert
+block_pruning_mode = "sqrt"   # sqrt, ratio, fixed
+----
+
+==== VIPER Engine
+
+[source,toml]
+----
+[storage.viper]
+row_group_size = 50000        # Vectors per row group
+compression = "zstd"          # zstd, snappy, none
+compression_level = 6         # 1-22 for zstd
+----
+
+==== SWIFT Engine
+
+[source,toml]
+----
+[storage.swift]
+superblock_size = 64          # Blocks per SuperBlock
+tenant_isolation = true       # Enable tenant separation
+----
+
+---
+
+== WAL Settings
+
+[source,toml]
+----
+[storage.wal_config]
+enable_wal = true
+global_manifest_url = "file:///var/lib/proximadb/manifest"
+memory_flush_size_bytes = 16777216  # 16MB per collection
+global_flush_threshold = 4294967296 # 4GB total
+sync_mode = "async"           # async, sync, periodic
+----
+
+|===
+| Setting | Default | Description
+
+| `enable_wal` | `true` | Enable write-ahead logging
+| `memory_flush_size_bytes` | `16MB` | Per-collection flush threshold
+| `global_flush_threshold` | `4GB` | Global memory threshold
+| `sync_mode` | `async` | `async`, `sync`, `periodic`
+|===
+
+---
+
+== Graph Settings
+
+[source,toml]
+----
+[graph]
+default_engine = "orion"
+wal_enabled = true
+
+[graph.orion]
+parallel_threshold = 1000     # BFS parallelization threshold
+----
+
+---
+
+== Security Settings
+
+[source,toml]
+----
+[security]
+auth_enabled = false
+token_secret = "your-secret-key"
+token_expiry_hours = 24
+
+[security.tls]
+enabled = false
+cert_path = "/etc/proximadb/cert.pem"
+key_path = "/etc/proximadb/key.pem"
+----
+
+See link:../operations/security.adoc[Security Guide] for details.
+
+---
+
+== Performance Tuning
+
+=== Write-Heavy Workloads
+
+[source,toml]
+----
+[storage]
+default_engine = "sst"
+
+[storage.sst]
+flush_threshold_mb = 128      # Larger buffer
+compaction_strategy = "tiered" # Favor writes
+compression = "lz4"           # Fast compression
+----
+
+=== Read-Heavy Workloads
+
+[source,toml]
+----
+[storage]
+default_engine = "helix"
+
+[storage.helix]
+pca_dimensions = 16
+block_pruning_mode = "sqrt"
+----
+
+=== Analytics Workloads
+
+[source,toml]
+----
+[storage]
+default_engine = "viper"
+
+[storage.viper]
+row_group_size = 100000
+compression = "zstd"
+compression_level = 9         # Max compression
+----
+
+---
+
+== Cloud Storage
+
+=== AWS S3
+
+[source,toml]
+----
+[storage]
+metadata_url = "s3://bucket/proximadb/metadata"
+
+[[storage.storage_locations]]
+url = "s3://bucket/proximadb/data"
+weight = 1
+
+[storage.aws]
+region = "us-east-1"
+access_key_id = "AKIA..."
+secret_access_key = "..."
+----
+
+=== Azure Blob
+
+[source,toml]
+----
+[[storage.storage_locations]]
+url = "azure://container/proximadb"
+weight = 1
+
+[storage.azure]
+account_name = "myaccount"
+account_key = "..."
+----
+
+=== Google Cloud Storage
+
+[source,toml]
+----
+[[storage.storage_locations]]
+url = "gs://bucket/proximadb"
+weight = 1
+
+[storage.gcp]
+credentials_path = "/path/to/credentials.json"
+----
+
+---
+
+== Environment Variables
+
+All settings can be overridden via environment:
+
+|===
+| Variable | Config Path
+
+| `PROXIMADB_PORT` | `server.port`
+| `PROXIMADB_DATA_DIR` | `server.data_dir`
+| `PROXIMADB_LOG_LEVEL` | `server.log_level`
+| `PROXIMADB_ENGINE` | `storage.default_engine`
+|===
+
+Example:
+[source,bash]
+----
+PROXIMADB_PORT=8080 PROXIMADB_ENGINE=helix ./proximadb-server
+----

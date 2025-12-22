@@ -1,0 +1,309 @@
+= Graph API Reference
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.lead]
+Graph database API for nodes, edges, and traversals. Base URL: `http://localhost:5678/api/v1/graph`
+
+== Quick Reference
+
+|===
+| Operation | Method | Endpoint
+
+| Create graph | POST | `/graphs`
+| Create node | POST | `/graphs/:id/nodes`
+| Create edge | POST | `/graphs/:id/edges`
+| Get node | GET | `/graphs/:id/nodes/:node_id`
+| Traverse | POST | `/graphs/:id/traverse`
+| Query nodes | POST | `/graphs/:id/query/nodes`
+|===
+
+---
+
+== Data Types
+
+=== Node
+
+[source,json]
+----
+{
+  "id": "user_123",
+  "labels": ["User", "Customer"],
+  "properties": {
+    "name": "Alice",
+    "age": 30
+  },
+  "embedding": {
+    "vector": [0.1, 0.2, 0.3, ...],
+    "model": "text-embedding-ada-002"
+  }
+}
+----
+
+=== Edge
+
+[source,json]
+----
+{
+  "id": "edge_001",
+  "from_node_id": "user_123",
+  "to_node_id": "user_456",
+  "edge_type": "FOLLOWS",
+  "properties": {"since": "2024-01-01"},
+  "weight": 0.8
+}
+----
+
+---
+
+== Graph Management
+
+=== POST /graphs
+
+Create a new graph.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "graph_id": "social_network",
+    "config": {
+      "engine": "orion",
+      "directed": true
+    }
+  }'
+----
+
+=== GET /graphs
+
+List all graphs.
+
+[source,bash]
+----
+curl http://localhost:5678/api/v1/graph/graphs
+----
+
+=== DELETE /graphs/:id
+
+Delete a graph.
+
+[source,bash]
+----
+curl -X DELETE http://localhost:5678/api/v1/graph/graphs/social_network
+----
+
+---
+
+== Node Operations
+
+=== POST /graphs/:id/nodes
+
+Create a node.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/social_network/nodes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node": {
+      "id": "user_123",
+      "labels": ["User"],
+      "properties": {
+        "name": "Alice",
+        "email": "alice@example.com"
+      }
+    }
+  }'
+----
+
+=== GET /graphs/:id/nodes/:node_id
+
+Get a node.
+
+[source,bash]
+----
+curl http://localhost:5678/api/v1/graph/graphs/social_network/nodes/user_123
+----
+
+=== PUT /graphs/:id/nodes/:node_id
+
+Update a node.
+
+[source,bash]
+----
+curl -X PUT http://localhost:5678/api/v1/graph/graphs/social_network/nodes/user_123 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "properties": {
+      "name": "Alice Smith",
+      "verified": true
+    }
+  }'
+----
+
+=== DELETE /graphs/:id/nodes/:node_id
+
+Delete a node (and its edges).
+
+[source,bash]
+----
+curl -X DELETE http://localhost:5678/api/v1/graph/graphs/social_network/nodes/user_123
+----
+
+---
+
+== Edge Operations
+
+=== POST /graphs/:id/edges
+
+Create an edge.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/social_network/edges \
+  -H "Content-Type: application/json" \
+  -d '{
+    "edge": {
+      "from_node_id": "user_123",
+      "to_node_id": "user_456",
+      "edge_type": "FOLLOWS",
+      "weight": 1.0,
+      "properties": {
+        "since": "2024-06-15"
+      }
+    }
+  }'
+----
+
+=== GET /graphs/:id/edges/:edge_id
+
+Get an edge.
+
+=== DELETE /graphs/:id/edges/:edge_id
+
+Delete an edge.
+
+---
+
+== Traversal
+
+=== POST /graphs/:id/traverse
+
+Traverse the graph from a starting node.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/social_network/traverse \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_node_id": "user_123",
+    "direction": "outgoing",
+    "edge_types": ["FOLLOWS"],
+    "max_depth": 2,
+    "limit": 100
+  }'
+----
+
+**Parameters:**
+
+|===
+| Field | Type | Default | Description
+
+| `start_node_id` | string | required | Starting node
+| `direction` | string | `outgoing` | `outgoing`, `incoming`, `both`
+| `edge_types` | string[] | all | Filter by edge types
+| `max_depth` | int | 1 | Maximum traversal depth
+| `limit` | int | 1000 | Maximum results
+|===
+
+**Response:**
+[source,json]
+----
+{
+  "paths": [
+    {
+      "nodes": ["user_123", "user_456", "user_789"],
+      "edges": ["FOLLOWS", "FOLLOWS"],
+      "depth": 2
+    }
+  ],
+  "total_nodes_visited": 150,
+  "traversal_time_ms": 2.1
+}
+----
+
+---
+
+== Query
+
+=== POST /graphs/:id/query/nodes
+
+Query nodes by labels or properties.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/social_network/query/nodes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "labels": ["User"],
+    "property_filters": [
+      {"key": "age", "operator": "GREATER_THAN", "value": 25}
+    ],
+    "limit": 50
+  }'
+----
+
+---
+
+== Hybrid Vector + Graph
+
+Combine vector similarity with graph traversal:
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/hybrid/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "papers",
+    "graph_id": "citations",
+    "query_vector": [0.1, 0.2, ...],
+    "graph_traversal": {
+      "edge_types": ["CITES"],
+      "max_depth": 2
+    },
+    "top_k": 10
+  }'
+----
+
+**Response:**
+[source,json]
+----
+{
+  "results": [
+    {
+      "node_id": "paper_42",
+      "vector_score": 0.95,
+      "graph_context": {
+        "cited_by": ["paper_10", "paper_23"],
+        "cites": ["paper_5"]
+      }
+    }
+  ]
+}
+----
+
+---
+
+== Error Codes
+
+|===
+| Code | HTTP Status | Description
+
+| `GRAPH_NOT_FOUND` | 404 | Graph doesn't exist
+| `NODE_NOT_FOUND` | 404 | Node ID not found
+| `EDGE_NOT_FOUND` | 404 | Edge ID not found
+| `DUPLICATE_NODE` | 409 | Node ID already exists
+| `INVALID_EDGE` | 400 | Source or target node missing
+|===

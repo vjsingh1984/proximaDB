@@ -1,0 +1,319 @@
+= Architecture Overview
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.lead]
+ProximaDB is a unified vector + graph database. This guide explains the system design and how components work together.
+
+== System Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    subgraph API["API Layer"]
+        REST["REST :5678"]
+        GRPC["gRPC :5679"]
+        FLIGHT["Arrow Flight :5680"]
+    end
+
+    subgraph SERVICES["Service Layer"]
+        COLL["Collection Service"]
+        VEC["Vector Operations"]
+        GRAPH["Graph Operations"]
+    end
+
+    subgraph STORAGE["Storage Layer"]
+        WAL["Write-Ahead Log"]
+        ENGINES["Storage Engines<br/>(SST, HELIX, VIPER,<br/>SWIFT, NOVA, RAPTOR)"]
+        GRAPH_ENG["Graph Engines<br/>(ORION, PULSAR, QUASAR)"]
+    end
+
+    subgraph COMPUTE["Compute Layer"]
+        QUANT["Quantization<br/>(Binary, INT8, PQ)"]
+        DIST["Distance<br/>(L2, Cosine, Dot)"]
+        SIMD["SIMD<br/>(AVX2, AVX512, NEON)"]
+    end
+
+    API --> SERVICES
+    SERVICES --> STORAGE
+    STORAGE --> COMPUTE
+
+    style API fill:#e6f3ff,stroke:#4a90e2
+    style SERVICES fill:#fff3e6,stroke:#f4a261
+    style STORAGE fill:#e6ffe6,stroke:#93c47d
+    style COMPUTE fill:#f3e6ff,stroke:#9066e0
+----
+
+== Core Concepts
+
+=== Collections
+
+A **collection** is a container for vectors with a fixed dimension and optional metadata schema.
+
+[source,json]
+----
+{
+  "name": "documents",
+  "dimension": 768,
+  "engine": "sst",
+  "filterable_columns": [
+    {"name": "category", "data_type": "STRING"},
+    {"name": "date", "data_type": "INT64"}
+  ]
+}
+----
+
+=== Vectors
+
+A **vector** is a point in high-dimensional space with an ID, embedding, and optional metadata.
+
+[source,json]
+----
+{
+  "id": "doc_123",
+  "vector": [0.1, -0.2, 0.3, ...],  // 768 dimensions
+  "metadata": {
+    "category": "technical",
+    "date": 1703203200
+  }
+}
+----
+
+=== Graphs
+
+A **graph** consists of nodes and edges, stored separately from vectors but queryable together.
+
+[source,json]
+----
+{
+  "node": {
+    "id": "person_1",
+    "labels": ["Person"],
+    "properties": {"name": "Alice"}
+  },
+  "edge": {
+    "source": "person_1",
+    "target": "person_2",
+    "type": "KNOWS",
+    "weight": 0.9
+  }
+}
+----
+
+---
+
+== Data Flow
+
+=== Write Path
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+sequenceDiagram
+    participant C as Client
+    participant API as API Layer
+    participant WAL as Write-Ahead Log
+    participant MEM as MemTable
+    participant DISK as SSTable
+
+    C->>API: Insert vectors
+    API->>WAL: Append (durability)
+    API->>MEM: Buffer in memory
+    API-->>C: Acknowledged
+
+    Note over MEM: Background flush
+    MEM->>DISK: Flush to SSTable
+----
+
+**Key insight**: Writes return after WAL append, before flush. This provides:
+- **Durability**: WAL survives crashes
+- **Low latency**: No disk I/O on critical path
+- **Throughput**: Batch flushes amortize disk cost
+
+=== Read Path
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+sequenceDiagram
+    participant C as Client
+    participant API as API Layer
+    participant FILTER as Filter Stage
+    participant QUANT as Quantization
+    participant DIST as Distance
+
+    C->>API: Search(query, top_k=10)
+    API->>FILTER: Apply metadata filters
+    FILTER->>QUANT: Coarse ranking (INT8)
+    QUANT->>DIST: Fine ranking (FP32)
+    DIST-->>C: Top-K results
+----
+
+**Key insight**: Progressive filtering eliminates 99%+ candidates before expensive FP32 distance computation.
+
+---
+
+== Storage Design
+
+=== Multi-Engine Architecture
+
+ProximaDB automatically selects the optimal engine based on workload:
+
+|===
+| Signal | Suggested Engine
+
+| High write rate | SST
+| Clustered embeddings | HELIX
+| Batch analytics | VIPER
+| Multi-tenant | SWIFT
+| Mixed workload | NOVA
+| Unknown patterns | RAPTOR
+|===
+
+=== Unified File Format: ProximaBlocks
+
+All engines use ProximaBlocks for on-disk storage:
+
+[source,text]
+----
+┌─────────────────────────────────┐
+│ Header (magic, version, dims)   │
+├─────────────────────────────────┤
+│ Data Blocks (compressed)        │
+│   Block 0: vectors + metadata   │
+│   Block 1: ...                  │
+├─────────────────────────────────┤
+│ Index Block (offsets, bloom)    │
+├─────────────────────────────────┤
+│ Footer (checksum, magic)        │
+└─────────────────────────────────┘
+----
+
+---
+
+== Compute Layer
+
+=== Quantization
+
+Reduces memory and speeds up search:
+
+|===
+| Method | Bits/Dim | Speedup | Recall
+
+| Binary | 1 | 32x | 85%
+| INT8 | 8 | 4x | 98%
+| PQ8 | <1 | 10x | 95%
+| FP32 | 32 | 1x | 100%
+|===
+
+=== SIMD Acceleration
+
+Automatic hardware detection at startup:
+
+|===
+| Platform | SIMD | Distance ops/sec
+
+| x86_64 | AVX2 | 500M
+| x86_64 | AVX-512 | 1B
+| ARM64 | NEON | 400M
+| Fallback | Scalar | 50M
+|===
+
+---
+
+== Hybrid Queries
+
+ProximaDB's unique capability: combine vector similarity with graph traversal.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    Q[Query] --> V[Vector Search]
+    Q --> G[Graph Traversal]
+    V --> M[Merge & Rank]
+    G --> M
+    M --> R[Results]
+
+    style Q fill:#e6f3ff
+    style M fill:#e6ffe6
+----
+
+**Example**: Find papers similar to a query AND their citation network:
+
+[source,python]
+----
+results = db.hybrid_search(
+    vector=query_embedding,
+    graph_traversal="citations",
+    hops=2,
+    top_k=10
+)
+----
+
+---
+
+== Durability & Recovery
+
+=== Write-Ahead Log (WAL)
+
+Every write is logged before acknowledgment:
+
+[source,text]
+----
+WAL Segment Structure:
+┌────────────────────────┐
+│ LSN: 1001              │  ← Log Sequence Number
+│ Operation: INSERT      │
+│ Collection: documents  │
+│ Data: [vectors...]     │
+│ Checksum: 0xABCD       │
+└────────────────────────┘
+----
+
+=== Recovery Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    START[Startup] --> LOAD[Load Manifest]
+    LOAD --> SCAN[Scan WAL Segments]
+    SCAN --> REPLAY[Replay Operations]
+    REPLAY --> READY[Ready for Queries]
+----
+
+---
+
+== Configuration
+
+Key settings in `config/config.toml`:
+
+[source,toml]
+----
+[server]
+bind_address = "127.0.0.1"
+port = 5678
+
+[storage]
+default_engine = "sst"
+data_dir = "/var/lib/proximadb"
+
+[storage.wal_config]
+enable_wal = true
+memory_flush_size_bytes = 16777216  # 16MB
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+----
+
+---
+
+== Learn More
+
+- link:storage-engines.adoc[Storage Engines] - Detailed engine comparison
+- link:graph-engines.adoc[Graph Engines] - Graph database design
+- link:../api/rest.adoc[REST API] - Complete endpoint reference
