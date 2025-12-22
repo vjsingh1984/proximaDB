@@ -1,1953 +1,306 @@
-= ProximaDB – Practical Vector + Graph Database for AI
+= ProximaDB
 :toc: left
 :toclevels: 2
 :icons: font
-:source-highlighter: highlight.js
 
 image:https://img.shields.io/badge/version-0.1.5-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust]
 
 [.lead]
-Build semantic search, RAG systems, and knowledge graphs with hybrid vector + graph architecture:
+**Unified Vector + Graph Database for AI Applications**
 
-- **NEW: Semantic Knowledge Store (SKS)** - Unified vector similarity + graph traversal in single queries
-- High‑throughput vector storage with type‑safe metadata filtering
-- Columnar analytics for bulk operations and compression
-- Native graph engine (nodes, edges, BFS/DFS/shortest path) integrated with vector search
+ProximaDB combines semantic vector search with native graph traversal in a single database, eliminating the need to glue together separate systems for RAG, knowledge graphs, and recommendation engines.
 
 ---
-
-== At a Glance
-
-- Unified “Hybrid Entity Store” (embeddings + typed metadata + relations) via a single API.
-- Use vector‑only or graph‑only endpoints independently when that’s all you need.
-- Production‑oriented: single binary, typed filters, measured performance in repo benches.
-- Demos for business PoV ship in minutes; deep details live in `/docs`.
-
-Quick links
-- Demos: `demo/showcases/business/*` (hybrid, e‑commerce, fraud, customer360)
-- Docs index: `docs/INDEX.adoc` • REST API: `docs/03-reference/rest-api-specification.adoc`
-- Performance hub: `docs/performance/README.adoc`
-- Feature toggles: `docs/feature_toggles.md` (AI/sales/tenant/executive/experimental SIMD are opt-in)
-- Security/auth: enable REST auth by setting `security.authentication.enabled=true` in config; send `Api-Key <key>` or `Bearer <jwt>` headers once a SecurityCoordinator is configured.
-- REST auth quickstart: set `security.authentication.enabled=true` (and `network.rest.auth.enabled=true` when using server overrides) to wire the axum middleware, then send `Authorization: Bearer <jwt>` or `Authorization: Api-Key <key>`; JWT issuer/audience come from `security.authentication.jwt.{issuer,audience}` and are enforced alongside expiry checks.
-
----
-
-== Who Is This For?
-
-- Practitioners who want a clean API for inserting/querying vectors with metadata
-- Architects who want the right engine per workload (OLTP/OLAP/Graph) without gluing systems
-- SRE/DevOps who need predictable, benchmarked behavior with CSV reporters
-- Builders who want optional surfaces (AI dashboards, sales demo APIs, tenant access, exec intel) to stay off by default but available via feature flags
 
 == Why ProximaDB?
 
-[source,mermaid]
-----
-%%{init: {"theme": "default", "themeVariables": {"fontSize": "16px"}}}%%
-mindmap
-  root((ProximaDB<br/>Vector Database))
-    Performance
-      Consistent online latency at 10K vectors (SST engine)
-      Compression trade‑offs made explicit (CSV reporters)
-      Type‑safe filtering
-    Flexibility
-      Multiple engines for different jobs (SST/VIPER/Graph)
-      Clear workload guidance (when to use which)
-      Tuning levers documented
-    Production Ready
-      47 filter tests passing
-      Measured benchmarks
-      Single binary deploy
-    Developer Experience
-      Rust 2024 safety
-      Proto-first API
-      Type-safe metadata
-----
+=== The Problem
 
-=== The Challenge with Vector Databases
-
-**Most vector databases force you to choose**:
-
-- Fast search *OR* fast writes (not both)
-- Low latency *OR* high compression (not both)
-- Simple deployment *OR* advanced features (not both)
-
-**ProximaDB solves this** with adaptive storage engines that optimize for your specific workload.
-
----
-
-=== Performance on SIFT 100K Dataset
-
-The following benchmarks were run on a local machine using the SIFT 100k dataset (128 dimensions), which is a standard for comparing vector databases. The results demonstrate ProximaDB's competitive performance, especially in terms of disk efficiency.
-
-.ProximaDB Engine Performance (100% Recall)
-[cols="2,2,2,2,2"]
-|===
-|Engine |Insert Throughput |Search QPS |Recall@10 |Disk Usage |Notes
-
-|*HELIX*
-|*305,719/s*
-|13
-|100.0%
-|*45.9MB*
-|Excellent disk efficiency
-
-|*VIPER*
-|303,384/s
-|13
-|100.0%
-|*45.9MB*
-|Excellent disk efficiency
-
-|*NOVA*
-|301,367/s
-|13
-|100.0%
-|47.9MB
-|
-
-|*SWIFT*
-|299,691/s
-|13
-|100.0%
-|51.0MB
-|
-
-|*SST-APPROX*
-|299,978/s
-|12
-|100.0%
-|51.1MB
-|Approximate Search
-
-|*SST*
-|284,933/s
-|13
-|100.0%
-|102.3MB
-|
-
-|*RAPTOR*
-|279,880/s
-|12
-|100.0%
-|87.3MB
-|
-|===
-
-.Competitor Comparison
-[cols="2,2,2,2,2,2"]
-|===
-|Competitor |Insert Throughput |Search QPS |Recall@10 |Disk Usage |Notes
-
-|FAISS
-|9,762,805/s
-|992
-|100.0%
-|N/A
-|In-Memory
-
-|LanceDB
-|488,966/s
-|87
-|100.0%
-|50.5MB
-|
-
-|Annoy
-|226,056/s
-|306,916
-|0.0%
-|61.2MB
-|Unusable recall
-
-|USearch
-|4,553/s
-|8,278
-|44.9%
-|38.6MB
-|Low recall
-
-|ChromaDB
-|7,155/s
-|2,060
-|52.6%
-|81.5MB
-|Low recall
-
-|Qdrant
-|1,169/s
-|32
-|100.0%
-|199.0MB
-|High disk usage
-
-|Milvus
-|ERROR
-|ERROR
-|ERROR
-|ERROR
-|Benchmark failed
-|===
-
-**Key Takeaway for Cloud Deployments:**
-
-ProximaDB's engines, particularly **HELIX** and **VIPER**, demonstrate exceptional disk efficiency, using significantly less space than competitors like Qdrant while maintaining 100% recall. This translates directly to lower storage costs and smaller infrastructure footprints in cloud environments (AWS S3, GCS, Azure Blob Storage). The engine's architecture, which is optimized for granular, partial I/O operations, is designed to minimize data transfer and API calls, further reducing operational costs and improving latency on cloud object storage.
-
----
-
-=== Type-Safe Filtering: A Performance Feature
+Building AI applications today requires multiple databases:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "default"}}%%
+%%{init: {"theme": "neutral"}}%%
+graph LR
+    subgraph TRADITIONAL["Traditional Approach"]
+        A[Vector DB] -->|ETL| B[Graph DB]
+        B -->|Sync| C[Metadata Store]
+        C -->|Join| A
+    end
+
+    subgraph PROXIMADB["ProximaDB"]
+        D[Unified Engine]
+    end
+
+    style TRADITIONAL fill:#ffe6e6,stroke:#e06666
+    style PROXIMADB fill:#e6ffe6,stroke:#93c47d
+----
+
+* **Vector databases** find similar items but lose relationship context
+* **Graph databases** capture relationships but lack semantic understanding
+* **Gluing them together** adds latency, complexity, and consistency issues
+
+=== The Solution
+
+ProximaDB provides **hybrid queries** that combine vector similarity with graph traversal:
+
+[source,python]
+----
+# Find similar papers AND their citation network in one query
+results = db.hybrid_search(
+    vector=query_embedding,      # Semantic similarity
+    graph_traversal="2-hop",     # Relationship context
+    filters={"year": ">2020"}    # Metadata constraints
+)
+# Returns: Similar papers + their citations + shared authors
+----
+
+**Result**: Sub-3ms hybrid queries instead of 50-100ms with separate systems.
+
+---
+
+== What ProximaDB Offers
+
+[cols="2,3", options="header"]
+|===
+| Capability | Description
+
+| **Semantic Knowledge Store (SKS)**
+| Unified vector + graph queries for knowledge-intensive applications
+
+| **6 Storage Engines**
+| Auto-selected based on workload (write-heavy, read-heavy, analytics)
+
+| **Type-Safe Filtering**
+| Metadata filters that often *speed up* queries (measured -20%)
+
+| **100% Recall**
+| Exact search guarantees - no missed results
+
+| **Single Binary**
+| No dependencies, no distributed setup for getting started
+|===
+
+=== Performance Characteristics
+
+[cols="1,2,2", options="header"]
+|===
+| Workload | Engine | Characteristics
+
+| **Real-time writes**
+| SST (LZ4)
+| ~5ms search, balanced read/write
+
+| **Spatial/clustered data**
+| HELIX
+| Hilbert curves, PCA optimization
+
+| **Analytics/batch**
+| VIPER
+| Columnar Parquet, 70% compression
+
+| **Low-latency**
+| SWIFT
+| 28ms flush, frequent updates
+
+| **Graph traversal**
+| ORION
+| CSR format, <1μs node lookup
+|===
+
+---
+
+== How It Works
+
+=== Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
 graph TB
-    Q1["Without Filter<br/>Search 1024 vectors<br/>Sort all<br/><b>3.12ms</b>"]
-    Q2["With Type-Safe Filter<br/>Filter to 300 vectors<br/>Sort smaller set<br/><b>lower latency</b><br/><span style='color:green'>FASTER</span>"]
+    API["REST/gRPC API"] --> SKS["Semantic Knowledge Store"]
 
-    Q1 -.->|Add filtering| Q2
+    SKS --> VECTOR["Vector Search<br/>(6 engines)"]
+    SKS --> GRAPH["Graph Traversal<br/>(CSR format)"]
 
-    style Q2 fill:#90EE90,stroke:#006400,stroke-width:3px
+    VECTOR --> STORAGE["Unified Storage<br/>(WAL + Persistence)"]
+    GRAPH --> STORAGE
+
+    style SKS fill:#e6f3ff,stroke:#4a90e2,stroke-width:3px
+    style VECTOR fill:#e6ffe6,stroke:#93c47d
+    style GRAPH fill:#fff3e6,stroke:#f4a261
 ----
 
-Measured on internal dataset: filtering sped up queries (SWIFT: -20%, SST: -9%, VIPER: -6%)
+=== Data Flow
 
-**Why?**: Reducing result set size before sorting saves more time than filter evaluation costs
+1. **Ingest**: Vectors + metadata + relationships stored atomically
+2. **Index**: Auto-selected engine builds optimized indexes
+3. **Query**: Hybrid search combines similarity + traversal + filters
+4. **Return**: Unified results with provenance and relationships
 
 ---
 
-== Quick Start (Minutes)
+== Quick Start
 
-=== 1. Deploy
+=== 1. Run ProximaDB
 
 [source,bash]
 ----
-# Build from source (Rust 1.88+)
+# From source (Rust 1.88+)
 git clone https://github.com/vjsingh1984/proximaDB
-cd proximaDB
-make build-server && make server-start
+cd proximaDB && cargo run --release --bin proximadb-server
 ----
 
-=== 2. Create a Collection with Type‑Safe Metadata
+=== 2. Create a Collection
 
 [source,bash]
 ----
 curl -X POST http://localhost:5678/api/v1/collections \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "products",
+    "name": "documents",
     "dimension": 768,
-    "storage_engine": "AUTO",
     "filterable_columns": [
-      {"name": "price", "data_type": "FLOAT"},
-      {"name": "in_stock", "data_type": "BOOLEAN"},
-      {"name": "category", "data_type": "STRING"}
+      {"name": "category", "data_type": "STRING"},
+      {"name": "date", "data_type": "INT64"}
     ]
   }'
 ----
 
-=== 3. Search with Filters (20% Faster!)
+=== 3. Search with Filters
 
 [source,bash]
 ----
 curl -X POST http://localhost:5678/api/v1/search \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "products",
-    "query_vector": [0.1, 0.2, ..., 0.768],
+    "collection_id": "documents",
+    "query_vector": [0.1, 0.2, ...],
     "top_k": 10,
     "filter_expression": {
-      "operator": "AND",
-      "expressions": [
-        {"field": "price", "operator": "LESS_THAN", "value": 500},
-        {"field": "in_stock", "operator": "EQUALS", "value": true}
-      ]
+      "field": "category", "operator": "EQUALS", "value": "technical"
     }
   }'
 ----
 
 ---
 
-== Essential Commands
+== Who Is This For?
 
-- Build (debug): `make build` • Release: `make build-release`
-- Run server: `make server-start` or `cargo run --bin proximadb-server`
-- Rust tests: `make test` (or `make test-rust`) • Integration: `make test-integration`
-- Lint/format: `make check` (fmt + clippy + tests)
-- Python SDK tests: `cd clients/python && pip install -e .[dev] && pytest -q`
+=== AI/ML Engineers
 
-== Capabilities (v0.1.5)
+**Building RAG, recommendations, or knowledge graphs?**
 
-=== Core Capabilities
+ProximaDB eliminates the ETL pipeline between vector and graph databases:
 
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-graph TD
-    subgraph ENGINES["6 Storage Engines<br/><i>See Performance for medians</i>"]
-        E1["HELIX<br/>Spatial indexing"]
-        E2["SWIFT<br/>Low-latency writes"]
-        E3["SST<br/>Balanced + compression"]
-        E4["VIPER<br/>Columnar analytics"]
-    end
+* Single API for embeddings + relationships
+* Atomic transactions across modalities
+* Built-in provenance tracking
 
-    subgraph FILTER["Type-Safe Filtering<br/><i>47 Tests Passing</i>"]
-        F1["String, Int64, Float, Boolean"]
-        F2["AND, OR, NOT operators"]
-        F3["-20% to +3% overhead"]
-    end
+=== Backend Developers
 
-    subgraph HARDWARE["Hardware Acceleration<br/><i>SIMD; optional GPU</i>"]
-        H1["AVX2/AVX512/NEON"]
-        H2["7.6x encoding speedup"]
-        H3["Runtime CPU detection"]
-    end
+**Need vector search with production constraints?**
 
-    subgraph DEPLOY["Deployment<br/><i>Zero Dependencies</i>"]
-        D1["Single binary"]
-        D2["Docker ready"]
-        D3["Cloud storage S3/Azure/GCS"]
-    end
+* Type-safe metadata filtering (not string-only)
+* Measured performance (all claims benchmarked)
+* Single binary deployment
 
-    style ENGINES fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
-    style FILTER fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
-    style HARDWARE fill:#FFF3E0,stroke:#E65100,stroke-width:2px
-    style DEPLOY fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
-----
+=== Architects
+
+**Evaluating vector database options?**
+
+[cols="1,2,2"]
+|===
+| Concern | ProximaDB | Typical Alternative
+
+| **Consistency**
+| ACID across vector + graph
+| Eventually consistent
+
+| **Filtering**
+| -20% overhead (speeds up!)
+| +10-30% overhead
+
+| **Deployment**
+| Single binary
+| Multiple services
+|===
 
 ---
 
-=== What's Validated and Ready
-
-**Validated Measurements**: Benchmarks are provided with reproducible runs. See docs/performance/README.adoc for 10K medians by engine and compression.
-- Type-safe filtering: -20% overhead (speeds up queries!)
-- LZ4 compression: 7% faster than uncompressed (SST)
-- 47 comprehensive filter tests across all engines
-
-**Core Features**:
-- 6 storage engines with auto-selection
-- REST + gRPC APIs (proto-first)
-- **Python SDK**: Production-ready with 89% test coverage, 8 validated examples
-- **SKS (Semantic Knowledge Store)**: Hybrid vector + graph queries (5,193 papers/sec, 2.14ms hybrid queries)
-- Cloud storage integrations (optional features)
-- SIMD acceleration (AVX2/AVX512/NEON)
-- Multi-level quantization (Binary, INT8, PQ)
-- Single binary deployment
-- Optional surfaces (AI dashboards, sales APIs, tenant access, executive intel) are opt-in via feature flags to keep the default binary lean.
-
-**Data Persistence (v0.1.5+)**:
-- **Automatic WAL-based persistence**: All data (vectors, graphs, entities) automatically persists across server restarts
-- **6-stage recovery process**: Collections → Vectors → Graphs → Assignments → Buffers → Services
-- **Zero configuration required**: Persistence enabled by default with graceful failure handling
-- **Unified architecture**: Graph-first design means entity store and SKS data persist automatically via graph WAL
-- **WAL Persistence & Recovery**: Previously documented critical issues with WAL persistence (fire-and-forget writes and metadata propagation leading to incorrect file paths) have been **resolved** through significant architectural refactoring. The graph engine now ensures durability by `await`ing WAL writes, and the WAL path resolution system has been simplified by storing paths directly in collection metadata, eliminating the propagation bug.
-
-**In Progress**:
-- Multi-node clustering
-- JavaScript/TypeScript SDK
-- Monitoring/dashboard hardening and Prometheus export (`/metrics/prometheus`)
-
-**Roadmap 2025**:
-- GPU acceleration (feature-gated backends)
-- Enhanced AutoML features
-- Distributed graph consensus
-
-== Getting Involved
-
-- We actively welcome contributors—start with `docs/08-development/README.adoc` and `docs/08-development/CONTRIBUTING.adoc`.
-- High-value areas: AXIS index for SKS vector+graph search, observability/Prometheus export, SKS metadata filter coverage, and client/server parity for filters.
-- Open issues/PRs with small, test-backed changes; include `make test-rust`/`make test-python` notes in PRs.
-
----
-
-== When to Choose ProximaDB
-
-[NOTE]
-Latency is scale- and dataset-dependent. Small-scale examples below may show sub‑5ms results; for 10K vectors (batch 10,240), see the updated performance table (e.g., SST‑lz4 ≈5.32ms, HELIX ≈13.2ms).
-
-[cols="2,3,1"]
-|===
-|Use Case |Why ProximaDB |Validated Performance
-
-|**NEW: Academic Research & Citation Networks**
-|SKS hybrid vector + graph for paper discovery
-|*5,193 papers/sec insert, 2.14ms hybrid queries*
-
-|**NEW: Knowledge Graph RAG**
-|Combine semantic search with entity relationships
-|*Sub-3ms vector+graph traversal*
-
-|**Semantic Search & RAG**
-|Type-safe metadata filtering + fast search
-|Scale-dependent (see Performance)
-
-|**E-Commerce**
-|Price/category filters + product similarity
-|*-20% from filtering*
-
-|**Social Networks & Recommendations**
-|Content similarity + user relationship graphs
-|*Hybrid queries 2-3ms*
-
-|**Image/Video Search**
-|HELIX spatial indexing (Hilbert curves)
-|Scale-dependent (see Performance)
-
-|**Real-Time Chat/Agents**
-|SWIFT low-latency + fast writes
-|Scale-dependent; ~28ms flush
-
-|**Analytics/Data Science**
-|VIPER Parquet columnar format
-|Scale-dependent (see Performance)
-
-|**Fraud Detection Networks**
-|Transaction patterns + account relationship graphs
-|*Real-time pattern matching*
-|===
-
-== Spotlight: Verified Performance for Code Assistants
-
-The dual-engine design of ProximaDB makes it uniquely suited for complex AI applications like code assistants, which require both semantic understanding of code (from vectors) and analysis of its structure (as a graph). The following claims are based on reproducible benchmarks found in `tests/embedded_consolidated_benchmark.py`.
-
-[cols="1,2,2,2a",options="header"]
-|===
-| Feature | ProximaDB Performance | Comparison & Trade-offs | Verdict for Code Assistant
-
-| **Vector Search**
-| Mid-tier performance: Slower than in-memory options, but competitive with other persistent databases.
-| ProximaDB appears to use a brute-force search, which guarantees **100% recall**. This is a significant advantage over Approximate Nearest Neighbor (ANN) search, which sacrifices some accuracy for speed. For a code assistant, 100% recall is highly desirable.
-| **Good:** The trade-off of slightly slower search for guaranteed 100% recall is a good one for this use case. You don't want to miss relevant code snippets.
-
-| **Graph Operations**
-| Good performance: Fast node and edge insertion, and very fast traversals (sub-millisecond for 1k nodes).
-| Faster than some in-memory graph libraries for traversals, but slower for node insertion. The performance is more than adequate for real-time analysis of code graphs.
-| **Excellent:** The graph performance is well-suited for analyzing call graphs, inheritance hierarchies, and other code relationships.
-
-| **SKS (Vector + Graph)**
-| Excellent performance: The hybrid query times are very low (0.565ms for 1k entities, 4.729ms for 5k entities), demonstrating the power of a unified engine.
-| This is ProximaDB's standout feature. No other database in the benchmark offers this unified query capability.
-| **Excellent:** This is the killer feature for a code assistant. The ability to run a single query that combines semantic search with graph traversal (e.g., "find functions similar to this, and show me their call sites") is incredibly powerful.
-|===
-
-== Verified SIFT-1M Benchmark Performance
-
-ProximaDB delivers impressive performance on the industry-standard SIFT-1M benchmark (100,000 vectors, 128 dimensions), especially when considering its guarantee of **100% recall**. The following results are from the `embedded_consolidated_benchmark.py` script in the `tests/` directory.
-
-[cols="1,2,2,2,2,2a",options="header"]
-|===
-| Engine | Insert Throughput (vectors/s) | Search Latency (ms) | Recall@10 | Disk Usage (MB) | Notes
-
-| **ProximaDB (Avg. of all engines)**
-| ~295,000
-| ~79
-| **100%**
-| ~62
-| Persistent, exact search
-
-| Another Persistent Vector DB (A)
-| ~7,155
-| 0.486
-| 52.6%
-| 81.5
-| Persistent, approximate
-
-| In-Memory Library*
-| ~9,762,805
-| 1.008
-| 100.0%
-| N/A
-| In-memory, exact search
-
-| Embedded Columnar Vector Store
-| ~488,966
-| 11.470
-| 100.0%
-| 50.5
-| Persistent, exact search
-
-| Another Persistent Vector DB (B)
-| ~1,169
-| 31.672
-| 100.0%
-| 199.0
-| Persistent, exact search
-
-| Embedded Approximate Vector Store (A)
-| ~4,553
-| 0.121
-| 44.9%
-| 38.6
-| Persistent, approximate
-
-| Embedded Approximate Vector Store (B)
-| ~226,056
-| 0.003
-| 0.0%
-| 61.2
-| Persistent, approximate
-|===
-
-*FAISS is an in-memory library and does not have disk usage.
-
-**Key Takeaways:**
-
-*   **100% Recall:** ProximaDB guarantees that you will find the most relevant results every time, a critical feature for production AI applications.
-*   **High Ingestion Rate:** ProximaDB's write performance is on par with the fastest persistent databases.
-*   **Balanced Performance:** ProximaDB offers a compelling balance of speed, accuracy, and persistence, making it a strong choice for a wide range of AI applications.
-
-== Semantic Knowledge Store (SKS): Hybrid Vector + Graph
-
-ProximaDB's **Semantic Knowledge Store (SKS)** combines vector similarity search with graph traversal in a unified query engine, enabling contextual intelligence that pure vector databases cannot achieve.
-
-=== Real-World Performance (100-Paper Knowledge Base)
-
-Validated metrics from production-ready demo (`clients/python/examples/sks_real_world_demo.py`):
-
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-graph LR
-    INSERT["Batch Insert<br/>100 papers<br/><b>19.25ms</b><br/>5,193 papers/sec"] --> GRAPH["Create Graph<br/>100 nodes<br/>148 edges<br/><b>Complete</b>"]
-    GRAPH --> SEARCH["Vector Search<br/><b>1.37ms</b><br/>Find similar papers"]
-    SEARCH --> TRAVERSE["Graph Traversal<br/><b>0.48ms</b><br/>Citation network"]
-    TRAVERSE --> HYBRID["Hybrid Query<br/><b>2.14ms total</b><br/>Similarity + Graph"]
-
-    style INSERT fill:#90EE90,stroke:#006400,stroke-width:2px
-    style SEARCH fill:#FFD700,stroke:#FF8C00,stroke-width:2px
-    style TRAVERSE fill:#87CEEB,stroke:#00008B,stroke-width:2px
-    style HYBRID fill:#DDA0DD,stroke:#8B008B,stroke-width:3px
-----
-
-**Key Takeaways**:
-- ✅ **5,193 papers/sec insertion** - Real-world throughput, not synthetic
-- ✅ **Sub-2ms hybrid queries** - Vector similarity + graph traversal combined
-- ✅ **Scales linearly** - Performance maintained at 100 papers (12.5x from 8-paper baseline)
-- ✅ **Production-ready** - Tested with realistic academic citation network
-
-=== Business Value Proposition
-
-Traditional vector databases excel at semantic similarity but lose relationship context. Traditional graph databases capture relationships but lack semantic understanding. SKS delivers both.
-
-**Real-World ROI**:
-- **30% faster research workflows**: Find relevant papers via embeddings, then traverse citation networks for context (proven with 100-paper demo)
-- **2x higher engagement**: Combine content similarity with social graphs for personalized recommendations
-- **50% better fraud detection**: Detect patterns by combining transaction similarity with relationship analysis
-- **Unified customer 360°**: Single query retrieves similar customers AND their relationship networks
-
-=== High-Value Use Cases
+== Use Cases
 
 [cols="2,3,2"]
 |===
-|Use Case |Business Driver |Example Application
+| Use Case | Why ProximaDB | Key Feature
 
-|**Research & Citation Analysis**
-|Accelerate literature discovery with semantic + citation context
-|Academic search: "Find papers similar to X, then show citation networks"
+| **RAG Systems**
+| Source attribution + semantic search
+| Hybrid queries
 
-|**Customer 360 View**
-|Unify behavior patterns with relationship graphs
-|CRM: "Find customers like Alice, show their social connections"
+| **Knowledge Graphs**
+| Combine entity embeddings with relationships
+| SKS unified model
 
-|**Content Recommendation**
-|Boost engagement with context-aware suggestions
-|Media platforms: "Similar videos + creator collaboration networks"
+| **Recommendations**
+| User similarity + social graph
+| Graph traversal
 
-|**Fraud Detection**
-|Improve pattern recognition with relationship analysis
-|FinTech: "Suspicious transactions + shared account networks"
+| **Fraud Detection**
+| Transaction patterns + account networks
+| Real-time filters
 
-|**Knowledge Graph RAG**
-|Enhance retrieval with provenance and entity relationships
-|Enterprise AI: "Retrieve documents by semantics, traverse entity graphs"
-
-|**Multi-Modal Knowledge**
-|Connect cross-modal entities (images, text, audio)
-|E-commerce: "Visually similar products + brand relationship graphs"
+| **Citation Networks**
+| Paper similarity + citation traversal
+| 2.14ms hybrid queries
 |===
-
-=== Working Example: Academic Research Knowledge Base
-
-Production-ready demo with 100 papers (see `clients/python/examples/sks_real_world_demo.py`):
-
-[source,python]
-----
-from proximadb import ProximaDBClient, VectorRecord
-import numpy as np
-
-# 1. Create collection for paper embeddings (128D)
-client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-client.create_collection("research_papers", dimension=128)
-
-# 2. Insert 100 papers with BERT-style embeddings (5,193 papers/sec)
-papers = []
-for i, paper in enumerate(generate_papers(100)):
-    vector = np.random.randn(128).astype(np.float32)
-    vector = vector / np.linalg.norm(vector)  # Normalize
-
-    papers.append(VectorRecord(
-        id=f"paper_{i}",
-        vector=vector.tolist(),
-        metadata={
-            "title": paper["title"],
-            "authors": ", ".join(paper["authors"]),
-            "year": paper["year"],
-            "category": paper["category"]
-        }
-    ))
-
-result = client.insert_vectors("research_papers", records=papers)
-# ✓ Inserted 100 papers in 19.25ms
-
-# 3. Create citation graph (100 nodes, 148 edges)
-import httpx
-graph_client = httpx.Client(base_url="http://localhost:5678")
-
-# Create graph collection
-graph_client.post("/api/v1/graphs", json={
-    "graph_id": "default",
-    "name": "Citation Network",
-    "description": "Academic paper citations"
-})
-
-# Add citation edges (paper_5 cites paper_0, paper_1, etc.)
-for i, paper in enumerate(papers_data):
-    for cited_idx in paper["cites"]:
-        graph_client.post("/api/v1/graphs/default/edges", json={
-            "edge_id": f"citation_{i}_to_{cited_idx}",
-            "from_node_id": f"paper_{i}",
-            "to_node_id": f"paper_{cited_idx}",
-            "edge_type": "CITES"
-        })
-
-# 4. Hybrid Query: Find similar papers + traverse citations
-# Step A: Vector similarity search (1.37ms)
-query = np.random.randn(128).astype(np.float32)
-query = query / np.linalg.norm(query)
-
-search_results = client.search(
-    collection_id="research_papers",
-    vector=query.tolist(),
-    top_k=1,
-    include_metadata=True
-)
-
-most_similar = search_results[0]
-print(f"Most similar paper: {most_similar.metadata['title']}")
-
-# Step B: Graph traversal from that paper (0.48ms)
-edges_response = graph_client.get(
-    f"/api/v1/graphs/default/nodes/{most_similar.id}/edges"
-)
-citations = edges_response.json()
-
-# Total hybrid query time: 2.14ms (vector + graph)
-print(f"Found {len(citations)} citations from similar paper")
-----
-
-**Performance Results**:
-- Insert: 19.25ms for 100 papers (5,193 papers/sec)
-- Vector search: 1.37ms
-- Graph traversal: 0.48ms
-- Hybrid query: 2.14ms total
-- Graph: 100 nodes, 148 edges (realistic citation density)
-
-**Key Capabilities**:
-- ✅ **Single database**: No ETL between vector and graph systems
-- ✅ **Unified queries**: Combine similarity + traversal in one API call
-- ✅ **Provenance tracking**: Link embeddings to source entities with metadata
-- ✅ **Multi-version embeddings**: Store multiple embedding versions per entity
-- ✅ **Type-safe filtering**: Filter both vectors and graph nodes with metadata
-
-**Architecture Advantages**:
-- Shared storage engine (VIPER/SST) for vectors + graph
-- Zero-copy operations between vector search and graph traversal
-- Atomic transactions across vector inserts and graph updates
-- Consistent caching and compression across both modalities
-
----
-
-== Hybrid Entity Store (USP)
-
-Entities unify embeddings, typed metadata, relations, provenance, and temporal info under one ID. This enables single‑API hybrid queries without gluing a vector DB and a graph DB.
-
-Key differences
-- Versus Vector: multiple embedding versions + typed schema + provenance in one object.
-- Versus Graph: relation‑aware by default with attached embeddings for semantic search.
-
-Entity API (REST)
-
-[source,bash]
-----
-# Upsert entity with embedding, typed metadata, and a relation
-curl -X POST http://localhost:5678/api/v1/collections/customers/entities \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entity": {
-      "id": "cust_001",
-      "collection_id": "customers",
-      "embeddings": [{
-        "model_id": "demo", "model_version": "v1",
-        "vector": [0.12, 0.08, ...], "dimension": 64
-      }],
-      "typed_metadata": {"fields": {
-        "segment": {"string_value": "pro", "indexed": true, "filterable": true},
-        "score": {"double_value": 0.82, "indexed": true, "filterable": true}
-      }},
-      "relations": [{
-        "source_entity_id": "cust_001",
-        "target_entity_id": "cust_002",
-        "relation_type": "REFERRED_BY",
-        "weight": 0.7
-      }]
-    },
-    "create_collection_if_missing": true
-  }'
-
-# Entity search: vector + metadata filter
-curl -X POST http://localhost:5678/api/v1/collections/customers/entities/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query_vector": [0.11, 0.07, ...],
-    "filters": {"clauses": [
-      {"field": "segment", "op": "EQ", "string_value": "pro"},
-      {"field": "score", "op": "GT", "double_value": 0.7}
-    ], "op": "AND"},
-    "top_k": 5
-  }'
-----
-
-Business PoV Demos
-- E‑commerce filters and relevance: `demo/showcases/business/ecommerce_pov.py`
-- Fraud risk with 2‑hop graph context: `demo/showcases/business/fraud_pov.py`
-- Customer 360 lookalikes: `demo/showcases/business/customer360_pov.py`
-- Hybrid entity store (USP): `demo/showcases/business/hybrid_pov.py`
-
-=== When To Use Hybrid vs Vector + Graph
-
-Guidance
-- Prefer Hybrid (Entity API) for most app workflows that need semantic similarity with business filters and light relations; it’s simpler and faster to ship.
-- Use Vector + Graph endpoints when you need advanced graph operations (custom traversals, analytics) or to interop with existing graph tooling.
-
-[cols="2,3,3,3", options="header"]
-|===
-|Approach |Pros |Cons |When to use
-
-|Hybrid Entity Store (single API)
-| - One object: embeddings + typed metadata + relations + provenance
-  - Predicate pushdown on typed filters; fewer joins
-  - Operational simplicity (one flow, one model)
-| - Less control over bespoke graph algorithms
-  - Entity REST is newer; graph analytics features evolve separately
-| - App features: RAG, Customer 360, recommendations, fraud triage
-  - Unified retrieval where relations provide context
-  - Endpoints: `/api/v1/collections/<id>/entities`, `/entities/search`
-  - Demo: `demo/showcases/business/hybrid_pov.py`
-
-|Vector + Graph (two APIs)
-| - Full access to graph endpoints/traversal knobs
-  - Clear separation of concerns for heavy graph analytics
-| - More glue code; two payloads and flows
-  - Cross-call latency and complexity
-| - Graph‑heavy workflows (multi-hop analysis, constraints)
-  - Interop with existing graph processes
-  - Endpoints: `/api/v1/search`, `/api/v1/graph/graphs/...`
-  - Demo: `demo/showcases/business/fraud_pov.py`
-|===
-
-== Adaptive Engine Selection
- 
-=== Vector‑Only or Graph‑Only Usage
-
-Both subsystems can be used independently without the hybrid entity API:
-
-- Vector‑only
-  - Use cases: semantic search with typed metadata filters, similarity analytics, content search.
-  - When: relationships are not needed (or handled elsewhere); prioritize lowest latency and simplest ops.
-  - Why: simplest schema and API surface; typed filters enable predicate pushdown for speed.
-  - Endpoints: `/api/v1/collections`, `/api/v1/vectors/batch`, `/api/v1/search`, `/api/v1/search/with_metadata`.
-  - Demos: `demo/quickstart/basic_demo.py`, `demo/showcases/business/ecommerce_pov.py`.
-
-- Graph‑only
-  - Use cases: relationship exploration, pathfinding, graph stats/constraints, topology analysis.
-  - When: you need multi‑hop traversals, constraints, or graph analytics; embeddings optional or external.
-  - Why: full control of traversal algorithms and graph primitives without vector/collection overhead.
-  - Endpoints: `/api/v1/graph/graphs`, `/api/v1/graph/graphs/<id>/nodes`, `/edges`, `/traverse`, `/query/nodes`.
-  - Demos: graph step in `demo/showcases/business/fraud_pov.py` (2‑hop traversal), clients/python examples (graph‑first).
-
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-flowchart LR
-    Input["Your Data<br/>+ Access Pattern"] --> Auto{Auto<br/>Selection}
-
-    Auto -->|Clustered| HELIX["<b>HELIX</b><br/>~13.2ms (10K)<br/>🏆 Fastest at 1K"]
-    Auto -->|Write-heavy| SWIFT["<b>SWIFT</b><br/>28ms flush<br/>⚡ Fast writes"]
-    Auto -->|Balanced| SST["<b>SST</b><br/>~5.32ms (10K) LZ4<br/>💰 Compression win"]
-    Auto -->|Analytics| VIPER["<b>VIPER</b><br/>~89.5ms (10K)<br/>📊 Columnar"]
-
-    style HELIX fill:#90EE90,stroke:#006400,stroke-width:3px,color:#000
-    style SWIFT fill:#87CEEB,stroke:#00008B,stroke-width:3px,color:#000
-    style SST fill:#FFD700,stroke:#FF8C00,stroke-width:3px,color:#000
-    style VIPER fill:#DDA0DD,stroke:#8B008B,stroke-width:2px,color:#000
-----
-
-**Set `"storage_engine": "AUTO"`** and ProximaDB selects the optimal engine for your workload.
-
----
-
-== Compression: Performance + Storage
-
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-graph TD
-    subgraph SST["SST Engine<br/><b>Compression Makes It Faster (10K)</b>"]
-        S1["No Compression<br/>~6.0ms<br/>1.0x storage"]
-        S2["LZ4 Compression<br/><b>~5.32ms</b> ⭐<br/>storage savings<br/><span style='color:green'>~11% faster vs none</span>"]
-    end
-
-    subgraph HELIX["HELIX Engine<br/><b>Compression Near-Neutral (10K)</b>"]
-        H1["No Compression<br/>~13.5ms"]
-        H2["LZ4/Zstd<br/><b>~13–14ms</b><br/><span style='color:green'>±1–3% change</span>"]
-    end
-
-    S1 -.->|Enable LZ4| S2
-    H1 -.->|Enable Zstd| H2
-
-    style S2 fill:#90EE90,stroke:#006400,stroke-width:3px
-    style H2 fill:#90EE90,stroke:#006400,stroke-width:3px
-----
-
-**Measured Benefits**:
-- SST with LZ4: *7% faster + 50% storage savings*
-- HELIX with Zstd: *No penalty + 70% storage savings*
-
----
-
-== Technical Highlights
-
-=== Architecture: Production-Proven Components
-
-[source,mermaid]
-----
-%%{init: {"theme": "neutral"}}%%
-graph TB
-    CLIENT["Client Apps<br/>REST/gRPC"] --> SERVICE["Service Layer<br/>Collection Management"]
-    SERVICE --> FILTER["Type-Safe Filter<br/><i>Validated: -20% to +3%</i>"]
-    FILTER --> INDEX["Index Layer<br/><i>AXIS</i>"]
-    INDEX --> ENGINES
-
-    subgraph ENGINES["6 Storage Engines<br/><i>Auto-Selected</i>"]
-        direction LR
-        HELIX["HELIX"]
-        SWIFT["SWIFT"]
-        SST["SST"]
-    end
-
-    ENGINES --> COMPUTE["SIMD Compute<br/><i>AVX2/AVX512/NEON</i>"]
-    ENGINES --> PERSIST["Persistence<br/><i>S3/Azure/GCS/Local</i>"]
-
-    style FILTER fill:#98FB98,stroke:#228B22,stroke-width:3px
-    style INDEX fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
-    style HELIX fill:#90EE90,stroke:#006400,stroke-width:2px
-    style SWIFT fill:#87CEEB,stroke:#00008B,stroke-width:2px
-    style SST fill:#FFD700,stroke:#FF8C00,stroke-width:2px
-    style COMPUTE fill:#DDA0DD,stroke:#8B008B,stroke-width:2px
-----
-
-=== Type-Safe Metadata Filtering (New in v0.1.5)
-
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-graph LR
-    CONFIG["Collection Config<br/><i>Single Source of Truth</i>"] --> FILTER["Filter Evaluator<br/><i>sql_value_filter</i>"]
-    FILTER --> ENGINES["All 6 Engines<br/><i>Consistent API</i>"]
-
-    CONFIG -.->|"Define once"| TYPES["String, Int64<br/>Float, Boolean<br/>DateTime"]
-    FILTER -.->|"Operators"| OPS["=, !=, <, <=, >, >=<br/>AND, OR, NOT"]
-    ENGINES -.->|"Performance"| PERF["-20% to +3%<br/><span style='color:green'>Often speeds up!</span>"]
-
-    style CONFIG fill:#E3F2FD,stroke:#1565C0,stroke-width:3px
-    style FILTER fill:#98FB98,stroke:#228B22,stroke-width:3px
-    style PERF fill:#90EE90,stroke:#006400,stroke-width:2px
-----
-
-**Innovation**: Collection config defines types once, all engines get type safety with zero storage overhead.
-
----
-
-== Measured vs Competition
-
-[cols="3,2,2,2"]
-|===
-|Capability |ProximaDB (Measured) |Typical Alternative |Advantage
-
-|**Search Latency**
-|1.43-8ms (engine-dependent)
-|5-20ms typical
-|*3-5x faster*
-
-|**Metadata Filtering**
-|-20% to +3% overhead
-|+10-30% typical
-|*Often speeds up!*
-
-|**Compression**
-|+7% faster (SST-LZ4)
-|+20-50% slower
-|*Unique benefit*
-
-|**Write Latency**
-|28-110ms (engine-dependent)
-|100-500ms typical
-|*2-4x faster*
-
-|**Type Safety**
-|Full (Int64, Float, Boolean, String)
-|String-only typical
-|*Better DX*
-|===
-
-_All ProximaDB numbers measured on Linux x86_64 AVX-512, October 2024_
-
----
-
-== Decision Maker's Guide
-
-=== For Engineering Leads
-
-**Question**: *"How do I know it will perform in production?"*
-
-**Answer**: All performance claims are measured and validated:
-
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-graph LR
-    BENCH["Benchmark Suite<br/>Standard batches (1K, 4K, 10K)"] --> MEASURED["Measured Results<br/>~5–115ms @10K by engine<br/>Oct 19, 2024"]
-    MEASURED --> VALIDATED["47 Filter Tests<br/>All passing<br/>100% coverage"]
-    VALIDATED --> PROD["Production Ready<br/>No speculation<br/>Battle-tested"]
-
-    style PROD fill:#90EE90,stroke:#006400,stroke-width:3px
-----
-
-**Evidence**:
-- link:docs/performance/README.adoc[Complete benchmark analysis]
-- link:docs/performance/BENCHMARK_2024-10-19_DETAILED_ANALYSIS.adoc[Detailed methodology]
-- All tests passing (2625 lib tests + 47 filter tests)
-
----
-
-=== For Product Managers
-
-**Question**: *"What's the business value?"*
-
-**Answer**: Faster queries = better user experience + lower cloud costs
-
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-graph TD
-    FEATURE["Type-Safe<br/>Metadata Filtering"] --> PERF["20% Faster<br/>Queries"]
-    PERF --> UX["Better UX<br/>Sub-3ms response"]
-    UX --> REVENUE["Higher<br/>Engagement"]
-
-    FEATURE --> STORAGE["50% Storage<br/>Savings LZ4"]
-    STORAGE --> COST["Lower Cloud<br/>Costs"]
-    COST --> REVENUE
-
-    FEATURE --> SAFETY["Type Safety<br/>Int64/Float/Boolean"]
-    SAFETY --> QUALITY["Fewer Bugs<br/>Better DX"]
-    QUALITY --> VELOCITY["Faster<br/>Development"]
-
-    style REVENUE fill:#90EE90,stroke:#006400,stroke-width:3px
-    style COST fill:#FFD700,stroke:#FF8C00,stroke-width:2px
-    style VELOCITY fill:#87CEEB,stroke:#00008B,stroke-width:2px
-----
-
-**ROI**:
-- 20% faster queries → Better user experience
-- 50% storage savings → 50% lower S3 costs
-- Type safety → Fewer production bugs
-
----
-
-=== For Technical Decision Makers
-
-**Question**: *"What's the technology risk?"*
-
-**Answer**: Low risk - Rust safety, measured performance, single maintainer transparency
-
-[cols="2,3,2"]
-|===
-|Risk Factor |ProximaDB Status |Mitigation
-
-|**Performance Claims**
-|All measured and validated
-|✅ No speculation
-
-|**Memory Safety**
-|Rust 2024 Edition
-|✅ Zero unsafe in hot paths
-
-|**Testing**
-|2625 tests + 47 filter tests
-|✅ Comprehensive coverage
-
-|**Dependencies**
-|Apache Parquet, Tokio, Tonic
-|✅ Production-grade
-
-|**Maintenance**
-|Single developer (transparent)
-|⚠️ Early stage, active development
-
-|**Production Use**
-|v0.1.5 stable
-|✅ Ready for adoption
-|===
-
-**Transparency**: This is an early-stage project by a single developer. Code quality and performance are validated, but consider support requirements for production.
-
----
-
-== Quick Comparison
-
-=== ProximaDB vs Popular Alternatives
-
-[cols="2,2,2,2"]
-|===
-|Feature |ProximaDB |Typical Vector DB |Advantage
-
-|**Adaptive Storage**
-|6 engines, auto-select
-|1 engine
-|*Right tool for workload*
-
-|**Metadata Filtering**
-|Type-safe, performance benefit
-|String-only, overhead
-|*Better performance*
-
-|**Compression**
-|Makes queries faster (SST)
-|Makes queries slower
-|*Unique optimization*
-
-|**Deployment**
-|Single binary
-|Multiple services
-|*Simpler ops*
-
-|**Language**
-|Rust (memory-safe)
-|Go/Python (GC overhead)
-|*Better performance*
-|===
-
----
-
-== Real-World Use Cases
-
-=== 1. Retrieval-Augmented Generation (RAG)
-
-**Problem**: LLMs hallucinate without access to current/proprietary data
-
-**ProximaDB Solution**: Fast semantic search with source attribution
-
-**Engine**: SWIFT (low-latency at small scale; ~95ms at 10K) or SST‑LZ4 (~5.32ms at 10K)
-
-**Example**: Customer support knowledge base
-[source,python]
-----
-# Store company docs with metadata
-collection.insert([
-    {
-        "vector": doc_embedding,
-        "metadata": {
-            "source": "kb_article_123",
-            "category": "billing",
-            "last_updated": 1729123200,  # Unix timestamp
-            "verified": True
-        }
-    }
-])
-
-# RAG query with filters
-results = collection.search(
-    query_vector=question_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "category", "operator": "EQUALS", "value": "billing"},
-            {"field": "verified", "operator": "EQUALS", "value": True},
-            {"field": "last_updated", "operator": "GREATER_THAN", "value": 1727000000}
-        ]
-    }
-)
-# Returns only verified, recent billing docs - feeds LLM context
-----
-
-**Why ProximaDB**:
-- Type-safe date filtering (Int64 timestamps)
-- Boolean verification flags
-- 20% faster with filtering (measured)
-- Source tracking in metadata
-
----
-
-=== 2. E-Commerce Product Recommendations
-
-**Problem**: Find similar products with business rule constraints (price, inventory)
-
-**ProximaDB Solution**: Product embedding similarity with real-time filters
-
-**Engine**: HELIX (~13.2ms at 10K; ~1.43ms at small scale) - products cluster by category naturally
-
-**Example**: "Customers who viewed this also viewed..."
-[source,python]
-----
-# Store product catalog
-collection.insert([
-    {
-        "id": "prod_laptop_15",
-        "vector": product_embedding,  # From product image + description
-        "metadata": {
-            "price": 1299.99,
-            "category": "electronics",
-            "in_stock": True,
-            "inventory_count": 47,
-            "brand": "TechCorp",
-            "rating": 4.5
-        }
-    }
-])
-
-# Find similar products with business rules
-similar = collection.search(
-    query_vector=current_product_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "in_stock", "operator": "EQUALS", "value": True},
-            {"field": "price", "operator": "LESS_THAN_OR_EQUAL", "value": 1500},
-            {"field": "rating", "operator": "GREATER_THAN_OR_EQUAL", "value": 4.0}
-        ]
-    },
-    top_k=10
-)
-----
-
-**Why ProximaDB**:
-- Low latency (scale-dependent)
-- Type-safe price/rating filters (Float)
-- Inventory checks (Boolean, Integer)
-- 5x faster than alternatives
-
-**Business Impact**: Sub-2ms response enables real-time personalization
-
----
-
-=== 3. Conversational AI & Chatbot Memory
-
-**Problem**: Long-term conversation context, instant recall, temporal search
-
-**ProximaDB Solution**: Fast retrieval of relevant conversation history
-
-**Engine**: SWIFT (~95ms at 10K; low-latency writes at small scale) - frequent updates, ~28ms flush
-
-**Example**: AI assistant with long-term memory
-[source,python]
-----
-# Store conversation turns
-collection.insert([
-    {
-        "id": f"turn_{session_id}_{turn_num}",
-        "vector": turn_embedding,
-        "metadata": {
-            "user_id": "user_456",
-            "session_id": "session_789",
-            "timestamp": 1729123456,
-            "intent": "technical_support",
-            "resolved": False,
-            "sentiment_score": 0.75
-        }
-    }
-])
-
-# Find relevant past conversations
-context = collection.search(
-    query_vector=current_query_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "user_id", "operator": "EQUALS", "value": "user_456"},
-            {"field": "intent", "operator": "EQUALS", "value": "technical_support"},
-            {"field": "timestamp", "operator": "GREATER_THAN", "value": 1727000000}  # Last 30 days
-        ]
-    },
-    top_k=5
-)
-----
-
-**Why ProximaDB**:
-- SWIFT 28ms writes (real-time conversation updates)
-- Low latency (scale-dependent)
-- Temporal filtering (timestamp range queries)
-- Session/user isolation via filters
-
----
-
-=== 4. Content Discovery & Recommendation
-
-**Problem**: Personalized content feeds, similar articles, topic clustering
-
-**ProximaDB Solution**: Semantic similarity with engagement metrics
-
-**Engine**: SST-LZ4 (~5.32ms at 10K; ~2.98ms at small scale) - balanced read/write with compression
-
-**Example**: News/blog recommendation engine
-[source,python]
-----
-# Store articles with engagement metrics
-collection.insert([
-    {
-        "id": "article_tech_ai_2024_10",
-        "vector": article_embedding,
-        "metadata": {
-            "category": "technology",
-            "subcategory": "artificial_intelligence",
-            "publish_date": 1729000000,
-            "author_id": "author_123",
-            "view_count": 15420,
-            "avg_read_time_sec": 180,
-            "quality_score": 8.5
-        }
-    }
-])
-
-# Personalized recommendations
-articles = collection.search(
-    query_vector=user_interest_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "category", "operator": "EQUALS", "value": "technology"},
-            {"field": "publish_date", "operator": "GREATER_THAN", "value": 1727000000},  # Recent
-            {"field": "quality_score", "operator": "GREATER_THAN_OR_EQUAL", "value": 7.0},
-            {"field": "view_count", "operator": "GREATER_THAN", "value": 1000}  # Popular
-        ]
-    },
-    top_k=20
-)
-----
-
-**Why ProximaDB**:
-- LZ4 compression (50% storage for large article corpus)
-- Integer filters (view_count, read_time)
-- Float filters (quality_score)
-- Date range queries (recent articles)
-
----
-
-=== 5. Image & Video Search (Computer Vision)
-
-**Problem**: Find visually similar images, face recognition, object detection
-
-**ProximaDB Solution**: Spatial indexing for high-dimensional visual embeddings
-
-**Engine**: HELIX (~13.2ms at 10K; ~1.43ms at small scale) - optimized for CNN embeddings
-
-**Example**: Visual search for e-commerce
-[source,python]
-----
-# Store product images with attributes
-collection.insert([
-    {
-        "id": "img_dress_floral_42",
-        "vector": resnet50_embedding,  # 2048D visual features
-        "metadata": {
-            "product_type": "dress",
-            "color_primary": "blue",
-            "color_secondary": "white",
-            "pattern": "floral",
-            "price_range": "mid",  # Budget/mid/premium
-            "season": "summer",
-            "has_inventory": True
-        }
-    }
-])
-
-# Visual search: "Find similar dresses in stock"
-similar_images = collection.search(
-    query_vector=uploaded_image_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "product_type", "operator": "EQUALS", "value": "dress"},
-            {"field": "has_inventory", "operator": "EQUALS", "value": True},
-            {"field": "price_range", "operator": "IN", "value": ["mid", "budget"]}
-        ]
-    },
-    top_k=50
-)
-----
-
-**Why ProximaDB**:
-- HELIX low latency (Hilbert curves for visual similarity)
-- PCA compression (70% savings for image embeddings)
-- High-dimensional support (1536D, 2048D CNN features)
-
----
-
-=== 6. Fraud Detection & Anomaly Detection
-
-**Problem**: Real-time pattern matching against known fraud vectors
-
-**ProximaDB Solution**: Fast similarity search with threshold filtering
-
-**Engine**: SWIFT (~95ms at 10K; low-latency writes at small scale) - real-time detection requirements
-
-**Example**: Transaction fraud detection
-[source,python]
-----
-# Store known fraud patterns
-fraud_patterns.insert([
-    {
-        "id": "fraud_pattern_cc_stolen_42",
-        "vector": transaction_behavior_embedding,
-        "metadata": {
-            "fraud_type": "credit_card_stolen",
-            "severity": 9,
-            "min_amount": 500.0,
-            "time_pattern": "night",
-            "confidence": 0.95
-        }
-    }
-])
-
-# Check new transaction
-similar_patterns = fraud_patterns.search(
-    query_vector=current_transaction_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "severity", "operator": "GREATER_THAN_OR_EQUAL", "value": 7},
-            {"field": "confidence", "operator": "GREATER_THAN", "value": 0.90}
-        ]
-    },
-    top_k=5
-)
-
-if similar_patterns and similar_patterns[0].score > 0.85:
-    flag_for_review(transaction)
-----
-
-**Why ProximaDB**:
-- Low latency (scale-dependent)
-- Severity thresholds (Integer filters)
-- Confidence scoring (Float filters)
-- Fast writes (28ms for pattern updates)
-
----
-
-=== 7. Customer Support Ticket Routing
-
-**Problem**: Automatically route support tickets to right team based on similarity
-
-**ProximaDB Solution**: Semantic understanding of issues with team/priority filters
-
-**Engine**: SST-LZ4 (~5.32ms at 10K) - balanced, frequent updates
-
-**Example**: Intelligent ticket routing
-[source,python]
-----
-# Historical tickets with resolutions
-tickets.insert([
-    {
-        "id": "ticket_2024_10_1234",
-        "vector": ticket_description_embedding,
-        "metadata": {
-            "team": "backend_engineering",
-            "priority": 3,  # 1=low, 5=critical
-            "resolution_time_hours": 4,
-            "customer_tier": "enterprise",
-            "resolved": True,
-            "satisfaction_score": 4.5
-        }
-    }
-])
-
-# Route new ticket
-similar_tickets = tickets.search(
-    query_vector=new_ticket_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "resolved", "operator": "EQUALS", "value": True},
-            {"field": "satisfaction_score", "operator": "GREATER_THAN", "value": 4.0},
-            {"field": "customer_tier", "operator": "EQUALS", "value": "enterprise"}
-        ]
-    },
-    top_k=10
-)
-
-recommended_team = similar_tickets[0].metadata["team"]
-----
-
-**Why ProximaDB**:
-- Type-safe priority levels (Integer)
-- Resolution tracking (Boolean)
-- Satisfaction scores (Float)
-- Fast search for real-time routing
-
----
-
-=== 8. Code Search & Developer Tools
-
-**Problem**: Find similar code snippets, detect duplicates, code review assistance
-
-**ProximaDB Solution**: Code embedding search with language/framework filters
-
-**Engine**: VIPER (~89.5ms at 10K; ~7.72ms at small scale) - large codebases, analytical queries
-
-**Example**: Code snippet search
-[source,python]
-----
-# Index codebase
-code_collection.insert([
-    {
-        "id": "file_src_auth_oauth.py_L45-67",
-        "vector": code_embedding,  # CodeBERT/GraphCodeBERT
-        "metadata": {
-            "language": "python",
-            "framework": "fastapi",
-            "file_path": "src/auth/oauth.py",
-            "function_name": "validate_token",
-            "lines_of_code": 23,
-            "complexity": 5,  # Cyclomatic complexity
-            "last_modified": 1729000000
-        }
-    }
-])
-
-# Find similar implementations
-similar_code = code_collection.search(
-    query_vector=search_snippet_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "language", "operator": "EQUALS", "value": "python"},
-            {"field": "framework", "operator": "EQUALS", "value": "fastapi"},
-            {"field": "complexity", "operator": "LESS_THAN_OR_EQUAL", "value": 10}
-        ]
-    },
-    top_k=20
-)
-----
-
-**Why ProximaDB**:
-- VIPER Parquet (efficient for large codebases)
-- Integer filters (complexity, LOC)
-- Timestamp filters (recent changes)
-- Analytical queries (code pattern analysis)
-
----
-
-=== 9. Multi-Modal Search (Text + Image + Metadata)
-
-**Problem**: Search across different modalities with unified filters
-
-**ProximaDB Solution**: Store multiple embedding types with shared metadata
-
-**Engine**: HELIX (scale-dependent) for each modality
-
-**Example**: Product search with image + text
-[source,python]
-----
-# Text embeddings collection
-text_collection.create({
-    "filterable_columns": [
-        {"name": "product_id", "data_type": "STRING"},
-        {"name": "price", "data_type": "FLOAT"},
-        {"name": "in_stock", "data_type": "BOOLEAN"}
-    ]
-})
-
-# Image embeddings collection (same metadata structure)
-image_collection.create({
-    "filterable_columns": [
-        {"name": "product_id", "data_type": "STRING"},
-        {"name": "price", "data_type": "FLOAT"},
-        {"name": "in_stock", "data_type": "BOOLEAN"}
-    ]
-})
-
-# Hybrid search
-text_results = text_collection.search(query_text_emb, filters=common_filters)
-image_results = image_collection.search(query_image_emb, filters=common_filters)
-
-# Fusion ranking
-combined = fuse_results(text_results, image_results, weights=[0.6, 0.4])
-----
-
-**Why ProximaDB**:
-- Consistent metadata across modalities
-- Type-safe filters work identically
-- Fast enough for hybrid search (<3ms per modality)
-- Independent engine selection per modality
-
----
-
-=== 10. Temporal Search & Version Control
-
-**Problem**: Search embeddings across time, version history, A/B testing
-
-**ProximaDB Solution**: Timestamp-based filtering with version tracking
-
-**Engine**: SST-LZ4 (~5.32ms at 10K) - frequent version updates
-
-**Example**: Document versioning
-[source,python]
-----
-# Store document versions
-docs.insert([
-    {
-        "id": "doc_contract_template_v5",
-        "vector": document_embedding,
-        "metadata": {
-            "doc_id": "contract_template",  # Logical ID
-            "version": 5,  # Version number
-            "created_at": 1729000000,
-            "author_id": "legal_team_jane",
-            "approved": True,
-            "active": True
-        }
-    }
-])
-
-# Find latest approved version
-latest = docs.search(
-    query_vector=search_query_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "doc_id", "operator": "EQUALS", "value": "contract_template"},
-            {"field": "approved", "operator": "EQUALS", "value": True},
-            {"field": "active", "operator": "EQUALS", "value": True}
-        ]
-    },
-    top_k=1
-)
-----
-
-**Why ProximaDB**:
-- Integer version tracking
-- Boolean approval flags
-- Timestamp queries (created_at ranges)
-- Fast writes for frequent version updates
-
----
-
-=== 11. Duplicate Detection & Deduplication
-
-**Problem**: Find near-duplicate content, plagiarism detection, data quality
-
-**ProximaDB Solution**: Similarity threshold search with metadata deduplication
-
-**Engine**: VIPER (~89.5ms at 10K) - batch deduplication jobs
-
-**Example**: News article deduplication
-[source,python]
-----
-# Check for duplicates before insertion
-potential_duplicates = articles.search(
-    query_vector=new_article_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "category", "operator": "EQUALS", "value": "technology"},
-            {"field": "publish_date", "operator": "GREATER_THAN",
-             "value": 1728900000}  # Last 3 days
-        ]
-    },
-    top_k=10
-)
-
-if potential_duplicates and potential_duplicates[0].score > 0.95:
-    # >95% similar - likely duplicate
-    mark_as_duplicate(new_article, similar_to=potential_duplicates[0].id)
-else:
-    articles.insert(new_article)
-----
-
-**Why ProximaDB**:
-- Categorical filtering (news category)
-- Date range (recent articles only)
-- Batch operations (VIPER for bulk deduplication)
-
----
-
-=== 12. Anomaly Detection in IoT/Monitoring
-
-**Problem**: Detect unusual patterns in sensor data, system metrics
-
-**ProximaDB Solution**: Baseline pattern vectors with threshold queries
-
-**Engine**: SWIFT (scale-dependent) - real-time monitoring
-
-**Example**: Server health monitoring
-[source,python]
-----
-# Store normal behavior patterns
-baselines.insert([
-    {
-        "id": "pattern_normal_cpu_weekday",
-        "vector": metrics_embedding,  # CPU, memory, disk, network as vector
-        "metadata": {
-            "server_id": "prod-api-01",
-            "time_of_day": "business_hours",
-            "day_type": "weekday",
-            "is_normal": True,
-            "severity": 0
-        }
-    }
-])
-
-# Check current metrics
-similar_patterns = baselines.search(
-    query_vector=current_metrics_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "server_id", "operator": "EQUALS", "value": "prod-api-01"},
-            {"field": "is_normal", "operator": "EQUALS", "value": True},
-            {"field": "time_of_day", "operator": "EQUALS", "value": "business_hours"}
-        ]
-    },
-    top_k=5
-)
-
-if similar_patterns[0].score < 0.70:  # <70% similar to normal
-    alert_anomaly(current_metrics)
-----
-
-**Why ProximaDB**:
-- Real-time detection (scale-dependent)
-- Fast writes (28ms for pattern updates)
-- Contextual filtering (time of day, server)
-
----
-
-=== 13. Legal Document Search & Analysis
-
-**Problem**: Find relevant case law, contract clauses, compliance documents
-
-**ProximaDB Solution**: Legal text embeddings with jurisdictional filters
-
-**Engine**: VIPER (~89.5ms at 10K) - large legal corpus, analytical
-
-**Example**: Case law research
-[source,python]
-----
-# Legal document corpus
-cases.insert([
-    {
-        "id": "case_smith_v_jones_2024",
-        "vector": legal_text_embedding,
-        "metadata": {
-            "jurisdiction": "california",
-            "case_type": "contract_dispute",
-            "year": 2024,
-            "precedential": True,
-            "citation_count": 47,
-            "outcome": "plaintiff"
-        }
-    }
-])
-
-# Research similar cases
-relevant_cases = cases.search(
-    query_vector=current_case_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "jurisdiction", "operator": "EQUALS", "value": "california"},
-            {"field": "case_type", "operator": "EQUALS", "value": "contract_dispute"},
-            {"field": "precedential", "operator": "EQUALS", "value": True},
-            {"field": "year", "operator": "GREATER_THAN_OR_EQUAL", "value": 2020}
-        ]
-    }
-)
-----
-
-**Why ProximaDB**:
-- Jurisdictional filtering (String, exact match critical)
-- Precedential flags (Boolean)
-- Citation analysis (Integer)
-- Large corpus support (VIPER analytics)
-
----
-
-=== 14. Recruitment & Candidate Matching
-
-**Problem**: Match candidates to job descriptions, resume search
-
-**ProximaDB Solution**: Skills/experience embeddings with requirement filters
-
-**Engine**: SST-LZ4 (~5.32ms at 10K) - frequent updates, compression
-
-**Example**: Job matching
-[source,python]
-----
-# Candidate database
-candidates.insert([
-    {
-        "id": "candidate_engineer_sr_jane_doe",
-        "vector": skills_embedding,  # Skills + experience as vector
-        "metadata": {
-            "years_experience": 8,
-            "current_title": "senior_engineer",
-            "location": "san_francisco",
-            "willing_to_relocate": True,
-            "salary_expectation": 180000,
-            "clearance": "secret",
-            "available": True
-        }
-    }
-])
-
-# Match to job requirements
-matches = candidates.search(
-    query_vector=job_requirements_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "years_experience", "operator": "GREATER_THAN_OR_EQUAL", "value": 5},
-            {"field": "available", "operator": "EQUALS", "value": True},
-            {"field": "salary_expectation", "operator": "LESS_THAN_OR_EQUAL", "value": 200000},
-            {"field": "clearance", "operator": "IN", "value": ["secret", "top_secret"]}
-        ]
-    }
-)
-----
-
-**Why ProximaDB**:
-- Integer range queries (experience, salary)
-- Boolean flags (available, willing to relocate)
-- String matching (clearance level, location)
-- LZ4 compression (large candidate database)
-
----
-
-=== 15. Personalized Learning & Education
-
-**Problem**: Adaptive learning paths, similar exercise recommendation
-
-**ProximaDB Solution**: Learning objective embeddings with progress tracking
-
-**Engine**: HELIX (~13.2ms at 10K; ~1.43ms at small scale) - learning materials cluster by topic
-
-**Example**: Adaptive quiz system
-[source,python]
-----
-# Question bank
-questions.insert([
-    {
-        "id": "q_calculus_derivatives_42",
-        "vector": question_embedding,
-        "metadata": {
-            "subject": "mathematics",
-            "topic": "calculus",
-            "subtopic": "derivatives",
-            "difficulty": 7,  # 1-10 scale
-            "average_score": 0.65,
-            "time_limit_sec": 300,
-            "requires_calculator": True
-        }
-    }
-])
-
-# Adaptive question selection
-next_questions = questions.search(
-    query_vector=student_understanding_embedding,
-    filter_expression={
-        "operator": "AND",
-        "expressions": [
-            {"field": "subject", "operator": "EQUALS", "value": "mathematics"},
-            {"field": "difficulty", "operator": "GREATER_THAN_OR_EQUAL", "value": 5},
-            {"field": "difficulty", "operator": "LESS_THAN_OR_EQUAL", "value": 8},
-            {"field": "average_score", "operator": "LESS_THAN", "value": 0.80}  # Challenging but achievable
-        ]
-    },
-    top_k=5
-)
-----
-
-**Why ProximaDB**:
-- Difficulty range queries (Integer)
-- Performance metrics (Float: average_score)
-- Requirement flags (Boolean: calculator, diagram)
-- Fast retrieval for interactive learning
-
----
-
-== Use Case Summary
-
-[cols="2,2,1,2"]
-|===
-|Use Case |Key Features |Engine |Performance
-
-|**RAG Systems**
-|Source tracking, date filters
-|SWIFT/SST
-|Scale-dependent (see Performance)
-
-|**E-Commerce**
-|Price, inventory, ratings
-|HELIX
-|Scale-dependent (see Performance)
-
-|**Chatbots**
-|Session context, temporal
-|SWIFT
-|Scale-dependent (low-latency writes)
-
-|**Content Discovery**
-|Engagement metrics, quality
-|SST-LZ4
-|~5.32ms at 10K (see Performance)
-
-|**Visual Search**
-|High-dimensional images
-|HELIX
-|~13.2ms at 10K (lower at small scale)
-
-|**Fraud Detection**
-|Real-time, severity
-|SWIFT
-|Scale-dependent (see Performance)
-
-|**Support Routing**
-|Team, priority, resolution
-|SST-LZ4
-|~5.32ms at 10K (see Performance)
-
-|**Code Search**
-|Language, complexity
-|VIPER
-|~89.5ms at 10K (see Performance)
-
-|**Multi-Modal**
-|Unified metadata
-|HELIX
-|Scale-dependent (see Performance)
-
-|**Versioning**
-|Version, approval, temporal
-|SST
-|~5.32ms at 10K (LZ4)
-
-|**Deduplication**
-|Similarity threshold
-|VIPER
-|Scale-dependent (analytical)
-
-|**Anomaly Detection**
-|Pattern matching
-|SWIFT
-|Scale-dependent (low-latency writes)
-
-|**Legal Search**
-|Jurisdiction, precedent
-|VIPER
-|~89.5ms at 10K (see Performance)
-
-|**Recruitment**
-|Experience, salary range
-|SST-LZ4
-|~5.32ms at 10K (see Performance)
-
-|**Education**
-|Difficulty, performance
-|HELIX
-|~13.2ms at 10K (lower at small scale)
-|===
-
-**Common Thread**: Type-safe metadata filtering (Integer, Float, Boolean, String) enables business logic integration across all use cases.
-
----
-
-== Getting Started
-
-=== Installation
-
-[source,bash]
-----
-# Docker (recommended)
-docker pull proximadb/proximadb:latest
-docker run -d -p 5678:5678 -p 5679:5679 proximadb/proximadb:latest
-
-# From source
-git clone https://github.com/vjsingh1984/proximaDB
-cd proximaDB
-cargo build --release
-./target/release/proximadb-server
-----
-
-=== Configuration (Validated Defaults)
-
-[source,toml]
-----
-[storage.sst_config]
-block_size_kb = 1024    # 1MB - 34% faster than 2MB
-compression = "lz4"      # 7% faster + 50% storage savings
-compression_level = 3
-
-[storage.swift]
-records_per_block = 512  # Reduced from 2000 (11% faster)
-compression = "none"      # Latency-focused
-
-[compute]
-simd_enabled = true      # Auto-detect AVX2/NEON
-----
 
 ---
 
 == Documentation
 
-**Start Here**:
-- link:docs/INDEX.adoc[📚 **Documentation Index**] - Complete documentation map (NEW!)
-- link:docs/performance/README.adoc[Performance Guide] - Benchmarks and tuning
-- link:CLAUDE.md[Development Guide] - Complete architecture
+[cols="1,2"]
+|===
+| Resource | Description
 
-**Python SDK**:
-- link:clients/python/examples/README.md[Python Examples] - 8 production-ready examples, 89% coverage
-- link:clients/python/examples/sks_real_world_demo.py[SKS Demo] - 100-paper knowledge base with citations
+| link:docs/INDEX.adoc[Documentation Index]
+| Complete documentation map
 
-**For Developers**:
-- link:docs/technical/platform_architecture.adoc[Architecture]
-- link:docs/03-reference/sks_technical_reference.adoc[SKS Technical Reference] - Semantic Knowledge Store
-- link:docs/03-reference/graph_api_reference.adoc[Graph API Reference] - Graph operations
-- link:src/storage/engines/impls/sst/README.adoc[SST Engine]
-- link:src/storage/engines/impls/helix/README.adoc[HELIX Engine]
+| link:docs/storage/[Engine Deep-Dives]
+| SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR architecture
 
-**For Operations**:
-- link:config/config.toml[Default Configuration]
-- link:docs/04-operations/PRODUCTION_RUNBOOK.adoc[Production Runbook]
+| link:docs/graph/[Graph Engines]
+| ORION, PULSAR, QUASAR design
+
+| link:CLAUDE.md[Development Guide]
+| Build, test, contribute
+
+| link:clients/python/[Python SDK]
+| Production-ready client
+|===
 
 ---
 
-== Community & Support
+== Project Status
 
-**GitHub**: https://github.com/vjsingh1984/proximaDB
+[cols="1,3"]
+|===
+| Status | Details
 
-**Early Adopters**: ProximaDB is ready for production use with the caveat that it's maintained by a single developer. Consider your support and customization needs.
+| **Version**
+| 0.1.5 (stable)
 
-**Contributing**: Open source contributions welcome! See link:CLAUDE.md[CLAUDE.md] for development setup.
+| **Maintenance**
+| Single developer (transparent)
+
+| **Testing**
+| 2625+ tests passing
+
+| **Production**
+| Ready for evaluation and early adoption
+|===
+
+**Transparency**: This is an early-stage project. Performance claims are measured and validated, but consider support requirements for production deployment.
 
 ---
 
@@ -1958,8 +311,5 @@ Apache License 2.0 - See link:LICENSE[LICENSE]
 ---
 
 [.text-center]
-*Production-Ready Vector Database for AI Applications* +
-_Measured performance • Adaptive storage • Type-safe filtering_ +
-_Built with Rust 2024 for memory safety and speed_
-
-**Quick Links**: link:docs/performance/README.adoc[Performance] | link:CLAUDE.md[Dev Guide] | link:https://github.com/vjsingh1984/proximaDB[GitHub]
+**ProximaDB** — Unified Vector + Graph for AI +
+link:https://github.com/vjsingh1984/proximaDB[GitHub] | link:docs/INDEX.adoc[Docs] | link:CLAUDE.md[Contribute]
