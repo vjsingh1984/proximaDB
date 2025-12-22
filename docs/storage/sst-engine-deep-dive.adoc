@@ -136,21 +136,41 @@ Total: **99.9% elimination before distance computation**
 [source,mermaid]
 ----
 %%{init: {"theme": "neutral"}}%%
-quadrantChart
-    title Engine Selection by Workload
-    x-axis Write-Heavy --> Read-Heavy
-    y-axis Simple Queries --> Complex Analytics
-    quadrant-1 VIPER (Columnar Analytics)
-    quadrant-2 NOVA (Mixed Workloads)
-    quadrant-3 SST (Real-time Writes)
-    quadrant-4 HELIX (Spatial Locality)
-    SST: [0.2, 0.3]
-    HELIX: [0.7, 0.4]
-    VIPER: [0.8, 0.8]
-    NOVA: [0.5, 0.6]
-    SWIFT: [0.6, 0.2]
-    RAPTOR: [0.4, 0.7]
+graph LR
+    subgraph WRITE["Write-Heavy"]
+        SST["SST<br/>Real-time writes<br/>LSM-tree"]
+        RAPTOR["RAPTOR<br/>Adaptive learning<br/>Matrix Trinity"]
+    end
+
+    subgraph BALANCED["Balanced"]
+        NOVA["NOVA<br/>Mixed workloads<br/>Zone maps"]
+        SWIFT["SWIFT<br/>Low-latency<br/>Three-tier"]
+    end
+
+    subgraph READ["Read-Heavy"]
+        HELIX["HELIX<br/>Spatial locality<br/>Hilbert curves"]
+        VIPER["VIPER<br/>Analytics<br/>Columnar"]
+    end
+
+    style SST fill:#ffd966,stroke:#cc9900,stroke-width:3px
+    style HELIX fill:#93c47d,stroke:#5a8047
+    style VIPER fill:#e6f3ff,stroke:#4a90e2
+    style NOVA fill:#fff3e6,stroke:#f4a261
+    style SWIFT fill:#e6ffe6,stroke:#93c47d
+    style RAPTOR fill:#ffe6f3,stroke:#e066a0
 ----
+
+[cols="1,1,1,1", options="header"]
+|===
+| Engine | Write Speed | Read Speed | Best For
+
+| **SST** | Fast | Medium | Real-time writes, ACID
+| **HELIX** | Medium | Fast | Spatial/clustered data
+| **VIPER** | Slow | Fast | Batch analytics
+| **NOVA** | Medium | Medium | Mixed workloads
+| **SWIFT** | Fast | Fast | Low-latency, small data
+| **RAPTOR** | Medium | Adaptive | Unknown patterns
+|===
 
 === When to Choose SST
 
