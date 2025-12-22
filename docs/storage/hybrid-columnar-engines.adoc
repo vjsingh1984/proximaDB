@@ -189,6 +189,11 @@ pub struct ColumnarBlock {
 
 == SST Engine: Modular ProximaBlocks
 
+[NOTE]
+====
+For comprehensive technical details including class diagrams, data flow, and performance analysis, see the link:sst-engine-deep-dive.adoc[SST Engine Deep Dive].
+====
+
 === Architecture Overview
 
 **Location**: `src/storage/engines/impls/sst/`
@@ -346,6 +351,11 @@ impl ThreeStageFilter {
 
 == SWIFT Engine: High-Speed Hybrid Columnar Storage
 
+[NOTE]
+====
+For comprehensive technical details including three-tier hierarchy, AdaCurve encoding, and class diagrams, see the link:swift-engine-deep-dive.adoc[SWIFT Engine Deep Dive].
+====
+
 === Architecture Overview
 
 **Location**: `src/storage/engines/impls/swift/`
@@ -410,6 +420,11 @@ impl FastLanesEncoder {
 - **Concurrent Operations**: Lock-free data structures for parallelism
 
 == RAPTOR Engine: Matrix Trinity Architecture
+
+[NOTE]
+====
+For comprehensive technical details including Matrix Trinity deep dive, GPU acceleration, and class diagrams, see the link:raptor-engine-deep-dive.adoc[RAPTOR Engine Deep Dive].
+====
 
 === Architecture Overview
 

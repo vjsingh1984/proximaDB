@@ -120,7 +120,16 @@ Complete documentation map for ProximaDB - High-Performance Vector Database
 |Document |Description
 
 |link:storage/sst-engine-deep-dive.adoc[**SST Engine Deep Dive**]
-|Real-time OLTP with hybrid columnar format
+|Real-time OLTP with hybrid columnar format, LSM-tree architecture
+
+|link:storage/helix-engine-deep-dive.adoc[**HELIX Engine Deep Dive**]
+|Spatial locality with Hilbert curves and PCA dimensionality reduction
+
+|link:storage/swift-engine-deep-dive.adoc[**SWIFT Engine Deep Dive**]
+|Three-tier hierarchy (SuperBlock → DataBlock → Records) with AdaCurve
+
+|link:storage/raptor-engine-deep-dive.adoc[**RAPTOR Engine Deep Dive**]
+|Matrix Trinity architecture (P² + K² + P×K) with GPU acceleration
 
 |link:storage/viper-engine-deep-dive.adoc[**VIPER Engine Deep Dive**]
 |Analytics/OLAP with columnar Parquet
@@ -129,10 +138,26 @@ Complete documentation map for ProximaDB - High-Performance Vector Database
 |Mixed workloads with progressive search
 
 |link:storage/hybrid-columnar-engines.adoc[**Hybrid Columnar Engines**]
-|Comparison of SST, VIPER, and NOVA
+|Comparison of all storage engines
 
 |link:storage/columnar-storage-architecture.adoc[**Columnar Storage Architecture**]
 |ProximaBlocks format and design
+|===
+
+=== Graph Engines
+
+[cols="2,5a"]
+|===
+|Document |Description
+
+|link:graph/graph-engines-deep-dive.adoc[**Graph Engines Deep Dive**]
+|ORION (CSR), PULSAR (distributed), QUASAR (tiered) - comprehensive guide
+
+|link:03-reference/graph_api_reference.adoc[**Graph API Reference**]
+|Graph operations and traversal API
+
+|link:technical/graph_persistence_architecture.adoc[**Graph Persistence Architecture**]
+|WAL persistence and recovery
 |===
 
 === Technical Deep-Dives

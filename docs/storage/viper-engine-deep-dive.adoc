@@ -1,1475 +1,535 @@
-= VIPER Engine Deep Dive: Columnar Storage Architecture
+= VIPER Engine: Design Rationale & Architecture
 :toc: left
-:toclevels: 4
+:toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:engine-version: 2.0
-:implementation-status: COMPLETE
+:last-updated: December 2025
+:engine-location: src/storage/engines/impls/viper/
 
 [.lead]
-**VIPER** (Vector-optimized Intelligent Parquet with Efficient Retrieval) is ProximaDB's pure columnar storage engine built on Apache Parquet, achieving 69.5% compression with exceptional analytics performance through progressive quantization and intelligent caching.
+**Why VIPER exists and how pure columnar storage transforms analytics**
 
-== Executive Summary
+== Design Philosophy
 
-=== Key Characteristics
+=== The Problem VIPER Solves
 
-[cols="2,3"]
-|===
-| Property | Value
+Vector databases typically optimize for real-time queries, sacrificing storage efficiency. But many workloads are **analytics-first**:
 
-| **Storage Format**
-| Apache Parquet (pure columnar)
+* Batch processing of ML pipeline outputs
+* Data warehouse integration with columnar tools (Spark, Presto, DuckDB)
+* Cloud storage where egress costs dominate
+* Archival storage where compression matters more than latency
 
-| **Compression**
-| 69.5% average (vs 16% for row-based engines)
+These workloads need a fundamentally different storage model.
 
-| **Best For**
-| Analytics, batch operations, cloud storage
-
-| **Implementation**
-| `src/storage/engines/impls/viper/` (12,049 lines, 31 files)
-
-| **Quantization**
-| Binary → INT8 → PQ8 → FP32 progressive cascade
-
-| **Row Group Size**
-| 50,000 vectors (vs 1,024 for ProximaBlocks)
-
-| **Status**
-| ✅ Production-ready
-|===
-
-=== Architecture Overview
+=== The Columnar Insight
 
 [source,mermaid]
 ----
 %%{init: {"theme": "neutral"}}%%
 graph TB
-    subgraph CLIENT["CLIENT REQUESTS"]
-        A[Insert Batch]
-        B[Search Query]
-        C[Metadata Filter]
+    subgraph ROW["Row-Based Storage (SST)"]
+        R1["vec1: [0.12, -0.34, 0.87, ...]"]
+        R2["vec2: [0.15, -0.31, 0.85, ...]"]
+        R3["vec3: [0.13, -0.33, 0.86, ...]"]
+        note1["Mixed values → poor compression"]
     end
 
-    subgraph PIPELINE["VIPER PIPELINE"]
-        D[VectorRecordProcessor]
-        E[Quantization Engine]
-        F[ParquetFlusher]
+    subgraph COL["Columnar Storage (VIPER)"]
+        C1["dim_0: [0.12, 0.15, 0.13, ...]"]
+        C2["dim_1: [-0.34, -0.31, -0.33, ...]"]
+        C3["dim_2: [0.87, 0.85, 0.86, ...]"]
+        note2["Similar values → 69% compression"]
     end
 
-    subgraph STORAGE["PARQUET STORAGE"]
-        G[vector_fp32 Column]
-        H[q_binary Column]
-        I[q_int8 Column]
-        J[q_pq8 Column]
-        K[Metadata Columns]
-    end
-
-    subgraph SEARCH["PROGRESSIVE SEARCH"]
-        L[Binary Filter 95%]
-        M[INT8 Rank 9%]
-        N[PQ8 Score 0.9%]
-        O[FP32 Rerank Final]
-    end
-
-    A --> D
-    D --> E
-    E --> F
-    F --> G
-    F --> H
-    F --> I
-    F --> J
-    F --> K
-
-    B --> L
-    L --> M
-    M --> N
-    N --> O
-
-    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style C fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style G fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style J fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style K fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style L fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
-    style M fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
-    style N fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
-    style O fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style ROW fill:#ffe6e6,stroke:#e06666
+    style COL fill:#e6ffe6,stroke:#93c47d
 ----
 
-== Core Architecture
+**Key insight**: Embedding vectors have strong correlations **within dimensions** but weak correlations **across dimensions**.
 
-=== Module Organization
+* Dimension 0 across all vectors: `[0.12, 0.15, 0.13, 0.14]` → Similar values, compress well
+* Row across all dimensions: `[0.12, -0.34, 0.87, ...]` → Mixed values, compress poorly
 
-VIPER implements a clean modular architecture with clear separation of concerns:
+**Result**: VIPER achieves **69.5% compression** vs ~16% for hybrid columnar engines.
 
-[cols="2,1,3"]
+=== Core Design Decisions
+
+[cols="2,3,3", options="header"]
 |===
-| Module | Lines | Responsibility
+| Decision | Rationale | Trade-off
 
-| **engine.rs**
-| 2,597
-| Main coordinator, initialization, UnifiedStorageEngine trait
+| **Pure Parquet format**
+| Industry-standard columnar format; integrates with Spark/Presto/DuckDB; mature compression
+| No custom optimization; Parquet overhead for small files
 
-| **pipeline.rs**
-| 3,565
-| Data processing pipeline, batch operations
+| **50K vectors per row group**
+| Large groups enable better compression modeling; amortize Parquet overhead
+| Higher memory during writes; coarser pruning granularity
 
-| **flush.rs**
-| 962
-| Flush operations, memtable to Parquet
+| **Pre-computed quantization columns**
+| Store Binary/INT8/PQ alongside FP32; avoid re-quantization at query time
+| 4x storage overhead for quantized columns; stale if distribution changes
 
-| **compaction.rs**
-| 46
-| Background row group reorganization
-
-| **readers/**
-| 2,432
-| Parquet reading, query optimization
-
-| **utilities.rs**
-| 1,001
-| Footer parsing, metadata extraction
-
-| **factory.rs**
-| 951
-| Engine instantiation, configuration
-
-| **column_filter.rs**
-| 657
-| Metadata filtering, predicate pushdown
-
-| **codebook_sidecar.rs**
-| 352
-| PQ codebook management
-
-| **tests/**
-| 1,486
-| Comprehensive test coverage
+| **No memtable (disk-only)**
+| Uses global WAL; batch-oriented writes fit analytics workload
+| Higher write latency than SST; not suitable for real-time inserts
 |===
 
-**Total**: 12,049 lines of implementation-verified code
+== Architecture Overview
 
-=== Columnar Storage Format
-
-==== Parquet Schema
-
-VIPER stores vectors in pure columnar format with separate columns for each data type:
-
-[source,asciidoc]
-----
-Parquet File Structure:
-├── Row Group 0 (50,000 vectors)
-│   ├── id: String[]                    // Vector IDs
-│   ├── collection_id: String[]         // Collection identifier
-│   ├── timestamp: i64[]                // Insertion timestamp
-│   ├── version: u32[]                  // Record version
-│   ├── vector_fp32: FixedSizeList[]    // Original FP32 vectors
-│   ├── q_binary: Binary[]              // Binary quantized (1 bit/dim)
-│   ├── q_int8: FixedSizeList[]         // INT8 quantized (8 bits/dim)
-│   ├── q_pq8: Binary[]                 // PQ8 codes (8 bits/vector)
-│   ├── qp_binary_threshold: f32[]      // Binary quantization params
-│   ├── qp_int8_min: f32[]              // INT8 min values
-│   ├── qp_int8_max: f32[]              // INT8 max values
-│   ├── qp_int8_scale: f32[]            // INT8 scale factors
-│   ├── qp_pq_subquantizers: i32[]      // PQ subquantizer count
-│   ├── qp_pq_centroids: Binary[]       // PQ codebook data
-│   ├── extra_meta: Map<String,String>  // Additional metadata
-│   ├── source: String[]                // Data source
-│   ├── is_deleted: bool[]              // Deletion marker
-│   └── expires_at: i64[]               // Expiration timestamp
-├── Row Group 1 (50,000 vectors)
-│   └── ... (same schema)
-└── Footer
-    ├── Schema definition
-    ├── Row group metadata
-    ├── Column statistics (min/max/null_count)
-    └── Bloom filters (optional)
-----
-
-==== Column Constants
-
-Defined in `src/storage/engines/core/formats/columnar/constants.rs`:
-
-[source,rust]
-----
-// Core columns
-pub const FIELD_ID: &str = "id";
-pub const FIELD_COLLECTION_ID: &str = "collection_id";
-pub const FIELD_VECTOR_FP32: &str = "vector_fp32";
-
-// Quantized vectors
-pub const FIELD_Q_BINARY: &str = "q_binary";
-pub const FIELD_Q_INT8: &str = "q_int8";
-pub const FIELD_Q_PQ4: &str = "q_pq4";
-pub const FIELD_Q_PQ8: &str = "q_pq8";
-pub const FIELD_Q_PQ16: &str = "q_pq16";
-pub const FIELD_Q_PQ32: &str = "q_pq32";
-
-// Quantization parameters
-pub const FIELD_QP_BINARY_THRESHOLD: &str = "qp_binary_threshold";
-pub const FIELD_QP_INT8_MIN: &str = "qp_int8_min";
-pub const FIELD_QP_INT8_MAX: &str = "qp_int8_max";
-pub const FIELD_QP_INT8_SCALE: &str = "qp_int8_scale";
-pub const FIELD_QP_PQ_SUBQUANTIZERS: &str = "qp_pq_subquantizers";
-pub const FIELD_QP_PQ_CENTROIDS: &str = "qp_pq_centroids";
-
-// Metadata columns
-pub const FIELD_TIMESTAMP: &str = "timestamp";
-pub const FIELD_VERSION: &str = "version";
-pub const FIELD_EXTRA_META: &str = "extra_meta";
-pub const FIELD_IS_DELETED: &str = "is_deleted";
-pub const FIELD_EXPIRES_AT: &str = "expires_at";
-----
-
-=== Why Columnar Achieves 69.5% Compression
-
-==== Dimensional Correlation Exploitation
-
-**Key Insight**: Embedding vectors have strong correlations **within dimensions** but weak correlations **across dimensions**.
-
-[source,asciidoc]
-----
-Example: OpenAI text-embedding-3-small (1536 dimensions)
-
-Dimension 0:  [0.12, 0.15, 0.13, 0.14, 0.11, ...]  ← Similar values
-Dimension 1:  [-0.34, -0.31, -0.33, -0.32, ...]    ← Similar values
-Dimension 2:  [0.87, 0.85, 0.86, 0.88, ...]        ← Similar values
-
-Row-based sees:  [0.12, -0.34, 0.87, 0.15, -0.31, 0.85, ...]  ← Mixed
-Columnar sees:   [0.12, 0.15, 0.13, 0.14, ...]  then [-0.34, -0.31, ...]
-----
-
-**Result**: Columnar compression can exploit:
-
-1. **Sequential correlation**: Adjacent values in same dimension are similar
-2. **Range optimization**: Each dimension has narrow value range
-3. **Pattern detection**: Dimension-specific patterns compress better
-
-==== Parquet's Multi-Stage Compression
-
-VIPER leverages Apache Parquet's sophisticated compression pipeline:
-
-[source,rust]
-----
-// From src/storage/engines/impls/viper/pipeline.rs
-let props = WriterProperties::builder()
-    .set_compression(Compression::ZSTD(ZstdLevel::try_new(6)?))
-    .set_encoding(Encoding::DELTA_BINARY_PACKED)  // Stage 1: Encoding
-    .set_dictionary_enabled(false)  // Disabled for high-cardinality vectors
-    .set_max_row_group_size(50_000)  // Stage 2: Large groups
-    .set_statistics_enabled(true)  // Stage 3: Statistics
-    .build();
-----
-
-**Compression Stages**:
-
-1. **Encoding** (DELTA_BINARY_PACKED): Encodes differences between consecutive values
-2. **Dictionary** (optional): Shared value dictionary (disabled for vectors)
-3. **Compression** (ZSTD level 6): Final compression algorithm
-4. **Statistics**: Min/max/null_count for pruning
-
-==== Compression Comparison
-
-From `docs/technical/compression/PROXIMA_VS_VIPER_COMPRESSION_ANALYSIS.md`:
-
-[cols="2,2,1,3"]
-|===
-| Engine | Storage Format | Compression | Analysis
-
-| **VIPER**
-| Columnar Parquet
-| **69.5%**
-| Exploits dimensional correlation
-
-| **SST**
-| Hybrid ProximaBlocks
-| ~16%
-| Mixed patterns reduce compression
-
-| **SWIFT**
-| Hybrid ProximaBlocks
-| 16.4%
-| Optimized for speed, not compression
-|===
-
-**Why 4.3x difference?**
-
-1. **Columnar layout**: Same-dimension values compress 3-5x better
-2. **Large row groups**: 50K vectors vs 1K blocks enable better modeling
-3. **Mature algorithms**: Parquet's ZSTD tuned for columnar data
-4. **No pattern detection overhead**: ProximaBlocks adds expensive analysis
-
-== Data Processing Pipeline
-
-=== Pipeline Architecture
-
-The VIPER pipeline (`pipeline.rs`, 3,565 lines) implements a three-stage processing model:
+=== Why Parquet for Vectors?
 
 [source,mermaid]
 ----
 %%{init: {"theme": "neutral"}}%%
 flowchart LR
-    A[VectorRecords] --> B[VectorRecordProcessor]
-    B --> C{Quantization?}
-    C -->|Enabled| D[StorageQuantizationEngine]
-    C -->|Disabled| E[Skip]
-    D --> F[ParquetFlusher]
-    E --> F
-    F --> G[WriterPool]
-    G --> H[Parquet File]
+    subgraph WRITE["Write Path"]
+        W1[Vector Batch] --> W2[Quantization Engine]
+        W2 --> W3[Arrow RecordBatch]
+        W3 --> W4[Parquet Writer]
+        W4 --> W5[.parquet file]
+    end
 
-    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style H fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    subgraph FILE["Parquet File Structure"]
+        F1["Row Group 0 (50K vectors)"]
+        F2["Row Group 1 (50K vectors)"]
+        F3["Footer: Schema + Statistics"]
+    end
+
+    subgraph READ["Read Path"]
+        R1[Query] --> R2[Footer: Statistics Pruning]
+        R2 --> R3[Selected Row Groups Only]
+        R3 --> R4[Column Projection]
+        R4 --> R5[Progressive Search]
+    end
+
+    W5 --> FILE
+    FILE --> R2
+
+    style WRITE fill:#e6f3ff,stroke:#4a90e2
+    style FILE fill:#fff3e6,stroke:#f4a261
+    style READ fill:#e6ffe6,stroke:#93c47d
 ----
 
-=== Stage 1: Vector Record Processing
+**Parquet advantages for vectors**:
 
-[source,rust]
+1. **Columnar layout**: Each dimension compressed independently
+2. **Row group statistics**: Min/max per column enables pruning
+3. **Ecosystem integration**: Read with Spark, Presto, DuckDB
+4. **Cloud-native**: Optimized for S3/GCS/Azure Blob
+
+=== Storage Schema
+
+[source,text]
 ----
-// From src/storage/engines/impls/viper/pipeline.rs
-pub struct VectorRecordProcessor {
-    /// Processing configuration
-    config: ProcessingConfig,
+VIPER Parquet Schema:
 
-    /// Batch size for processing
-    batch_size: usize,
+├── Core Columns (always present)
+│   ├── id: String                    // Vector ID
+│   ├── vector_fp32: FixedSizeList    // Original 768-dim float32
+│   ├── timestamp: i64                // Insertion time
+│   └── metadata: Map<String, String> // User metadata
 
-    /// Sorting strategy
-    sorting_strategy: SortingStrategy,
+├── Quantization Columns (pre-computed)
+│   ├── q_binary: Binary              // 1 bit/dim → 96 bytes for 768D
+│   ├── q_int8: FixedSizeList         // 8 bits/dim → 768 bytes
+│   └── q_pq8: Binary                 // Product quantization codes
 
-    /// Statistics tracking
-    stats: Arc<RwLock<ProcessingStats>>,
-}
+├── Quantization Parameters (per row group)
+│   ├── qp_binary_threshold: f32      // Binarization threshold
+│   ├── qp_int8_min/max/scale: f32    // INT8 normalization
+│   └── qp_pq_centroids: Binary       // PQ codebook
+
+Why pre-compute quantization?
+- Analytics queries often scan millions of vectors
+- Re-quantizing at query time = O(n × d) overhead
+- Pre-computed = instant access to compressed representation
 ----
 
-**Processing Steps**:
+== Engine Differentiation
 
-1. **Batch Formation**: Group records into batches of configurable size (default 10,000)
-2. **Sorting**: Apply sorting strategy (ByTimestamp, BySimilarity, ByMetadata, CompositeOptimal)
-3. **Preprocessing**: Normalize metadata, validate dimensions
-4. **Schema Adaptation**: Convert VectorRecord to Arrow RecordBatch
+=== VIPER vs Other Engines: Storage Efficiency
 
-**Sorting Strategies**:
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph LR
+    subgraph VIPER["VIPER: Pure Columnar"]
+        V1[69.5% compression]
+        V2[Batch-optimized]
+        V3[Cloud-native]
+    end
 
-[cols="2,3,2"]
+    subgraph SST["SST: Hybrid Columnar"]
+        S1[~16% compression]
+        S2[Real-time writes]
+        S3[Low latency]
+    end
+
+    subgraph HELIX["HELIX: Spatial Columnar"]
+        H1[~20% compression]
+        H2[Hilbert locality]
+        H3[Clustered access]
+    end
+
+    Q1["Need best compression?"] --> VIPER
+    Q2["Need real-time writes?"] --> SST
+    Q3["Need spatial clustering?"] --> HELIX
+
+    style VIPER fill:#e6ffe6,stroke:#93c47d
+    style SST fill:#ffd966,stroke:#cc9900
+    style HELIX fill:#e6f3ff,stroke:#4a90e2
+----
+
+=== When to Choose VIPER
+
+[cols="1,4", options="header"]
 |===
-| Strategy | Description | Use Case
+| Choose VIPER When | Rationale
 
-| **ByTimestamp**
-| Sort by insertion time
-| Time-series queries
+| **Storage cost is critical**
+| 69.5% compression reduces cloud storage costs 4x vs hybrid formats
 
-| **BySimilarity**
-| Cluster similar vectors
-| Similarity search
+| **Batch analytics workload**
+| Columnar format optimized for scanning, filtering, aggregating
 
-| **ByMetadata**
-| Sort by specified fields
-| Metadata filtering
+| **Cloud storage backend**
+| Parquet's row group structure enables selective reads → lower egress
 
-| **CompositeOptimal**
-| ID → Metadata → Timestamp
-| Range queries, compaction
+| **Ecosystem integration**
+| Read VIPER files directly with Spark, Presto, DuckDB, pandas
 
-| **ClusterThenSort**
-| K-means clustering + inner sort
-| Large datasets (moved to AXIS)
-|===
-
-=== Stage 2: Quantization
-
-VIPER uses the unified quantization engine (`src/compute/quantization/storage_engine.rs`) with collection-specific codebook management:
-
-[source,rust]
-----
-// From src/storage/engines/impls/viper/engine.rs (lines 336-367)
-let storage_config = StorageQuantizationConfig {
-    // PQ8 with 32 subquantizers - 32x compression for 768D vectors
-    primary_level: Some(UnifiedQuantizationLevel::pq8(32)),
-
-    // Binary quantization for initial filtering - 32x reduction
-    filter_level: Some(UnifiedQuantizationLevel::binary()),
-
-    // INT8 for intermediate precision - 4x reduction, 98% recall
-    fast_level: Some(UnifiedQuantizationLevel::int8()),
-
-    // Cosine distance (default, configurable per collection)
-    distance_metric: DistanceMetric::Cosine,
-
-    // Enable Binary→INT8→PQ→FP32 progressive refinement
-    enable_progressive: true,
-
-    // Initial filter returns 100x final k for refinement
-    filter_threshold: 100.0,
-
-    // Fetch 10x candidates at each stage
-    candidate_multiplier: 10,
-
-    // Train codebooks on 10K sample vectors
-    training_sample_size: 10000,
-
-    // 512MB memory budget for quantization structures
-    memory_budget_mb: 512,
-
-    // Use SIMD/GPU when available
-    enable_hardware_acceleration: true,
-};
-----
-
-**Quantization Levels**:
-
-[cols="1,1,1,2,2"]
-|===
-| Level | Storage | Training | Compression | Recall
-
-| **Binary**
-| 1 bit/dim
-| No (threshold)
-| 32x
-| 70-75% (filter only)
-
-| **INT8**
-| 8 bits/dim
-| No (min/max)
-| 4x
-| 95-98%
-
-| **PQ8**
-| 8 bits/vector
-| Yes (k-means++)
-| 32x
-| 90-95%
-
-| **PQ16**
-| 16 bits/vector
-| Yes (k-means++)
-| 16x
-| 95-98%
-
-| **FP32**
-| 32 bits/dim
-| No
-| 1x
-| 100%
+| **Archival/cold storage**
+| Maximum compression for infrequently accessed data
 |===
 
-=== Stage 3: Parquet Flushing
+=== When NOT to Choose VIPER
 
-[source,rust]
-----
-// From src/storage/engines/impls/viper/pipeline.rs
-pub struct ParquetFlusher {
-    /// Flushing configuration
-    config: FlushingConfig,
-
-    /// Writer pool for parallel writing
-    writer_pool: Arc<WriterPool>,
-
-    /// Filesystem interface
-    filesystem: Arc<FilesystemFactory>,
-
-    /// Flushing statistics
-    stats: Arc<RwLock<FlushingStats>>,
-}
-----
-
-**Flush Configuration** (`FlushingConfig`):
-
-[source,rust]
-----
-pub struct FlushingConfig {
-    // Compression algorithm (ZSTD recommended)
-    pub compression_algorithm: CompressionAlgorithm,
-
-    // Compression level (6 = balanced)
-    pub compression_level: u8,
-
-    // Enable dictionary encoding (for metadata only)
-    pub enable_dictionary_encoding: bool,
-
-    // Row group size (50,000 = optimal)
-    pub row_group_size: usize,
-
-    // Write batch size (10,000 = balanced)
-    pub write_batch_size: usize,
-
-    // Enable column statistics
-    pub enable_statistics: bool,
-}
-----
-
-**Parquet Writer Properties**:
-
-[source,rust]
-----
-// Default configuration from pipeline.rs
-WriterProperties::builder()
-    .set_compression(Compression::ZSTD(ZstdLevel::try_new(6)?))
-    .set_encoding(Encoding::DELTA_BINARY_PACKED)
-    .set_dictionary_enabled(false)  // Disabled for vectors
-    .set_max_row_group_size(50_000)
-    .set_statistics_enabled(true)
-    .set_writer_version(WriterVersion::PARQUET_2_0)
-    .build()
-----
-
-== Progressive Search Pipeline
-
-=== Multi-Stage Cascade
-
-VIPER implements a 4-stage progressive search with exponential candidate reduction:
-
-[source,asciidoc]
-----
-Query: Find top-10 similar vectors from 1M collection
-
-Stage 1: Binary Filter
-├── Input: 1,000,000 vectors
-├── Operation: Hamming distance on binary vectors
-├── Candidates: 100,000 vectors (90% elimination)
-└── Cost: ~100ms
-
-Stage 2: INT8 Ranking
-├── Input: 100,000 candidates
-├── Operation: L2 distance on INT8 vectors
-├── Candidates: 10,000 vectors (90% elimination)
-└── Cost: ~50ms
-
-Stage 3: PQ8 Scoring
-├── Input: 10,000 candidates
-├── Operation: Asymmetric distance on PQ8 codes
-├── Candidates: 1,000 vectors (90% elimination)
-└── Cost: ~20ms
-
-Stage 4: FP32 Reranking
-├── Input: 1,000 candidates
-├── Operation: Full precision distance
-├── Output: Top-10 results
-└── Cost: ~10ms
-
-Total Time: ~180ms
-Speedup: 142x vs full scan (25,000ms)
-Recall: 95%+
-----
-
-=== Search Implementation
-
-The search pipeline is implemented in `src/storage/engines/core/formats/columnar/`:
-
-[source,rust]
-----
-// UnifiedParquetReader coordinates progressive search
-pub struct UnifiedParquetReader {
-    /// Reading strategy (Direct, Streaming, MemoryMapped)
-    strategy: ReadingStrategy,
-
-    /// Row group access pattern
-    access_pattern: RowGroupAccessPattern,
-
-    /// Column projector for selective reading
-    projector: ColumnProjector,
-
-    /// Metadata filter strategy
-    filter_strategy: MetadataFilterStrategy,
-}
-----
-
-**Reading Strategies**:
-
-[cols="2,3,2"]
+[cols="1,2,2", options="header"]
 |===
-| Strategy | Description | Use Case
+| Scenario | Better Choice | Why
 
-| **Direct**
-| Read full row groups
-| Small files (<100MB)
+| Real-time writes
+| **SST**
+| VIPER's large row groups (50K) have higher write latency
 
-| **Streaming**
-| Lazy row group loading
-| Large files (>1GB)
+| Point queries (by ID)
+| **SST** or **SWIFT**
+| Row-based formats have O(1) ID lookup; VIPER requires row group scan
 
-| **MemoryMapped**
-| OS page cache utilization
-| Hot files (local storage)
+| Spatial locality queries
+| **HELIX**
+| VIPER doesn't preserve vector proximity in storage layout
+
+| Frequently updated data
+| **SST**
+| VIPER's immutable row groups require rewriting for updates
+
+| Sub-millisecond latency
+| **SWIFT**
+| Parquet parsing overhead > SWIFT's in-memory hierarchy
 |===
+
+== Progressive Search: The Quantization Cascade
+
+=== Why Pre-Compute Multiple Quantization Levels?
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    subgraph QUERY["Query: top-10 from 1M vectors"]
+        Q[Query Vector]
+    end
+
+    subgraph S1["Stage 1: Binary Filter"]
+        A[1M vectors] -->|Hamming distance| B[100K candidates]
+        note1["96 bytes × 1M = 96MB scanned<br/>90% eliminated"]
+    end
+
+    subgraph S2["Stage 2: INT8 Ranking"]
+        B -->|SIMD L2 distance| C[10K candidates]
+        note2["768 bytes × 100K = 73MB scanned<br/>90% eliminated"]
+    end
+
+    subgraph S3["Stage 3: PQ8 Scoring"]
+        C -->|Lookup table distance| D[1K candidates]
+        note3["32 bytes × 10K = 320KB scanned<br/>90% eliminated"]
+    end
+
+    subgraph S4["Stage 4: FP32 Rerank"]
+        D -->|Full precision L2| E[Top-10 Results]
+        note4["3KB × 1K = 3MB scanned<br/>Final ranking"]
+    end
+
+    Q --> S1
+    S1 --> S2
+    S2 --> S3
+    S3 --> S4
+
+    style S1 fill:#ffe6e6,stroke:#e06666
+    style S2 fill:#fff3e6,stroke:#f4a261
+    style S3 fill:#e6f3ff,stroke:#4a90e2
+    style S4 fill:#e6ffe6,stroke:#93c47d
+----
+
+|===
+| Stage | Column Read | Bytes/Vector | Total I/O (1M) | Elimination
+
+| Binary | `q_binary` | 96 | 96MB | 90%
+| INT8 | `q_int8` | 768 | 73MB (100K) | 90%
+| PQ8 | `q_pq8` | 32 | 320KB (10K) | 90%
+| FP32 | `vector_fp32` | 3072 | 3MB (1K) | Final
+|===
+
+**Key insight**: Pre-computing quantization means each stage reads only its column. No re-quantization = pure I/O bound.
+
+**Total**: 169MB scanned vs 3GB for full FP32 scan → **17x I/O reduction**
 
 === Row Group Pruning
 
-VIPER uses Parquet column statistics for aggressive row group elimination:
-
-[source,rust]
+[source,mermaid]
 ----
-// From src/storage/engines/core/formats/columnar/metadata_filter_strategy.rs
-pub enum MetadataFilterStrategy {
-    // Fast path: All filters on indexed columns
-    FastFilterable {
-        projection_columns: Vec<String>,
-        pushdown_filters: Vec<FilterCondition>,
-    },
+%%{init: {"theme": "neutral"}}%%
+sequenceDiagram
+    participant Q as Query
+    participant F as Footer
+    participant RG as Row Groups
+    participant R as Results
 
-    // Slow path: Filters on extra_meta require full scan
-    SlowFullScan {
-        filterable_filters: Vec<FilterCondition>,
-        non_filterable_filters: Vec<FilterCondition>,
-        warning_message: String,
-    },
+    Q->>F: Read Parquet footer (4KB)
+    F->>F: Parse row group statistics
 
-    // Mixed: Some filters pushdown, others post-process
-    Mixed {
-        pushdown_filters: Vec<FilterCondition>,
-        post_filters: Vec<FilterCondition>,
-        projection_columns: Vec<String>,
-    },
+    loop Each Row Group
+        F->>F: Check min/max vs filter
+        alt Statistics match
+            F->>RG: Add to scan list
+        else Statistics don't match
+            F->>F: Skip row group (PRUNED)
+        end
+    end
 
-    NoFilter,
-}
+    Note over F,RG: 80%+ row groups pruned<br/>for selective filters
+
+    RG->>R: Read only selected columns<br/>from selected row groups
 ----
 
-**Pruning Pipeline**:
+**Example**: Filter `timestamp > 2024-01-01`
 
-1. **Bloom Filter Check**: For ID equality, check Parquet bloom filters (100-1000x speedup)
-2. **Statistics Pruning**: Use min/max values to eliminate row groups (10-100x speedup)
-3. **Column Projection**: Read only necessary columns (2-10x speedup)
-4. **Post-Filtering**: Apply remaining filters after reading
+* 20 row groups total
+* Footer statistics show 16 row groups have `max(timestamp) < 2024-01-01`
+* Only 4 row groups actually read → **80% I/O reduction**
 
-== Compaction Strategy
+== Compression Deep Dive
 
-=== Background Compaction
+=== Why 69.5% vs 16%?
 
-VIPER implements size-tiered compaction to optimize storage layout:
-
-[source,rust]
+[source,text]
 ----
-// From src/storage/engines/impls/viper/compaction.rs
-pub struct ViperCompactionService {
-    filesystem: Arc<FilesystemFactory>,
-}
+Compression Analysis (768-dim OpenAI embeddings):
 
-impl ViperCompactionService {
-    pub async fn compact_files(
-        &self,
-        input_files: Vec<String>,
-        output_file: String,
-        collection_config: &CollectionConfig,
-    ) -> Result<CompactionResult> {
-        // 1. Read all input files
-        // 2. Merge records (with deduplication)
-        // 3. Recalculate quantization if enabled
-        // 4. Write merged Parquet file
-        // 5. Update statistics
-    }
-}
-----
+Row-Based (SST):
+  Vector: [0.12, -0.34, 0.87, 0.45, -0.23, ...]
+  Next vector: [0.15, -0.31, 0.85, 0.42, -0.21, ...]
 
-**Compaction Triggers**:
+  Compressor sees: [0.12, -0.34, 0.87, 0.45, -0.23, 0.15, -0.31, ...]
+                   └─────────────── No pattern ───────────────────┘
 
-[cols="2,3,1"]
-|===
-| Trigger | Description | Threshold
+  Result: ~16% compression (random-looking data)
 
-| **File Count**
-| Too many small files
-| >10 files
+Columnar (VIPER):
+  Dimension 0: [0.12, 0.15, 0.13, 0.14, 0.11, ...]
+  Dimension 1: [-0.34, -0.31, -0.33, -0.32, -0.35, ...]
 
-| **Size Imbalance**
-| Files with different sizes
-| 10x difference
+  Compressor sees: [0.12, 0.15, 0.13, 0.14, ...]
+                   └── Clear pattern: values near 0.13 ──┘
 
-| **Fragmentation**
-| High delete/update ratio
-| >30% tombstones
+  Result: 69.5% compression (exploits dimension correlation)
 
-| **Time-Based**
-| Periodic optimization
-| Daily
-|===
-
-=== Quantization-Aware Compaction
-
-**Critical Design Decision**: When quantization is enabled, compaction **cannot** use simple row group merging.
-
-**Why?**
-
-1. **Binary quantization**: Thresholds change with merged data distribution
-2. **INT8 quantization**: Min/max values require recalculation
-3. **PQ quantization**: Codebooks must be retrained on combined dataset
-
-**Implementation**:
-
-[source,rust]
-----
-async fn compact_with_quantization(
-    &self,
-    input_files: Vec<String>,
-    output_file: String,
-    quantization_config: &QuantizationConfig,
-) -> Result<CompactionResult> {
-    // Step 1: Load ALL vectors (not just metadata)
-    let mut all_vectors = Vec::new();
-    for file in input_files {
-        let vectors = self.read_full_vectors(&file).await?;
-        all_vectors.extend(vectors);
-    }
-
-    // Step 2: Retrain quantization on merged dataset
-    let quantized = self.storage_quantization_engine
-        .quantize_batch(&all_vectors, quantization_config)
-        .await?;
-
-    // Step 3: Write new file with recalculated quantization
-    self.write_parquet_with_quantization(
-        &output_file,
-        &all_vectors,
-        &quantized,
-    ).await?;
-
-    Ok(CompactionResult { ... })
-}
+Why the difference?
+1. Same-dimension values cluster in narrow range
+2. Delta encoding captures small differences efficiently
+3. ZSTD's context modeling works better on similar values
 ----
 
-**Memory Management**:
-
-- Process in batches of 10,000 vectors
-- Use streaming for >5 input files
-- Release memory after each batch
-- Total memory: O(batch_size × dimension × 4 bytes)
-
-== Cloud Storage Optimization
-
-=== UnifiedCachingFilesystem Integration
-
-VIPER integrates with `UnifiedCachingFilesystem` for transparent cloud storage support:
-
-[source,rust]
-----
-// From src/storage/engines/impls/viper/engine.rs (lines 198-210)
-let unified_fs = Arc::new(
-    UnifiedCachingFilesystem::with_serializer(
-        base_fs,
-        collection_id,
-        "viper".to_string(),  // Engine-specific cache namespace
-        metadata_serializer,
-    )
-);
-----
-
-**Cache Strategy**:
-
-1. **Footer Caching**: Parquet footers cached in memory (hot access)
-2. **Metadata Caching**: Row group metadata cached with LRU eviction
-3. **Disk Cache**: Cloud files downloaded to `/tmp/proximadb/cache/{collection}/viper/`
-4. **Prefetching**: Sequential row group prefetching for scans
-
-=== S3/Azure/GCS Support
-
-[source,asciidoc]
-----
-Cloud Storage Access Pattern:
-
-1. Client requests search on S3-backed collection
-2. VIPER checks local cache for Parquet file
-3. If miss:
-   a. Download only Parquet footer (4KB)
-   b. Parse row group metadata
-   c. Apply statistics-based pruning
-   d. Download only selected row groups (streaming)
-4. If hit:
-   a. Use cached file for instant access
-5. Update cache LRU based on access patterns
-
-Cache Hierarchy:
-├── Memory: Footer cache (2KB per file, 10ms access)
-├── Disk: Full file cache (varies, 50ms access)
-└── Cloud: Remote storage (varies, 500ms+ access)
-----
-
-**Benefits**:
-
-- **Reduced egress**: Only selected row groups downloaded
-- **Lower latency**: Footer caching enables instant pruning
-- **Cost optimization**: Columnar format minimizes data transfer
-
-== Performance Characteristics
-
-=== Compression Benchmarks
-
-From `benches/bench_04_storage_unified.rs`:
-
-[cols="2,1,1,2"]
-|===
-| Dataset | Vectors | VIPER | SST (Hybrid)
-
-| **Random 768D**
-| 1,000
-| 71.2%
-| 18.3%
-
-| **Normalized 768D**
-| 5,000
-| 69.5%
-| 16.1%
-
-| **Sequential 768D**
-| 10,000
-| 67.8%
-| 15.9%
-
-| **High-dimensional 1536D**
-| 1,000
-| 72.4%
-| 14.2%
-|===
-
-**Average Compression**: 69.5% (4.3x better than ProximaBlocks)
-
-=== Search Performance
-
-Progressive search performance on 1M vectors (768D):
-
-[cols="2,1,1,1"]
-|===
-| Operation | Time | Candidates | Elimination
-
-| **Binary Filter**
-| 100ms
-| 100,000
-| 90%
-
-| **INT8 Ranking**
-| 50ms
-| 10,000
-| 90%
-
-| **PQ8 Scoring**
-| 20ms
-| 1,000
-| 90%
-
-| **FP32 Reranking**
-| 10ms
-| 10 (final)
-| 99%
-
-| **Total**
-| **180ms**
-| -
-| **99.999%**
-|===
-
-**Speedup**: 142x vs full FP32 scan (25,600ms)
-**Recall**: 95%+ with progressive refinement
-
-=== Memory Usage
-
-[cols="2,2,2"]
-|===
-| Component | Memory | Notes
-
-| **Engine Instance**
-| ~50MB
-| Base structures, caches
-
-| **Quantization Codebooks**
-| ~10MB/collection
-| PQ centroids, statistics
-
-| **Footer Cache**
-| ~2KB/file
-| Row group metadata
-
-| **Flush Buffer**
-| ~100MB
-| 10,000 vector batch
-
-| **Search Working Set**
-| ~50MB
-| Progressive candidates
-
-| **Total (typical)**
-| **200-300MB**
-| Per collection
-|===
-
-=== Disk I/O Patterns
-
-[cols="2,2,2,2"]
-|===
-| Operation | Read Pattern | I/O Size | Optimized By
-
-| **Point Query (ID)**
-| Random
-| 4KB (footer) + 1 row
-| Bloom filters
-
-| **Metadata Filter**
-| Sequential
-| Footer + selected row groups
-| Statistics pruning
-
-| **Similarity Search**
-| Sequential
-| Footer + all row groups
-| Column projection
-
-| **Full Scan**
-| Sequential
-| Entire file
-| Memory mapping
-|===
-
-== Configuration Reference
-
-=== Collection Configuration
+=== Compression Configuration
 
 [source,toml]
 ----
-[collection.my_vectors]
-# Storage engine selection
-storage_engine_override = "viper"
+[viper]
+# Compression algorithm: ZSTD provides best ratio for vectors
+compression_algorithm = "zstd"
 
-# Quantization settings
-quantization.enabled = true
-quantization.strategy = "SMART_DEFAULTS"
-quantization.enable_binary = true
-quantization.enable_int8 = true
-quantization.enable_pq = true
-quantization.pq_segments = 32
-quantization.pq_bits = 8
+# Level 6 = balanced speed/ratio; level 12+ for archival
+compression_level = 6
 
-# Filterable columns (for fast metadata filtering)
-filterable_columns = [
-    { name = "user_id", data_type = 1, indexed = true },
-    { name = "timestamp", data_type = 2, indexed = true },
-    { name = "category", data_type = 1, indexed = false }
-]
+# Larger row groups = better compression modeling
+row_group_size = 50000
 
-# VIPER-specific settings
-viper_settings.enable_columnar_compression = true
-viper_settings.enable_vector_quantization = true
-viper_settings.row_group_size = 50000
-viper_settings.compression_level = 6
+# Enable statistics for pruning (minimal overhead)
+enable_statistics = true
+
+# Bloom filters for point queries (10 bits/key overhead)
+enable_bloom_filters = true
 ----
 
-=== Engine Configuration
+== Cloud Storage Optimization
 
-[source,rust]
+=== S3/GCS/Azure Design
+
+[source,mermaid]
 ----
-// From src/storage/engines/impls/viper/engine.rs
-pub struct ViperEngineConfig {
-    // Compression settings
-    pub compression_algorithm: String,  // "zstd"
-    pub compression_level: u8,          // 6 (balanced)
+%%{init: {"theme": "neutral"}}%%
+stateDiagram-v2
+    [*] --> QueryReceived
 
-    // Row group settings
-    pub row_group_size: usize,          // 50,000 (optimal)
-    pub max_row_group_size: usize,      // 128,000 (maximum)
+    state "Footer Cache Check" as CACHE {
+        QueryReceived --> CacheHit: Footer in memory
+        QueryReceived --> CacheMiss: Footer not cached
+        CacheMiss --> FetchFooter: Download 4KB footer
+        FetchFooter --> ParseFooter: Parse row group metadata
+        ParseFooter --> CacheFooter: Store in memory
+    }
 
-    // Batch processing
-    pub batch_size: usize,              // 10,000 (balanced)
-    pub flush_threshold_records: usize, // 100,000 (trigger)
+    state "Selective Download" as DOWNLOAD {
+        CacheHit --> PruneRowGroups: Use statistics
+        CacheFooter --> PruneRowGroups
+        PruneRowGroups --> SelectColumns: Project needed columns
+        SelectColumns --> StreamRowGroups: Download only selected
+    }
 
-    // Cache settings
-    pub enable_footer_cache: bool,      // true (recommended)
-    pub cache_size_mb: usize,           // 512 (per collection)
+    StreamRowGroups --> ProcessResults
+    ProcessResults --> [*]
 
-    // Optimization flags
-    pub enable_dictionary_encoding: bool,  // false (for vectors)
-    pub enable_statistics: bool,           // true (for pruning)
-    pub enable_bloom_filters: bool,        // true (for point queries)
-}
-----
+    note right of CACHE
+        Footer caching: 4KB × files
+        Typical: 10-100KB memory
+        Saves 500ms+ per query
+    end note
 
-=== Performance Tuning
-
-[cols="2,2,2,2"]
-|===
-| Parameter | Default | Range | Tuning Guide
-
-| **row_group_size**
-| 50,000
-| 10K-200K
-| Larger = better compression, slower point queries
-
-| **compression_level**
-| 6
-| 1-22
-| Higher = more compression, slower writes
-
-| **batch_size**
-| 10,000
-| 1K-100K
-| Larger = faster writes, more memory
-
-| **cache_size_mb**
-| 512
-| 128-2048
-| Larger = fewer cache misses
-
-| **pq_segments**
-| 32
-| 8-128
-| More = better quality, larger codebooks
-|===
-
-== Testing and Validation
-
-=== Test Coverage
-
-VIPER has comprehensive test coverage across 13 test files:
-
-[cols="2,1,2"]
-|===
-| Test Category | Files | Coverage
-
-| **Engine Tests**
-| engine_tests.rs
-| Initialization, configuration, UnifiedStorageEngine trait
-
-| **Flush Tests**
-| atomic_flush_tests.rs
-| Atomic flush operations, crash recovery
-
-| **Compaction Tests**
-| compaction_tests.rs, minimal_compaction_test.rs
-| Row group merging, quantization recalculation
-
-| **Reader Tests**
-| unified_parquet_reader_tests.rs, unified_parquet_reader_edge_tests.rs
-| Progressive search, metadata filtering, edge cases
-
-| **Strategy Tests**
-| strategy_tests.rs
-| Reading strategies, access patterns
-
-| **Coverage Tests**
-| coverage_tests.rs
-| Code coverage, missing branches
-
-| **Unified Storage**
-| unified_storage_tests.rs
-| Cross-engine compatibility
-|===
-
-=== Key Test Cases
-
-[source,rust]
-----
-// From src/storage/engines/impls/viper/tests/engine_tests.rs
-
-#[tokio::test]
-async fn test_insert_flush_search_flow() {
-    // 1. Insert 10,000 vectors
-    // 2. Flush to Parquet
-    // 3. Verify compression ratio
-    // 4. Search with progressive cascade
-    // 5. Verify recall > 95%
-}
-
-#[tokio::test]
-async fn test_quantization_quality() {
-    // 1. Insert vectors with known distances
-    // 2. Enable quantization
-    // 3. Flush and compact
-    // 4. Verify quantized distances within error bounds
-}
-
-#[tokio::test]
-async fn test_metadata_filtering() {
-    // 1. Insert vectors with metadata
-    // 2. Define filterable columns
-    // 3. Query with metadata filters
-    // 4. Verify row group pruning effectiveness
-}
-
-#[tokio::test]
-async fn test_compaction_with_quantization() {
-    // 1. Create multiple small files
-    // 2. Enable quantization
-    // 3. Trigger compaction
-    // 4. Verify quantization recalculated correctly
-    // 5. Verify search results unchanged
-}
+    note right of DOWNLOAD
+        Column projection: Read only q_binary
+        for first pass (96 bytes/vec)
+        vs full vector (3KB/vec)
+    end note
 ----
 
-=== Running Tests
+**Cloud cost optimization**:
 
-[source,bash]
-----
-# All VIPER tests
-cargo test --lib storage::engines::impls::viper
+1. **Footer caching**: Parse once, reuse forever (files are immutable)
+2. **Row group pruning**: Download only matching groups
+3. **Column projection**: Read only needed columns (Binary < INT8 < PQ < FP32)
 
-# Specific test with debug output
-RUST_LOG=debug cargo test --lib \
-    storage::engines::impls::viper::tests::engine_tests::test_insert_flush_search_flow \
-    -- --exact --nocapture
+**Example**: Search 1M vectors on S3
 
-# Integration tests
-cargo test --test integration viper
+* Without VIPER: Download 3GB (full vectors)
+* With VIPER: Download 96MB (Binary column only) + 3MB (final FP32 for top-1K)
+* **Egress reduction: 30x**
 
-# With coverage
-cargo tarpaulin --lib --out Html --output-dir coverage \
-    --exclude-files benches/* tests/*
-----
+== Compaction Strategy
 
-== Monitoring and Observability
-
-=== Key Metrics
-
-[cols="2,2,2"]
-|===
-| Metric | Description | Threshold
-
-| **compression_ratio**
-| Actual / Original size
-| >60% (target)
-
-| **row_groups_pruned**
-| % row groups eliminated
-| >80% (good)
-
-| **cache_hit_rate**
-| Footer cache hits / total
-| >85% (optimal)
-
-| **quantization_time_ms**
-| Time to quantize batch
-| <500ms (10K vectors)
-
-| **flush_time_ms**
-| Time to flush batch
-| <2000ms (10K vectors)
-
-| **search_latency_p99**
-| 99th percentile search time
-| <300ms (1M vectors)
-|===
-
-=== Logging
-
-VIPER uses structured logging with `tracing`:
-
-[source,rust]
-----
-info!(
-    collection_id = %collection_id,
-    vectors_flushed = %record_count,
-    compression_ratio = %compression_ratio,
-    quantization_enabled = %config.quantization.enabled,
-    row_groups = %row_group_count,
-    file_size_mb = %file_size_mb,
-    "VIPER flush completed"
-);
-
-debug!(
-    row_groups_total = %total_row_groups,
-    row_groups_read = %selected_row_groups,
-    pruning_ratio = %(1.0 - selected as f64 / total as f64),
-    "Row group pruning effective"
-);
-----
-
-=== Performance Profiling
-
-[source,bash]
-----
-# CPU profiling
-cargo flamegraph --bin proximadb-bench -- \
-    compression -s viper -v 10000 -d 768
-
-# Memory profiling (macOS)
-cargo instruments --bin proximadb-bench --template Allocations -- \
-    compression -s viper -v 10000 -d 768
-
-# Benchmarking
-cargo bench --bench bench_04_storage_unified -- viper
-----
-
-== Integration Points
-
-=== UnifiedStorageEngine Trait
-
-VIPER implements the standard `UnifiedStorageEngine` trait:
-
-[source,rust]
-----
-#[async_trait]
-impl UnifiedStorageEngine for ViperEngine {
-    async fn insert(&self, request: InsertRequest) -> Result<InsertResponse>;
-    async fn search(&self, request: SearchRequest) -> Result<SearchResponse>;
-    async fn flush(&self, params: FlushParameters) -> Result<FlushResult>;
-    async fn compact(&self, strategy: CompactionStrategy) -> Result<CompactionResult>;
-    async fn get_stats(&self) -> Result<EngineStats>;
-}
-----
-
-=== Integration with Services
+=== Why Quantization-Aware Compaction?
 
 [source,mermaid]
 ----
 %%{init: {"theme": "neutral"}}%%
 graph TB
-    A[CollectionService] --> B[ViperEngine]
-    B --> C[UnifiedQuantizationEngine]
-    B --> D[UnifiedCachingFilesystem]
-    B --> E[UnifiedDistanceCompute]
-    F[VectorOperationsService] --> B
-    G[EventLogService] --> B
+    subgraph NAIVE["Naive Compaction (WRONG)"]
+        N1[File A: vectors 1-1000<br/>Binary threshold: 0.12]
+        N2[File B: vectors 1001-2000<br/>Binary threshold: 0.15]
+        N3["Merge row groups<br/>Keep old thresholds"]
+        N4["PROBLEM: Thresholds<br/>don't match merged data"]
 
-    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
-    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style D fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style E fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
-    style F fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
-    style G fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+        N1 --> N3
+        N2 --> N3
+        N3 --> N4
+    end
+
+    subgraph SMART["VIPER Compaction (CORRECT)"]
+        S1[File A: vectors 1-1000]
+        S2[File B: vectors 1001-2000]
+        S3["1. Merge FP32 vectors<br/>2. Retrain quantization<br/>3. Write new columns"]
+        S4["Result: Consistent<br/>quantization across file"]
+
+        S1 --> S3
+        S2 --> S3
+        S3 --> S4
+    end
+
+    style NAIVE fill:#ffe6e6,stroke:#e06666
+    style SMART fill:#e6ffe6,stroke:#93c47d
 ----
 
-=== Cross-Engine Compatibility
+**The problem**: Each file has its own quantization parameters trained on its vectors. Merging files without retraining creates inconsistent quantization → search quality degrades.
 
-VIPER shares common infrastructure with other engines:
+**VIPER solution**: Compaction always retrains quantization on merged data. This is expensive but ensures consistent quality.
 
-[cols="2,2,2"]
+== Configuration Guide
+
+=== Tuning for Maximum Compression
+
+[source,toml]
+----
+[viper]
+# Maximum compression settings
+compression_level = 12      # Slow writes, best ratio
+row_group_size = 100000     # Larger groups, better modeling
+enable_dictionary = false   # Disabled for vectors (high cardinality)
+----
+
+=== Tuning for Query Performance
+
+[source,toml]
+----
+[viper]
+# Balanced query performance
+compression_level = 6       # Fast decompression
+row_group_size = 50000      # Moderate group size
+enable_bloom_filters = true # Fast point queries
+cache_size_mb = 512         # Cache hot row groups
+----
+
+== Monitoring & Debugging
+
+=== Key Health Indicators
+
+[cols="2,3,2", options="header"]
 |===
-| Component | Shared With | Purpose
+| Metric | Healthy Range | Action if Unhealthy
 
-| **UnifiedQuantizationEngine**
-| All engines
-| Quantization algorithms
-
-| **UnifiedDistanceCompute**
-| All engines
-| Distance metrics (SIMD)
-
-| **UnifiedCachingFilesystem**
-| All engines
-| Storage abstraction
-
-| **ColumnarSchema**
-| NOVA, HELIX
-| Parquet schema definition
-
-| **UnifiedParquetReader**
-| NOVA
-| Parquet reading logic
-|===
-
-== Comparison with Other Engines
-
-=== VIPER vs SST (Hybrid Columnar)
-
-[cols="2,2,2"]
-|===
-| Aspect | VIPER | SST
-
-| **Storage Format**
-| Pure columnar (Parquet)
-| Hybrid columnar (ProximaBlocks)
-
-| **Compression**
-| 69.5%
-| ~16%
-
-| **Write Performance**
-| 50K ops/sec
-| 100K ops/sec
-
-| **Read Performance**
-| 200ms p99
-| 100ms p99
-
-| **Best For**
-| Analytics, batch, cloud
-| OLTP, real-time, local
-
-| **Row Group Size**
-| 50,000
-| 1,024
-
-| **Quantization**
-| Progressive cascade
-| On-demand
+| `compression_ratio` | >60% | Check if data is actually vectors; increase row_group_size
+| `row_groups_pruned_pct` | >70% | Add more selective filters; verify statistics enabled
+| `cache_hit_rate` | >80% | Increase cache_size_mb; check working set size
+| `progressive_stages_used` | 3-4 | If always 4, data may not be clustered; consider HELIX
 |===
 
-=== VIPER vs NOVA (Progressive Columnar)
+=== Debug Logging
 
-[cols="2,2,2"]
-|===
-| Aspect | VIPER | NOVA
+[source,bash]
+----
+# See row group pruning decisions
+RUST_LOG=proximadb::storage::engines::impls::viper::readers=debug
 
-| **Storage Format**
-| Pure columnar
-| Progressive columnar
+# Trace quantization during flush
+RUST_LOG=proximadb::storage::engines::impls::viper::pipeline=trace
 
-| **Quantization**
-| All levels precomputed
-| Progressive on-demand
+# Compaction decisions
+RUST_LOG=proximadb::storage::engines::impls::viper::compaction=debug
+----
 
-| **Compaction**
-| Size-tiered
-| Multi-level progressive
+== Summary: VIPER Design Principles
 
-| **Best For**
-| Batch operations
-| Mixed workloads
+1. **Pure columnar for maximum compression** - Same-dimension values compress 4x better than row-based
+2. **Pre-computed quantization columns** - Store Binary/INT8/PQ alongside FP32 for instant access
+3. **Large row groups (50K)** - Better compression modeling, amortize Parquet overhead
+4. **Cloud-native with footer caching** - Minimize egress through selective row group/column reads
+5. **Quantization-aware compaction** - Always retrain on merged data for consistent quality
 
-| **Complexity**
-| Moderate
-| Higher
+---
 
-| **Zone Maps**
-| Parquet statistics
-| Custom zone maps
-|===
+**See Also**:
 
-== Production Deployment
-
-=== Deployment Checklist
-
-[cols="1,3"]
-|===
-| ✅ | Task
-
-| ☑
-| Enable compression (level 6+ for production)
-
-| ☑
-| Configure quantization for collection dimensions
-
-| ☑
-| Define filterable columns for metadata filtering
-
-| ☑
-| Set row_group_size based on query patterns (50K default)
-
-| ☑
-| Enable footer caching for hot collections
-
-| ☑
-| Configure compaction schedule (daily recommended)
-
-| ☑
-| Set up monitoring for compression_ratio and cache_hit_rate
-
-| ☑
-| Test progressive search recall on representative data
-
-| ☑
-| Benchmark with production-like workload
-
-| ☑
-| Configure cloud storage caching if using S3/Azure/GCS
-|===
-
-=== Operational Considerations
-
-**When to Use VIPER**:
-
-✅ Analytics workloads with large batch queries
-✅ Cloud storage (S3/Azure/GCS) for cost optimization
-✅ Compression-critical applications
-✅ Immutable or append-only data
-✅ Metadata-heavy filtering requirements
-
-**When to Use Other Engines**:
-
-- **SST**: Real-time updates, low latency point queries
-- **SWIFT**: Ultra-low latency (<10ms) requirements
-- **NOVA**: Mixed read/write workloads
-- **RAPTOR**: Dynamic workload patterns
-- **HELIX**: Spatial locality requirements
-
-=== Troubleshooting
-
-[cols="2,3,2"]
-|===
-| Issue | Cause | Solution
-
-| **Low compression ratio**
-| Small row groups
-| Increase row_group_size to 50K+
-
-| **Slow point queries**
-| No bloom filters
-| Enable bloom_filters in config
-
-| **High memory usage**
-| Large batches
-| Reduce batch_size to 10K
-
-| **Poor recall**
-| Aggressive quantization
-| Use PQ16 instead of PQ8, increase training samples
-
-| **Cache misses**
-| Insufficient cache
-| Increase cache_size_mb to 1024+
-
-| **Slow compaction**
-| Quantization recalculation
-| Schedule during low-traffic periods
-|===
-
-== Future Enhancements
-
-=== Roadmap (2025)
-
-**Q1 2025** (Planned):
-
-- Adaptive row group sizing based on query patterns
-- Streaming compaction for large files (>10GB)
-- Advanced bloom filter strategies
-
-**Q2 2025** (Planned):
-
-- Parquet encryption for sensitive data
-- Cross-collection join optimization
-- Temporal indexing for time-series
-
-**Q3 2025** (Planned):
-
-- Delta encoding for sequential vectors
-- Hybrid storage (hot/cold tier)
-- Advanced prefetching with ML
-
-=== Research Directions
-
-- **Learned quantization**: Train quantizers on query distribution
-- **Adaptive compression**: Per-dimension compression algorithm selection
-- **Query result caching**: Cache frequent query results
-- **Approximate filters**: Sketch-based filtering for massive collections
-
-== Conclusion
-
-VIPER represents ProximaDB's columnar storage engine, achieving industry-leading 69.5% compression through pure columnar layout and progressive quantization. With comprehensive test coverage (13 test files, 1,486+ lines) and production-ready implementation (12,049 lines across 31 files), VIPER is the optimal choice for analytics workloads, cloud storage, and batch operations.
-
-**Key Takeaways**:
-
-1. **Pure columnar storage** exploits dimensional correlations for 4.3x better compression
-2. **Progressive quantization** (Binary→INT8→PQ8→FP32) provides 142x search speedup
-3. **Cloud-optimized** with footer caching and intelligent prefetching
-4. **Production-ready** with comprehensive testing and monitoring
-
-For implementation details, see:
-
-- Source: `src/storage/engines/impls/viper/`
-- Tests: `src/storage/engines/impls/viper/tests/`
-- Compression analysis: `docs/technical/compression/PROXIMA_VS_VIPER_COMPRESSION_ANALYSIS.md`
-- Configuration: `config/config.toml`
-
-== References
-
-- link:../09-roadmap/completed/01-storage-engines.adoc[Storage Engines Overview]
-- link:../technical/unified-quantization-guide.adoc[Unified Quantization Guide]
-- link:sst-engine-deep-dive.adoc[SST Engine Deep Dive]
-- link:hybrid-columnar-engines.adoc[Hybrid Columnar Engines]
-- Apache Parquet Documentation: https://parquet.apache.org/docs/
+* link:sst-engine-deep-dive.adoc[SST Engine] - Real-time write alternative
+* link:helix-engine-deep-dive.adoc[HELIX Engine] - Spatial locality alternative
+* link:nova-engine-deep-dive.adoc[NOVA Engine] - Mixed workload alternative

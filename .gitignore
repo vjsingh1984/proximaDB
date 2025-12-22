@@ -388,6 +388,9 @@ test_summary*.py
 test_*_summary.py
 *_summary_report.py
 
+# Session work archives (development session notes and summaries)
+docs/archive/sessions/
+
 # Development planning and architecture documents (root level only)
 /GLOBAL_MANIFEST_*.md
 /RECOVERY_*.md
