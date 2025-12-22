@@ -1,5 +1,3 @@
-use tracing::debug;
-
 // Only import these when actually compiling GPU kernels
 #[cfg(any(
     all(feature = "gpu", target_os = "linux", target_arch = "x86_64"),
