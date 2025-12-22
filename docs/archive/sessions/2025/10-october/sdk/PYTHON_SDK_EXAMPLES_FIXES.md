@@ -227,7 +227,7 @@ Response missing 'dimension' field. Available keys: ['id', 'config', 'stats', 'c
 
 ## Test Environment
 
-**Server Version**: ProximaDB 0.1.4
+**Server Version**: ProximaDB 0.1.5
 **Server Start Command**: `cargo run --bin proximadb-server --release`
 **Server Status**: ✅ Healthy (uptime: ~6.5 hours during tests)
 **Python Environment**:
@@ -1207,7 +1207,7 @@ Add notes to each example file:
 **For Working Examples**:
 ```python
 # STATUS: ✅ Production Ready (Tested 2025-01-23)
-# No fixes required - works with ProximaDB v0.1.4 and SDK v1.0
+# No fixes required - works with ProximaDB v0.1.5 and SDK v1.0
 ```
 
 **For Missing Features**:
@@ -1221,7 +1221,7 @@ Add notes to each example file:
 ```python
 # STATUS: ⚠️  Server Feature Incomplete
 # This example demonstrates [feature] which is under development on the server side
-# Current server version: v0.1.4 - Feature expected in: v0.2.0
+# Current server version: v0.1.5 - Feature expected in: v0.2.0
 ```
 
 ### Priority 2: Update README
@@ -1233,13 +1233,13 @@ Add example compatibility matrix to `clients/python/examples/README.md`:
 
 | Example | Status | SDK Version | Server Version | Notes |
 |---------|--------|-------------|----------------|-------|
-| basic_usage.py | ✅ Working | v1.0+ | v0.1.4+ | Core functionality |
-| advanced_search.py | ✅ Working | v1.0+ | v0.1.4+ | Client-side filtering |
-| compression_example.py | ✅ Working | v1.0+ | v0.1.4+ | Compression configs |
-| dashboard_metrics_demo.py | ✅ Working | v1.0+ | v0.1.4+ | Monitoring APIs |
+| basic_usage.py | ✅ Working | v1.0+ | v0.1.5+ | Core functionality |
+| advanced_search.py | ✅ Working | v1.0+ | v0.1.5+ | Client-side filtering |
+| compression_example.py | ✅ Working | v1.0+ | v0.1.5+ | Compression configs |
+| dashboard_metrics_demo.py | ✅ Working | v1.0+ | v0.1.5+ | Monitoring APIs |
 | sql_queries.py | ⚠️  Partial | v1.0+ | v0.2.0+ | SQL support incomplete |
-| monitoring_example.py | 🚧 Future | v1.1+ | v0.1.4+ | Requires telemetry module |
-| production_setup.py | 🚧 Future | v1.1+ | v0.1.4+ | Requires resilient client |
+| monitoring_example.py | 🚧 Future | v1.1+ | v0.1.5+ | Requires telemetry module |
+| production_setup.py | 🚧 Future | v1.1+ | v0.1.5+ | Requires resilient client |
 ```
 
 ### Priority 3: Clean Up Example Files

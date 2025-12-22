@@ -1456,13 +1456,8 @@ impl UnifiedQueryOptimizer {
         };
 
         // Check for available bloom filters
-        let has_bloom_filters = context
-            .collection
-            .config
-            .as_ref()
-            .and_then(|c| c.bloom_filter_config.as_ref())
-            .map(|bf| bf.enabled)
-            .unwrap_or(false);
+        // Bloom filters are typically enabled for larger datasets
+        let has_bloom_filters = dataset_size > 50000;
 
         // Estimate memory usage
         let dimension = context
@@ -1558,16 +1553,16 @@ impl UnifiedQueryOptimizer {
             }
             FilterExpression::Or(expressions) => {
                 // OR: take max selectivity (conservative estimate)
-                let mut or_selectivity = 0.0;
+                let mut or_selectivity: f64 = 0.0;
                 for expr in expressions {
-                    let mut temp_selectivity = 1.0;
+                    let mut temp_selectivity: f64 = 1.0;
                     self.extract_filter_analyses(expr, context, analyses, &mut temp_selectivity);
                     or_selectivity = or_selectivity.max(temp_selectivity);
                 }
                 *combined_selectivity *= or_selectivity.min(1.0);
             }
             FilterExpression::Not(inner) => {
-                let mut inner_selectivity = 1.0;
+                let mut inner_selectivity: f64 = 1.0;
                 self.extract_filter_analyses(inner, context, analyses, &mut inner_selectivity);
                 // NOT inverts selectivity
                 *combined_selectivity *= 1.0 - inner_selectivity;
@@ -1644,8 +1639,8 @@ impl UnifiedQueryOptimizer {
     ) -> Result<ResourceAllocation> {
         // Get hardware capabilities
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        let available_cores = hardware.cpu_cores.max(1);
-        let available_memory_mb = hardware.available_memory_mb.max(512);
+        let available_cores = hardware.cpu.logical_cores.max(1);
+        let available_memory_mb = (hardware.memory.available_memory / (1024 * 1024)) as usize;
 
         // Calculate resource needs based on execution steps
         let mut memory_budget_mb = 256; // Base allocation
@@ -1825,7 +1820,7 @@ impl UnifiedQueryOptimizer {
         steps: &[ExecutionStep],
     ) -> ParallelismConfig {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        let available_cores = hardware.cpu_cores.max(1);
+        let available_cores = hardware.cpu.logical_cores.max(1);
 
         // Determine parallelism based on query type and data size
         let has_heavy_search = steps.iter().any(|s| {
@@ -1870,7 +1865,7 @@ impl UnifiedQueryOptimizer {
         };
 
         // SIMD support
-        let use_simd = hardware.has_avx2 || hardware.has_neon;
+        let use_simd = hardware.cpu.features.avx2_support || hardware.cpu.features.neon_support;
 
         ParallelismConfig {
             file_parallelism,

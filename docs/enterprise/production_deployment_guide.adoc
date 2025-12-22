@@ -593,5 +593,5 @@ cargo run --release --bin proximadb-bench -- --diagnostic
 ---
 
 *Production Deployment Guide - September 2025*
-*ProximaDB Version: 0.1.4*
+*ProximaDB Version: 0.1.5*
 *Engines: 7 Production-Ready Storage Engines*

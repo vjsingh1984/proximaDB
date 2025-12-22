@@ -4,7 +4,7 @@
 
 STATUS: ⚠️  Requires Future Feature
 SDK Version: v1.1+ (requires proximadb.telemetry module)
-Server Version: v0.1.4+
+Server Version: v0.1.5+
 Test Result: SKIP - Telemetry infrastructure not yet implemented
 
 Monitoring and Telemetry Example for ProximaDB Python SDK v1.0

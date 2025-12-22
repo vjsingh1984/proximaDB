@@ -9,7 +9,7 @@
 
 == 📊 Status Overview
 
-Roadmap statuses are based on current code (v0.1.4). See the Master Feature Dashboard for the authoritative, up‑to‑date list of Completed, In Progress, and Future items.
+Roadmap statuses are based on current code (v0.1.5). See the Master Feature Dashboard for the authoritative, up‑to‑date list of Completed, In Progress, and Future items.
 
 == 🗂️ Documentation Structure
 

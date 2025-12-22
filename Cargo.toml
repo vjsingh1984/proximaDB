@@ -1,6 +1,6 @@
 [package]
 name = "proximadb"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
@@ -266,10 +266,10 @@ embedded-all = ["python", "java", "nodejs", "c_ffi"]
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
+lto = "thin"          # Thin LTO: ~90% of full LTO perf, 3x faster compile
+codegen-units = 6     # 60% of cores (6 of 10) for parallel LLVM codegen
 debug = false
-strip = false  # Keep symbols for profiling
+strip = false         # Keep symbols for profiling
 incremental = false
 
 # Test configuration

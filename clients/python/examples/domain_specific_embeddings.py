@@ -4,7 +4,7 @@
 
 STATUS: ⚠️  Requires Future Feature
 SDK Version: v1.1+ (requires BGEEmbeddingProvider)
-Server Version: v0.1.4+
+Server Version: v0.1.5+
 Test Result: SKIP - Advanced embedding providers not yet implemented
 
 Domain-Specific Embedding Examples for ProximaDB

@@ -400,15 +400,49 @@ impl MultiTierDeduplicator {
     pub fn get_final_results(self, k: usize) -> Vec<TieredSearchCandidate> {
         let mut final_results = Vec::new();
 
+        // Get current time for tombstone detection
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         // Capture lengths before moving
         let unique_ids_count = self.id_to_latest.len();
         let without_id_count = self.results_without_id.len();
 
-        // Add latest version of each ID using into_values() to avoid clone
-        final_results.extend(self.id_to_latest.into_values());
+        // Add latest version of each ID, filtering out tombstones
+        // Tombstone design: empty vector + expires_at in past (including 0)
+        let mut tombstones_filtered = 0;
+        for candidate in self.id_to_latest.into_values() {
+            let is_tombstone = candidate.vector_record.vector.is_empty()
+                && candidate
+                    .vector_record
+                    .expires_at
+                    .map_or(false, |e| e <= current_time_secs);
+            if is_tombstone {
+                tombstones_filtered += 1;
+                tracing::debug!(
+                    "🗑️ Filtering tombstone from final results: {}",
+                    candidate.vector_record.id
+                );
+            } else {
+                final_results.push(candidate);
+            }
+        }
 
-        // Add non-ID results
-        final_results.extend(self.results_without_id);
+        // Add non-ID results (these should not be tombstones but filter just in case)
+        for candidate in self.results_without_id {
+            let is_tombstone = candidate.vector_record.vector.is_empty()
+                && candidate
+                    .vector_record
+                    .expires_at
+                    .map_or(false, |e| e <= current_time_secs);
+            if !is_tombstone {
+                final_results.push(candidate);
+            } else {
+                tombstones_filtered += 1;
+            }
+        }
 
         // Sort by similarity (descending - higher similarity is better)
         final_results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap());
@@ -417,9 +451,10 @@ impl MultiTierDeduplicator {
         final_results.truncate(k);
 
         tracing::info!(
-            "🎯 Multi-tier deduplication complete: {} unique IDs, {} without ID, {} final results",
+            "🎯 Multi-tier deduplication complete: {} unique IDs, {} without ID, {} tombstones filtered, {} final results",
             unique_ids_count,
             without_id_count,
+            tombstones_filtered,
             final_results.len()
         );
 

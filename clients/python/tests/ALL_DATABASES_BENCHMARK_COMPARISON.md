@@ -2,7 +2,7 @@
 
 **Date**: 2025-12-20
 **Test Configuration**: 1,000 nodes + 5,000 edges (6,000 total operations)
-**ProximaDB Version**: 0.1.4 (embedded mode)
+**ProximaDB Version**: 0.1.5 (embedded mode)
 
 ---
 

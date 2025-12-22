@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proximadb-python"
-version = "0.1.4"
+version = "0.1.5"
 description = "Python client SDK for ProximaDB - Cloud-native vector database engineered for AI-first applications"
 authors = [
     {name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}
@@ -43,8 +43,9 @@ dependencies = [
     "rich>=13.0.0",
     "tabulate>=0.9.0",
     # Tree-sitter for code chunking (AST-aware chunking)
-    "tree-sitter>=0.21.0,<0.22.0",
-    "tree-sitter-languages>=1.10.0",
+    # Note: tree-sitter-languages is unmaintained, using tree-sitter-language-pack instead
+    "tree-sitter>=0.24.0",
+    "tree-sitter-language-pack>=0.13.0",
 ]
 
 [project.optional-dependencies]

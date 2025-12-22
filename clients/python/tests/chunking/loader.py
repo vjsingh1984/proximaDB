@@ -20,12 +20,16 @@ RESOURCES_DIR = Path(__file__).parent / "resources"
 
 def _load_module(name: str, file_name: str, parent_module: types.ModuleType):
     """Helper to load a chunking_strategies module."""
-    if name in sys.modules:
-        return sys.modules[name]
+    # Check if module exists and has __file__ attribute (indicating it was loaded from a file)
+    # If it's a mock module (no __file__), we need to load the real one
+    existing = sys.modules.get(name)
+    if existing is not None and hasattr(existing, '__file__') and existing.__file__ is not None:
+        return existing
 
+    # Use proximadb_sdk (actual package location) instead of proximadb
     spec = importlib.util.spec_from_file_location(
         name,
-        str(src_path / 'proximadb' / 'chunking_strategies' / file_name)
+        str(src_path / 'proximadb_sdk' / 'chunking_strategies' / file_name)
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -39,13 +43,17 @@ def _load_module(name: str, file_name: str, parent_module: types.ModuleType):
 
 
 def _load_root_module(name: str, file_name: str, parent_module: types.ModuleType):
-    """Helper to load a module from proximadb root."""
-    if name in sys.modules:
-        return sys.modules[name]
+    """Helper to load a module from proximadb_sdk root."""
+    # Check if module exists and has __file__ attribute (indicating it was loaded from a file)
+    # If it's a mock module (no __file__), we need to load the real one
+    existing = sys.modules.get(name)
+    if existing is not None and hasattr(existing, '__file__') and existing.__file__ is not None:
+        return existing
 
+    # Use proximadb_sdk (actual package location) instead of proximadb
     spec = importlib.util.spec_from_file_location(
         name,
-        str(src_path / 'proximadb' / file_name)
+        str(src_path / 'proximadb_sdk' / file_name)
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -60,15 +68,32 @@ def _load_root_module(name: str, file_name: str, parent_module: types.ModuleType
 
 def _setup_modules():
     """Load chunking modules without triggering protobuf imports."""
-    # Create minimal package structure
+    # Clean up any mock modules that might have been created by other test files
+    # Mock modules don't have __file__ set, so we can detect and remove them
+    mock_module_patterns = ['proximadb.chunking_strategies.', 'proximadb.document_processor', 'proximadb.document_pipeline']
+    for mod_name in list(sys.modules.keys()):
+        for pattern in mock_module_patterns:
+            if mod_name.startswith(pattern) or mod_name == pattern.rstrip('.'):
+                mod = sys.modules[mod_name]
+                if not hasattr(mod, '__file__') or mod.__file__ is None:
+                    del sys.modules[mod_name]
+                    break
+
+    # Create minimal package structure with proper __path__ for relative imports
     if 'proximadb' not in sys.modules:
         proximadb = types.ModuleType('proximadb')
+        # Set __path__ so Python can resolve subpackage imports
+        proximadb.__path__ = [str(src_path / 'proximadb_sdk')]
+        proximadb.__package__ = 'proximadb'
         sys.modules['proximadb'] = proximadb
     else:
         proximadb = sys.modules['proximadb']
 
     if 'proximadb.chunking_strategies' not in sys.modules:
         chunking_strategies = types.ModuleType('proximadb.chunking_strategies')
+        # Set __path__ for the chunking_strategies subpackage
+        chunking_strategies.__path__ = [str(src_path / 'proximadb_sdk' / 'chunking_strategies')]
+        chunking_strategies.__package__ = 'proximadb.chunking_strategies'
         sys.modules['proximadb.chunking_strategies'] = chunking_strategies
         proximadb.chunking_strategies = chunking_strategies
     else:
@@ -105,7 +130,7 @@ def _setup_modules():
     if 'proximadb.code_knowledge' not in sys.modules:
         code_knowledge_spec = importlib.util.spec_from_file_location(
             'proximadb.code_knowledge',
-            str(src_path / 'proximadb' / 'code_knowledge.py')
+            str(src_path / 'proximadb_sdk' / 'code_knowledge.py')
         )
         code_knowledge_module = importlib.util.module_from_spec(code_knowledge_spec)
         sys.modules['proximadb.code_knowledge'] = code_knowledge_module

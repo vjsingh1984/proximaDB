@@ -1077,6 +1077,22 @@ impl RaptorReader {
         )
         .await?;
 
+        // Validate we got the expected number of bytes
+        if footer_metadata_bytes.len() < 8 {
+            tracing::error!(
+                "RAPTOR read_metadata: Expected 8 bytes from footer, got {} bytes. File: {}, size: {}, offset: {}",
+                footer_metadata_bytes.len(),
+                file_path,
+                file_size,
+                footer_metadata_offset
+            );
+            return Err(anyhow::anyhow!(
+                "RAPTOR file {} has invalid footer: expected 8 bytes, got {}",
+                file_path,
+                footer_metadata_bytes.len()
+            ));
+        }
+
         // Extract footer size (first 4 bytes) and magic (last 4 bytes)
         let footer_size_bytes = &footer_metadata_bytes[0..4];
         let magic_bytes = &footer_metadata_bytes[4..8];

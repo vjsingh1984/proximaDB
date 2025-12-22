@@ -1,6 +1,6 @@
 # ProximaDB Documentation Index
 
-**Version**: 0.1.4
+**Version**: 0.1.5
 **Last Updated**: 2025-10-23
 **Purpose**: Complete guide to all ProximaDB documentation with quick-find navigation (see `AGENTS.md` for authoritative commands/standards)
 

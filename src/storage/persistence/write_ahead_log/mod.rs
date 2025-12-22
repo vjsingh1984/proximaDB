@@ -2307,8 +2307,52 @@ impl WriteAheadLogManager {
         // Step 4: Search through filtered batches
         let mut all_results = Vec::new();
 
+        // Get current time for tombstone detection
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         for batch in filtered_batches {
             for vector_record in batch.vector_records.iter() {
+                // Check if this is a tombstone (empty vector + expires_at in past)
+                // IMPORTANT: Tombstones MUST be returned to the merge phase so they can
+                // override storage results. The merge phase filters them out after deduplication.
+                let is_tombstone = vector_record.vector.is_empty()
+                    && vector_record.expires_at.map_or(false, |e| e <= current_time_secs);
+
+                if is_tombstone {
+                    // Return tombstone as a special marker for the merge phase
+                    // Score is 0.0 since we can't compute distance for empty vectors
+                    tracing::trace!("Returning tombstone marker for: {}", vector_record.id);
+                    let tombstone_result = crate::core::search::results::OptimizedSearchRecord {
+                        id: vector_record.id.clone(),
+                        vector_id: Some(vector_record.id.clone()),
+                        score: 0.0, // Tombstone has no similarity score
+                        similarity: Some(0.0),
+                        vector: None, // Empty vector marker
+                        metadata: std::collections::HashMap::new(),
+                        debug_info: None,
+                        version: vector_record.version,
+                        timestamp: Some(vector_record.timestamp.unwrap_or(0)),
+                        updated_at: vector_record.updated_at,
+                        expires_at: vector_record.expires_at, // Preserve tombstone marker
+                        source: None,
+                        expanded_context: Vec::new(),
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                    };
+                    all_results.push(tombstone_result);
+                    continue;
+                }
+
+                // Skip empty vectors that aren't tombstones (malformed records)
+                if vector_record.vector.is_empty() {
+                    continue;
+                }
+
                 // Apply fine-grained metadata filter if specified
                 if let Some(filter_expr) = metadata_filters {
                     if !self.evaluate_filter_on_record(vector_record, filter_expr) {

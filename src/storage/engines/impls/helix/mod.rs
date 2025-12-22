@@ -117,6 +117,7 @@ pub mod zone_maps;
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::core::search::{BlockPruneConfig, SearchMode};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::EventLog;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
@@ -805,43 +806,60 @@ impl HelixEngine {
         Ok(levels)
     }
 
-    /// Read Hilbert range from file footer (static version for load_levels)
+    /// Read Hilbert range and vector count from unified header (static version for load_levels)
+    /// Uses the new unified header format from proxima.rs
+    async fn read_file_metadata_from_header(
+        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        file_path: &str,
+    ) -> Result<(Option<(u64, u64)>, u64)> {
+        use std::path::Path;
+
+        // Use the unified header reader from proxima module
+        let path = Path::new(file_path);
+        let header = proxima::read_helix_header_optimized(filesystem, path).await?;
+
+        // Extract hilbert_range from all blocks: file-level range is min/max of all block ranges
+        let mut min_key = u64::MAX;
+        let mut max_key = 0u64;
+        let mut has_range = false;
+        let mut total_vectors = 0u64;
+
+        for block_meta in &header.block_metadata {
+            // Sum up vector counts from each block
+            total_vectors += block_meta.proxima_metadata.record_count as u64;
+
+            // Aggregate hilbert ranges
+            if let Some((block_min, block_max)) = block_meta.hilbert_range {
+                has_range = true;
+                min_key = min_key.min(block_min);
+                max_key = max_key.max(block_max);
+            }
+        }
+
+        let hilbert_range = if has_range {
+            Some((min_key, max_key))
+        } else {
+            None
+        };
+
+        Ok((hilbert_range, total_vectors))
+    }
+
+    /// Read Hilbert range from unified header (static version for load_levels)
     async fn read_hilbert_range_static(
         filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
         file_path: &str,
     ) -> Result<(u64, u64)> {
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        let file_size = filesystem.metadata(file_path).await?.size;
-        if file_size < 16 {
-            return Err(anyhow::anyhow!("File too small to contain Hilbert range"));
-        }
-
-        let footer_bytes = filesystem.read_range(file_path, file_size - 16, 16).await?;
-        if footer_bytes.len() < 16 {
-            return Err(anyhow::anyhow!("Failed to read Hilbert range from footer"));
-        }
-
-        let min_key = u64::from_le_bytes(footer_bytes[0..8].try_into()?);
-        let max_key = u64::from_le_bytes(footer_bytes[8..16].try_into()?);
-
-        Ok((min_key, max_key))
+        let (hilbert_range, _) = Self::read_file_metadata_from_header(filesystem, file_path).await?;
+        hilbert_range.ok_or_else(|| anyhow::anyhow!("No Hilbert range found in file"))
     }
 
-    /// Read num_vectors from file header (static version for load_levels)
+    /// Read num_vectors from unified header (static version for load_levels)
     async fn read_num_vectors_static(
         filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
         file_path: &str,
     ) -> Result<u64> {
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        // Read header: [magic:4][version:4][num_vectors:4][dimension:4]...
-        let header_bytes = filesystem.read_range(file_path, 0, 16).await?;
-        if header_bytes.len() < 12 {
-            return Err(anyhow::anyhow!("File too small to contain header"));
-        }
-
-        let num_vectors = u32::from_le_bytes(header_bytes[8..12].try_into()?) as u64;
+        let (_, num_vectors) = Self::read_file_metadata_from_header(filesystem, file_path).await?;
         Ok(num_vectors)
     }
 
@@ -1058,67 +1076,37 @@ impl HelixEngine {
         Ok(sstables)
     }
 
-    /// Read Hilbert range from HELIX file footer
+    /// Read Hilbert range from HELIX unified header
     /// This is critical for spatial pruning to work effectively
     async fn read_hilbert_range_from_file(&self, file_path: &str) -> Result<(u64, u64)> {
-        // Read the last 16 bytes which contain the Hilbert range
-        // Format: [min_key: u64][max_key: u64]
-        let file_size = self.filesystem.metadata(file_path).await?.size;
+        // Use the unified header reader for correct format
+        let (hilbert_range, _) =
+            Self::read_file_metadata_from_header(&self.filesystem, file_path).await?;
 
-        if file_size < 16 {
-            return Err(anyhow::anyhow!("File too small to contain Hilbert range"));
+        if let Some((min_key, max_key)) = hilbert_range {
+            debug!(
+                "Read Hilbert range from {}: [{}, {}]",
+                file_path, min_key, max_key
+            );
+            Ok((min_key, max_key))
+        } else {
+            Err(anyhow::anyhow!("No Hilbert range found in file"))
         }
-
-        // Read last 16 bytes (8 bytes for min, 8 bytes for max)
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        let footer_bytes = self
-            .filesystem
-            .read_range(file_path, file_size - 16, 16)
-            .await?;
-
-        if footer_bytes.len() < 16 {
-            return Err(anyhow::anyhow!("Failed to read Hilbert range from footer"));
-        }
-
-        let min_key = u64::from_le_bytes(footer_bytes[0..8].try_into()?);
-        let max_key = u64::from_le_bytes(footer_bytes[8..16].try_into()?);
-
-        debug!(
-            "Read Hilbert range from {}: [{}, {}]",
-            file_path, min_key, max_key
-        );
-
-        Ok((min_key, max_key))
     }
 
-    /// Read number of vectors from HELIX file header
+    /// Read number of vectors from HELIX unified header
     /// This provides accurate vector count for search optimization
     async fn read_num_vectors_from_file(&self, file_path: &str) -> Result<usize> {
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        // HELIX header format: magic(4) + version(4) + num_blocks(4) = 12 bytes
-        // NOTE: dimension is NOT in the header, it's inferred from data
-        let header_bytes = self.filesystem.read_range(file_path, 0, 12).await?;
-
-        if header_bytes.len() < 12 {
-            return Err(anyhow::anyhow!("File too small to contain header"));
-        }
-
-        // Read num_blocks from offset 8 (after magic + version)
-        let num_blocks = u32::from_le_bytes(header_bytes[8..12].try_into()?) as usize;
-
-        // Each block typically contains block_size vectors, but we need to count exactly
-        // For now, use a reasonable estimate: num_blocks * avg_block_size
-        // In production, this should read the exact count from footer or count blocks
-        let estimated_vectors = num_blocks * self.config.proxima_block_size;
+        // Use the unified header reader for accurate count
+        let (_, num_vectors) =
+            Self::read_file_metadata_from_header(&self.filesystem, file_path).await?;
 
         trace!(
-            "Read num_vectors estimate from {}: {} blocks × {} = {} vectors",
-            file_path, num_blocks, self.config.proxima_block_size, estimated_vectors
+            "Read num_vectors from {}: {} vectors",
+            file_path, num_vectors
         );
 
-        Ok(estimated_vectors)
+        Ok(num_vectors as usize)
     }
 }
 
@@ -1587,14 +1575,23 @@ impl UnifiedStorageEngine for HelixEngine {
         };
 
         // Calculate query Hilbert key if PCA model is available using configured bits
+        // IMPORTANT: Must use same bits as write path to ensure compatible Hilbert keys
         let query_hilbert = if let Some(model) = pca_model.as_ref() {
+            // Apply the same bits capping logic as write path (do_flush)
+            // For high-dim PCA (>16 components), cap bits to prevent overflow
+            let bits = if model.n_components > 16 {
+                self.config.hilbert_bits_per_dimension.min(8)
+            } else {
+                self.config.hilbert_bits_per_dimension
+            };
+
             let hilbert_key = model.project_and_compute_hilbert_with_config(
                 query_vector,
-                self.config.hilbert_bits_per_dimension,
+                bits,
             )?;
             debug!(
-                "[HELIX] ✅ Query Hilbert key calculated: {} (PCA model version: {})",
-                hilbert_key, model.version
+                "[HELIX] ✅ Query Hilbert key calculated: {} (PCA model version: {}, n_components: {}, bits: {})",
+                hilbert_key, model.version, model.n_components, bits
             );
             Some(hilbert_key)
         } else {
@@ -1782,6 +1779,17 @@ impl UnifiedStorageEngine for HelixEngine {
         // Get filter expression from context for type-safe SqlValue filtering
         let filter_expression = ctx.search_params.filter_expression.as_ref();
 
+        // CRITICAL FIX: When SearchMode::Exact is used, disable block-level pruning
+        // to ensure 100% recall. Block pruning should only happen in approximate mode.
+        let effective_block_prune = if matches!(ctx.search_params.search_mode, SearchMode::Exact) {
+            let mut config = ctx.search_params.block_prune.clone();
+            config.force_exact = true; // Disable centroid-based block pruning
+            debug!("[HELIX] SearchMode::Exact detected - forcing block-level exact search");
+            config
+        } else {
+            ctx.search_params.block_prune.clone()
+        };
+
         // Decide whether to use parallel or sequential search based on config
         let use_parallel = self.config.parallel_search_enabled
             && sstables_to_search.len() >= self.config.parallel_search_threshold;
@@ -1812,6 +1820,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 self.distance_compute.clone(),
                 filter_expression.cloned(),
                 Some(ctx.collection.clone()), // Pass collection for type-safe metadata filtering
+                effective_block_prune.clone(), // Pass block prune config (force_exact for Exact mode)
             )
             .await?;
 
@@ -1841,7 +1850,7 @@ impl UnifiedStorageEngine for HelixEngine {
                     filter_expression, // Pass FilterExpression for type-safe filtering
                     None,              // No specific IDs to check
                     Some(&*ctx.collection), // Pass collection for type-safe metadata
-                    &ctx.search_params.block_prune,
+                    &effective_block_prune,
                 )
                 .await?;
 

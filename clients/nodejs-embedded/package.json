@@ -1,6 +1,6 @@
 {
   "name": "proximadb-embedded",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "ProximaDB Embedded - In-process vector database for Node.js with zero network overhead",
   "main": "index.js",
   "types": "index.d.ts",
@@ -55,11 +55,11 @@
     "typescript": "^5.2.2"
   },
   "optionalDependencies": {
-    "proximadb-embedded-darwin-arm64": "0.1.4",
-    "proximadb-embedded-darwin-x64": "0.1.4",
-    "proximadb-embedded-linux-arm64-gnu": "0.1.4",
-    "proximadb-embedded-linux-x64-gnu": "0.1.4",
-    "proximadb-embedded-win32-x64-msvc": "0.1.4"
+    "proximadb-embedded-darwin-arm64": "0.1.5",
+    "proximadb-embedded-darwin-x64": "0.1.5",
+    "proximadb-embedded-linux-arm64-gnu": "0.1.5",
+    "proximadb-embedded-linux-x64-gnu": "0.1.5",
+    "proximadb-embedded-win32-x64-msvc": "0.1.5"
   },
   "files": [
     "index.js",

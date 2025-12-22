@@ -26,18 +26,24 @@ sys.path.insert(0, str(src_path))
 # First, load repository_manager module
 repo_spec = importlib.util.spec_from_file_location(
     "proximadb.repository_manager",
-    str(src_path / "proximadb" / "repository_manager.py")
+    str(src_path / "proximadb_sdk" / "repository_manager.py")
 )
 repo_module = importlib.util.module_from_spec(repo_spec)
 sys.modules['proximadb.repository_manager'] = repo_module
 repo_spec.loader.exec_module(repo_module)
 
-# Create mock proximadb package
+# Create mock proximadb package with proper __path__ for relative imports
 if 'proximadb' not in sys.modules:
     proximadb = types.ModuleType('proximadb')
+    proximadb.__path__ = [str(src_path / 'proximadb_sdk')]
+    proximadb.__package__ = 'proximadb'
     sys.modules['proximadb'] = proximadb
 else:
     proximadb = sys.modules['proximadb']
+    # Ensure __path__ is set even if module was created elsewhere
+    if not hasattr(proximadb, '__path__') or proximadb.__path__ is None:
+        proximadb.__path__ = [str(src_path / 'proximadb_sdk')]
+        proximadb.__package__ = 'proximadb'
 
 proximadb.repository_manager = repo_module
 
@@ -76,31 +82,40 @@ code_knowledge_module.IndexingResult = mock_index_result_class
 code_knowledge_module.CodeSearchResult = type('CodeSearchResult', (), {})
 sys.modules['proximadb.code_knowledge'] = code_knowledge_module
 
-# Create mock chunking_strategies.code module
-chunking_code_module = types.ModuleType('proximadb.chunking_strategies.code')
-chunking_code_module.EXTENSION_TO_LANGUAGE = {
-    '.py': 'python', '.rs': 'rust', '.js': 'javascript',
-    '.go': 'go', '.java': 'java',
-}
-chunking_code_module.get_supported_extensions = lambda: ['.py', '.rs', '.js', '.go', '.java']
-sys.modules['proximadb.chunking_strategies.code'] = chunking_code_module
+# Create mock chunking_strategies.code module only if not already loaded with real module
+# (loader.py may have already set up the real module)
+_saved_code_module = sys.modules.get('proximadb.chunking_strategies.code')
+if _saved_code_module is None or not hasattr(_saved_code_module, '__file__') or _saved_code_module.__file__ is None:
+    chunking_code_module = types.ModuleType('proximadb.chunking_strategies.code')
+    chunking_code_module.EXTENSION_TO_LANGUAGE = {
+        '.py': 'python', '.rs': 'rust', '.js': 'javascript',
+        '.go': 'go', '.java': 'java',
+    }
+    chunking_code_module.get_supported_extensions = lambda: ['.py', '.rs', '.js', '.go', '.java']
+    sys.modules['proximadb.chunking_strategies.code'] = chunking_code_module
+else:
+    # Use the real module - it has what we need
+    chunking_code_module = _saved_code_module
 
 # Now load repository_indexer module
 indexer_spec = importlib.util.spec_from_file_location(
     "proximadb.repository_indexer",
-    str(src_path / "proximadb" / "repository_indexer.py")
+    str(src_path / "proximadb_sdk" / "repository_indexer.py")
 )
 indexer_module = importlib.util.module_from_spec(indexer_spec)
 sys.modules['proximadb.repository_indexer'] = indexer_module
 indexer_spec.loader.exec_module(indexer_module)
 
 # Track modules we added so we can clean up
+# Note: Only clean up modules we actually created (not ones that already existed)
 _added_modules = [
     'proximadb.repository_manager',
     'proximadb.code_knowledge',
-    'proximadb.chunking_strategies.code',
     'proximadb.repository_indexer',
 ]
+# Only add chunking_strategies.code to cleanup if we created it
+if _saved_code_module is None or not hasattr(_saved_code_module, '__file__') or _saved_code_module.__file__ is None:
+    _added_modules.append('proximadb.chunking_strategies.code')
 
 
 @pytest.fixture(scope="module", autouse=True)

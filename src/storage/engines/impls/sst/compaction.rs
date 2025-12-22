@@ -820,13 +820,23 @@ impl Compaction {
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
 
+        // Get current time in seconds for consistent comparison
+        let current_time_secs = current_time / 1000;
+
         for vector_record in resolved_records.iter() {
-            // Check if record is expired (TTL-based expiry)
-            let is_expired = if let Some(expires_at) = vector_record.expires_at {
-                expires_at as i64 > 0 && (expires_at as i64) < current_time // Both in milliseconds
-            } else {
-                false
-            };
+            // Tombstone detection: empty vector + expires_at in past (including 0)
+            // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
+            let is_tombstone = vector_record.vector.is_empty()
+                && vector_record
+                    .expires_at
+                    .map_or(false, |e| e <= current_time_secs);
+
+            // Check if record is expired (TTL-based expiry for non-tombstones)
+            // This is different from tombstones - these are regular records that have expired
+            let is_expired = !is_tombstone
+                && vector_record.expires_at.map_or(false, |expires_at| {
+                    expires_at > 0 && expires_at < current_time_secs
+                });
 
             // Skip expired records completely - they are physically deleted
             if is_expired {
@@ -835,12 +845,6 @@ impl Compaction {
                 deleted_vector_ids.push(vector_record.id.clone());
                 continue;
             }
-
-            // Handle tombstone cleanup
-            // Check if it's a tombstone by checking if expires_at is set and in the past
-            let is_tombstone = vector_record.expires_at.map_or(false, |expires_at| {
-                expires_at as i64 > 0 && (expires_at as i64) < current_time
-            });
             let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
                 let age = (current_time / 1000) - (vector_record.timestamp.unwrap_or(0) as i64); // Both in seconds

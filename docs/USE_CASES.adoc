@@ -594,5 +594,5 @@ flowchart TD
 ---
 
 [.text-center]
-**ProximaDB v0.1.4** • Real metrics • Production-ready • Transparent limitations +
+**ProximaDB v0.1.5** • Real metrics • Production-ready • Transparent limitations +
 _5,193 vectors/sec • 2.14ms hybrid queries • 89% Python SDK coverage_

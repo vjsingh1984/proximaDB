@@ -27,7 +27,7 @@ toc::[]
 
 == Architecture Overview
 
-=== Current Architecture (v0.1.4)
+=== Current Architecture (v0.1.5)
 
 [source,mermaid]
 ----
@@ -335,7 +335,7 @@ criterion_main!(benches);
 
 [cols="3,2,2,2"]
 |===
-|Operation |Current (v0.1.4) |Target (v0.2.0) |Improvement
+|Operation |Current (v0.1.5) |Target (v0.2.0) |Improvement
 
 |Entity lookup (1K entities)
 |TBD μs

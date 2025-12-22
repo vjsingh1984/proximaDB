@@ -4,7 +4,7 @@
 :icons: font
 :source-highlighter: highlight.js
 
-image:https://img.shields.io/badge/version-0.1.4-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust]
+image:https://img.shields.io/badge/version-0.1.5-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust]
 
 [.lead]
 Build semantic search, RAG systems, and knowledge graphs with hybrid vector + graph architecture:
@@ -277,7 +277,7 @@ curl -X POST http://localhost:5678/api/v1/search \
 - Lint/format: `make check` (fmt + clippy + tests)
 - Python SDK tests: `cd clients/python && pip install -e .[dev] && pytest -q`
 
-== Capabilities (v0.1.4)
+== Capabilities (v0.1.5)
 
 === Core Capabilities
 
@@ -336,7 +336,7 @@ graph TD
 - Single binary deployment
 - Optional surfaces (AI dashboards, sales APIs, tenant access, executive intel) are opt-in via feature flags to keep the default binary lean.
 
-**Data Persistence (v0.1.4+)**:
+**Data Persistence (v0.1.5+)**:
 - **Automatic WAL-based persistence**: All data (vectors, graphs, entities) automatically persists across server restarts
 - **6-stage recovery process**: Collections → Vectors → Graphs → Assignments → Buffers → Services
 - **Zero configuration required**: Persistence enabled by default with graceful failure handling
@@ -857,7 +857,7 @@ graph TB
     style COMPUTE fill:#DDA0DD,stroke:#8B008B,stroke-width:2px
 ----
 
-=== Type-Safe Metadata Filtering (New in v0.1.4)
+=== Type-Safe Metadata Filtering (New in v0.1.5)
 
 [source,mermaid]
 ----
@@ -1006,7 +1006,7 @@ graph TD
 |⚠️ Early stage, active development
 
 |**Production Use**
-|v0.1.4 stable
+|v0.1.5 stable
 |✅ Ready for adoption
 |===
 

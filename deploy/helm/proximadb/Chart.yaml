@@ -3,7 +3,7 @@ name: proximadb
 description: ProximaDB - Cloud-native vector database engineered for AI-first applications
 type: application
 version: 0.1.0
-appVersion: "0.1.4"
+appVersion: "0.1.5"
 
 keywords:
   - vector-database

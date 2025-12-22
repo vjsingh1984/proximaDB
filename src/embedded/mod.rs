@@ -768,13 +768,22 @@ impl EmbeddedProximaDB {
         };
 
         self.runtime.block_on(async {
-            self.shared_services.collection_service
+            let response = self.shared_services.collection_service
                 .create_collection(&collection_config)
                 .await
-                .map(|_| ())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                })
+                })?;
+
+            // Check if the collection service returned an error in the response
+            if !response.success {
+                let error_msg = response.error_code.unwrap_or_else(|| "Unknown error".to_string());
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Failed to create collection '{}': {}", name, error_msg)
+                )) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            Ok(())
         })
     }
 
@@ -784,13 +793,22 @@ impl EmbeddedProximaDB {
         name: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
-            self.collection_service
+            let response = self.collection_service
                 .delete_collection(name)
                 .await
-                .map(|_| ())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                })
+                })?;
+
+            // Check if the collection service returned an error in the response
+            if !response.success {
+                let error_msg = response.error_code.unwrap_or_else(|| "Unknown error".to_string());
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Failed to delete collection '{}': {}", name, error_msg)
+                )) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            Ok(())
         })
     }
 
@@ -1397,8 +1415,9 @@ impl EmbeddedProximaDB {
         use crate::proto::proximadb_v1::VectorRecord;
         use std::sync::Arc;
 
-        // Create tombstone record: empty vector + version=None marks deletion
-        // expires_at is set to 30 days from now for eventual cleanup during compaction
+        // Create tombstone record: empty vector + expires_at in past marks deletion
+        // expires_at is set to 0 (epoch) to immediately mark as expired/deleted
+        // Compaction will clean up these tombstones after they've been applied
         let now = chrono::Utc::now();
         let tombstone = VectorRecord {
             id: vector_id.to_string(),
@@ -1406,8 +1425,8 @@ impl EmbeddedProximaDB {
             metadata: std::collections::HashMap::new(),
             timestamp: Some(now.timestamp_millis()),
             updated_at: Some(now.timestamp_millis()),
-            expires_at: Some(now.timestamp() + 30 * 24 * 60 * 60), // 30 days
-            version: None,  // None = tombstone marker
+            expires_at: Some(0), // Expired at epoch = tombstone marker (always in past)
+            version: None,  // Version may be updated by MVCC later
             source: None,
         };
 
@@ -1455,9 +1474,9 @@ impl EmbeddedProximaDB {
         }
 
         let now = chrono::Utc::now();
-        let expires_at = now.timestamp() + 30 * 24 * 60 * 60; // 30 days
 
         // Create tombstone records for all IDs
+        // expires_at is set to 0 (epoch) to immediately mark as expired/deleted
         let tombstones: Vec<VectorRecord> = vector_ids
             .iter()
             .map(|id| VectorRecord {
@@ -1466,8 +1485,8 @@ impl EmbeddedProximaDB {
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(now.timestamp_millis()),
                 updated_at: Some(now.timestamp_millis()),
-                expires_at: Some(expires_at),
-                version: None,  // None = tombstone marker
+                expires_at: Some(0), // Expired at epoch = tombstone marker (always in past)
+                version: None,  // Version may be updated by MVCC later
                 source: None,
             })
             .collect();

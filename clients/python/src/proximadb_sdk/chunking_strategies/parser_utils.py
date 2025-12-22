@@ -401,7 +401,7 @@ class BaseLanguageParser(ABC):
     def _init_tree_sitter(self):
         """Initialize tree-sitter parser"""
         try:
-            from tree_sitter_languages import get_parser, get_language
+            from tree_sitter_language_pack import get_parser, get_language
             self._parser = get_parser(self.tree_sitter_language_name)
             self._language_binding = get_language(self.tree_sitter_language_name)
             logger.debug(f"Tree-sitter initialized for {self.language}")

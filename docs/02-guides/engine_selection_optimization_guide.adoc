@@ -921,5 +921,5 @@ if __name__ == "__main__":
 ---
 
 *Engine Selection and Optimization Guide - September 2025*
-*ProximaDB Version: 0.1.4*
+*ProximaDB Version: 0.1.5*
 *All 6 Storage Engines Production-Ready*

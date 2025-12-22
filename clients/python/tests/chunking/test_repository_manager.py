@@ -26,7 +26,7 @@ sys.path.insert(0, str(src_path))
 # Load module directly to avoid __init__.py import chain
 spec = importlib.util.spec_from_file_location(
     "repository_manager",
-    str(src_path / "proximadb" / "repository_manager.py")
+    str(src_path / "proximadb_sdk" / "repository_manager.py")
 )
 repo_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(repo_module)

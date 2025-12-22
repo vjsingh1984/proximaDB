@@ -4,7 +4,7 @@
 
 STATUS: ✅ Production Ready (Tested 2025-01-23)
 SDK Version: v1.0+
-Server Version: v0.1.4+
+Server Version: v0.1.5+
 Test Result: 100% PASS - Works perfectly
 
 ProximaDB Dashboard & Metrics API Demo

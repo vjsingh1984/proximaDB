@@ -401,5 +401,5 @@ cd clients/python && pip install -e .
 ---
 
 **Last Updated:** October 2025
-**SDK Version:** 0.1.4+
+**SDK Version:** 0.1.5+
 **Status:** Production Ready ✅

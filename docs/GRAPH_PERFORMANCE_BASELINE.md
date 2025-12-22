@@ -1,7 +1,7 @@
 # ProximaDB Graph Engine Performance Benchmarks
 
 **Date**: 2025-12-20
-**Version**: 0.1.4
+**Version**: 0.1.5
 **Test Environment**: macOS (Darwin 24.6.0), Apple Silicon
 **Rust Edition**: 2024
 **Build Profile**: Release (optimized)
@@ -1104,7 +1104,7 @@ RUST_LOG=debug PYTHONPATH=clients/python/src python3 clients/python/tests/trace_
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 0.1.4 | 2025-12-20 | Fixed bulk insert delegation (132x improvement), added SKS use cases |
+| 0.1.5 | 2025-12-20 | Fixed bulk insert delegation (132x improvement), added SKS use cases |
 | 0.1.3 | 2025-12-19 | Initial baseline metrics |
 
 ---

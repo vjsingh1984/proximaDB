@@ -737,4 +737,4 @@ println!("Cache hit rate: {:.2}%", stats.cache_hit_rate * 100.0);
 * link:../../../../docs/performance/[Performance Documentation]
 
 ---
-_Last updated: January 2025 (v0.1.4)_
+_Last updated: January 2025 (v0.1.5)_

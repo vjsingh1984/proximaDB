@@ -561,4 +561,4 @@ curl http://localhost:5678/api/v1/storage/health
 ---
 
 _Last Updated: October 2025_
-_Version: 0.1.4_
+_Version: 0.1.5_

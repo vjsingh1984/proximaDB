@@ -4,7 +4,7 @@
 
 STATUS: ⚠️  Requires External Dependency
 SDK Version: v1.0+ (requires aiofiles package)
-Server Version: v0.1.4+
+Server Version: v0.1.5+
 Test Result: SKIP - Install with: pip install aiofiles
 
 Streaming Upload Example for ProximaDB Python SDK v1.0

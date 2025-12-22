@@ -1612,7 +1612,8 @@ fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
     }
 }
 
-/// Python module definition - must match crate name "proximadb"
+/// Python module definition
+/// This exports as "proximadb" which is the module name used by benchmarks
 #[pymodule]
 fn proximadb(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     // Core classes

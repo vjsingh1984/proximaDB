@@ -3,7 +3,7 @@
 **Last Updated**: 2024-12-17
 **Status**: ✅ Production-Ready (Implemented)
 **Engines**: SST ✅, SWIFT ✅, HELIX (partial)
-**Version**: ProximaDB 0.1.4+
+**Version**: ProximaDB 0.1.5+
 
 This document describes the implementation of block-level centroids with FP16 (half-precision) quantization for the shared SST row-based layout (used by SST, SWIFT, and HELIX engines).
 

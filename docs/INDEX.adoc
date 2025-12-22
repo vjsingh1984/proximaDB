@@ -268,4 +268,4 @@ Historical and development documentation moved to archive:
 
 _Last Updated: {docdate}_
 
-_Version: 0.1.4_
+_Version: 0.1.5_

@@ -507,25 +507,26 @@ impl GraphEngine for PulsarGraphEngine {
 
     async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         // For edges, we need to consider both source and target nodes
-        // Validate both nodes exist first (looking in appropriate shards)
+        // Validate both nodes exist first using the trait's get_node which searches all shards
 
-        // Validate source node exists (in its shard)
-        let source_shard = self.get_primary_shard(&edge.from_node_id).await?;
-        if source_shard.get_node(&edge.from_node_id)?.is_none() {
+        // Validate source node exists (searches primary + all shards as fallback)
+        if self.get_node(&edge.from_node_id)?.is_none() {
             return Err(ProximaDBError::InvalidInput(format!(
                 "Source node {} does not exist",
                 edge.from_node_id
             )));
         }
 
-        // Validate target node exists (in its shard - might be different from source)
-        let target_shard = self.get_primary_shard(&edge.to_node_id).await?;
-        if target_shard.get_node(&edge.to_node_id)?.is_none() {
+        // Validate target node exists (searches primary + all shards as fallback)
+        if self.get_node(&edge.to_node_id)?.is_none() {
             return Err(ProximaDBError::InvalidInput(format!(
                 "Target node {} does not exist",
                 edge.to_node_id
             )));
         }
+
+        // Get the primary shard for storing the edge (edges stored on source node's shard)
+        let source_shard = self.get_primary_shard(&edge.from_node_id).await?;
 
         // Store edge on source node's shard, using insert_edge_unchecked to skip
         // OrionGraphEngine's validation (we already validated at PULSAR level)

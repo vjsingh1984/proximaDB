@@ -127,10 +127,28 @@ impl ParallelWALSearch {
         let use_simd =
             self.hardware.cpu.features.avx2_support || self.hardware.cpu.features.sse42_support;
 
+        // Get current time in seconds for tombstone detection
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         batch
             .vector_records
             .par_iter()
             .filter_map(|record| {
+                // Skip tombstones (empty vector + expires_at in past or 0)
+                let is_tombstone = record.vector.is_empty() &&
+                    record.expires_at.map_or(false, |e| e <= current_time_secs);
+                if is_tombstone {
+                    return None;
+                }
+
+                // Skip empty vectors (safety check)
+                if record.vector.is_empty() {
+                    return None;
+                }
+
                 // Apply metadata filter if present
                 if let Some(filter) = metadata_filter {
                     if !self.evaluate_filter(record, filter) {

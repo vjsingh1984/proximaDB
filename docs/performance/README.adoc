@@ -3,7 +3,7 @@
 :toclevels: 2
 :icons: font
 
-**Version**: 0.1.4 +
+**Version**: 0.1.5 +
 **Benchmark Date**: December 17, 2025 +
 **Platform**: Local Machine (macOS) +
 **Validated**: All numbers from user-provided benchmark run.

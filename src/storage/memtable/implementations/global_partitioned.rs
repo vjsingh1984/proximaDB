@@ -476,25 +476,44 @@ impl CollectionPartition {
                     };
 
                     if is_newer {
-                        let score = distance_compute.calculate_distance(
-                            query_vector,
-                            &vector_record.vector,
-                            distance_metric,
-                        );
-                        id_to_latest.insert(
-                            vector_record.id.clone(),
-                            (score, vector_record.clone(), sequence, version),
-                        );
+                        // Skip tombstones (empty vector + expires_at in past or 0) - they mark deletions
+                        // and should not be included in search results
+                        let current_time_secs = (current_time / 1_000_000) as i64;
+                        let is_tombstone = vector_record.vector.is_empty() &&
+                            vector_record.expires_at.map_or(false, |e| e <= current_time_secs);
+                        if is_tombstone {
+                            // Remove any previous version from results (tombstone shadows it)
+                            id_to_latest.remove(vector_id);
+                            tracing::debug!(
+                                "🗑️ Tombstone found for ID {}: removing from results",
+                                vector_id
+                            );
+                        } else {
+                            let score = distance_compute.calculate_distance(
+                                query_vector,
+                                &vector_record.vector,
+                                distance_metric,
+                            );
+                            id_to_latest.insert(
+                                vector_record.id.clone(),
+                                (score, vector_record.clone(), sequence, version),
+                            );
 
-                        tracing::debug!(
-                            "📝 Updated latest version for ID {}: seq={}, version={:?}",
-                            &vector_record.id,
-                            sequence,
-                            version
-                        );
+                            tracing::debug!(
+                                "📝 Updated latest version for ID {}: seq={}, version={:?}",
+                                &vector_record.id,
+                                sequence,
+                                version
+                            );
+                        }
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
+                    // Also skip empty vectors (should not happen for valid data, but safety check)
+                    if vector_record.vector.is_empty() {
+                        continue;
+                    }
+
                     let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at

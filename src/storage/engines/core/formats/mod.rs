@@ -7,6 +7,7 @@ pub mod columnar;
 pub mod common_quantization;
 pub mod proximablocks;
 pub mod quantized_schema;
+pub mod vector_serialization;
 
 #[cfg(test)]
 mod codebook_integration_test;
@@ -35,3 +36,5 @@ pub use codebook_metadata::{
     BinaryCodebook, CodebookSerializer, Int8Codebook, PqCodebook, PqTrainingConfig,
     ProximaBlockFooter, QuantizationCodebookMetadata,
 };
+
+pub use vector_serialization::VectorSerializer;

@@ -443,7 +443,7 @@ compression_level = 3    # Balance speed vs ratio
 - Lower memory bandwidth: Less data movement
 - SIMD-optimized: Vectorized decompression
 
-== Data Persistence (v0.1.4+)
+== Data Persistence (v0.1.5+)
 
 **ProximaDB provides automatic persistence for all data types:**
 
@@ -602,5 +602,5 @@ graph TB
 ---
 
 [.text-center]
-**ProximaDB v0.1.4** • Apache 2.0 License • link:https://github.com/vjsingh1984/proximaDB[GitHub Repository] +
+**ProximaDB v0.1.5** • Apache 2.0 License • link:https://github.com/vjsingh1984/proximaDB[GitHub Repository] +
 _Honest metrics • Production-ready Python SDK • Transparent limitations_

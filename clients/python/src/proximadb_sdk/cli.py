@@ -59,7 +59,7 @@ def get_client(
 )
 @click.option("--timeout", default=30.0, help="Request timeout in seconds")
 @click.option("--json-output", is_flag=True, help="Output results as JSON")
-@click.version_option(version="0.1.4", prog_name="ProximaDB CLI")
+@click.version_option(version="0.1.5", prog_name="ProximaDB CLI")
 @click.pass_context
 def cli(
     ctx: click.Context,

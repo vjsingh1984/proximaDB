@@ -536,13 +536,10 @@ impl UnifiedCachingFilesystem {
         Ok(data)
     }
 
-    async fn read_range(&self, path: &str, start: u64, end: u64) -> FsResult<Vec<u8>> {
-        // Read a specific range from the file
-        // This would be implemented with cloud storage range requests
-        let data = self.underlying_fs.read(path).await?;
-        let start = start as usize;
-        let end = std::cmp::min(end as usize, data.len());
-        Ok(data[start..end].to_vec())
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        // Delegate to underlying filesystem's read_range for proper offset/length handling
+        // This fixes a critical bug where offset/length was incorrectly interpreted as start/end
+        self.underlying_fs.read_range(path, offset, length).await
     }
 }
 

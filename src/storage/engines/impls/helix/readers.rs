@@ -214,6 +214,7 @@ pub async fn parallel_search(
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     filter_expression: Option<crate::core::search::FilterExpression>,
     collection: Option<std::sync::Arc<crate::proto::proximadb_v1::Collection>>,
+    block_prune: crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<OptimizedSearchRecord>> {
     if sstables.is_empty() {
         return Ok(Vec::new());
@@ -234,6 +235,7 @@ pub async fn parallel_search(
         let dist_compute = distance_compute.clone();
         let filter_clone = filter_expression.clone();
         let collection_clone = collection.clone();
+        let prune_config = block_prune.clone();
 
         tokio::spawn(async move {
             trace!(
@@ -254,7 +256,7 @@ pub async fn parallel_search(
                 filter_clone.as_ref(),
                 None, // No candidate IDs for now
                 collection_clone.as_ref().map(|c| c.as_ref()), // Pass collection for type-safe metadata
-                &crate::core::search::BlockPruneConfig::default(),
+                &prune_config,
             )
             .await;
 

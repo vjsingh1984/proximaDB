@@ -347,7 +347,7 @@ global_manifest_url = "file:///var/lib/proximadb/manifest"
 global_manifest_url = "s3://bucket/proximadb/manifest"
 ----
 
-**v0.1.4 Feature**: Cloud-optimized global WAL manifest for multi-disk deployments with centralized LSN tracking.
+**v0.1.5 Feature**: Cloud-optimized global WAL manifest for multi-disk deployments with centralized LSN tracking.
 
 ==== `memory_flush_size_bytes`
 
@@ -639,7 +639,7 @@ dashboard_refresh_interval_seconds = 30   # Every 30 seconds
 
 [WARNING]
 ====
-**Version 0.1.4**: Security features are under development. Use network-level security (firewalls, VPNs) for production deployments.
+**Version 0.1.5**: Security features are under development. Use network-level security (firewalls, VPNs) for production deployments.
 ====
 
 [source,toml]
@@ -888,7 +888,7 @@ rm -rf /var/lib/proximadb/manifest/*
 
 == Migration Guide
 
-=== Upgrading from v0.1.3 to v0.1.4
+=== Upgrading from v0.1.3 to v0.1.5
 
 **New Features**:
 * Global WAL manifest system
@@ -903,7 +903,7 @@ rm -rf /var/lib/proximadb/manifest/*
 [storage]
 storage_path = "/data/proximadb"
 
-# v0.1.4 (new)
+# v0.1.5 (new)
 [storage]
 metadata_url = "file:///data/proximadb/metadata"
 
@@ -981,4 +981,4 @@ global_flush_threshold = 34359738368  # 32GB
 * link:../../README.adoc[Main Documentation]
 
 ---
-_Last updated: January 2025 (v0.1.4)_
+_Last updated: January 2025 (v0.1.5)_

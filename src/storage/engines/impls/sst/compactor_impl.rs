@@ -386,12 +386,14 @@ impl SstCompactor {
             let current_time = chrono::Utc::now().timestamp() as u32;
 
             // Check for empty vector tombstones (deleted records)
+            // Tombstone design: empty vector + expires_at in past (including 0 = epoch = always past)
             let has_empty_vector_tombstone = versions.iter().any(|r| r.vector.is_empty());
             if has_empty_vector_tombstone {
                 // Check if any tombstone has expired (past grace period)
+                // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
                 let tombstone_expired = versions.iter().any(|r| {
                     r.vector.is_empty()
-                        && r.expires_at.map_or(false, |exp| exp < current_time as i64)
+                        && r.expires_at.map_or(false, |exp| exp <= current_time as i64)
                 });
 
                 if tombstone_expired {
@@ -589,12 +591,14 @@ impl SstCompactor {
             let current_time = chrono::Utc::now().timestamp() as u32;
 
             // Check for empty vector tombstones (deleted records)
+            // Tombstone design: empty vector + expires_at in past (including 0 = epoch = always past)
             let has_empty_vector_tombstone = versions.iter().any(|r| r.vector.is_empty());
             if has_empty_vector_tombstone {
                 // Check if any tombstone has expired (past grace period)
+                // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
                 let tombstone_expired = versions.iter().any(|r| {
                     r.vector.is_empty()
-                        && r.expires_at.map_or(false, |exp| exp < current_time as i64)
+                        && r.expires_at.map_or(false, |exp| exp <= current_time as i64)
                 });
 
                 if tombstone_expired {

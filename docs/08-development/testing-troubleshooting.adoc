@@ -237,5 +237,5 @@ Dynamic fields:        metadata.any_field (Unknown type)
 ---
 
 _Analysis Date: October 2025_
-_Version: 0.1.4_
+_Version: 0.1.5_
 _Status: ✅ RESOLVED_

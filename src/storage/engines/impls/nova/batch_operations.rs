@@ -4,6 +4,7 @@
 use super::NovaFile;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::ParquetLocation;
+use crate::storage::engines::core::formats::VectorSerializer;
 use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_array::array::{BinaryArray, StringArray};
@@ -394,16 +395,9 @@ fn estimate_batch_size(batch: &RecordBatch) -> usize {
     size
 }
 
+// NOTE: Now using shared VectorSerializer from core/formats/vector_serialization.rs
 fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
-        return Err(anyhow!("Invalid vector byte length"));
-    }
-    let mut vector = Vec::with_capacity(bytes.len() / 4);
-    for chunk in bytes.chunks_exact(4) {
-        let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        vector.push(value);
-    }
-    Ok(vector)
+    VectorSerializer::deserialize_raw(bytes)
 }
 /// Statistics for batch operations
 pub struct BatchStats {

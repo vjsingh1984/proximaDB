@@ -182,11 +182,14 @@ class PythonParser(LanguageParser):
     def _init_parser(self):
         """Initialize tree-sitter parser for Python"""
         try:
-            from tree_sitter_languages import get_parser, get_language
+            from tree_sitter_language_pack import get_parser, get_language
             self._parser = get_parser("python")
             self._language = get_language("python")
-        except ImportError:
+        except (ImportError, TypeError, Exception) as e:
             # Fallback to regex-based parsing if tree-sitter not available
+            # or if there's a version incompatibility (e.g., tree-sitter 0.25.x with older tree-sitter-languages)
+            import logging
+            logging.debug(f"Tree-sitter init failed, using regex fallback: {e}")
             self._parser = None
             self._language = None
 
@@ -820,10 +823,10 @@ class JavaScriptParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             lang = "typescript" if self._typescript else "javascript"
             self._parser = get_parser(lang)
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -864,9 +867,9 @@ class RustParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("rust")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -1311,9 +1314,9 @@ class GoParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("go")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -1548,9 +1551,9 @@ class JavaParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("java")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -1926,10 +1929,10 @@ class CppParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             lang = "c" if self._c_mode else "cpp"
             self._parser = get_parser(lang)
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2189,9 +2192,9 @@ class RubyParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("ruby")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2450,9 +2453,9 @@ class CSharpParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("c_sharp")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2485,9 +2488,9 @@ class PhpParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("php")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2519,9 +2522,9 @@ class SwiftParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("swift")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2553,9 +2556,9 @@ class KotlinParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("kotlin")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2587,9 +2590,9 @@ class ScalaParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("scala")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2621,9 +2624,9 @@ class BashParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("bash")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2751,9 +2754,9 @@ class SqlParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("sql")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -2913,9 +2916,9 @@ class YamlParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("yaml")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -3038,9 +3041,9 @@ class JsonParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("json")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -3213,9 +3216,9 @@ class PerlParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("perl")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -3372,9 +3375,9 @@ class LuaParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("lua")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -3407,9 +3410,9 @@ class HaskellParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("haskell")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property
@@ -3441,9 +3444,9 @@ class ElixirParser(LanguageParser):
 
     def _init_parser(self):
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_language_pack import get_parser
             self._parser = get_parser("elixir")
-        except ImportError:
+        except (ImportError, TypeError, Exception):
             self._parser = None
 
     @property

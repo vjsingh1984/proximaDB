@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # ProximaDB Architecture Guide for AI Assistants
 
-**Version**: 0.1.4
+**Version**: 0.1.5
 **Rust Edition**: 2024
 **License**: Apache 2.0
 
@@ -1696,7 +1696,7 @@ Copyright 2024-2025 Vijaykumar Singh
 ---
 
 **Last Updated**: November 17, 2025
-**Version**: 0.1.4
+**Version**: 0.1.5
 **Maintainer**: Vijaykumar Singh <singhvjd@gmail.com>
 
 **Verification Notes**:

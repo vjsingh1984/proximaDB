@@ -900,14 +900,15 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     /// Delete vector by ID using batch operations
     async fn delete_vector(&self, collection_id: &str, vector_id: &VectorId) -> Result<u64> {
         // Create a tombstone vector record for deletion
+        // Tombstone design: empty vector + expires_at in the past (epoch 0)
         let tombstone = VectorRecord {
             id: vector_id.clone(),
-            vector: vec![], // Empty vector for tombstone
+            vector: vec![], // Empty vector = tombstone marker
             metadata: std::collections::HashMap::new(),
             timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: Some(chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)), // 30 days
-            version: None, // None for tombstone
+            expires_at: Some(0), // Epoch time = always in past = tombstone marker
+            version: None, // May be updated by MVCC later
             // rank removed -  None,
             source: None,
         };

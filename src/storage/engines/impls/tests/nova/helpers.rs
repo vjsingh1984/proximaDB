@@ -18,6 +18,7 @@
 //! - Performance metrics
 
 use crate::storage::engines::impls::nova::{hierarchical_stats::*, zone_maps::*};
+use crate::storage::engines::core::formats::VectorSerializer;
 use anyhow::Result;
 
 // ============================================================================
@@ -402,18 +403,11 @@ pub fn lookup_pq_distance(table: &[Vec<f32>], pq_code: &[u8]) -> f32 {
 ///
 /// # Returns
 /// Deserialized vector
+///
+/// NOTE: Delegates to shared VectorSerializer from core/formats
 #[allow(dead_code)]
 pub fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
-        anyhow::bail!("Invalid vector byte length: {}", bytes.len());
-    }
-
-    let floats: Vec<f32> = bytes
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect();
-
-    Ok(floats)
+    VectorSerializer::deserialize_raw(bytes)
 }
 
 /// Serialize a vector to bytes
@@ -423,10 +417,13 @@ pub fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
 /// * `vector` - Vector to serialize
 ///
 /// # Returns
-/// Serialized bytes
+/// Serialized bytes (raw f32 bytes, no length prefix for test compatibility)
+///
+/// NOTE: Uses raw bytemuck cast for compatibility with existing tests
 #[allow(dead_code)]
 pub fn serialize_vector(vector: &[f32]) -> Vec<u8> {
-    vector.iter().flat_map(|&f| f.to_le_bytes()).collect()
+    // Use raw serialization (no length prefix) for backward compatibility with tests
+    bytemuck::cast_slice(vector).to_vec()
 }
 
 // ============================================================================

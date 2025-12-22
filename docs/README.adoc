@@ -448,5 +448,5 @@ Run documentation validation:
 ---
 
 _Last Updated: October 2025_
-_Version: 0.1.4_
+_Version: 0.1.5_
 _Documentation Version: 2.0 (Streamlined)_

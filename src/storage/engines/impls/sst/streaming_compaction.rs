@@ -71,93 +71,34 @@ impl PartialEq for MergeRecord {
 
 impl Eq for MergeRecord {}
 
-/// Fast vector serialization using bytemuck for optimal performance
+/// Fast vector serialization - delegates to shared VectorSerializer
+///
+/// This struct is kept for API compatibility with existing code.
+/// All implementations now use the centralized VectorSerializer from core/formats.
 pub struct FastVectorSerialization;
 
 impl FastVectorSerialization {
     /// Fastest possible vector serialization - zero-copy for fixed dimensions
+    /// Delegates to shared VectorSerializer
     #[inline(always)]
     pub fn serialize_vector_optimized(vector: &[f32]) -> Vec<u8> {
-        match vector.len() {
-            // Common embedding dimensions - use zero-copy bytemuck
-            64 | 128 | 256 | 384 | 512 | 768 | 1024 | 1536 | 2048 => {
-                // FASTEST: Zero-copy cast from f32 slice to u8 slice
-                unsafe {
-                    let byte_slice = bytemuck::cast_slice::<f32, u8>(vector);
-                    byte_slice.to_vec() // Single memcpy
-                }
-            }
-            // Variable dimensions - direct memory copy (still faster than protobuf)
-            _ => {
-                let byte_len = vector.len() * 4; // f32 = 4 bytes
-                let mut result = Vec::with_capacity(byte_len + 4); // +4 for length prefix
-
-                // Write length prefix for variable dimensions
-                result.extend_from_slice(&(vector.len()).to_le_bytes());
-
-                // Direct memory copy - fastest for variable dimensions
-                unsafe {
-                    let byte_ptr = vector.as_ptr() as *const u8;
-                    let byte_slice = std::slice::from_raw_parts(byte_ptr, byte_len);
-                    result.extend_from_slice(byte_slice);
-                }
-
-                result
-            }
-        }
+        crate::storage::engines::core::formats::VectorSerializer::serialize(vector)
     }
 
     /// Fast vector deserialization with bytemuck
+    /// Delegates to shared VectorSerializer
     #[inline(always)]
     pub fn deserialize_vector_optimized(
         data: &[u8],
         expected_dim: Option<usize>,
     ) -> Result<Vec<f32>> {
-        match expected_dim {
-            Some(dim) if Self::is_fixed_dimension(dim) => {
-                // FASTEST: Zero-copy cast for fixed dimensions
-                let expected_bytes = dim * 4;
-                if data.len() != expected_bytes {
-                    return Err(anyhow::anyhow!(
-                        "Fixed dimension size mismatch: expected {} bytes, got {}",
-                        expected_bytes,
-                        data.len()
-                    ));
-                }
-
-                unsafe {
-                    let float_slice = bytemuck::cast_slice::<u8, f32>(data);
-                    Ok(float_slice.to_vec()) // Single memcpy
-                }
-            }
-            _ => {
-                // Variable dimension - read length prefix + data
-                if data.len() < 4 {
-                    return Err(anyhow::anyhow!(
-                        "Insufficient data for variable dimension vector"
-                    ));
-                }
-
-                let len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-                let expected_bytes = len * 4 + 4; // +4 for length prefix
-
-                if data.len() != expected_bytes {
-                    return Err(anyhow::anyhow!("Variable dimension size mismatch"));
-                }
-
-                unsafe {
-                    let vector_data = &data[4..];
-                    let float_slice = bytemuck::cast_slice::<u8, f32>(vector_data);
-                    Ok(float_slice.to_vec())
-                }
-            }
-        }
+        crate::storage::engines::core::formats::VectorSerializer::deserialize(data, expected_dim)
     }
 
     /// Check if dimension qualifies for fixed-size optimization
     #[inline(always)]
-    fn is_fixed_dimension(dim: usize) -> bool {
-        matches!(dim, 64 | 128 | 256 | 384 | 512 | 768 | 1024 | 1536 | 2048)
+    pub fn is_fixed_dimension(dim: usize) -> bool {
+        crate::storage::engines::core::formats::VectorSerializer::is_fixed_dimension(dim)
     }
 }
 

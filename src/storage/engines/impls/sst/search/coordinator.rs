@@ -164,19 +164,27 @@ impl SearchCoordinator {
     /// Filter tombstones from search results
     ///
     /// Tombstones are identified by:
-    /// - Empty vector (None or empty Vec) - PRIMARY indicator
+    /// - Empty vector (None or empty Vec) AND expires_at in the past (or 0)
     ///
-    /// Deleted records are marked with empty vectors during the delete operation.
+    /// Deleted records are marked with empty vectors + expires_at in past during delete.
     /// These should be excluded from search results.
     fn filter_tombstones(&self, results: Vec<OptimizedSearchRecord>) -> Vec<OptimizedSearchRecord> {
         let original_count = results.len();
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         let filtered: Vec<OptimizedSearchRecord> = results
             .into_iter()
             .filter(|r| {
-                // Primary tombstone indicator: empty vector
-                // A record is considered a tombstone if it has no vector data
-                // Keep records that have a non-empty vector
-                r.vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+                // Tombstone check: empty vector + expires_at in past
+                let is_empty_vector = r.vector.as_ref().map(|v| v.is_empty()).unwrap_or(true);
+                let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
+                let is_tombstone = is_empty_vector && is_expired;
+
+                // Keep records that are NOT tombstones AND have valid vectors
+                !is_tombstone && r.vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
             })
             .collect();
 

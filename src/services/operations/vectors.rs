@@ -129,8 +129,12 @@ pub struct SearchPlanHints {
 
 /// Updated Vector Operations Service using consolidated optimizer
 pub struct VectorOperationsService {
-    /// Storage engine - using concrete type for now due to trait object safety
+    /// Default storage engine (SST) - used for fallback and WAL coordination
     storage_engine: Arc<SstEngine>,
+
+    /// Dynamic engine cache - maps collection_id to the correct storage engine
+    /// This enables each collection to use its configured engine (SST, HELIX, VIPER, etc.)
+    engine_cache: Arc<dashmap::DashMap<String, Arc<dyn UnifiedStorageEngine>>>,
 
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
@@ -442,6 +446,7 @@ impl VectorOperationsService {
 
         Self {
             storage_engine,
+            engine_cache: Arc::new(dashmap::DashMap::new()),
             wal_manager,
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
@@ -1679,6 +1684,10 @@ impl VectorOperationsService {
             collection.clone(),
         );
 
+        // Get the correct engine for this collection (CRITICAL for multi-engine support)
+        // This ensures HELIX collections use HELIX, VIPER uses VIPER, etc.
+        let engine = self.get_engine_for_collection(collection_id).await?;
+
         // Launch both searches in parallel using tokio::join!
         let (wal_results, storage_results) = tokio::join!(
             // Stage 1: WAL/memtable search
@@ -1705,19 +1714,20 @@ impl VectorOperationsService {
                 );
                 Ok::<_, anyhow::Error>(results)
             },
-            // Stage 2: Storage engine search
+            // Stage 2: Storage engine search (using collection-specific engine)
             async {
                 debug!(
-                    "Stage 2: Searching storage engine for {}",
+                    "Stage 2: Searching storage engine ({}) for {}",
+                    engine.engine_name(),
                     collection_id
                 );
-                let results = self
-                    .storage_engine
+                let results = engine
                     .search_vectors_unified(&search_context)
                     .await?;
                 debug!(
-                    "Stage 2 complete: {} storage results",
-                    results.len()
+                    "Stage 2 complete: {} storage results from {}",
+                    results.len(),
+                    engine.engine_name()
                 );
                 Ok::<_, anyhow::Error>(results)
             }
@@ -1727,11 +1737,56 @@ impl VectorOperationsService {
         let wal_optimized_results = wal_results?;
         let storage_results = storage_results?;
 
-        // Merge and rank results from both stages
-        let mut all_results =
-            Vec::with_capacity(wal_optimized_results.len() + storage_results.len());
-        all_results.extend(wal_optimized_results);
-        all_results.extend(storage_results);
+        // MVCC Deduplication: WAL results override storage results for same ID
+        // This is critical for delete/update operations where WAL contains tombstones
+        use std::collections::HashMap;
+
+        // Get current time for tombstone detection
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        // Build map from WAL results (highest priority - fresher data)
+        let mut id_to_result: HashMap<String, crate::core::search::results::OptimizedSearchRecord> =
+            HashMap::new();
+
+        for result in wal_optimized_results {
+            id_to_result.insert(result.id.clone(), result);
+        }
+
+        // Add storage results only if not already present in WAL
+        for result in storage_results {
+            id_to_result.entry(result.id.clone()).or_insert(result);
+        }
+
+        // Filter out tombstones and collect final results
+        // Tombstone design: empty vector (Some(vec![])) + expires_at in past (including 0)
+        // NOTE: A record with vector=None is NOT a tombstone - it just means the vector wasn't
+        // returned in the optimized search (common for storage engines that return only IDs/scores)
+        let mut all_results: Vec<crate::core::search::results::OptimizedSearchRecord> = id_to_result
+            .into_values()
+            .filter(|r| {
+                // Check if this is a tombstone
+                // Tombstone: vector is explicitly empty (Some(vec![])) AND expired
+                // A record with vector=None is NOT a tombstone - it's just missing vector data
+                let is_explicit_empty_vector = r.vector.as_ref().map(|v| v.is_empty()).unwrap_or(false);
+                let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
+                let is_tombstone = is_explicit_empty_vector && is_expired;
+
+                if is_tombstone {
+                    debug!("🗑️ Filtering tombstone from two-stage search results: {}", r.id);
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        debug!(
+            "TWO-STAGE dedup: {} unique results after MVCC resolution and tombstone filtering",
+            all_results.len()
+        );
 
         // Sort by similarity score in DESCENDING order (higher = more similar)
         // IMPORTANT: All engines now put normalized similarity (0-1) in the score field
@@ -1819,6 +1874,58 @@ impl VectorOperationsService {
                 .insert(collection_id_string, arc_collection.clone());
             Ok(arc_collection)
         }
+    }
+
+    /// Get or create the correct storage engine for a collection.
+    ///
+    /// This is CRITICAL for multi-engine support:
+    /// - Looks up the collection's configured engine type from its storage_assignment
+    /// - Creates the engine if not already cached
+    /// - Returns the cached engine for subsequent calls
+    ///
+    /// Without this, all searches would use SST regardless of collection configuration.
+    async fn get_engine_for_collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+        // Check cache first
+        if let Some(engine) = self.engine_cache.get(collection_id) {
+            return Ok(engine.clone());
+        }
+
+        // Get collection to determine engine type
+        let collection = self.get_or_load_collection(collection_id).await?;
+
+        // Determine engine type from storage_assignment
+        let engine_type = collection
+            .storage_assignment
+            .as_ref()
+            .map(|sa| {
+                crate::proto::proximadb_v1::StorageEngine::try_from(sa.engine)
+                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst)
+            })
+            .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst);
+
+        debug!(
+            "🔧 Creating storage engine {:?} for collection {}",
+            engine_type, collection_id
+        );
+
+        // Create the appropriate engine
+        let engine = crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(
+            engine_type,
+        )
+        .await?;
+
+        // Cache it for future use
+        self.engine_cache.insert(collection_id.to_string(), engine.clone());
+
+        info!(
+            "✅ Cached storage engine {:?} for collection {}",
+            engine_type, collection_id
+        );
+
+        Ok(engine)
     }
 
     // REMOVED: get_available_files - storage engines handle their own file listing
@@ -2190,10 +2297,19 @@ impl VectorOperationsService {
             None
         };
 
+        // Get current time for tombstone detection
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         // Single pass validation loop - check everything at once
         for (i, vector) in vectors.iter().enumerate() {
             // INLINE: Dimension check (simple integer comparison)
-            if expected_dimension > 0 && vector.vector.len() != expected_dimension as usize {
+            // Skip dimension check for tombstones (empty vector + expires_at in past indicates deletion)
+            let is_tombstone = vector.vector.is_empty()
+                && vector.expires_at.map_or(false, |e| e <= current_time_secs);
+            if !is_tombstone && expected_dimension > 0 && vector.vector.len() != expected_dimension as usize {
                 return Err(anyhow::anyhow!(
                     "Vector at index {} has dimension {} but collection '{}' expects dimension {}",
                     i,

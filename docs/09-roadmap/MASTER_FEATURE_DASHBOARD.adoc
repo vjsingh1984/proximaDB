@@ -194,7 +194,7 @@ Status updated January 2025 based on actual codebase analysis. Previous version 
 |===
 
 [[category-index]]
-== 📂 Features by Category (status reflects v0.1.4 code)
+== 📂 Features by Category (status reflects v0.1.5 code)
 
 [[completed-features]]
 === ✅ COMPLETED (representative set)
