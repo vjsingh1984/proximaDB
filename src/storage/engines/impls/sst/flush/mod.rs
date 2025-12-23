@@ -306,7 +306,7 @@ impl SstEngine {
             entries_flushed: Some(entries_written),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
-            file_paths: vec![atomic_op.final_url.clone()],
+            file_paths: vec![format!("{}/{}", atomic_op.final_url, filename)],
             duration_ms: Some(0), // Will be set by caller
             completed_at: Utc::now(),
             engine_metrics: {

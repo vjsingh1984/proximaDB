@@ -46,6 +46,26 @@ impl VectorExtractor for SstExtractor {
             return Ok(ExtractionResult::empty());
         }
 
+        // Convert file:// URLs to local paths if needed
+        let file_paths: Vec<String> = request
+            .file_paths
+            .iter()
+            .map(|p| {
+                if p.starts_with("file://") {
+                    // Strip file:// prefix to get local path
+                    p.strip_prefix("file://").unwrap_or(p).to_string()
+                } else {
+                    p.clone()
+                }
+            })
+            .collect();
+
+        debug!(
+            "[SST Extractor] Processing {} files: {:?}",
+            file_paths.len(),
+            file_paths
+        );
+
         // Create filesystem factory for this extraction operation
         let filesystem_factory = Arc::new(
             FilesystemFactory::create_default()
@@ -62,7 +82,7 @@ impl VectorExtractor for SstExtractor {
 
         // Use the existing read_all_records_for_compaction method
         let records = reader
-            .read_all_records_for_compaction(&request.file_paths)
+            .read_all_records_for_compaction(&file_paths)
             .await
             .map_err(|e| ExtractionError::EngineError(format!("SST read error: {}", e)))?;
 

@@ -694,17 +694,34 @@ impl ModularBlockReader {
     pub async fn read_data_block_at_offset(
         &self,
         offset: u64,
-        size: usize,
+        _size: usize,
     ) -> Result<ProximaDataBlock> {
+        // SST block format: [4-byte size prefix][block data]
+        // The offset points to the size prefix, so we need to:
+        // 1. Read the 4-byte size prefix to get actual block size
+        // 2. Read the block data starting at offset+4
+
+        // Read block size from the file (first 4 bytes at offset)
+        let size_bytes = self.read_range(offset, 4).await.map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to read block size at offset {}: {}",
+                offset,
+                e
+            )
+        })?;
+        let block_size =
+            u32::from_le_bytes([size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]])
+                as usize;
+
         debug!(
-            "Reading hierarchical data block at offset {} with size {} for file: {}",
-            offset, size, self.file_path
+            "Reading hierarchical data block at offset {} with actual size {} for file: {}",
+            offset, block_size, self.file_path
         );
 
-        // Read the block data
-        let block_data = self.read_range(offset, size).await?;
+        // Read the block data (excluding the size prefix)
+        let block_data = self.read_range(offset + 4, block_size).await?;
 
-        // NEW: Use hierarchical deserialization with automatic compression detection
+        // Use hierarchical deserialization with automatic compression detection
         ProximaDataBlock::deserialize(&block_data, None).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to deserialize hierarchical ProximaDataBlock at offset {}: {}",
@@ -1256,32 +1273,44 @@ impl UnifiedSstableReader {
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        // Delegate to the new version with default (sqrt) block pruning
+        self.search_with_filter_and_pruning(
+            file_path,
+            query_vector,
+            filter,
+            k,
+            distance_metric,
+            collection,
+            &crate::core::search::BlockPruneConfig::default(), // sqrt mode by default
+        )
+        .await
+    }
+
+    /// Search with filter and explicit block pruning configuration
+    ///
+    /// This method uses the modular block reader with smart block selection
+    /// based on Z-order spatial codes and centroid distances.
+    pub async fn search_with_filter_and_pruning(
+        &self,
+        file_path: &str,
+        query_vector: &[f32],
+        filter: Option<FilterExpression>,
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+        block_prune: &crate::core::search::BlockPruneConfig,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         trace!(
-            "SST Reader: search_with_filter called with file_path: {}",
-            file_path
+            "SST Reader: search_with_filter_and_pruning called with file_path: {}, force_exact: {}",
+            file_path,
+            block_prune.force_exact
         );
-        // REFACTORED: Use SharedSstFormatReader like SWIFT does
-        // No more duplicate I/O logic!
 
-        // Step 1: Determine strategy
-        let strategy = if filter.is_some() {
-            SstableReadingStrategy::SelectiveWithCache {
-                use_range_reads: true,
-                enable_bloom_filters: true,
-                enable_cache_lookup: true,
-                enable_metadata_cache: true,
-            }
-        } else {
-            SstableReadingStrategy::FullScan {
-                use_block_cache: true,
-            }
-        };
-
-        // Step 2: Create search context with correct fields
+        // Create search context
         let context = CollectionContext {
             file_path: file_path.to_string(),
             sstable_files: vec![file_path.to_string()],
-            total_vectors: 0, // Will be determined during search
+            total_vectors: 0,
             metadata_columns: Vec::new(),
             level: 0,
             creation_time: chrono::Utc::now(),
@@ -1293,12 +1322,14 @@ impl UnifiedSstableReader {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
             top_k: Some(k),
+            distance_metric: Some(distance_metric),
+            block_prune: block_prune.clone(),
             ..Default::default()
         };
 
-        // Step 3: Use apply_strategy to leverage SharedSstFormatReader
-        // This delegates all I/O to the shared infrastructure
-        let blocks = self.apply_strategy(&strategy, &params, &context).await?;
+        // Use modular search with block pruning instead of FullScan
+        // This applies Z-order/centroid-based block selection
+        let blocks = self.search_optimized_strategy_modular(&context, &params).await?;
         trace!(
             "SST Reader: apply_strategy returned {} blocks",
             blocks.len()
@@ -1471,14 +1502,13 @@ impl UnifiedSstableReader {
     }
 
     /// Read all records from SSTable files for compaction
-    /// Delegates to the strategy selector's optimized compaction reader
+    /// Uses the working compaction strategy instead of the stub
     pub async fn read_all_records_for_compaction(
         &self,
         sstable_files: &[String],
     ) -> Result<Vec<VectorRecord>> {
-        self.strategy_selector
-            .read_all_records_for_compaction(sstable_files)
-            .await
+        // Use read_with_compaction_strategy which actually reads files
+        self.read_with_compaction_strategy(sstable_files, None).await
     }
 
     /// 🚀 NEW: Create unified reader with bandwidth optimizer for smart threshold decisions
@@ -4256,22 +4286,26 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
     ) -> Result<Vec<ProximaDataBlock>> {
-        info!("🚀 Direct compaction modular search_strategy - zero-copy SST operations");
-
-        let direct_reader = SstDirectReader::new(self.filesystem.clone())?;
+        info!(
+            "🚀 Direct compaction modular search_strategy - zero-copy SST operations for {} files",
+            context.sstable_files.len()
+        );
 
         let mut all_sst_records = Vec::new();
 
         for file_path in &context.sstable_files {
-            // For now, use a simpler approach without streaming
-            // TODO: Implement proper async streaming
-            let mut direct_reader_clone = SstDirectReader::new(self.filesystem.clone())?;
-            let sst_stream = direct_reader_clone.read_all_for_compaction().await?;
+            debug!("📁 COMPACTION DIRECT: Opening file: {}", file_path);
+            // Use SstDirectReader::open() with the actual file path
+            let mut direct_reader = SstDirectReader::open(self.filesystem.clone(), file_path).await?;
+            let sst_records = direct_reader.read_all_for_compaction().await?;
 
             // Collect all records from the iterator
-            for record in sst_stream {
-                all_sst_records.push(record);
-            }
+            debug!(
+                "📁 COMPACTION DIRECT: Read {} records from {}",
+                sst_records.len(),
+                file_path
+            );
+            all_sst_records.extend(sst_records);
         }
 
         // Convert to DataBlocks only when needed for compatibility
@@ -4282,18 +4316,15 @@ impl UnifiedSstableReader {
     }
 
     /// Search-optimized strategy using modular approach with smart caching
+    /// Uses Z-order spatial codes and centroid distances for intelligent block selection
     async fn search_optimized_strategy_modular(
         &self,
         context: &CollectionContext,
         search_params: &SearchParams,
     ) -> Result<Vec<ProximaDataBlock>> {
-        debug!("🔍 Search-optimized modular search_strategy");
         let mut relevant_blocks = Vec::new();
 
         for file_path in &context.sstable_files {
-            // Skip vector cache for now - would need conversion from VectorRecord to SstRecord
-            // TODO: Consider adding a method to convert cached VectorRecords to SstRecords
-
             let mut block_reader =
                 ModularBlockReader::new(self.filesystem.clone(), file_path.clone());
 
@@ -4302,21 +4333,22 @@ impl UnifiedSstableReader {
             // Use index to find blocks with high relevance scores
             let index_blocks = block_reader.read_index_blocks(&header).await?;
 
-            // Smart block selection based on search parameters
+            // Smart block selection based on search parameters (sqrt-based pruning)
             let selected_blocks = self.select_blocks_for_search(&index_blocks, search_params);
 
-            for block_idx in selected_blocks {
-                if let Some(index_entry) = index_blocks.get(block_idx) {
-                    let data_block = block_reader
+            for block_idx in &selected_blocks {
+                if let Some(index_entry) = index_blocks.get(*block_idx) {
+                    match block_reader
                         .read_data_block_at_offset(index_entry.offset, index_entry.size as usize)
-                        .await?;
-
-                    // Cache hot data for future searches
-                    // Note: Vector cache stores VectorRecords, not SstRecords
-                    // This would require conversion which we're trying to avoid
-                    // TODO: Consider adding a separate cache for SstRecords
-
-                    relevant_blocks.push(data_block);
+                        .await
+                    {
+                        Ok(data_block) => {
+                            relevant_blocks.push(data_block);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
                 }
             }
         }
@@ -4695,6 +4727,20 @@ fn select_blocks_by_centroid(
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Vec<usize> {
     if prune.force_exact {
+        return (0..entries.len()).collect();
+    }
+
+    // OPTIMIZATION: Skip pruning for small datasets where overhead exceeds benefit.
+    // For datasets with < 100 blocks, the cost of computing centroid distances
+    // and sorting exceeds the savings from pruning. At 100 blocks with sqrt mode,
+    // we'd scan 10 blocks (90% pruned) which justifies the overhead.
+    use crate::storage::engines::core::constants::pruning;
+    if entries.len() < pruning::MIN_BLOCKS_FOR_PRUNING {
+        tracing::debug!(
+            "Block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
+            entries.len(),
+            pruning::MIN_BLOCKS_FOR_PRUNING
+        );
         return (0..entries.len()).collect();
     }
 
