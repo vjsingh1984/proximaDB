@@ -741,7 +741,8 @@ impl EmbeddedProximaDB {
         engine: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use crate::proto::proximadb_v1::{
-            CollectionConfig, CompressionAlgorithm, StorageConfig,
+            CollectionConfig, CompressionAlgorithm, HnswConfig, IndexConfig, IndexingAlgorithm,
+            StorageConfig,
         };
 
         let storage_engine = match engine.unwrap_or(&self.config.default_engine).to_lowercase().as_str() {
@@ -756,6 +757,25 @@ impl EmbeddedProximaDB {
             }
         };
 
+        // Create default HNSW index config for automatic index building
+        // This enables AXIS EventLog consumer to build HNSW indexes on flush
+        let default_hnsw_config = IndexConfig {
+            index_name: "default_hnsw".to_string(),
+            algorithm: IndexingAlgorithm::Hnsw as i32,
+            enabled: Some(true),
+            hnsw_config: Some(HnswConfig {
+                m: Some(16),                    // Balanced connectivity
+                ef_construction: Some(200),     // Good build quality
+                ef_search: Some(50),            // Fast search with good recall
+                max_partition_size: Some(100_000),
+                adaptive_parameters: Some(true),
+                use_simd: Some(true),
+                memory_limit_mb: Some(512),
+                lazy_loading: Some(false),
+            }),
+            ..Default::default()
+        };
+
         let collection_config = CollectionConfig {
             name: name.to_string(),
             dimension,
@@ -764,6 +784,7 @@ impl EmbeddedProximaDB {
                 compression: Some(CompressionAlgorithm::CompressionLz4 as i32),
                 ..Default::default()
             }),
+            index_configs: vec![default_hnsw_config], // Enable HNSW by default
             ..Default::default()
         };
 
@@ -783,6 +804,19 @@ impl EmbeddedProximaDB {
                     format!("Failed to create collection '{}': {}", name, error_msg)
                 )) as Box<dyn std::error::Error + Send + Sync>);
             }
+
+            // Register the collection in the global cache for EventLog consumer
+            // This enables AXIS index building when flush events occur
+            if let Some(collection) = response.collection {
+                crate::services::events::log::register_collection_in_cache(
+                    std::sync::Arc::new(collection)
+                );
+                tracing::info!(
+                    "📦 EMBEDDED: Registered collection '{}' in global cache for AXIS indexing",
+                    name
+                );
+            }
+
             Ok(())
         })
     }
@@ -1238,6 +1272,28 @@ impl EmbeddedProximaDB {
                                             );
                                         }
                                     }
+                                }
+
+                                // Update collection stats after successful flush
+                                // This is CRITICAL for query optimizer to know dataset size
+                                // Without this, optimizer skips index lookup due to "0 vectors"
+                                if let Err(e) = self.shared_services.collection_service
+                                    .update_stats(&collection_name, vector_count as i64, bytes as i64)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "⚠️ EMBEDDED: Failed to update stats for '{}': {}",
+                                        collection_id, e
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        "📊 EMBEDDED: Updated stats for '{}': +{} vectors, +{} bytes",
+                                        collection_id, vector_count, bytes
+                                    );
+                                    // Invalidate the collection cache so the next search loads fresh stats
+                                    // This ensures query optimizer sees the updated vector_count
+                                    self.shared_services.vector_operations_service
+                                        .invalidate_collection_cache(&collection_name);
                                 }
 
                                 tracing::info!(

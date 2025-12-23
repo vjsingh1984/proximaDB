@@ -1014,15 +1014,49 @@ pub trait UnifiedStorageEngine: Send + Sync {
             }
         }
 
-        // 🚀 INDEX UPDATES: Delegate to AXIS indexing service for proper configuration handling
+        // 🚀 INDEX UPDATES: Notify EventLog for AXIS indexing service
         if result.success {
             if let Some(collection_id) = &params.collection_id {
-                tracing::debug!(
-                    "🔄 Flush successful for collection: {} - AXIS will handle index updates",
-                    collection_id
-                );
-                // NOTE: Index updates are now handled by AXIS indexing service based on collection IndexConfig
-                // The flush coordinator will notify AXIS about new vectors to index
+                // Notify EventLog so AXIS consumer can build indexes asynchronously
+                if let Some(event_log) = crate::services::events::log::event_log_service() {
+                    // Determine storage engine type based on engine name
+                    let storage_engine_type = match self.engine_name() {
+                        "sst" => crate::index::axis::eventlog::StorageEngineType::SST,
+                        "viper" => crate::index::axis::eventlog::StorageEngineType::VIPER,
+                        "helix" => crate::index::axis::eventlog::StorageEngineType::HELIX,
+                        "nova" => crate::index::axis::eventlog::StorageEngineType::NOVA,
+                        "swift" => crate::index::axis::eventlog::StorageEngineType::SWIFT,
+                        "raptor" => crate::index::axis::eventlog::StorageEngineType::RAPTOR,
+                        _ => crate::index::axis::eventlog::StorageEngineType::SST,
+                    };
+
+                    let vector_count = result.entries_flushed.unwrap_or(0) as usize;
+                    // files_created is a count, not paths - EventLog needs paths for index building
+                    // Pass empty vec for now; engines with path info can use their own handlers
+                    if let Err(e) = event_log.notify_flush(
+                        collection_id,
+                        vec![], // flushed_files paths not available in FlushResult
+                        vector_count,
+                        false, // has_quantized - TODO: pass from params
+                        true,  // has_fp32
+                        storage_engine_type,
+                    ).await {
+                        tracing::warn!(
+                            "⚠️ Failed to notify EventLog about flush for '{}': {}",
+                            collection_id, e
+                        );
+                    } else {
+                        tracing::info!(
+                            "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
+                            collection_id, vector_count
+                        );
+                    }
+                } else {
+                    tracing::debug!(
+                        "🔄 Flush successful for collection: {} - EventLog not initialized",
+                        collection_id
+                    );
+                }
             }
         }
 
@@ -1895,9 +1929,10 @@ impl StorageQueryContext {
         self.metadata.quantization_enabled
     }
 
-    /// Get collection ID (pre-computed)
+    /// Get collection ID from the collection object directly
+    /// This is more reliable than the metadata cache which may not be initialized
     pub fn collection_id(&self) -> &str {
-        &self.metadata.collection_id
+        &self.collection.id
     }
 
     /// Get storage URL from collection's storage assignment

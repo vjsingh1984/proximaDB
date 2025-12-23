@@ -195,6 +195,22 @@ impl VectorOperationsService {
     pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
         self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageEngine>
     }
+
+    /// Expose the AXIS index manager for direct index operations
+    /// Used by embedded mode to build indexes synchronously after flush
+    pub fn axis_index_manager(&self) -> Arc<crate::index::AxisManager> {
+        self.axis_index_manager.clone()
+    }
+
+    /// Invalidate the collection cache entry for a specific collection
+    /// Called after stats are updated to ensure fresh data is loaded
+    pub fn invalidate_collection_cache(&self, collection_id: &str) {
+        self.collection_cache.remove(collection_id);
+        tracing::debug!(
+            "🗑️ Invalidated collection cache for '{}'",
+            collection_id
+        );
+    }
     /// Public v1 boundary: execute vector search and return v1 response
     pub async fn search_v1(
         &self,
@@ -1090,6 +1106,9 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        use std::time::Instant;
+        let total_start = Instant::now();
+
         let config = config.clone();
 
         // Extract search_mode from config (defaults to Exact for 100% recall)
@@ -1099,6 +1118,7 @@ impl VectorOperationsService {
             .unwrap_or_default();
 
         // Plan context
+        let context_start = Instant::now();
         let collection = self.get_or_load_collection(collection_id).await?;
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
@@ -1121,11 +1141,81 @@ impl VectorOperationsService {
             total_columns: 0,
             query_vectors: Some(&query_vectors),
         };
+        let context_time_us = context_start.elapsed().as_micros();
 
+        let plan_start = Instant::now();
         let execution_plan = self.query_optimizer.optimize_query(context).await?;
+        let plan_time_us = plan_start.elapsed().as_micros();
+
+        let execute_start = Instant::now();
         let optimized_results = self
-            .execute_unified_plan(collection_id, execution_plan, query_vector, k, filter, search_mode)
+            .execute_unified_plan(collection_id, execution_plan.clone(), query_vector, k, filter, search_mode.clone())
             .await?;
+        let execute_time_us = execute_start.elapsed().as_micros();
+
+        let total_time_us = total_start.elapsed().as_micros();
+
+        // Log query timing breakdown for performance analysis
+        // Shows at RUST_LOG=info level for visibility
+        tracing::info!(
+            "📊 QUERY TIMING [{}]: total={}μs | context={}μs | plan={}μs | execute={}μs | mode={:?} | k={} | results={}",
+            collection_id,
+            total_time_us,
+            context_time_us,
+            plan_time_us,
+            execute_time_us,
+            search_mode,
+            k,
+            optimized_results.len()
+        );
+
+        // Log execution plan details with optimization breakdown
+        tracing::info!(
+            "📋 EXECUTION PLAN [{}]: steps={} | parallelism={:?}",
+            collection_id,
+            execution_plan.execution_steps.len(),
+            execution_plan.parallelism
+        );
+
+        // Log each optimization step for visibility
+        for (idx, step) in execution_plan.execution_steps.iter().enumerate() {
+            match step {
+                ExecutionStep::VectorSearch { execution_method, quantization_strategy, candidates } => {
+                    let quant_info = quantization_strategy
+                        .as_ref()
+                        .map(|q| format!("{:?}", q.quantization_type))
+                        .unwrap_or_else(|| "None/FP32".to_string());
+                    tracing::info!(
+                        "  [Step {}] VectorSearch: method={:?} | quantization={} | candidates={}",
+                        idx + 1, execution_method, quant_info, candidates
+                    );
+                }
+                ExecutionStep::IndexLookup { index_type, lookup_params } => {
+                    tracing::info!(
+                        "  [Step {}] IndexLookup: type={:?} | ef_search={:?} | nprobe={:?}",
+                        idx + 1, index_type, lookup_params.ef_search, lookup_params.nprobe
+                    );
+                }
+                ExecutionStep::CombinedFilterSearch { filter_pushdown, search_method, early_termination } => {
+                    tracing::info!(
+                        "  [Step {}] CombinedFilterSearch: pushdowns={} | method={:?} | early_term={:?}",
+                        idx + 1, filter_pushdown.len(), search_method, early_termination
+                    );
+                }
+                ExecutionStep::BloomFilterCheck { filter_type, expected_false_positive_rate } => {
+                    tracing::info!(
+                        "  [Step {}] BloomFilterCheck: type={:?} | fpr={:.4}",
+                        idx + 1, filter_type, expected_false_positive_rate
+                    );
+                }
+                ExecutionStep::MetadataFilter { conditions, execution_method, estimated_selectivity, .. } => {
+                    tracing::info!(
+                        "  [Step {}] MetadataFilter: conditions={} | method={:?} | selectivity={:.2}%",
+                        idx + 1, conditions.len(), execution_method, estimated_selectivity * 100.0
+                    );
+                }
+            }
+        }
 
         Ok(optimized_results)
     }

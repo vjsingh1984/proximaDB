@@ -63,6 +63,8 @@ use crate::security::SecurityCoordinator;
 use crate::storage::StorageEngine;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use dashmap::DashMap;
+use crate::proto::proximadb_v1::Collection;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///
@@ -643,6 +645,60 @@ impl SharedServices {
             CrossCacheOrchestrator::register_global(orch.clone());
             orch
         };
+
+        // =========================================================================
+        // Initialize EventLog service and start AXIS consumer for async index building
+        // This enables automatic AXIS index updates when data is flushed to storage
+        // =========================================================================
+        debug!("🔧 SharedServices::new - Initializing EventLog service for AXIS indexing...");
+
+        // Use the global collection cache (shared across services)
+        // Collections are registered in this cache when created via register_collection_in_cache()
+        let collection_cache = crate::services::events::log::get_or_create_global_collection_cache();
+
+        // Get base storage URL for EventLog persistence
+        let base_storage_url = storage_config
+            .storage_locations
+            .first()
+            .map(|loc| loc.url.clone());
+
+        // Initialize the global EventLog service
+        if let Err(e) = crate::services::events::log::initialize_event_log_service(
+            collection_cache.clone(),
+            filesystem_factory.clone(),
+            base_storage_url.clone(),
+        )
+        .await
+        {
+            warn!(
+                "⚠️ SharedServices: Failed to initialize EventLog service: {}. AXIS indexing will be disabled.",
+                e
+            );
+        } else {
+            info!("✅ SharedServices: EventLog service initialized successfully");
+
+            // Start the AXIS EventLog consumer as a background task
+            // This polls the EventLog and builds AXIS indexes when flush events occur
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+            // Store shutdown sender for graceful shutdown (could be stored in SharedServices if needed)
+            // For now, the consumer will run until the process exits
+            std::mem::forget(shutdown_tx); // Prevent sender from being dropped
+
+            let _consumer_handle = crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
+                crate::services::events::log::event_log_service()
+                    .expect("EventLog service just initialized")
+                    .inner(),
+                axis_manager.clone(),
+                filesystem_factory.clone(),
+                collection_cache.clone(),
+                orchestrator.clone(),
+                shutdown_rx,
+            )
+            .await;
+
+            info!("✅ SharedServices: AXIS EventLog consumer started - automatic index building enabled");
+        }
 
         let vector_operations_service = Arc::new(
             VectorOperationsService::new(

@@ -235,6 +235,48 @@ pub struct EventLogStats {
 /// Global EventLog service instance (initialized at server startup)
 static EVENT_LOG_SERVICE: std::sync::OnceLock<Arc<EventLogService>> = std::sync::OnceLock::new();
 
+/// Global collection cache shared across EventLog service and AXIS consumer
+/// This cache is populated when collections are created and used by the consumer
+/// to look up collection configs (including index_configs) during flush processing
+static GLOBAL_COLLECTION_CACHE: std::sync::OnceLock<Arc<DashMap<String, Arc<Collection>>>> =
+    std::sync::OnceLock::new();
+
+/// Get the global collection cache (creates if not exists)
+pub fn get_or_create_global_collection_cache() -> Arc<DashMap<String, Arc<Collection>>> {
+    GLOBAL_COLLECTION_CACHE
+        .get_or_init(|| Arc::new(DashMap::new()))
+        .clone()
+}
+
+/// Get the global collection cache if initialized
+pub fn get_global_collection_cache() -> Option<Arc<DashMap<String, Arc<Collection>>>> {
+    GLOBAL_COLLECTION_CACHE.get().cloned()
+}
+
+/// Add a collection to the global cache
+/// Called when a collection is created to enable EventLog consumer to find it
+pub fn register_collection_in_cache(collection: Arc<Collection>) {
+    let cache = get_or_create_global_collection_cache();
+    let collection_id = collection.id.clone();
+    cache.insert(collection_id.clone(), collection);
+    tracing::debug!(
+        "📦 Registered collection '{}' in global collection cache",
+        collection_id
+    );
+}
+
+/// Remove a collection from the global cache
+/// Called when a collection is deleted
+pub fn unregister_collection_from_cache(collection_id: &str) {
+    if let Some(cache) = get_global_collection_cache() {
+        cache.remove(collection_id);
+        tracing::debug!(
+            "🗑️ Unregistered collection '{}' from global collection cache",
+            collection_id
+        );
+    }
+}
+
 /// Initialize the global EventLog service (called once at server startup)
 /// This follows the same pattern as collection service initialization
 pub async fn initialize_event_log_service(
