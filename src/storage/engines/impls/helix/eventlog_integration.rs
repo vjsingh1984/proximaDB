@@ -70,7 +70,7 @@ impl HelixFlushHandler {
                 records.len(),
                 has_quantized,
                 has_fp32,
-                StorageEngineType::SST, // HELIX is SST-based
+                StorageEngineType::HELIX, // Use HELIX extractor for ProximaBlocks format
             )
             .await?;
 

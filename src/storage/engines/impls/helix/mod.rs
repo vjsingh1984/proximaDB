@@ -189,7 +189,7 @@ impl Default for HelixConfig {
             pca_dimensions: 64, // Max PCA dims (actual dims selected adaptively: 8-64 based on vector dim)
             proxima_block_size: block_sizes::HELIX_DEFAULT_VECTORS_PER_BLOCK, // Centralized constant
             enable_liquid_clustering: true,
-            storage_quantization: false,
+            storage_quantization: true, // Enable progressive quantization (Binary → INT8 → FP32)
             bloom_filter_bits_per_key: 10,
             block_cache_size_mb: 1024,
             pca_retrain_interval_hours: 24,
