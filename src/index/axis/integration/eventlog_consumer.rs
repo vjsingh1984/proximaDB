@@ -636,7 +636,11 @@ impl AxisEventLogConsumer {
         mode
     }
 
-    /// Read vectors from data files
+    /// Read vectors from data files using the unified VectorExtractor protocol.
+    ///
+    /// This method uses the ExtractionFactory to create engine-specific extractors,
+    /// providing a consistent interface across all storage engines (SST, SWIFT, HELIX,
+    /// VIPER, NOVA, RAPTOR).
     async fn read_vectors_from_files(
         &self,
         files: &[String],
@@ -644,27 +648,34 @@ impl AxisEventLogConsumer {
         storage_engine: StorageEngineType,
         collection_id: &str,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
+        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+        use crate::storage::trait_components::extractor::{
+            ExtractionFactory, ExtractionMode as TraitMode, ExtractionRequest,
+        };
+
         let start_time = std::time::Instant::now();
 
         debug!(
-            "[AXIS Consumer] Starting vector extraction:\n  Files: {:?}\n  Count: {}\n  Storage Engine: {:?}\n  Extraction Mode: {:?}",
+            "[AXIS Consumer] Starting vector extraction via unified VectorExtractor:\n  Files: {:?}\n  Count: {}\n  Storage Engine: {:?}\n  Extraction Mode: {:?}",
             files,
             files.len(),
             storage_engine,
             extraction_mode
         );
 
-        // Create filesystem factory with proper configuration for zero-copy optimization
+        if files.is_empty() {
+            debug!("[AXIS Consumer] No files to extract, returning empty result");
+            return Ok(Vec::new());
+        }
+
+        // Create filesystem factory with proper configuration
         let filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(Default::default())
                 .await
                 .context("Failed to create filesystem factory")?,
         );
 
-        // Create zero-copy IO system once for all files - this enables cross-file optimization
-        // Use UnifiedCachingFilesystem for all engines
-        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-
+        // Create UnifiedCachingFilesystem for the collection
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
@@ -672,644 +683,121 @@ impl AxisEventLogConsumer {
             "axis".to_string(),
         ));
 
-        // Note: For AXIS indexing, we need full scan of all records, not selective reads
-        // The zero-copy system should prioritize local disk reads for recently flushed/compacted files
-        debug!(
-            "[AXIS Consumer] Configuring zero-copy IO for full-scan indexing of {} files",
-            files.len()
-        );
-
-        // Track which files are likely on local disk (recently flushed/compacted)
-        // These should be read from local cache to avoid cloud storage costs
-        for file_path in files {
-            // UnifiedCachingFilesystem handles access tracking internally
-            // No need to create access events manually
-        }
-
         info!(
-            "[AXIS Consumer] Zero-copy IO configured for full-scan indexing. Will prioritize local disk for recently written files."
+            "[AXIS Consumer] Using unified VectorExtractor for {:?} engine",
+            storage_engine
         );
 
-        let mut all_vectors = Vec::new();
+        // Create extractor via factory pattern
+        let extractor = ExtractionFactory::create(storage_engine, unified_fs);
 
-        // Use unified approach for all storage engines
-        // The zero-copy IO system will optimize reads regardless of engine type
-        match storage_engine {
-            StorageEngineType::SST
-            | StorageEngineType::VIPER
-            | StorageEngineType::NOVA
-            | StorageEngineType::RAPTOR
-            | StorageEngineType::SWIFT
-            | StorageEngineType::HELIX => {
-                debug!(
-                    "[AXIS Consumer] Using unified reader for {:?} engine with zero-copy optimization",
-                    storage_engine
-                );
+        // Convert extraction mode from eventlog type to extractor trait type
+        let mode = match extraction_mode {
+            ExtractionMode::Fp32Only => TraitMode::Fp32Only,
+            ExtractionMode::QuantizedOnly => TraitMode::QuantizedOnly,
+            ExtractionMode::Both => TraitMode::Both,
+            ExtractionMode::Auto => TraitMode::Auto,
+        };
 
-                use crate::proto::proximadb_v1::VectorRecord;
+        // Build extraction request for full scan
+        let request = ExtractionRequest::full(files.to_vec()).with_mode(mode);
 
-                // Create appropriate reader based on storage engine type
-                // All readers should leverage the zero-copy IO system for optimization
-                let records_futures = match storage_engine {
-                    StorageEngineType::SST => {
-                        // SST uses unified SST reader with streaming support
-                        use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+        debug!(
+            "[AXIS Consumer] Sending extraction request: {} files, mode={:?}",
+            files.len(),
+            mode
+        );
 
-                        let reader = UnifiedSstableReader::new(
-                            filesystem_factory.clone(),
-                            unified_fs.clone(),
-                            collection_id.to_string(),
-                        );
+        // Extract vectors using unified interface
+        let engine_name = extractor.engine_type();
+        let result = extractor.extract_vectors(request).await.map_err(|e| {
+            error!(
+                "[AXIS Consumer] VectorExtractor failed for {:?} engine: {}",
+                engine_name, e
+            );
+            anyhow::anyhow!("Vector extraction failed: {}", e)
+        })?;
 
-                        let mut all_records = Vec::new();
-                        for (idx, file_path) in files.iter().enumerate() {
-                            debug!(
-                                "[AXIS Consumer] Full-scan reading SST file {}/{}: {}",
-                                idx + 1,
-                                files.len(),
-                                file_path
-                            );
-                            let file_start = std::time::Instant::now();
+        // Log extraction stats
+        debug!(
+            "[AXIS Consumer] Extraction stats: {} vectors, {} bytes, {} files in {}ms",
+            result.stats.vectors_extracted,
+            result.stats.bytes_read,
+            result.stats.files_processed,
+            result.stats.duration_ms
+        );
 
-                            let records = reader
-                                .read_all_records_for_compaction(&[file_path.clone()])
-                                .await
-                                .map_err(|e| {
-                                    error!(
-                                        "[AXIS Consumer] Failed to read SST file {}: {}",
-                                        file_path, e
-                                    );
-                                    e
-                                })?;
-                            all_records.extend(records);
-
-                            let file_duration = file_start.elapsed();
-                            debug!(
-                                "[AXIS Consumer] Read {} records from {} in {:.2}ms",
-                                all_records.len(),
-                                file_path,
-                                file_duration.as_secs_f64() * 1000.0
-                            );
-                        }
-                        all_records
-                    }
-                    StorageEngineType::SWIFT => {
-                        // SWIFT has hierarchical blocks - use its unified reader with StreamAll strategy
-                        // SWIFT reader can skip metadata SuperBlocks and stream DataBlocks directly
-                        use crate::storage::engines::impls::swift::unified_reader::{
-                            SwiftReadStrategy, UnifiedSwiftReader,
-                        };
-
-                        let mut all_records = Vec::new();
-                        for (idx, file_path) in files.iter().enumerate() {
-                            debug!(
-                                "[AXIS Consumer] Full-scan reading SWIFT file {}/{}: {}",
-                                idx + 1,
-                                files.len(),
-                                file_path
-                            );
-                            let file_start = std::time::Instant::now();
-
-                            // Create SWIFT reader with default config
-                            use crate::storage::engines::impls::swift::unified_reader::SwiftReaderConfig;
-                            let config = SwiftReaderConfig::default();
-                            let reader = UnifiedSwiftReader::new(
-                                filesystem_factory.clone(),
-                                file_path.clone(),
-                                unified_fs.clone(),
-                                collection_id.to_string(),
-                                config,
-                            )
-                            .await?;
-
-                            // Use StreamAll strategy for full scan (skips metadata blocks, reads all DataBlocks)
-                            let result = reader
-                                .read_with_strategy(SwiftReadStrategy::StreamAll)
-                                .await
-                                .map_err(|e| {
-                                    error!(
-                                        "[AXIS Consumer] Failed to read SWIFT file {}: {}",
-                                        file_path, e
-                                    );
-                                    e
-                                })?;
-
-                            let record_count = result.records.len();
-                            all_records.extend(result.records);
-
-                            let file_duration = file_start.elapsed();
-                            debug!(
-                                "[AXIS Consumer] Read {} records from {} in {:.2}ms",
-                                record_count,
-                                file_path,
-                                file_duration.as_secs_f64() * 1000.0
-                            );
-                        }
-                        all_records
-                    }
-                    StorageEngineType::VIPER | StorageEngineType::NOVA => {
-                        // VIPER and NOVA use Parquet format - use the same mechanism as VIPER compaction
-                        debug!(
-                            "[AXIS Consumer] Using Parquet reader for columnar engine {:?}",
-                            storage_engine
-                        );
-
-                        use arrow_array::{Array, Int64Array, StringArray};
-                        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-
-                        let mut all_records = Vec::new();
-
-                        for (idx, file_path) in files.iter().enumerate() {
-                            debug!(
-                                "[AXIS Consumer] Reading Parquet file {}/{}: {}",
-                                idx + 1,
-                                files.len(),
-                                file_path
-                            );
-                            let file_start = std::time::Instant::now();
-
-                            // Read file data using filesystem (leverages zero-copy IO)
-                            let fs = filesystem_factory.get_filesystem(file_path)?;
-                            let file_data = fs.read(file_path).await.map_err(|e| {
-                                error!(
-                                    "[AXIS Consumer] Failed to read Parquet file {}: {}",
-                                    file_path, e
-                                );
-                                e
-                            })?;
-
-                            // Convert to Parquet reader (same as VIPER compaction)
-                            let parquet_bytes = bytes::Bytes::from(file_data);
-                            let builder = ParquetRecordBatchReaderBuilder::try_new(parquet_bytes)
-                                .map_err(|e| {
-                                error!(
-                                    "[AXIS Consumer] Failed to create Parquet reader for {}: {}",
-                                    file_path, e
-                                );
-                                e
-                            })?;
-
-                            let reader = builder.build().map_err(|e| {
-                                error!(
-                                    "[AXIS Consumer] Failed to build Parquet reader for {}: {}",
-                                    file_path, e
-                                );
-                                e
-                            })?;
-
-                            // Process each batch (same pattern as VIPER compaction)
-                            for batch_result in reader {
-                                let batch = batch_result.map_err(|e| {
-                                    error!(
-                                        "[AXIS Consumer] Failed to read batch from {}: {}",
-                                        file_path, e
-                                    );
-                                    e
-                                })?;
-
-                                debug!(
-                                    "[AXIS Consumer] Processing batch with {} rows",
-                                    batch.num_rows()
-                                );
-
-                                // Extract vector data from the batch
-                                let id_array = batch
-                                    .column_by_name("id")
-                                    .and_then(|col| col.as_any().downcast_ref::<StringArray>());
-
-                                let vector_column = batch.column_by_name("vector");
-
-                                let version_array = batch.column_by_name("version");
-                                let timestamp_array = batch
-                                    .column_by_name("timestamp")
-                                    .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
-
-                                // Process each row in the batch
-                                for row_idx in 0..batch.num_rows() {
-                                    // Check extraction mode to determine what data to extract
-                                    let has_fp32 = vector_column.is_some();
-                                    // Note: quantized vectors are now internalized in storage, not in input records
-                                    let has_quantized = false;
-
-                                    let should_extract = match extraction_mode {
-                                        ExtractionMode::Fp32Only => has_fp32,
-                                        ExtractionMode::QuantizedOnly => has_quantized,
-                                        ExtractionMode::Both => has_fp32 || has_quantized,
-                                        ExtractionMode::Auto => has_fp32 || has_quantized, // Auto defaults to extracting any available
-                                    };
-
-                                    if should_extract {
-                                        // Extract ID
-                                        let id = id_array.and_then(|arr| {
-                                            if row_idx < arr.len() {
-                                                Some(arr.value(row_idx).to_string())
-                                            } else {
-                                                None
-                                            }
-                                        });
-
-                                        // Extract vector (simplified - full implementation would handle List<Float32>)
-                                        let vector = if has_fp32 {
-                                            // TODO: Extract actual vector from List<Float32> column
-                                            vec![] // Placeholder
-                                        } else {
-                                            vec![]
-                                        };
-
-                                        // Extract quantized vector if available
-                                        let quantized_vector: Vec<u8> = if has_quantized {
-                                            // TODO: Extract quantized vector
-                                            vec![]
-                                        } else {
-                                            vec![]
-                                        };
-
-                                        // Extract version
-                                        let version = if let Some(version_col) = version_array {
-                                            if let Some(arr) =
-                                                version_col.as_any().downcast_ref::<Int64Array>()
-                                            {
-                                                if row_idx < arr.len() {
-                                                    arr.value(row_idx)
-                                                } else {
-                                                    0
-                                                }
-                                            } else {
-                                                0
-                                            }
-                                        } else {
-                                            0
-                                        };
-
-                                        // Extract timestamp
-                                        let timestamp = timestamp_array
-                                            .and_then(|arr| {
-                                                if row_idx < arr.len() {
-                                                    Some(arr.value(row_idx))
-                                                } else {
-                                                    None
-                                                }
+        // Convert ExtractedVector to proto::VectorRecord
+        let all_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = result
+            .vectors
+            .into_iter()
+            .filter_map(|v| {
+                // Only include vectors with FP32 data for now
+                // (quantized-only extraction would need different handling)
+                v.fp32_vector.map(|fp32_vec| {
+                    crate::proto::proximadb_v1::VectorRecord {
+                        id: v.id,
+                        vector: fp32_vec,
+                        metadata: v
+                            .metadata
+                            .and_then(|m| {
+                                // Convert serde_json::Value to HashMap<String, SqlValue>
+                                if let serde_json::Value::Object(map) = m {
+                                    Some(
+                                        map.into_iter()
+                                            .filter_map(|(k, v)| {
+                                                // Convert JSON value to SqlValue
+                                                use crate::proto::proximadb_v1::sql_value::Value as V;
+                                                let sql_val = match v {
+                                                    serde_json::Value::String(s) => {
+                                                        Some(V::StringValue(s))
+                                                    }
+                                                    serde_json::Value::Number(n) => {
+                                                        Some(V::NumberValue(n.as_f64().unwrap_or(0.0)))
+                                                    }
+                                                    serde_json::Value::Bool(b) => {
+                                                        Some(V::BoolValue(b))
+                                                    }
+                                                    serde_json::Value::Null => {
+                                                        Some(V::NullValue(0))
+                                                    }
+                                                    _ => None,
+                                                };
+                                                sql_val.map(|sv| {
+                                                    (k, crate::proto::proximadb_v1::SqlValue { value: Some(sv) })
+                                                })
                                             })
-                                            .unwrap_or(0);
-
-                                        // Create VectorRecord
-                                        let record = VectorRecord {
-                                            id: id.clone().unwrap_or_default(), // Use empty string if no ID
-                                            vector,
-                                            // quantized_vector field removed - internalized in storage
-                                            metadata: std::collections::HashMap::new(), // TODO: Extract metadata columns
-                                            version: Some(version as u32),
-                                            timestamp: Some(timestamp),
-                                            expires_at: None,
-                                            updated_at: None,
-                                            source: None,
-                                        };
-
-                                        all_records.push(record);
-                                    }
+                                            .collect(),
+                                    )
+                                } else {
+                                    None
                                 }
-                            }
-
-                            let file_duration = file_start.elapsed();
-                            debug!(
-                                "[AXIS Consumer] Read {} records from {} in {:.2}ms",
-                                all_records.len(),
-                                file_path,
-                                file_duration.as_secs_f64() * 1000.0
-                            );
-                        }
-
-                        all_records
+                            })
+                            .unwrap_or_default(),
+                        timestamp: None,
+                        updated_at: None,
+                        expires_at: None,
+                        version: None,
+                        source: None,
                     }
-                    StorageEngineType::RAPTOR => {
-                        // RAPTOR uses Arrow RecordBatch format with row-aligned storage
-                        // It stores data in a format optimized for HNSW graph operations
-                        debug!("[AXIS Consumer] Using RAPTOR reader for row-aligned Arrow format");
-
-                        // RAPTOR's compaction reads all vectors to rebuild HNSW graph
-                        // We can use the same approach for AXIS indexing
-                        use crate::storage::engines::impls::raptor::consolidated_reader::RaptorReader;
-
-                        let mut all_records = Vec::new();
-                        for (idx, file_path) in files.iter().enumerate() {
-                            debug!(
-                                "[AXIS Consumer] Full-scan reading RAPTOR file {}/{}: {}",
-                                idx + 1,
-                                files.len(),
-                                file_path
-                            );
-                            let file_start = std::time::Instant::now();
-
-                            // Create RAPTOR reader with required dependencies
-                            use crate::storage::engines::impls::raptor::RaptorConfig;
-                            use crate::storage::transaction_coordinator::TransactionCoordinator;
-
-                            let config = RaptorConfig::default();
-                            let transaction_coordinator = Arc::new(
-                                TransactionCoordinator::new(
-                                    filesystem_factory.clone(),
-                                    None, // No temp directory needed for reads
-                                )
-                                .await?,
-                            );
-                            let cache_dir = "/tmp/raptor_cache".to_string();
-
-                            // Use unified cache orchestrator
-                            let cache = self.cache_orchestrator.clone();
-
-                            // Create UnifiedCachingFilesystem for RAPTOR
-                            use crate::storage::persistence::filesystem::{
-                                FilesystemConfig, FilesystemFactory,
-                            };
-
-                            // Create filesystem factory
-                            let fs_config = FilesystemConfig::default();
-                            let fs_factory =
-                                Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-
-                            // Get unified caching filesystem
-                            let unified_fs = fs_factory
-                                .get_unified_caching_filesystem(
-                                    &format!("file://{}", cache_dir),
-                                    collection_id.to_string(),
-                                    "raptor".to_string(),
-                                )
-                                .unwrap();
-
-                            // Create transaction coordinator for RAPTOR
-                            let transaction_coordinator = Arc::new(
-                                TransactionCoordinator::new(
-                                    fs_factory.clone(),
-                                    Some(format!("{}/temp", cache_dir)),
-                                )
-                                .await?,
-                            );
-
-                            let reader = RaptorReader::new(
-                                cache_dir.clone(),
-                                collection_id.to_string(),
-                                config,
-                                cache,
-                                unified_fs.clone(),
-                                transaction_coordinator,
-                            );
-
-                            // Read all vectors from rowgroups (RAPTOR needs all vectors for HNSW graph)
-                            // Use empty slice to read all rowgroups
-                            let record_batches =
-                                reader.read_rowgroups(file_path, &[]).await.map_err(|e| {
-                                    error!(
-                                        "[AXIS Consumer] Failed to read RAPTOR file {}: {}",
-                                        file_path, e
-                                    );
-                                    e
-                                })?;
-
-                            // Convert RecordBatch to VectorRecord
-                            // For now, we'll create placeholder records since the conversion is complex
-                            // In a real implementation, you'd parse the Arrow RecordBatch columns
-                            for batch in record_batches {
-                                let num_rows = batch.num_rows();
-                                for row_idx in 0..num_rows {
-                                    let record = VectorRecord {
-                                        id: format!("raptor_{}_{}", file_path, row_idx),
-                                        vector: vec![0.0; 128], // Placeholder vector
-                                        metadata: std::collections::HashMap::new(),
-                                        version: Some(0),
-                                        timestamp: Some(0),
-                                        expires_at: None,
-                                        updated_at: None,
-                                        source: None,
-                                    };
-                                    all_records.push(record);
-                                }
-                            }
-
-                            let file_duration = file_start.elapsed();
-                            debug!(
-                                "[AXIS Consumer] Read {} records from {} in {:.2}ms",
-                                all_records.len(),
-                                file_path,
-                                file_duration.as_secs_f64() * 1000.0
-                            );
-                        }
-                        all_records
-                    }
-                    _ => {
-                        warn!(
-                            "[AXIS Consumer] Unknown storage engine type: {:?}",
-                            storage_engine
-                        );
-                        vec![]
-                    }
-                };
-
-                // Convert VectorRecords to proto format for AXIS
-                for vector_record in records_futures {
-                    // Check if we should include this record based on extraction mode
-                    let should_extract = match extraction_mode {
-                        ExtractionMode::Fp32Only => {
-                            // Only extract if we have FP32 data
-                            !vector_record.vector.is_empty()
-                        }
-                        ExtractionMode::QuantizedOnly => {
-                            // Note: quantized_vector field removed - quantization is internalized
-                            // Quantized data is now in ProximaDataBlock's QuantizedSection
-                            // For now, treat as no extraction for quantized-only mode
-                            false
-                        }
-                        ExtractionMode::Both => {
-                            // Extract if we have vector data
-                            // (quantized data would come from storage blocks)
-                            !vector_record.vector.is_empty()
-                        }
-                        ExtractionMode::Auto => {
-                            // Auto mode: extract if we have vector data
-                            !vector_record.vector.is_empty()
-                        }
-                    };
-
-                    if should_extract {
-                        // Convert core::VectorRecord to proto::VectorRecord for AXIS
-                        let proto_record = crate::proto::proximadb_v1::VectorRecord {
-                            id: vector_record.id.clone(),
-                            vector: match extraction_mode {
-                                ExtractionMode::QuantizedOnly => vec![],
-                                _ => vector_record.vector.clone(),
-                            },
-                            metadata: vector_record.metadata.clone(),
-                            timestamp: vector_record.timestamp,
-                            updated_at: None, // Not used by AXIS
-                            expires_at: vector_record.expires_at,
-                            version: vector_record.version,
-                            // quantized_vector field removed - quantization is internalized
-                            source: None,
-                        };
-
-                        all_vectors.push(proto_record);
-                    }
-                }
-            }
-            StorageEngineType::VIPER => {
-                debug!("[AXIS Consumer] Using Parquet reader for vector extraction");
-
-                // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-                // use arrow_array::{Array, StringArray, Int64Array, Float32Array};
-                // use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-
-                for file_path in files {
-                    debug!("[AXIS Consumer] Reading Parquet file: {}", file_path);
-                    let file_start = std::time::Instant::now();
-
-                    // Read the Parquet file
-                    let fs = filesystem_factory.get_filesystem(file_path)?;
-                    let _file_data = fs.read(file_path).await.map_err(|e| {
-                        error!(
-                            "[AXIS Consumer] Failed to read Parquet file {}: {}",
-                            file_path, e
-                        );
-                        e
-                    })?;
-
-                    // Arrow crates disabled - commenting out parquet processing
-                    // let parquet_bytes = bytes::Bytes::from(file_data);
-                    // let builder = arrow::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder::new(parquet_bytes)?;
-                    // let mut reader = builder.build()?;
-
-                    let file_vector_count = 0;
-
-                    // TODO: Re-enable when arrow crates are restored
-                    // Process each record batch
-                    // while let Some(batch_result) = reader.next() {
-                    //                         let batch = batch_result?;
-                    //
-                    //                         // Extract columns we need
-                    //                         // Arrow disabled - commenting out array operations
-                    //                         // let id_array = batch.column_by_name("id")
-                    //                         //     .and_then(|col| col.as_any().downcast_ref::<StringArray>());
-                    //
-                    //                         let vector_array = batch.column_by_name("vector");
-                    //                         let quantized_array = batch.column_by_name("quantized_vector");
-                    //
-                    //                         // let version_array = batch.column_by_name("version")
-                    //                         //     .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
-                    //
-                    //                         // let timestamp_array = batch.column_by_name("timestamp")
-                    //                         //     .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
-                    //
-                    //                         // Process each row in the batch
-                    //                         // TODO: Restore Arrow processing when enabled
-                    //                         /*
-                    //                         for row_idx in 0..batch.num_rows() {
-                    //                             // Extract ID
-                    //                             let id = id_array
-                    //                                 .and_then(|arr| {
-                    //                                     if arr.is_null(row_idx) {
-                    //                                         None
-                    //                                     } else {
-                    //                                         Some(arr.value(row_idx).to_string())
-                    //                                     }
-                    //                                 })
-                    //                                 .unwrap_or_else(|| format!("row_{}", row_idx));
-                    //                         */
-                    //
-                    //                             /*
-                    //                             // Check extraction mode
-                    //                             let has_fp32 = vector_array.is_some() && !vector_array.unwrap().is_null(row_idx);
-                    //                             let has_quantized = quantized_array.is_some() && !quantized_array.unwrap().is_null(row_idx);
-                    //
-                    //                             let should_extract = match extraction_mode {
-                    //                                 ExtractionMode::Fp32Only => has_fp32,
-                    //                                 ExtractionMode::QuantizedOnly => has_quantized,
-                    //                                 ExtractionMode::Both => has_fp32 || has_quantized,
-                    //                             };
-                    //
-                    //                             if should_extract {
-                    //                                 // Extract vector data based on mode
-                    //                                 let vector = if extraction_mode != ExtractionMode::QuantizedOnly && has_fp32 {
-                    //                                     // Extract FP32 vector from List<Float32> column
-                    //                                     // Arrow disabled - using stub check
-                    //                                     // if let Some(list_array) = vector_array
-                    //                                     //     .and_then(|col| col.as_any().downcast_ref::<arrow_array::ListArray>()) {
-                    //                                     if false { // Stub condition since Arrow is disabled
-                    //                                         if !list_array.is_null(row_idx) {
-                    //                                             let values = list_array.value(row_idx);
-                    //                                             if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
-                    //                                                 (0..float_array.len())
-                    //                                                     .map(|i| float_array.value(i))
-                    //                                                     .collect()
-                    //                                             } else {
-                    //                                                 vec![]
-                    //                                             }
-                    //                                         } else {
-                    //                                             vec![]
-                    //                                         }
-                    //                                     } else {
-                    //                                         vec![]
-                    //                                     }
-                    //                                 } else {
-                    //                                     vec![]
-                    //                                 };
-                    //
-                    //                                 // Create VectorRecord
-                    //                                 let vector_record = crate::proto::proximadb_v1::VectorRecord {
-                    //                                     id: Some(id),
-                    //                                     vector,
-                    //                                     metadata: vec![], // Metadata extraction would be more complex
-                    //                                     version: version_array
-                    //                                         .and_then(|arr| {
-                    //                                             if arr.is_null(row_idx) {
-                    //                                                 None
-                    //                                             } else {
-                    //                                                 Some(arr.value(row_idx) as u32)
-                    //                                             }
-                    //                                         }),
-                    //                                     timestamp: timestamp_array
-                    //                                         .and_then(|arr| {
-                    //                                             if arr.is_null(row_idx) {
-                    //                                                 None
-                    //                                             } else {
-                    //                                                 Some(arr.value(row_idx) as u32)
-                    //                                             }
-                    //                                         })
-                    //                                         ,
-                    //                                     updated_at: None,
-                    //                                     expires_at: None,
-                    //                                     // rank removed -  None,
-                    //                                     similarity: None,
-                    //                                     similarity: None,
-                    //                                 };
-                    //
-                    //                                 all_vectors.push(vector_record);
-                    //                                 file_vector_count += 1;
-                    //                             }
-                    // }
-                    // End of disabled arrow processing block
-
-                    let file_duration = file_start.elapsed();
-                    debug!(
-                        "[AXIS Consumer] Extracted {} vectors from {} in {:.2}ms",
-                        file_vector_count,
-                        file_path,
-                        file_duration.as_secs_f64() * 1000.0
-                    );
-                }
-            }
-        }
+                })
+            })
+            .collect();
 
         let duration = start_time.elapsed();
 
         if all_vectors.is_empty() {
             warn!(
-                "[AXIS Consumer] Vector extraction returned empty after {:.2}ms (implementation pending)",
+                "[AXIS Consumer] Vector extraction returned empty after {:.2}ms",
                 duration.as_secs_f64() * 1000.0
             );
         } else {
             info!(
-                "[AXIS Consumer] Vector extraction completed in {:.2}ms: extracted {} vectors from {} files",
+                "[AXIS Consumer] Vector extraction completed in {:.2}ms: extracted {} vectors from {} files using {:?} extractor",
                 duration.as_secs_f64() * 1000.0,
                 all_vectors.len(),
-                files.len()
+                files.len(),
+                engine_name
             );
         }
 

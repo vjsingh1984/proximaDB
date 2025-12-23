@@ -223,6 +223,7 @@ use crate::core::bloom::{self as bloom_filter, BloomFilterStrategy};
 pub mod compaction;
 pub mod decompression_cache;
 pub mod error;
+pub mod extraction;
 pub mod filter_methods;
 pub mod flush_eventlog_integration;
 // Quantization now handled by unified compute module

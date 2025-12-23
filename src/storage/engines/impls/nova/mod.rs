@@ -133,6 +133,7 @@
 pub mod batch_operations;
 pub mod columnar_search;
 pub mod engine;
+pub mod extraction;
 pub mod optimized_operations;
 pub mod progressive_refinement;
 pub mod quantized_columns;
@@ -229,6 +230,7 @@ pub struct NovaFile {
 }
 
 /// Main NOVA operations trait with streaming optimizations
+#[allow(async_fn_in_trait)]
 pub trait NovaOperations {
     /// Streaming progressive search with all optimizations
     async fn search_streaming(

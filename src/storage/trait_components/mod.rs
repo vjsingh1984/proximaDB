@@ -36,6 +36,7 @@
 //! ```
 
 mod compactor;
+pub mod extractor;
 mod identity;
 mod lifecycle;
 mod metrics;
@@ -45,6 +46,11 @@ mod writer;
 
 // Re-export all sub-traits
 pub use compactor::StorageCompactor;
+pub use extractor::{
+    ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionFactory, ExtractionMode,
+    ExtractionRequest, ExtractionResult, ExtractionScope, ExtractionStats, ExtractedVector,
+    QuantizedVector, VectorExtractor,
+};
 pub use identity::StorageIdentity;
 pub use lifecycle::StorageLifecycle;
 pub use metrics::StorageMetrics;

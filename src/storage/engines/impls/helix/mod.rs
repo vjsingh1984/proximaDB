@@ -103,6 +103,7 @@ use tracing::{debug, info, trace, warn};
 pub mod clustering;
 pub mod compaction;
 pub mod eventlog_integration;
+pub mod extraction;
 pub mod hilbert_curve;
 pub mod liquid_clustering;
 pub mod pca_impl;
@@ -179,12 +180,14 @@ pub struct HelixConfig {
 
 impl Default for HelixConfig {
     fn default() -> Self {
+        use crate::storage::engines::core::constants::block_sizes;
+
         Self {
             level0_file_num_compaction_trigger: 4,
             max_levels: 7,
             size_ratio: 10.0,
             pca_dimensions: 64, // Max PCA dims (actual dims selected adaptively: 8-64 based on vector dim)
-            proxima_block_size: 128,
+            proxima_block_size: block_sizes::HELIX_DEFAULT_VECTORS_PER_BLOCK, // Centralized constant
             enable_liquid_clustering: true,
             storage_quantization: false,
             bloom_filter_bits_per_key: 10,
@@ -419,6 +422,18 @@ pub struct HelixEngine {
     ///
     /// RwLock allows concurrent reads during queries
     metrics: Arc<RwLock<EngineMetrics>>,
+
+    /// **Progressive Search Coordinator**
+    ///
+    /// Multi-stage search with quantization for performance:
+    /// - Stage 1: SSTable pruning by Hilbert range
+    /// - Stage 2: Binary quantization filtering (10-50x speedup)
+    /// - Stage 3: INT8 refinement (~95% recall, 2-5x speedup)
+    /// - Stage 4: PQ refinement for high precision
+    /// - Stage 5: FP32 final reranking
+    ///
+    /// Used for approximate searches to achieve 2-3x speedup
+    progressive_search_coordinator: Arc<progressive_search::ProgressiveSearchCoordinator>,
 }
 
 /// Engine metrics for monitoring
@@ -470,46 +485,6 @@ impl HelixEngine {
             // Use stateless engine for ad-hoc operations
             Some(self.fallback_quantization_engine.clone())
         }
-    }
-
-    /// Write a simplified SSTable without PCA or Hilbert ordering (fast path for small batches)
-    async fn write_sstable_simple(&self, path: &Path, records: &[VectorRecord]) -> Result<u64> {
-        // Use unified SIMD-optimized writer for optimal compression
-        // SIMD provides 2-8x speedup and 25-50% compression via ProximaDataBlock
-        let bytes_written = proxima::write_helix_sstable(
-            &self.filesystem,
-            path,
-            records,
-            self.config.proxima_block_size,
-            HELIX_MAGIC,
-            None,      // No Hilbert keys for fast path
-            Some(256), // Default curve size for spatial optimization
-        )
-        .await?;
-
-        // Create simplified metadata without Hilbert ranges
-        let metadata = SStableMetadata {
-            path: path.to_owned(),
-            level: 0,
-            hilbert_range: None, // No range for simple writes
-            num_vectors: records.len(),
-            size_bytes: bytes_written,
-            created_at: chrono::Utc::now(),
-            blocks: vec![],     // Will be populated if needed during reads
-            bloom_filter: None, // Skip bloom filter for fast path
-        };
-
-        // Add to level 0
-        let mut levels = self.levels.write().await;
-        levels.entry(0).or_insert_with(Vec::new).push(metadata);
-
-        // Update metrics
-        let mut metrics = self.metrics.write().await;
-        metrics.total_vectors += records.len() as u64;
-        metrics.total_sstables += 1;
-        metrics.total_size_bytes += bytes_written;
-
-        Ok(bytes_written)
     }
 
     /// Create a new HELIX engine instance (stateless)
@@ -678,6 +653,15 @@ impl HelixEngine {
             300,  // Cache TTL (5 minutes)
         ));
 
+        // Create progressive search coordinator for multi-stage quantized search
+        let progressive_search_coordinator = Arc::new(
+            progressive_search::ProgressiveSearchCoordinator::new(
+                config.clone(),
+                distance_compute.clone(),
+                storage_quantization_engine.clone(),
+            ),
+        );
+
         // Create engine instance (stateless - no collection-specific state)
         let engine = Self {
             config,
@@ -694,6 +678,7 @@ impl HelixEngine {
             event_log,
             filename_codec: FilenameCodec::new(),
             metrics: Arc::new(RwLock::new(EngineMetrics::default())),
+            progressive_search_coordinator,
         };
 
         // PCA model will be loaded at runtime from collection-specific paths
@@ -1170,172 +1155,131 @@ impl UnifiedStorageEngine for HelixEngine {
 
         // SORTED FLUSH OPTIMIZATION: Sort by Hilbert key during L0 flush
         // This enables immediate query pruning even before compaction
+        // For small batches (< 100 vectors), skip PCA/Hilbert - brute force is fast enough
 
-        // Step 1: PCA model handling with optimization
-        // Skip PCA for small batches and use existing model if available
-        // Skip PCA entirely for very small batches
-        if self.config.use_fast_approximation && records.len() < self.config.pca_skip_threshold {
-            // Fast path - skip PCA and Hilbert ordering for small batches
-            info!("Skipping PCA for small batch of {} vectors", records.len());
+        let use_spatial_clustering = records.len() >= self.config.pca_skip_threshold;
 
-            // Get filesystem for data directory
-            let filesystem = self.filesystem_factory.get_filesystem(&data_dir)?;
-
-            // Create directory if it doesn't exist
-            filesystem.create_dir_all(&data_dir).await?;
-
-            // Just write the records directly without complex ordering
-            let file_path = format!(
-                "{}/L0_{:016x}.helix",
-                data_dir,
-                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64
-            );
-
-            // Write using simplified format with filesystem
-            let bytes_written = self
-                .write_sstable_simple(&std::path::Path::new(&file_path), &records)
-                .await?;
-
-            return Ok(FlushResult {
-                success: true,
-                collections_affected: vec![collection_id.clone()],
-                entries_flushed: Some(records.len() as u64),
-                bytes_written: Some(bytes_written),
-                files_created: Some(1),
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                completed_at: chrono::Utc::now(),
-                engine_metrics: HashMap::new(),
-                compaction_triggered: false,
-                compaction_error: None,
-                flushed_batch_ids: Vec::new(),
-            });
-        }
-
-        let should_update_pca = {
-            let model_guard = self.pca_model.read().await;
-            let metrics = self.metrics.read().await;
-
-            // Only update PCA if:
-            // 1. No model exists yet AND we have enough training data
-            // 2. We have enough samples AND haven't updated recently
-            (model_guard.is_none() && records.len() >= self.config.pca_min_training_vectors)
-                || (records.len() >= self.config.pca_min_training_vectors
-                    && metrics.total_vectors % 10000 == 0)
-        };
-
-        let pca_model = if should_update_pca {
-            // Train new model only when necessary
-            info!(
-                "Training new PCA model with {} samples",
-                records.len().min(1000)
-            );
-            // Use a sample for training to speed up
-            let training_sample: Vec<VectorRecord> = if records.len() > 1000 {
-                // Sample 1000 vectors for training
-                records
-                    .iter()
-                    .step_by(records.len() / 1000)
-                    .cloned()
-                    .collect()
-            } else {
-                records.clone()
-            };
-            self.update_pca_model(&training_sample).await?;
-
-            // Persist the newly trained model
-            let trained_model = self.pca_model.read().await.clone();
-            if let Some(ref model) = trained_model {
-                // Save model asynchronously (best-effort, don't fail flush if save fails)
-                let model_path = self.get_pca_model_path(&data_dir);
-                match self.save_pca_model(&data_dir, model).await {
-                    Ok(_) => info!(
-                        "[HELIX] ✅ PCA model persisted: version={}, path={}",
-                        model.version, model_path
-                    ),
-                    Err(e) => warn!(
-                        "[HELIX] ❌ Failed to persist PCA model to {}: {}",
-                        model_path, e
-                    ),
-                }
-            } else {
-                warn!("[HELIX] ⚠️  PCA model training completed but model is None!");
-            }
-
-            trained_model
-        } else {
-            self.pca_model.read().await.clone()
-        };
-
-        // Step 2: Compute Hilbert keys with optimization
-        let mut hilbert_keys = Vec::with_capacity(records.len());
-
-        // Fast path for small batches without PCA model
-        if self.config.use_fast_approximation && records.len() < 500 && pca_model.is_none() {
-            // Use a fast approximation for small batches
-            for (i, record) in records.iter().enumerate() {
-                // Simple hash based on first few dimensions
-                let hash_dims = record.vector.len().min(8);
-                let mut hash = 0u64;
-                for j in 0..hash_dims {
-                    hash = hash
-                        .wrapping_mul(31)
-                        .wrapping_add((record.vector[j] * 1000.0) as u64);
-                }
-                hilbert_keys.push(hash);
-            }
-        } else if let Some(ref model) = pca_model {
-            // Use PCA model for larger batches
-            // Prevent overflow: for high dims (>16), we must reduce bits/dim (max 8)
-            let bits = if model.n_components > 16 {
-                self.config.hilbert_bits_per_dimension.min(8)
-            } else {
-                self.config.hilbert_bits_per_dimension
-            };
-
-            for record in &records {
-                let reduced = model.transform(&record.vector)?;
-                let hilbert_key = clustering::compute_hilbert_key_with_config(
-                    &reduced,
-                    bits,
-                );
-                hilbert_keys.push(hilbert_key);
-            }
-        } else {
-            // Fallback: use hash-based keys if no PCA model
-            for record in &records {
-                // Simple hash-based key as fallback
-                let hilbert_key = {
-                    let mut hash = 0u64;
-                    for byte in record.id.bytes() {
-                        hash = hash.wrapping_mul(31).wrapping_add(byte as u64);
+        let hilbert_keys = if use_spatial_clustering {
+            // Step 1a: Try to load existing PCA model from disk if not in memory
+            let pca_model = {
+                let model_guard = self.pca_model.read().await;
+                if model_guard.is_some() {
+                    model_guard.clone()
+                } else {
+                    drop(model_guard);
+                    // Try loading from disk
+                    if let Ok(Some(loaded_model)) = self.load_pca_model(&data_dir).await {
+                        info!(
+                            "[HELIX] ✅ Loaded existing PCA model from disk: version={}",
+                            loaded_model.version
+                        );
+                        *self.pca_model.write().await = Some(loaded_model.clone());
+                        Some(loaded_model)
+                    } else {
+                        None
                     }
-                    hash
+                }
+            };
+
+            // Step 1b: Train new model if needed (no existing model)
+            let pca_model = if pca_model.is_none() {
+                info!(
+                    "[HELIX] Training new PCA model with {} samples",
+                    records.len().min(1000)
+                );
+                // Use a sample for training to speed up
+                let training_sample: Vec<VectorRecord> = if records.len() > 1000 {
+                    records
+                        .iter()
+                        .step_by(records.len() / 1000)
+                        .cloned()
+                        .collect()
+                } else {
+                    records.clone()
                 };
-                hilbert_keys.push(hilbert_key);
+                self.update_pca_model(&training_sample).await?;
+
+                // Persist the newly trained model
+                let trained_model = self.pca_model.read().await.clone();
+                if let Some(ref model) = trained_model {
+                    let model_path = self.get_pca_model_path(&data_dir);
+                    match self.save_pca_model(&data_dir, model).await {
+                        Ok(_) => info!(
+                            "[HELIX] ✅ PCA model persisted: version={}, path={}",
+                            model.version, model_path
+                        ),
+                        Err(e) => warn!(
+                            "[HELIX] ❌ Failed to persist PCA model to {}: {}",
+                            model_path, e
+                        ),
+                    }
+                }
+                trained_model
+            } else {
+                pca_model
+            };
+
+            // Step 2: Compute Hilbert keys using PCA model
+            let mut keys = Vec::with_capacity(records.len());
+
+            if let Some(ref model) = pca_model {
+                // Prevent overflow: for high dims (>16), we must reduce bits/dim (max 8)
+                let bits = if model.n_components > 16 {
+                    self.config.hilbert_bits_per_dimension.min(8)
+                } else {
+                    self.config.hilbert_bits_per_dimension
+                };
+
+                for record in &records {
+                    let reduced = model.transform(&record.vector)?;
+                    let hilbert_key =
+                        clustering::compute_hilbert_key_with_config(&reduced, bits);
+                    keys.push(hilbert_key);
+                }
+            } else {
+                // Should not happen if training succeeded, but provide fallback
+                warn!("[HELIX] PCA training failed, using sequential ordering");
+                keys = (0..records.len() as u64).collect();
             }
-        }
-
-        // Step 3: Sort records by Hilbert key
-        let mut indexed_records: Vec<(u64, VectorRecord)> =
-            hilbert_keys.into_iter().zip(records.into_iter()).collect();
-        indexed_records.sort_by_key(|(key, _)| *key);
-
-        // Extract sorted records and compute Hilbert range
-        let sorted_records: Vec<VectorRecord> = indexed_records
-            .iter()
-            .map(|(_, record)| record.clone())
-            .collect();
-
-        let hilbert_range = if !indexed_records.is_empty() {
-            Some((
-                indexed_records.first().unwrap().0,
-                indexed_records.last().unwrap().0,
-            ))
+            Some(keys)
         } else {
+            // Small batch (< 100 vectors): brute force is fast enough, skip spatial clustering
+            debug!(
+                "[HELIX] Small batch ({} vectors < {}), using brute force (no Hilbert ordering)",
+                records.len(),
+                self.config.pca_skip_threshold
+            );
             None
         };
 
-        // Create Level-0 SSTable (now sorted by Hilbert key)
+        // Step 3: Sort records by Hilbert key (if available) and prepare for write
+        let (sorted_records, hilbert_keys_for_write, hilbert_range) = if let Some(keys) = hilbert_keys
+        {
+            // Sort by Hilbert key for spatial locality
+            let mut indexed_records: Vec<(u64, VectorRecord)> =
+                keys.into_iter().zip(records.into_iter()).collect();
+            indexed_records.sort_by_key(|(key, _)| *key);
+
+            let sorted: Vec<VectorRecord> = indexed_records
+                .iter()
+                .map(|(_, record)| record.clone())
+                .collect();
+            let keys_vec: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
+            let range = if !indexed_records.is_empty() {
+                Some((
+                    indexed_records.first().unwrap().0,
+                    indexed_records.last().unwrap().0,
+                ))
+            } else {
+                None
+            };
+            (sorted, Some(keys_vec), range)
+        } else {
+            // Small batch: no sorting needed, brute force search
+            (records, None, None)
+        };
+
+        // Create Level-0 SSTable
         let filename = self.generate_sstable_filename(0);
 
         // Create directory if it doesn't exist
@@ -1343,15 +1287,14 @@ impl UnifiedStorageEngine for HelixEngine {
 
         let file_path = std::path::Path::new(&data_dir).join(&filename);
 
-        // Write unified SIMD-optimized Proxima blocks with Hilbert keys for spatial clustering
-        let hilbert_keys_for_write: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
+        // Write unified SIMD-optimized Proxima blocks
         let bytes_written = proxima::write_helix_sstable(
             &self.filesystem,
             &file_path,
             &sorted_records,
             self.config.proxima_block_size,
             HELIX_MAGIC,
-            Some(&hilbert_keys_for_write),
+            hilbert_keys_for_write.as_deref(),
             Some(16), // Default Hilbert curve bits
         )
         .await?;
@@ -1369,7 +1312,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 blocks: proxima::extract_helix_metadata(
                     &sorted_records,
                     self.config.proxima_block_size,
-                    Some(&hilbert_keys_for_write),
+                    hilbert_keys_for_write.as_deref(),
                 )
                 .into_iter()
                 .map(|h| h.proxima_metadata)
@@ -1549,25 +1492,24 @@ impl UnifiedStorageEngine for HelixEngine {
             if model_guard.is_none() {
                 drop(model_guard); // Release read lock before attempting load
 
-                debug!("[HELIX] PCA model not in memory, attempting to load from disk...");
                 // Try to load persisted model for this collection
                 if let Some(loaded_model) = self.load_pca_model(&collection_data_dir).await? {
-                    info!(
-                        "[HELIX] ✅ PCA model loaded from disk: version={}, collection={}",
-                        loaded_model.version, collection_id
+                    debug!(
+                        "[HELIX] PCA model loaded from disk: version={}, n_components={}, collection={}",
+                        loaded_model.version, loaded_model.n_components, collection_id
                     );
                     *self.pca_model.write().await = Some(loaded_model.clone());
                     Some(loaded_model)
                 } else {
                     warn!(
-                        "[HELIX] ⚠️  No PCA model found on disk for collection: {}",
+                        "[HELIX] No PCA model found on disk for collection: {}, Hilbert pruning will be DISABLED!",
                         collection_id
                     );
                     None
                 }
             } else {
                 debug!(
-                    "[HELIX] ✅ Using cached PCA model from memory: version={}",
+                    "[HELIX] Using cached PCA model from memory: version={}",
                     model_guard.as_ref().unwrap().version
                 );
                 model_guard.clone()
@@ -1669,8 +1611,9 @@ impl UnifiedStorageEngine for HelixEngine {
                     .discover_sstables_from_directory(&collection_data_dir)
                     .await?;
                 tracing::debug!(
-                    "[HELIX] Discovered {} SSTables from filesystem",
-                    discovered.len()
+                    "[HELIX] Discovered {} SSTables from filesystem at {}",
+                    discovered.len(),
+                    collection_data_dir
                 );
 
                 // Populate cache
@@ -1760,10 +1703,6 @@ impl UnifiedStorageEngine for HelixEngine {
             tracing::debug!("[HELIX] Including SSTable in search");
             sstables_to_search.push(sstable.clone());
         }
-        tracing::debug!(
-            "[HELIX] After pruning: {} SSTables to search",
-            sstables_to_search.len()
-        );
 
         // Update pruning metrics
         let total_sstables = discovered_sstables.len().max(1);
@@ -1773,8 +1712,12 @@ impl UnifiedStorageEngine for HelixEngine {
             metrics.query_count += 1;
             metrics.pruning_ratio_sum += pruning_ratio;
         }
-
-        info!("HELIX pruned {:.1}% of SSTables", pruning_ratio * 100.0);
+        tracing::debug!(
+            "[HELIX] Pruning complete: {} SSTables to search (from {} discovered), pruning_ratio={:.1}%",
+            sstables_to_search.len(),
+            discovered_sstables.len(),
+            pruning_ratio * 100.0
+        );
 
         // Get filter expression from context for type-safe SqlValue filtering
         let filter_expression = ctx.search_params.filter_expression.as_ref();
@@ -1789,6 +1732,53 @@ impl UnifiedStorageEngine for HelixEngine {
         } else {
             ctx.search_params.block_prune.clone()
         };
+
+        // OPTIMIZATION: Route approximate searches through progressive search pipeline
+        // This provides 2-3x speedup via Binary → INT8 → FP32 filtering stages
+        if matches!(ctx.search_params.search_mode, SearchMode::Approximate { .. }) {
+            info!(
+                "[HELIX] Using progressive search for approximate mode ({} SSTables)",
+                sstables_to_search.len()
+            );
+
+            // Convert SStableMetadata Vec to references for progressive search
+            let results = self
+                .progressive_search_coordinator
+                .progressive_search(
+                    query_vector,
+                    query_hilbert,
+                    &sstables_to_search,
+                    k,
+                    distance_metric,
+                    &self.filesystem,
+                )
+                .await?;
+
+            // Record query execution for learning
+            let latency_ms = start.elapsed().as_millis() as u64;
+            let accessed_files: Vec<String> = sstables_to_search
+                .iter()
+                .map(|s| s.path.to_string_lossy().to_string())
+                .collect();
+            self.query_optimizer
+                .record_execution(
+                    query_hash,
+                    query_hilbert,
+                    results.clone(),
+                    accessed_files,
+                    latency_ms,
+                )
+                .await;
+
+            tracing::debug!(
+                "[HELIX] Progressive search complete: {} results, latency={}ms, k={}",
+                results.len(),
+                latency_ms,
+                k
+            );
+
+            return Ok(results);
+        }
 
         // Decide whether to use parallel or sequential search based on config
         let use_parallel = self.config.parallel_search_enabled
@@ -1877,6 +1867,13 @@ impl UnifiedStorageEngine for HelixEngine {
                 latency_ms,
             )
             .await;
+
+        tracing::debug!(
+            "[HELIX] Search complete: {} results, latency={}ms, k={}",
+            results.len(),
+            latency_ms,
+            k
+        );
 
         Ok(results)
     }

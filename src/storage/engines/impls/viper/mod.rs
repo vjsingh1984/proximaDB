@@ -225,6 +225,7 @@
 //! - Cost-aware storage tiering
 
 pub mod eventlog_flush;
+pub mod extraction;
 pub mod factory;
 pub mod pipeline;
 pub mod pipeline_tests;
@@ -244,6 +245,7 @@ pub mod engine;
 pub mod flush;
 pub mod unified_metadata_serializer;
 pub mod unified_strategy_reader;
+pub mod viper_meta_collector;
 
 // Test modules
 
