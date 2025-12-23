@@ -1606,9 +1606,15 @@ impl VectorOperationsService {
                 // Index lookup optimization
                 ExecutionStep::IndexLookup {
                     index_type,
-                    lookup_params,
+                    mut lookup_params,
                 } => {
                     debug!("📚 Using index lookup ({:?})", index_type);
+
+                    // CRITICAL FIX: Inject the query vector from the caller
+                    // The optimizer sets query_vector to None to be filled at execution time
+                    if lookup_params.query_vector.is_none() {
+                        lookup_params.query_vector = Some(query_vector.clone());
+                    }
 
                     let index_results = self
                         .execute_index_lookup(collection_id, index_type, lookup_params)
