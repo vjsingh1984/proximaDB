@@ -90,7 +90,16 @@ impl NovaFlushOperations {
             sort_columns: vec![],
             id_less_storage: false,
             filterable_metadata_columns: None,
-            quantization: Default::default(),
+            quantization: {
+                // Enable quantization for NOVA progressive search (Binary → INT8 → FP32)
+                // This creates quantized columns during flush for 10-50x search speedup
+                let mut qconfig = crate::proto::proximadb_v1::QuantizationConfig::default();
+                qconfig.enabled = Some(true);
+                qconfig.enable_progressive_search = Some(true);
+                qconfig.binary_filter_selectivity = Some(0.1); // Keep 10% after binary stage
+                qconfig.int8_ranking_selectivity = Some(0.3); // Keep 30% after INT8 stage
+                qconfig
+            },
             max_records_per_file: None,
             target_file_size_bytes: Some(128 * 1024 * 1024),
             enable_async_io: true,
@@ -260,6 +269,7 @@ impl NovaFlushOperations {
             entries_flushed: Some(params.vector_records.len() as u64),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
+            file_paths: vec![path],
             duration_ms: Some(start.elapsed().as_millis() as u64),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),

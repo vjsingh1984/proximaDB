@@ -1031,11 +1031,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     };
 
                     let vector_count = result.entries_flushed.unwrap_or(0) as usize;
-                    // files_created is a count, not paths - EventLog needs paths for index building
-                    // Pass empty vec for now; engines with path info can use their own handlers
+                    // Use file_paths from FlushResult for AXIS index building
                     if let Err(e) = event_log.notify_flush(
                         collection_id,
-                        vec![], // flushed_files paths not available in FlushResult
+                        result.file_paths.clone(),
                         vector_count,
                         false, // has_quantized - TODO: pass from params
                         true,  // has_fp32
@@ -1974,6 +1973,9 @@ pub struct FlushResult {
     /// Number of files/segments created
     pub files_created: Option<u64>,
 
+    /// Actual file paths created (for AXIS index building)
+    pub file_paths: Vec<String>,
+
     /// Duration of the operation
     pub duration_ms: Option<u64>,
 
@@ -2246,6 +2248,7 @@ impl Default for FlushResult {
             entries_flushed: None,
             bytes_written: None,
             files_created: None,
+            file_paths: Vec::new(),
             duration_ms: None,
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),

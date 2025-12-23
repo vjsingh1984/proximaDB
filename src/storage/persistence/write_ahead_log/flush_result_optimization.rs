@@ -278,6 +278,7 @@ impl OptimizedFlushCoordinator {
             entries_flushed: Some(processed_vectors.len() as u64),
             bytes_written: Some(processed_vectors.len() as u64 * 512), // Estimate
             files_created: Some(1),
+            file_paths: vec![],
             duration_ms: Some(0), // Will be set by caller
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),

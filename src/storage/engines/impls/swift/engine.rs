@@ -827,6 +827,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             entries_flushed: Some(records.len() as u64),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
+            file_paths: vec![filename.clone()],
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),

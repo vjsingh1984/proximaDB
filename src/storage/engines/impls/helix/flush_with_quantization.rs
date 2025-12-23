@@ -60,16 +60,19 @@ impl ProximaBlockQuantization for HelixEngine {
         }
 
         // Create flush result
+        // Note: file_paths not tracked in this quantization path - main do_flush handles it
         Ok(FlushResult {
             success: true,
             collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
             entries_flushed: Some(total_entries),
             bytes_written: Some(total_bytes),
             files_created: Some(files_created),
+            file_paths: vec![],
             duration_ms: None,
             completed_at: chrono::Utc::now(),
             engine_metrics: self.collect_helix_metrics(),
             compaction_triggered: self.should_trigger_compaction(total_entries),
+            compaction_error: None,
             flushed_batch_ids: params.batch_ids.clone(),
         })
     }

@@ -996,8 +996,14 @@ impl RaptorEngine {
 
             // STEP 1: Use hierarchical_search to find top-k rowgroups by centroid distance
             // This reads directly from footer and doesn't need Matrix Trinity state
-            // Auto-calculate nprobe: search max(3, sqrt(num_rowgroups)) rowgroups for good recall
-            let nprobe = 3.max((k as f32).sqrt().ceil() as usize);
+            // Get actual rowgroup count to calculate proper nprobe for high recall
+            let num_rowgroups = reader.get_rowgroup_count().await.unwrap_or(10);
+            // For 90%+ recall: search at least sqrt(num_rowgroups) * 2, but min 10 and at least k
+            let nprobe = k.max(10).max(((num_rowgroups as f32).sqrt().ceil() as usize) * 2);
+            debug!(
+                "SCAN_DISK: Calculated nprobe={} for num_rowgroups={}, k={}",
+                nprobe, num_rowgroups, k
+            );
 
             match reader.hierarchical_search(query, nprobe, distance_metric).await {
                 Ok(top_rowgroups) => {
@@ -2184,6 +2190,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         Ok(FlushResult {
             success: true,
             files_created: Some(1),
+            file_paths: vec![file_path],
             bytes_written: Some(bytes_written),
             duration_ms: Some(start_time.elapsed().as_millis() as u64),
             collections_affected: vec![collection_id.to_string()],

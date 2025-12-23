@@ -299,13 +299,14 @@ impl SstEngine {
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
 
-        // Create flush result
+        // Create flush result with file path for AXIS index building
         Ok(FlushResult {
             success: true,
             collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
             entries_flushed: Some(entries_written),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
+            file_paths: vec![atomic_op.final_url.clone()],
             duration_ms: Some(0), // Will be set by caller
             completed_at: Utc::now(),
             engine_metrics: {

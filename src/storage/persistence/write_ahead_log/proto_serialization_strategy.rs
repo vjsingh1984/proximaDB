@@ -310,6 +310,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                 entries_flushed: Some(0),
                 bytes_written: Some(0),
                 files_created: Some(0),
+                file_paths: vec![],
                 duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
@@ -391,6 +392,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             entries_flushed: flush_result.entries_flushed,
             bytes_written: flush_result.bytes_written,
             files_created: flush_result.files_created,
+            file_paths: flush_result.file_paths.clone(),
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
@@ -606,6 +608,7 @@ impl ProtoSerializationStrategy {
             entries_flushed: Some(0), // TODO: Track actual entries
             bytes_written: Some(0),   // TODO: Track actual bytes
             files_created: Some(0),
+            file_paths: vec![],
             duration_ms: Some(0),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
