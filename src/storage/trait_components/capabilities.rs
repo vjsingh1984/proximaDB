@@ -463,6 +463,25 @@ impl CapabilityFactory {
             _ => Box::new(SstCapabilities),
         }
     }
+
+    /// Create capabilities from proto StorageEngine enum (for static utility bridge)
+    ///
+    /// This method bridges the static `EngineCapabilities` utility with the trait-based
+    /// capability system, enabling OCP compliance while maintaining the static API.
+    pub fn from_proto_engine(engine: crate::proto::proximadb_v1::StorageEngine) -> Box<dyn EngineCapabilities> {
+        use crate::proto::proximadb_v1::StorageEngine;
+
+        match engine {
+            StorageEngine::Sst => Box::new(SstCapabilities),
+            StorageEngine::Helix => Box::new(HelixCapabilities),
+            StorageEngine::Viper => Box::new(ViperCapabilities),
+            StorageEngine::Swift => Box::new(SwiftCapabilities),
+            StorageEngine::Nova => Box::new(NovaCapabilities),
+            StorageEngine::Raptor => Box::new(RaptorCapabilities),
+            // Default to SST capabilities for unknown engines
+            _ => Box::new(SstCapabilities),
+        }
+    }
 }
 
 #[cfg(test)]
