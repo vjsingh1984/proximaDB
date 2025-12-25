@@ -154,6 +154,7 @@ pub mod id_index;
 pub mod batch_operations;
 pub mod optimized_operations;
 pub mod progressive_search;
+pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod stages;
 pub mod superblock_cache;
 pub mod unified_metadata_serializer;

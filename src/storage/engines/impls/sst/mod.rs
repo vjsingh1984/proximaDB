@@ -249,6 +249,7 @@ pub mod manifest;
 pub mod search;
 pub mod trait_impl;
 pub mod utils;
+pub mod progressive_stages; // ISP-compliant progressive search stages
 
 // Test modules
 #[cfg(test)]

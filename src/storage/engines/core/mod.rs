@@ -11,6 +11,7 @@ pub mod formats; // Storage formats: row-based, columnar
 pub mod io; // I/O operations: zero-copy, filesystem abstractions
 pub mod ops; // Common operations: compression, encoding, optimization
 pub mod pca; // PCA model management for spatial clustering
+pub mod progressive; // ISP-compliant progressive search stages
 pub mod read_strategy; // Unified read access strategy for all engines
 pub mod search; // Search infrastructure: progressive search, filtering
 
@@ -25,5 +26,10 @@ pub use formats::{
 };
 pub use io::zero_copy::ZeroCopyIOSystem;
 pub use pca::{EnhancedPCAModel, PCAConfig, PCAManagerConfig, PCAModelManager};
+pub use progressive::{
+    ProgressiveSearchCoordinator, ProgressiveSearchStage, ScoredCandidate,
+    BinaryStage, Int8Stage, PqStage, Fp32Stage, CoordinatorConfig, StageStats,
+    QuantizationLevel as ProgressiveQuantizationLevel,
+};
 pub use search::{ProgressiveSearchEngine, SearchContext};
 // Common operations exports available from ops module directly

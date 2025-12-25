@@ -232,6 +232,7 @@ pub mod pipeline_tests;
 pub mod readers; // Pipeline tests module
 // Quantization now handled by unified compute module
 pub mod utilities;
+pub mod progressive_stages; // ISP-compliant progressive search stages
 // Removed indexed_reader - use columnar/parquet_query_engine instead
 // Removed vector_writer - use columnar/parquet_writer instead
 pub mod column_filter;

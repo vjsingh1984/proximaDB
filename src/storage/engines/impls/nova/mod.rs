@@ -145,6 +145,7 @@ pub mod operations;
 pub mod hierarchical_cache;
 pub mod hierarchical_stats;
 pub mod progressive_search;
+pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod streaming_processor;
 pub mod streaming_search;
 pub mod zone_maps;
