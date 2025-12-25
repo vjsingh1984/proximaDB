@@ -86,6 +86,7 @@ use crate::compute::distance_computation::engine::{
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
+// DIP: CollectionPathResolver is re-exported below via pub use
 use std::collections::HashMap;
 
 // Sub-modules
@@ -162,6 +163,11 @@ pub use recovery_manager::{ParallelRecoveryManager, RecoveryManager, RecoveryMod
 pub use recovery_thread_pool::{
     RecoveryPoolStats, RecoveryThreadPool, get_recovery_thread_pool,
     initialize_recovery_thread_pool,
+};
+
+// DIP: Re-export path resolver types for convenient access
+pub use crate::storage::trait_components::path_resolver::{
+    CollectionPathResolver, ConfigFallbackResolver, MetadataProviderResolver,
 };
 
 // Batch coordination exports - BatchId defined below
@@ -377,6 +383,9 @@ pub struct WriteAheadLogManager {
     metadata_provider: Arc<
         tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>,
     >,
+    /// DIP-compliant path resolver (optional - falls back to metadata_provider if None)
+    /// When set, this is used for path resolution instead of the global singleton
+    path_resolver: Option<Arc<dyn CollectionPathResolver>>,
 }
 
 /// Adaptive WriteAheadLogManager Registry with Pool-based Collection Assignment
@@ -1273,6 +1282,102 @@ impl WriteAheadLogManager {
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
             // CRITICAL FIX: Use global metadata provider for shared access
             metadata_provider: get_global_metadata_provider(),
+            // DIP: No path resolver by default, falls back to metadata_provider
+            path_resolver: None,
+        })
+    }
+
+    /// Create new WriteAheadLogManager with an injected path resolver (DIP-compliant)
+    ///
+    /// This constructor enables Dependency Inversion by accepting a `CollectionPathResolver`,
+    /// eliminating the 100ms metadata provider wait during path resolution. This is the
+    /// recommended constructor for production use.
+    ///
+    /// # Arguments
+    /// * `config` - WAL configuration
+    /// * `collection_id` - Collection identifier (for logging)
+    /// * `path_resolver` - Injected path resolver for collection path resolution
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use proximadb::storage::trait_components::path_resolver::{MetadataProviderResolver, CollectionPathResolver};
+    ///
+    /// let resolver = Arc::new(MetadataProviderResolver::new(metadata_provider));
+    /// let wal_manager = WriteAheadLogManager::new_with_path_resolver(
+    ///     config,
+    ///     "my_collection".to_string(),
+    ///     resolver,
+    /// ).await?;
+    /// ```
+    pub async fn new_with_path_resolver(
+        config: WALConfig,
+        collection_id: String,
+        path_resolver: Arc<dyn CollectionPathResolver>,
+    ) -> Result<Self> {
+        tracing::info!(
+            "🚀 Creating WriteAheadLogManager for collection {} with DIP path resolver '{}' (no 100ms wait)",
+            collection_id,
+            path_resolver.name()
+        );
+        tracing::debug!(
+            "📋 WAL Config: strategy_type={:?}, memtable_type={:?}, resolver={}",
+            config.strategy_type,
+            config.memtable.memtable_type,
+            path_resolver.name()
+        );
+
+        // Initialize singleton WALBehaviorWrapper (thread-safe, only happens once globally)
+        let memtable_config = crate::storage::memtable::core::MemtableConfig {
+            max_size_bytes: config.memtable.global_memory_limit,
+            flush_threshold_bytes: config.memtable.global_memory_limit / 2,
+            enable_mvcc: config.enable_mvcc,
+            mvcc_cleanup_interval_secs: config.performance.mvcc_cleanup_interval_secs,
+            max_versions_per_key: config.memtable.mvcc_versions_retained,
+        };
+        let _shared_wal_behavior = GLOBAL_WRITE_BUFFER_BEHAVIOR.get_or_init(&memtable_config);
+
+        let stats = Arc::new(tokio::sync::RwLock::new(WALStats {
+            total_entries: 0,
+            memory_entries: 0,
+            disk_segments: 0,
+            total_disk_size_bytes: 0,
+            memory_size_bytes: 0,
+            collections_count: 0,
+            last_flush_time: None,
+            write_throughput_entries_per_sec: 0.0,
+            read_throughput_entries_per_sec: 0.0,
+            compression_ratio: 1.0,
+        }));
+
+        // Initialize with empty collection map - collections will be added with their metadata
+        let assigned_collections = std::collections::HashMap::new();
+
+        tracing::info!(
+            "✅ WriteAheadLogManager created for collection {} with DIP resolver '{}' - zero-wait path resolution",
+            collection_id,
+            path_resolver.name()
+        );
+
+        // Extract strategy type for routing
+        let strategy_type = config.strategy_type.clone();
+
+        // Create filesystem factory for per-collection disk managers
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
+        );
+
+        Ok(Self {
+            config,
+            stats,
+            distance_compute: UnifiedDistanceCompute::default(),
+            assigned_collections: Arc::new(tokio::sync::RwLock::new(assigned_collections)),
+            shared_wal_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
+            strategy_type,
+            recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            // DIP: Still use global metadata provider for other operations
+            metadata_provider: get_global_metadata_provider(),
+            // DIP: Use injected path resolver (no 100ms wait needed)
+            path_resolver: Some(path_resolver),
         })
     }
 
@@ -1339,6 +1444,8 @@ impl WriteAheadLogManager {
             // CRITICAL FIX: Use global metadata provider instead of creating new empty one
             // This ensures ALL pool instances share the same metadata provider
             metadata_provider: parent_metadata_provider.unwrap_or_else(get_global_metadata_provider),
+            // DIP: No path resolver by default, falls back to metadata_provider
+            path_resolver: None,
         })
     }
 
@@ -1383,6 +1490,35 @@ impl WriteAheadLogManager {
         tracing::info!("📋 Metadata provider attached to WAL manager for recovery");
     }
 
+    /// Set path resolver for DIP-compliant path resolution (post-construction injection)
+    ///
+    /// This method allows injecting a path resolver after the WAL manager is created,
+    /// which is useful for pool managers that are created before the metadata provider
+    /// is fully initialized.
+    ///
+    /// Once set, the path resolver will be used for path resolution, bypassing the
+    /// 100ms metadata provider wait.
+    ///
+    /// Note: This requires mutable access to `self`. For immutable post-construction
+    /// injection, create the WAL manager with `new_with_path_resolver` instead.
+    pub fn set_path_resolver(&mut self, resolver: Arc<dyn CollectionPathResolver>) {
+        tracing::info!(
+            "📋 Path resolver '{}' attached to WAL manager - DIP path resolution enabled",
+            resolver.name()
+        );
+        self.path_resolver = Some(resolver);
+    }
+
+    /// Check if a path resolver is configured
+    pub fn has_path_resolver(&self) -> bool {
+        self.path_resolver.is_some()
+    }
+
+    /// Get the name of the configured path resolver (if any)
+    pub fn path_resolver_name(&self) -> Option<&str> {
+        self.path_resolver.as_ref().map(|r| r.name())
+    }
+
     /// Resolve the base location for a collection's WAL files
     ///
     /// This method ensures WAL files are written to the correct storage location
@@ -1399,13 +1535,38 @@ impl WriteAheadLogManager {
     /// * `Ok(String)` - The resolved base location path
     /// * `Err` - If path cannot be resolved (e.g., collection not found)
     async fn resolve_collection_base_location(&self, collection_id: &str) -> Result<String> {
-        // First, check if metadata provider is available
+        // DIP: If a path_resolver is injected, use it directly (no 100ms wait needed)
+        if let Some(ref resolver) = self.path_resolver {
+            match resolver.resolve_base_location(collection_id).await {
+                Ok(location) => {
+                    tracing::debug!(
+                        "WAL path resolved via {} resolver: {} -> {}",
+                        resolver.name(),
+                        collection_id,
+                        location
+                    );
+                    return Ok(location);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Path resolver {} failed for {}: {}, falling back",
+                        resolver.name(),
+                        collection_id,
+                        e
+                    );
+                    // Fall through to metadata_provider path
+                }
+            }
+        }
+
+        // Legacy path: Check if metadata provider is available
         let provider_available = {
             let lock = self.metadata_provider.read().await;
             lock.is_some()
         };
 
         // If not available, wait briefly for it to be set (handles startup race condition)
+        // NOTE: This 100ms wait is only used when no path_resolver is injected
         if !provider_available {
             tracing::debug!(
                 "WAL path resolution: Waiting for metadata provider (collection: {})",
