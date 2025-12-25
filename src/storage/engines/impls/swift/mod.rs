@@ -154,6 +154,7 @@ pub mod id_index;
 pub mod batch_operations;
 pub mod optimized_operations;
 pub mod progressive_search;
+pub mod stages;
 pub mod superblock_cache;
 pub mod unified_metadata_serializer;
 pub mod unified_reader;
@@ -165,6 +166,9 @@ pub use superblock_cache::{
     CachedSuperBlockMetadata, OptimalTreePath, SwiftSuperBlockCache, TreeNavigationHints,
 };
 pub use unified_strategy_reader::{CachedSWIFTReader, DirectSWIFTReader, UnifiedSWIFTReader};
+
+// Re-export SOLID progressive search stages
+pub use stages::{SwiftBinaryStage, SwiftInt8Stage, SwiftFp32Stage, SwiftProgressivePipelineBuilder};
 
 use anyhow::{Result, anyhow};
 // use std::collections::HashMap; // Unused import

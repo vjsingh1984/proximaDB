@@ -239,6 +239,8 @@ pub mod writer;
 
 // New modular structure
 pub mod blocks;
+#[allow(dead_code)]
+mod blocks_archive; // Legacy types preserved for reference
 pub mod codebook_integration;
 pub mod collections;
 pub mod core;
@@ -263,8 +265,8 @@ pub use readers::UnifiedSstableReader;
 // Additional exports for unified reader (SstableHeader is already defined below)
 pub use writer::SstableWriter;
 
-// Re-export from new modular structure
-pub use blocks::{CompressionType, QuantizedBlockData, SstRecord};
+// Re-export SstRecord for test compatibility (deprecated - see blocks.rs)
+pub use blocks::SstRecord;
 pub use collections::CollectionSizeInfo;
 pub use core::SstEngine;
 pub use flush::{FlushCoordinator, FlushOperations, FlushOptimizer, SortStats};
@@ -1520,9 +1522,45 @@ pub fn optimal_block_size(vector_dim: usize) -> usize {
 mod block_utils {
     use super::*;
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
+    use crate::core::bloom::{
+        adaptive::AdaptiveBloomConfig, factory::BloomFilterFactory, BloomFilterConfig,
+        BloomFilterStats, BloomFilterStrategy, SstableBloomFilter,
+    };
 
-    /// Create a new ProximaDataBlock for SST usage
+    /// Create a new ProximaDataBlock for SST usage with automatic bloom filter generation
     pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> ProximaDataBlock {
+        // Create bloom filter for record IDs using adaptive sizing
+        let bloom_filter = if !records.is_empty() {
+            let adaptive_config = AdaptiveBloomConfig::for_block_level();
+            let bloom_config = adaptive_config.to_bloom_config(records.len());
+
+            // Create bloom filter and insert all record IDs
+            let mut filter = BloomFilterFactory::create(&bloom_config);
+            for record in &records {
+                filter.insert(record.id.as_bytes());
+            }
+
+            // Serialize and create SstableBloomFilter
+            if let Ok(filter_data) = filter.serialize() {
+                Some(SstableBloomFilter::new(
+                    bloom_config,
+                    filter_data,
+                    Vec::new(), // No metadata filter for now
+                    BloomFilterStats {
+                        key_count: records.len() as u64,
+                        metadata_columns: 0,
+                        total_keys: records.len() as u64,
+                        key_lookups_saved: 0,
+                        metadata_queries_saved: 0,
+                    },
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         ProximaDataBlock {
             encoding_marker: 0x00, // Will be set based on encoding
             encoding_metadata: None,
@@ -1537,7 +1575,7 @@ mod block_utils {
             compression_config: BlockCompressionConfig::default(),
             compression_algorithm: CompressionAlgorithm::None,
             uncompressed_size: 0,
-            bloom_filter: None,
+            bloom_filter,
             block_bloom_filter: None,
             id_range: (String::new(), String::new()),
             timestamp_range: (0, 0),
