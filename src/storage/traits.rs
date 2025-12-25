@@ -62,6 +62,9 @@ pub use crate::storage::trait_components::{
 // Import capabilities for OCP-compliant delegation
 use crate::storage::trait_components::capabilities::CapabilityFactory;
 
+// Import StorageEngineType for OCP-compliant engine type dispatch
+use crate::index::axis::eventlog::StorageEngineType;
+
 /// Performance tier hint for storage engines
 ///
 /// ## Purpose:
@@ -557,6 +560,26 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn engine_version(&self) -> &'static str;
     fn strategy(&self) -> StorageEngineStrategy;
 
+    /// Get the storage engine type for AXIS indexing and event logging
+    ///
+    /// This method eliminates the need for string matching on engine_name(),
+    /// following the Open/Closed Principle. Each engine provides its type
+    /// directly, so adding new engines doesn't require modifying dispatch code.
+    ///
+    /// Default implementation maps from strategy() for backward compatibility.
+    fn engine_type(&self) -> StorageEngineType {
+        match self.strategy() {
+            StorageEngineStrategy::Sst => StorageEngineType::SST,
+            StorageEngineStrategy::Viper => StorageEngineType::VIPER,
+            StorageEngineStrategy::Helix => StorageEngineType::HELIX,
+            StorageEngineStrategy::Nova => StorageEngineType::NOVA,
+            StorageEngineStrategy::Swift => StorageEngineType::SWIFT,
+            StorageEngineStrategy::Raptor => StorageEngineType::RAPTOR,
+            // Default to SST for any unknown engines
+            _ => StorageEngineType::SST,
+        }
+    }
+
     /// Core flush operation - engine-specific implementation (required)
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult>;
 
@@ -916,16 +939,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
             if let Some(collection_id) = &params.collection_id {
                 // Notify EventLog so AXIS consumer can build indexes asynchronously
                 if let Some(event_log) = crate::services::events::log::event_log_service() {
-                    // Determine storage engine type based on engine name
-                    let storage_engine_type = match self.engine_name() {
-                        "sst" => crate::index::axis::eventlog::StorageEngineType::SST,
-                        "viper" => crate::index::axis::eventlog::StorageEngineType::VIPER,
-                        "helix" => crate::index::axis::eventlog::StorageEngineType::HELIX,
-                        "nova" => crate::index::axis::eventlog::StorageEngineType::NOVA,
-                        "swift" => crate::index::axis::eventlog::StorageEngineType::SWIFT,
-                        "raptor" => crate::index::axis::eventlog::StorageEngineType::RAPTOR,
-                        _ => crate::index::axis::eventlog::StorageEngineType::SST,
-                    };
+                    // Use engine_type() method (OCP-compliant - no string matching)
+                    let storage_engine_type = self.engine_type();
 
                     let vector_count = result.entries_flushed.unwrap_or(0) as usize;
                     // Use file_paths from FlushResult for AXIS index building
@@ -1636,16 +1651,20 @@ impl StorageQueryContext {
         let config = collection.config.as_ref();
         let storage_assignment = collection.storage_assignment.as_ref();
 
+        // Use proto enum for OCP-compliant storage engine mapping
         let storage_strategy = config
-            .map(|c| match c.storage_engine {
-                Some(0) => StorageEngineStrategy::Viper,  // VIPER
-                Some(1) => StorageEngineStrategy::Sst,    // SST
-                Some(2) => StorageEngineStrategy::Nova,   // NOVA
-                Some(3) => StorageEngineStrategy::Swift,  // SWIFT
-                Some(4) => StorageEngineStrategy::Raptor, // RAPTOR
-                _ => StorageEngineStrategy::Viper,
+            .and_then(|c| c.storage_engine)
+            .and_then(|e| crate::proto::proximadb_v1::StorageEngine::try_from(e).ok())
+            .map(|engine| match engine {
+                crate::proto::proximadb_v1::StorageEngine::Viper => StorageEngineStrategy::Viper,
+                crate::proto::proximadb_v1::StorageEngine::Sst => StorageEngineStrategy::Sst,
+                crate::proto::proximadb_v1::StorageEngine::Nova => StorageEngineStrategy::Nova,
+                crate::proto::proximadb_v1::StorageEngine::Helix => StorageEngineStrategy::Helix,
+                crate::proto::proximadb_v1::StorageEngine::Swift => StorageEngineStrategy::Swift,
+                crate::proto::proximadb_v1::StorageEngine::Raptor => StorageEngineStrategy::Raptor,
+                _ => StorageEngineStrategy::Sst, // Default to SST for unknown engines
             })
-            .unwrap_or(StorageEngineStrategy::Viper);
+            .unwrap_or(StorageEngineStrategy::Sst);
 
         let mut adjusted_params = (*search_params).clone();
         if matches!(

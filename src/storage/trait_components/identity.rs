@@ -4,6 +4,7 @@
 //! This trait satisfies the Single Responsibility Principle by focusing solely
 //! on engine identification and capability reporting.
 
+use crate::index::axis::eventlog::StorageEngineType;
 use crate::storage::traits::StorageEngineStrategy;
 
 /// Core identity trait for storage engines
@@ -29,6 +30,25 @@ pub trait StorageIdentity: Send + Sync {
 
     /// Storage strategy this engine implements
     fn strategy(&self) -> StorageEngineStrategy;
+
+    /// Get the storage engine type for AXIS indexing and event logging
+    ///
+    /// This method eliminates the need for string matching on engine_name(),
+    /// following the Open/Closed Principle. Each engine provides its type
+    /// directly, so adding new engines doesn't require modifying dispatch code.
+    fn engine_type(&self) -> StorageEngineType {
+        // Default implementation maps from strategy for backward compatibility
+        match self.strategy() {
+            StorageEngineStrategy::Sst => StorageEngineType::SST,
+            StorageEngineStrategy::Viper => StorageEngineType::VIPER,
+            StorageEngineStrategy::Helix => StorageEngineType::HELIX,
+            StorageEngineStrategy::Nova => StorageEngineType::NOVA,
+            StorageEngineStrategy::Swift => StorageEngineType::SWIFT,
+            StorageEngineStrategy::Raptor => StorageEngineType::RAPTOR,
+            // Future engines should override this method
+            _ => StorageEngineType::SST,
+        }
+    }
 
     /// Check if engine supports collection-level operations
     ///
