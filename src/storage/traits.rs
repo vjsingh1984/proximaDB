@@ -59,6 +59,9 @@ pub use crate::storage::trait_components::{
     StorageScan, StorageWriter,
 };
 
+// Import capabilities for OCP-compliant delegation
+use crate::storage::trait_components::capabilities::CapabilityFactory;
+
 /// Performance tier hint for storage engines
 ///
 /// ## Purpose:
@@ -632,108 +635,12 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 
     /// Get scan capabilities for this engine
-    /// Each engine reports its specific optimization capabilities
+    ///
+    /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.
+    /// Each engine's capabilities are defined in `trait_components::capabilities`.
     fn scan_capabilities(&self) -> crate::storage::unified_scan_strategy::ScanCapabilities {
-        use crate::storage::unified_scan_strategy::ScanCapabilities;
-
-        match self.strategy() {
-            StorageEngineStrategy::Sst => ScanCapabilities {
-                // SST capabilities
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: true,
-                supports_block_cache: true,
-                supports_range_scans: true,
-                supports_index_scans: true,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-            StorageEngineStrategy::Viper => ScanCapabilities {
-                // VIPER capabilities
-                supports_predicate_pushdown: true,
-                supports_column_projection: true,
-                supports_row_group_pruning: true,
-                supports_parallel_column_evaluation: true,
-                supports_bloom_filters: false,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: false,
-                supports_zone_maps: true,
-                supports_streaming: true,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-            StorageEngineStrategy::Nova => ScanCapabilities {
-                // NOVA capabilities
-                supports_predicate_pushdown: true,
-                supports_column_projection: true,
-                supports_row_group_pruning: true,
-                supports_parallel_column_evaluation: true,
-                supports_bloom_filters: false,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: true,
-                supports_zone_maps: true,
-                supports_streaming: true,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-            StorageEngineStrategy::Raptor => ScanCapabilities {
-                // RAPTOR capabilities
-                supports_predicate_pushdown: true,
-                supports_column_projection: true,
-                supports_row_group_pruning: true,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: true,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: true,
-                supports_tier_aware_scanning: true,
-                supports_consolidated_reading: true,
-            },
-            StorageEngineStrategy::Swift => ScanCapabilities {
-                // SWIFT capabilities - hierarchical superblock architecture
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: true,
-                supports_block_cache: true,
-                supports_range_scans: true,
-                supports_index_scans: true,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: true,
-                supports_consolidated_reading: false,
-            },
-            _ => ScanCapabilities {
-                // Default minimal capabilities
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: false,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-        }
+        // OCP: Delegate to CapabilityFactory instead of hardcoded match
+        CapabilityFactory::create(self.strategy()).scan_capabilities()
     }
 
     // =============================================================================
@@ -749,32 +656,22 @@ pub trait UnifiedStorageEngine: Send + Sync {
     ///
     /// Determines whether the storage engine supports collection-level operations
     /// such as per-collection flush, compaction, and configuration.
+    ///
+    /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.
     fn supports_collection_level_operations(&self) -> bool {
-        match self.strategy() {
-            StorageEngineStrategy::Viper => true, // VIPER supports collection-level ops
-            StorageEngineStrategy::Sst => false,  // SST operates on entire tree
-            StorageEngineStrategy::Hybrid => true, // Hybrid supports collection-level ops
-            StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
-            StorageEngineStrategy::Nova => true,  // NOVA supports collection-level ops
-            StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
-            StorageEngineStrategy::Helix => true, // HELIX supports collection-level ops
-        }
+        // OCP: Delegate to CapabilityFactory instead of hardcoded match
+        CapabilityFactory::create(self.strategy()).supports_collection_level_operations()
     }
 
     /// Determines whether the storage engine supports atomic operations
     ///
     /// Atomic operations guarantee that either all changes are applied
     /// or none are applied, preventing partial updates.
+    ///
+    /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.
     fn supports_atomic_operations(&self) -> bool {
-        match self.strategy() {
-            StorageEngineStrategy::Viper => true, // VIPER has atomic staging operations
-            StorageEngineStrategy::Sst => false,  // SST has eventual consistency
-            StorageEngineStrategy::Hybrid => true, // Hybrid provides atomic guarantees
-            StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
-            StorageEngineStrategy::Nova => true,  // NOVA provides atomic guarantees
-            StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
-            StorageEngineStrategy::Helix => true, // HELIX provides atomic guarantees
-        }
+        // OCP: Delegate to CapabilityFactory instead of hardcoded match
+        CapabilityFactory::create(self.strategy()).supports_atomic_operations()
     }
 
     fn supports_background_operations(&self) -> bool {
