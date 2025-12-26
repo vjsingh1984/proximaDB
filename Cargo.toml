@@ -113,7 +113,7 @@ azure_storage_blobs = { version = "0.19", optional = true }
 google-cloud-storage = { version = "0.15", optional = true }
 
 # Vector operations & SIMD
-nalgebra = "0.32"  # For PCA eigendecomposition in HELIX engine
+nalgebra = { version = "0.32", features = ["serde-serialize"] }  # For PCA eigendecomposition, with serde for model persistence
 half = "2.4"  # FP16 (float16) support for centroid quantization (50% storage reduction)
 
 # CPU optimization
@@ -424,6 +424,11 @@ path = "benches/bench_16_proximacodec_comprehensive.rs"
 name = "bench_18_fp16_centroid_performance"
 harness = false
 path = "benches/bench_18_fp16_centroid_performance.rs"
+
+[[bench]]
+name = "bench_19_comprehensive_optimization"
+harness = false
+path = "benches/bench_19_comprehensive_optimization.rs"
 
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY
