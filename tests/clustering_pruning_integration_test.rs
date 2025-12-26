@@ -125,7 +125,7 @@ async fn test_sst_zorder_pruning_effectiveness() -> anyhow::Result<()> {
             mode: BlockPruneMode::Sqrt,
             ratio: 0.2,
             min_keep: 1,
-            max_keep: 0,
+            max_keep: 0, min_blocks_override: Some(0),
         },
         ..Default::default()
     });
@@ -154,7 +154,7 @@ async fn test_sst_zorder_pruning_effectiveness() -> anyhow::Result<()> {
             mode: BlockPruneMode::Sqrt,
             ratio: 0.2,
             min_keep: 1,
-            max_keep: 0,
+            max_keep: 0, min_blocks_override: Some(0),
         },
         ..Default::default()
     });
@@ -246,7 +246,7 @@ async fn test_sst_pruning_modes() -> anyhow::Result<()> {
             mode: BlockPruneMode::Sqrt,
             ratio: 0.2,
             min_keep: 1,
-            max_keep: 0,
+            max_keep: 0, min_blocks_override: Some(0),
         },
         ..Default::default()
     });
@@ -270,7 +270,7 @@ async fn test_sst_pruning_modes() -> anyhow::Result<()> {
             mode: BlockPruneMode::Ratio,
             ratio: 0.3,
             min_keep: 1,
-            max_keep: 0,
+            max_keep: 0, min_blocks_override: Some(0),
         },
         ..Default::default()
     });
@@ -294,7 +294,7 @@ async fn test_sst_pruning_modes() -> anyhow::Result<()> {
             mode: BlockPruneMode::Fixed(5),
             ratio: 0.2,
             min_keep: 1,
-            max_keep: 0,
+            max_keep: 0, min_blocks_override: Some(0),
         },
         ..Default::default()
     });
@@ -380,7 +380,7 @@ async fn test_sst_min_max_keep_constraints() -> anyhow::Result<()> {
             mode: BlockPruneMode::Fixed(1),
             ratio: 0.2,
             min_keep: 5,
-            max_keep: 0,
+            max_keep: 0, min_blocks_override: Some(0),
         },
         ..Default::default()
     });
@@ -405,7 +405,7 @@ async fn test_sst_min_max_keep_constraints() -> anyhow::Result<()> {
             mode: BlockPruneMode::Ratio,
             ratio: 0.9,
             min_keep: 1,
-            max_keep: 3,
+            max_keep: 3, min_blocks_override: Some(0),
         },
         ..Default::default()
     });

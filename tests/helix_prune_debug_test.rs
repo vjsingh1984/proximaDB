@@ -138,6 +138,7 @@ mod helix_prune_debug {
             min_keep: 1,
             max_keep: 0, // No max limit
             ratio: 0.5,
+            min_blocks_override: Some(0), // Enable pruning for tests
         };
         let ctx = create_search_context(query.clone(), collection_arc.clone(), SearchMode::Approximate { nprobe: Some(5) }, approx_prune);
         let approx_results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -155,6 +156,7 @@ mod helix_prune_debug {
             min_keep: 1,
             max_keep: 0,
             ratio: 0.8, // Keep 80% of blocks
+            min_blocks_override: Some(0), // Enable pruning for tests
         };
         let ctx = create_search_context(query.clone(), collection_arc.clone(), SearchMode::Approximate { nprobe: Some(5) }, high_ratio_prune);
         let high_ratio_results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -389,11 +391,11 @@ mod helix_prune_debug {
 
         // Test with increasingly aggressive pruning
         let configs = vec![
-            ("Sqrt (default)", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Sqrt, min_keep: 1, max_keep: 0, ratio: 0.5 }),
-            ("Sqrt min_keep=4", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Sqrt, min_keep: 4, max_keep: 0, ratio: 0.5 }),
-            ("Ratio 50%", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Ratio, min_keep: 1, max_keep: 0, ratio: 0.5 }),
-            ("Ratio 80%", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Ratio, min_keep: 1, max_keep: 0, ratio: 0.8 }),
-            ("Force Exact", BlockPruneConfig { force_exact: true, mode: BlockPruneMode::Sqrt, min_keep: 1, max_keep: 0, ratio: 0.5 }),
+            ("Sqrt (default)", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Sqrt, min_keep: 1, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
+            ("Sqrt min_keep=4", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Sqrt, min_keep: 4, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
+            ("Ratio 50%", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Ratio, min_keep: 1, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
+            ("Ratio 80%", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Ratio, min_keep: 1, max_keep: 0, ratio: 0.8, min_blocks_override: Some(0) }),
+            ("Force Exact", BlockPruneConfig { force_exact: true, mode: BlockPruneMode::Sqrt, min_keep: 1, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
         ];
 
         eprintln!("\nRecall comparison with different pruning configs:");

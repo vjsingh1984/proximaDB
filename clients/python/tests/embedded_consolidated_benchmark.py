@@ -89,43 +89,58 @@ except ImportError:
 # =============================================================================
 
 class BenchmarkLogger:
-    """Utility for logging benchmark progress with timestamps and inline stats."""
+    """Utility for logging benchmark progress with timestamps and inline stats.
+
+    Features:
+    - Single-line compact output format: [time] ENGINE: operation | stat1=val1 | stat2=val2
+    - Horizontal separators between engines for readability
+    - All stats on one line for easy parsing and comparison
+    """
+
+    @staticmethod
+    def separator(char: str = "-", width: int = 70):
+        """Print a horizontal separator between engines."""
+        print(f"  {char * width}")
+
+    @staticmethod
+    def log_engine_start(engine_name: str):
+        """Log engine separator before starting benchmarks."""
+        BenchmarkLogger.separator()
+        print(f"  ENGINE: {engine_name}")
+        BenchmarkLogger.separator("·", 70)
 
     @staticmethod
     def log_start(engine_name: str, operation: str = ""):
-        """Log the start of a benchmark operation."""
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        op_str = f" ({operation})" if operation else ""
-        print(f"\n  [{timestamp}] ▶ START: {engine_name}{op_str}")
+        """Log the start of a benchmark operation (silent, returns start time)."""
         return time.perf_counter()
 
     @staticmethod
     def log_end(engine_name: str, start_time: float, stats: Dict[str, Any] = None):
-        """Log the end of a benchmark operation with stats."""
+        """Log benchmark completion with all stats on a single line."""
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
-        # Format stats line
-        stats_str = ""
+        # Format compact stats on single line
+        stats_parts = [f"total={elapsed_ms:.1f}ms"]
         if stats:
-            stat_parts = []
             for key, value in stats.items():
                 if isinstance(value, float):
-                    stat_parts.append(f"{key}={value:.2f}")
+                    stats_parts.append(f"{key}={value:.2f}")
                 elif isinstance(value, int):
-                    stat_parts.append(f"{key}={value:,}")
+                    stats_parts.append(f"{key}={value:,}")
                 else:
-                    stat_parts.append(f"{key}={value}")
-            stats_str = f" | {' | '.join(stat_parts)}"
+                    stats_parts.append(f"{key}={value}")
 
-        print(f"  [{timestamp}] ✓ DONE:  {engine_name} ({elapsed_ms:.1f}ms){stats_str}")
+        stats_str = " | ".join(stats_parts)
+        print(f"  [{timestamp}] ✓ {engine_name}: {stats_str}")
         return elapsed_ms
 
     @staticmethod
     def log_error(engine_name: str, error: Exception):
         """Log an error during benchmark."""
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        print(f"  [{timestamp}] ✗ ERROR: {engine_name} - {str(error)}")
+        error_msg = str(error)[:80]  # Truncate long error messages
+        print(f"  [{timestamp}] ✗ {engine_name}: ERROR - {error_msg}")
 
 
 # =============================================================================
@@ -1963,6 +1978,81 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
             f"{tput_str} | {p95_str} |"
         )
 
+    # Add Mermaid charts for visual comparison
+    lines.append("")
+    lines.append("## Performance Charts")
+    lines.append("")
+
+    # QPS Chart (bar chart)
+    lines.append("### Query Performance (QPS)")
+    lines.append("")
+    lines.append("```mermaid")
+    lines.append("%%{init: {'theme': 'neutral'}}%%")
+    lines.append("xychart-beta")
+    lines.append('    title "Queries Per Second by Engine"')
+    lines.append("    x-axis [SST, HELIX, VIPER, NOVA, SWIFT, RAPTOR]")
+
+    # Collect QPS values for search operations
+    qps_values = []
+    for engine in ["sst", "helix", "viper", "nova", "swift", "raptor"]:
+        search_result = next((r for r in results if r.engine == engine and r.operation == "vector_search"), None)
+        if search_result and search_result.throughput:
+            qps_values.append(int(search_result.throughput))
+        else:
+            qps_values.append(0)
+
+    lines.append(f"    y-axis \"QPS\" 0 --> {max(qps_values) * 1.2:.0f}")
+    lines.append(f"    bar [{', '.join(str(v) for v in qps_values)}]")
+    lines.append("```")
+    lines.append("")
+
+    # Ingestion Throughput Chart
+    lines.append("### Ingestion Throughput (vectors/sec)")
+    lines.append("")
+    lines.append("```mermaid")
+    lines.append("%%{init: {'theme': 'neutral'}}%%")
+    lines.append("xychart-beta")
+    lines.append('    title "Insert Throughput by Engine"')
+    lines.append("    x-axis [SST, HELIX, VIPER, NOVA, SWIFT, RAPTOR]")
+
+    # Collect ingestion throughput values
+    ingest_values = []
+    for engine in ["sst", "helix", "viper", "nova", "swift", "raptor"]:
+        insert_result = next((r for r in results if r.engine == engine and r.operation == "vector_insert"), None)
+        if insert_result and insert_result.throughput:
+            ingest_values.append(int(insert_result.throughput))
+        else:
+            ingest_values.append(0)
+
+    lines.append(f"    y-axis \"vectors/sec\" 0 --> {max(ingest_values) * 1.2:.0f}")
+    lines.append(f"    bar [{', '.join(str(v) for v in ingest_values)}]")
+    lines.append("```")
+    lines.append("")
+
+    # Recall Chart (if recall data available)
+    recall_values = []
+    for engine in ["sst", "helix", "viper", "nova", "swift", "raptor"]:
+        search_result = next((r for r in results if r.engine == engine and
+                            (r.operation == "vector_search" or r.operation == "sift_search")), None)
+        if search_result and search_result.recall_at_k is not None:
+            recall_values.append(search_result.recall_at_k)
+        else:
+            recall_values.append(None)
+
+    if any(v is not None for v in recall_values):
+        lines.append("### Recall@10")
+        lines.append("")
+        lines.append("```mermaid")
+        lines.append("%%{init: {'theme': 'neutral'}}%%")
+        lines.append("xychart-beta")
+        lines.append('    title "Recall@10 by Engine"')
+        lines.append("    x-axis [SST, HELIX, VIPER, NOVA, SWIFT, RAPTOR]")
+        lines.append("    y-axis \"Recall %\" 0 --> 105")
+        formatted_recalls = [f"{v:.1f}" if v is not None else "0" for v in recall_values]
+        lines.append(f"    bar [{', '.join(formatted_recalls)}]")
+        lines.append("```")
+        lines.append("")
+
     report_path = target_dir / "consolidated_benchmark_latest.md"
     report_path.write_text("\n".join(lines))
     print(f"\nMarkdown report written to {report_path}")
@@ -2157,8 +2247,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 import chromadb
                 from chromadb.config import Settings
 
-                logger = BenchmarkLogger()
-                phase_start = logger.log_start("ChromaDB", "Insert + Search")
+                BenchmarkLogger.log_engine_start("ChromaDB")
+                phase_start = BenchmarkLogger.log_start("ChromaDB", "Insert + Search")
 
                 chroma_dir = tempfile.mkdtemp()
                 client = chromadb.PersistentClient(path=chroma_dir)
@@ -2188,7 +2278,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 qps = 1000 / avg_search
                 avg_recall = float(np.mean(recalls)) * 100
 
-                logger.log_end(
+                BenchmarkLogger.log_end(
                     "ChromaDB",
                     phase_start,
                     {
@@ -2210,8 +2300,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             except ImportError:
                 print(f"  ChromaDB - SKIPPED (not installed)", flush=True)
             except Exception as e:
-                logger = BenchmarkLogger()
-                logger.log_error("ChromaDB", e)
+                BenchmarkLogger.log_error("ChromaDB", e)
                 results.append(BenchmarkResult("sift_ops", "chromadb", 0, error=str(e)))
 
             gc.collect()
@@ -2221,8 +2310,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         try:
             import faiss
 
-            logger = BenchmarkLogger()
-            phase_start = logger.log_start("FAISS* (in-memory)", "Insert + Search")
+            BenchmarkLogger.log_engine_start("FAISS* (in-memory)")
+            phase_start = BenchmarkLogger.log_start("FAISS*", "Insert + Search")
 
             # Create flat index for exact search (fair comparison)
             index = faiss.IndexFlatL2(metadata['dimension'])
@@ -2246,8 +2335,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
-            logger.log_end(
-                "FAISS* (in-memory)",
+            BenchmarkLogger.log_end(
+                "FAISS*",
                 phase_start,
                 {
                     "insert_ms": insert_time,
@@ -2269,8 +2358,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         except ImportError:
             print(f"  FAISS* - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            logger = BenchmarkLogger()
-            logger.log_error("FAISS*", e)
+            BenchmarkLogger.log_error("FAISS*", e)
             results.append(BenchmarkResult("sift_ops", "faiss*", 0, error=str(e)))
 
         gc.collect()
@@ -2280,8 +2368,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         try:
             import lancedb
 
-            logger = BenchmarkLogger()
-            phase_start = logger.log_start("LanceDB", "Insert + Flush + Search")
+            BenchmarkLogger.log_engine_start("LanceDB")
+            phase_start = BenchmarkLogger.log_start("LanceDB", "Insert + Flush + Search")
 
             lance_dir = tempfile.mkdtemp()
             db = lancedb.connect(lance_dir)
@@ -2328,7 +2416,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 "LanceDB",
                 phase_start,
                 {
@@ -2352,8 +2440,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         except ImportError:
             print(f"  LanceDB - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            logger = BenchmarkLogger()
-            logger.log_error("LanceDB", e)
+            BenchmarkLogger.log_error("LanceDB", e)
             results.append(BenchmarkResult("sift_ops", "lancedb", 0, error=str(e)))
 
         gc.collect()
@@ -2364,8 +2451,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             from qdrant_client import QdrantClient
             from qdrant_client.models import Distance, VectorParams, PointStruct
 
-            logger = BenchmarkLogger()
-            phase_start = logger.log_start("Qdrant", "Insert + Flush + Search")
+            BenchmarkLogger.log_engine_start("Qdrant")
+            phase_start = BenchmarkLogger.log_start("Qdrant", "Insert + Flush + Search")
 
             qdrant_dir = tempfile.mkdtemp()
             client = QdrantClient(path=qdrant_dir)
@@ -2429,7 +2516,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 "Qdrant",
                 phase_start,
                 {
@@ -2454,8 +2541,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         except ImportError:
             print(f"  Qdrant - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            logger = BenchmarkLogger()
-            logger.log_error("Qdrant", e)
+            BenchmarkLogger.log_error("Qdrant", e)
             results.append(BenchmarkResult("sift_ops", "qdrant", 0, error=str(e)))
 
         gc.collect()
@@ -2465,8 +2551,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         try:
             from usearch.index import Index as USearchIndex
 
-            logger = BenchmarkLogger()
-            phase_start = logger.log_start("USearch", "Insert + Save + Search")
+            BenchmarkLogger.log_engine_start("USearch")
+            phase_start = BenchmarkLogger.log_start("USearch", "Insert + Save + Search")
 
             usearch_dir = tempfile.mkdtemp()
             usearch_file = os.path.join(usearch_dir, "usearch.index")
@@ -2506,7 +2592,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 "USearch",
                 phase_start,
                 {
@@ -2531,8 +2617,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         except ImportError:
             print(f"  USearch - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            logger = BenchmarkLogger()
-            logger.log_error("USearch", e)
+            BenchmarkLogger.log_error("USearch", e)
             results.append(BenchmarkResult("sift_ops", "usearch", 0, error=str(e)))
 
         gc.collect()
@@ -2542,8 +2627,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         try:
             from annoy import AnnoyIndex
 
-            logger = BenchmarkLogger()
-            phase_start = logger.log_start("Annoy", "Insert + Build + Search")
+            BenchmarkLogger.log_engine_start("Annoy")
+            phase_start = BenchmarkLogger.log_start("Annoy", "Insert + Build + Search")
 
             annoy_dir = tempfile.mkdtemp()
             annoy_file = os.path.join(annoy_dir, "annoy.index")
@@ -2583,7 +2668,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 "Annoy",
                 phase_start,
                 {
@@ -2608,8 +2693,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         except ImportError:
             print(f"  Annoy - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            logger = BenchmarkLogger()
-            logger.log_error("Annoy", e)
+            BenchmarkLogger.log_error("Annoy", e)
             results.append(BenchmarkResult("sift_ops", "annoy", 0, error=str(e)))
 
         gc.collect()
@@ -2619,8 +2703,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         try:
             from pymilvus import MilvusClient
 
-            logger = BenchmarkLogger()
-            phase_start = logger.log_start("Milvus Lite", "Insert + Search")
+            BenchmarkLogger.log_engine_start("Milvus Lite")
+            phase_start = BenchmarkLogger.log_start("Milvus Lite", "Insert + Search")
 
             milvus_dir = tempfile.mkdtemp()
             milvus_file = os.path.join(milvus_dir, "milvus.db")
@@ -2671,7 +2755,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 "Milvus Lite",
                 phase_start,
                 {
@@ -2696,8 +2780,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         except ImportError:
             print(f"  Milvus - SKIPPED (not installed)", flush=True)
         except Exception as e:
-            logger = BenchmarkLogger()
-            logger.log_error("Milvus Lite", e)
+            BenchmarkLogger.log_error("Milvus Lite", e)
             results.append(BenchmarkResult("sift_ops", "milvus", 0, error=str(e)))
 
         gc.collect()
@@ -2777,7 +2860,9 @@ def _benchmark_proximadb_engine(
     """Benchmark a single ProximaDB engine with disk persistence."""
     results = []
     name = display_name if display_name else engine.upper()
-    logger = BenchmarkLogger()
+
+    # Add separator before engine benchmark
+    BenchmarkLogger.log_engine_start(name)
 
     # Handle special engine aliases (e.g., sst_approx -> sst for different search modes)
     actual_engine = "sst" if engine == "sst_approx" else engine
@@ -2790,7 +2875,7 @@ def _benchmark_proximadb_engine(
 
     try:
         # Phase 1: Create DB and insert all data
-        phase1_start = logger.log_start(name, "Create + Insert")
+        phase1_start = BenchmarkLogger.log_start(name, "Create + Insert")
 
         if temp_dir is None:
             temp_dir = tempfile.mkdtemp()
@@ -2822,7 +2907,7 @@ def _benchmark_proximadb_engine(
                 db.insert(collection_name, ids, vectors_list, None)
             insert_time = (time.perf_counter() - start) * 1000
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 f"{name} (Insert)",
                 phase1_start,
                 {
@@ -2840,7 +2925,7 @@ def _benchmark_proximadb_engine(
 
             # Phase 1.5: WARM CACHE SEARCH (DB still open, file handles valid)
             # This measures true algorithm performance without cold I/O penalty
-            phase_warm_start = logger.log_start(name, "Search (Warm Cache)")
+            phase_warm_start = BenchmarkLogger.log_start(name, "Search (Warm Cache)")
 
             search_times_warm = []
             recalls_warm = []
@@ -2865,7 +2950,7 @@ def _benchmark_proximadb_engine(
             qps_warm = 1000 / avg_search_warm
             avg_recall_warm = float(np.mean(recalls_warm)) * 100 if recalls_warm else None
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 f"{name} (Warm {num_queries}q)",
                 phase_warm_start,
                 {
@@ -2887,7 +2972,7 @@ def _benchmark_proximadb_engine(
             ))
 
             # Phase 2: Force flush memtable to SST files before close
-            phase2_start = logger.log_start(name, "Flush + Close")
+            phase2_start = BenchmarkLogger.log_start(name, "Flush + Close")
 
             # Note: close() internally calls flush(), so we don't need to call flush() explicitly.
             # Context manager will handle closing
@@ -2897,10 +2982,10 @@ def _benchmark_proximadb_engine(
         gc.collect()
         time.sleep(1.0)  # Allow OS to flush file handles
 
-        logger.log_end(f"{name} (Flush+Close)", phase2_start)
+        BenchmarkLogger.log_end(f"{name} (Flush+Close)", phase2_start)
 
         # Calculate disk space - scan ACTUAL ProximaDB write location and filter by collection
-        phase_disk_start = logger.log_start(name, "Disk Analysis")
+        phase_disk_start = BenchmarkLogger.log_start(name, "Disk Analysis")
 
         total_size = 0
         file_count = 0
@@ -2918,14 +3003,14 @@ def _benchmark_proximadb_engine(
 
         disk_size_mb = total_size / (1024 * 1024)
 
-        logger.log_end(
+        BenchmarkLogger.log_end(
             f"{name} (Disk Analysis)",
             phase_disk_start,
             {"files": file_count, "disk_mb": disk_size_mb}
         )
 
         # Phase 3: Reopen DB for search (loads indexes from disk)
-        phase3_start = logger.log_start(name, "Reopen + Search")
+        phase3_start = BenchmarkLogger.log_start(name, "Reopen + Search")
 
         with proximadb.ProximaDB(
             data_dirs=data_dir,
@@ -2966,7 +3051,7 @@ def _benchmark_proximadb_engine(
             qps = 1000 / avg_search
             avg_recall = float(np.mean(recalls)) * 100 if recalls else None
 
-            logger.log_end(
+            BenchmarkLogger.log_end(
                 f"{name} (Search {num_queries}q)",
                 phase3_start,
                 {
@@ -2988,10 +3073,10 @@ def _benchmark_proximadb_engine(
             ))
 
     except TimeoutError as e:
-        logger.log_error(name, e)
+        BenchmarkLogger.log_error(name, e)
         results.append(BenchmarkResult("sift_search", engine, 0, error=str(e)))
     except Exception as e:
-        logger.log_error(name, e)
+        BenchmarkLogger.log_error(name, e)
         results.append(BenchmarkResult("sift_ops", engine, 0, error=str(e)))
 
     return results
