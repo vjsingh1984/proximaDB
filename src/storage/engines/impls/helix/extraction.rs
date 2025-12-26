@@ -107,11 +107,43 @@ impl VectorExtractor for HelixExtractor {
             return Ok(ExtractionResult::empty());
         }
 
+        // Filter out non-existent files to handle race conditions gracefully
+        // (e.g., temp directories cleaned up before AXIS consumer processes events)
+        let mut existing_files = Vec::with_capacity(request.file_paths.len());
+        let mut missing_count = 0;
+        for path in &request.file_paths {
+            // Strip file:// prefix if present
+            let local_path = if path.starts_with("file://") {
+                path.strip_prefix("file://").unwrap_or(path)
+            } else {
+                path.as_str()
+            };
+            if std::path::Path::new(local_path).exists() {
+                existing_files.push(path.clone());
+            } else {
+                missing_count += 1;
+                debug!("[HELIX Extractor] File not found (skipping): {}", path);
+            }
+        }
+
+        if missing_count > 0 {
+            tracing::warn!(
+                "[HELIX Extractor] {} of {} files not found (temp dir cleanup race?)",
+                missing_count,
+                request.file_paths.len()
+            );
+        }
+
+        if existing_files.is_empty() {
+            debug!("[HELIX Extractor] No existing files to process, returning empty result");
+            return Ok(ExtractionResult::empty());
+        }
+
         let mut all_vectors = Vec::new();
         let mut total_bytes_read = 0usize;
         let mut files_processed = 0usize;
 
-        for file_path in &request.file_paths {
+        for file_path in &existing_files {
             let records = self.read_sstable(file_path).await?;
 
             debug!(

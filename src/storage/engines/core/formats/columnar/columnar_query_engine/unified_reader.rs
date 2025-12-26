@@ -674,14 +674,99 @@ impl UnifiedParquetReader {
         let total_row_groups = metadata.num_row_groups();
 
         // ROW GROUP PRUNING: Filter row groups based on filter expression
-        // For now, we skip row group pruning with FilterExpression until FilterPushdown is updated
-        // TODO: Update FilterPushdown to work with FilterExpression instead of MetadataFilter
-        let selected_row_groups: Vec<usize> = if filter_expression.is_some() {
-            debug!(
-                "  Filter expression present - row group pruning with FilterExpression not yet implemented"
-            );
-            // Select all row groups for now - will implement statistics-based pruning later
-            (0..total_row_groups).collect()
+        // Convert FilterExpression to MetadataFilter for statistics-based pruning
+        let selected_row_groups: Vec<usize> = if let Some(filter_expr) = filter_expression {
+            // Convert FilterExpression to MetadataFilter for pruning
+            if let Some(metadata_filter) = crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(filter_expr) {
+                debug!(
+                    "  Converted FilterExpression to MetadataFilter with {} conditions",
+                    metadata_filter.conditions.len()
+                );
+
+                // Try to prune row groups using Parquet column statistics
+                let mut selected = Vec::new();
+                for rg_idx in 0..total_row_groups {
+                    let row_group_meta = metadata.row_group(rg_idx);
+                    let mut keep_row_group = true;
+
+                    // Check each filter condition against row group statistics
+                    for condition in &metadata_filter.conditions {
+                        let column_name = condition.column();
+
+                        // Find the column in the row group metadata
+                        let column_idx = (0..row_group_meta.num_columns())
+                            .find(|&i| {
+                                row_group_meta.column(i).column_descr().name() == column_name
+                            });
+
+                        if let Some(col_idx) = column_idx {
+                            let col_meta = row_group_meta.column(col_idx);
+
+                            // Check statistics if available
+                            if let Some(stats) = col_meta.statistics() {
+                                // For range/equality filters, check if the value could be in this row group
+                                match condition {
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::Equals(_, value) => {
+                                        // Check if the value falls within the min/max range
+                                        if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                                            // Convert bytes to string for comparison
+                                            let min_str = String::from_utf8_lossy(min_bytes);
+                                            let max_str = String::from_utf8_lossy(max_bytes);
+                                            let value_str = value.as_str().unwrap_or(&value.to_string()).to_string();
+
+                                            // Skip row group if value is clearly outside range
+                                            if value_str.as_str() < min_str.as_ref() || value_str.as_str() > max_str.as_ref() {
+                                                keep_row_group = false;
+                                                debug!("  Row group {} pruned: {} not in [{}, {}]",
+                                                    rg_idx, value_str, min_str, max_str);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, min_val, max_val) => {
+                                        if let (Some(stats_min_bytes), Some(stats_max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                                            let stats_min_str = String::from_utf8_lossy(stats_min_bytes);
+                                            let stats_max_str = String::from_utf8_lossy(stats_max_bytes);
+                                            let filter_min = min_val.as_str().unwrap_or(&min_val.to_string()).to_string();
+                                            let filter_max = max_val.as_str().unwrap_or(&max_val.to_string()).to_string();
+
+                                            // Prune if ranges don't overlap
+                                            if filter_max.as_str() < stats_min_str.as_ref() || filter_min.as_str() > stats_max_str.as_ref() {
+                                                keep_row_group = false;
+                                                debug!("  Row group {} pruned: range [{}, {}] doesn't overlap [{}, {}]",
+                                                    rg_idx, filter_min, filter_max, stats_min_str, stats_max_str);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        // For other filter types (In, IsNull, IsNotNull),
+                                        // we can't easily prune based on statistics
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if keep_row_group {
+                        selected.push(rg_idx);
+                    }
+                }
+
+                if selected.len() < total_row_groups {
+                    info!(
+                        "Row group pruning: keeping {} of {} row groups ({} pruned)",
+                        selected.len(),
+                        total_row_groups,
+                        total_row_groups - selected.len()
+                    );
+                }
+
+                selected
+            } else {
+                debug!("  FilterExpression couldn't be converted to MetadataFilter");
+                (0..total_row_groups).collect()
+            }
         } else {
             // No filters, select all row groups
             (0..total_row_groups).collect()

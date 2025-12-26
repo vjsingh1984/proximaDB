@@ -73,6 +73,41 @@ pub enum FileType {
     Index,
 }
 
+/// Wrapper for either memory-mapped data or owned Vec
+/// Enables zero-copy reads on local filesystem while maintaining cloud compatibility
+pub enum MmapOrVec {
+    /// Memory-mapped file (zero-copy, local filesystem only)
+    Mmap(memmap2::Mmap),
+    /// Owned byte vector (for cloud storage or when mmap unavailable)
+    Vec(Vec<u8>),
+}
+
+impl MmapOrVec {
+    /// Get a byte slice view of the data (works for both variants)
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            MmapOrVec::Mmap(mmap) => mmap.as_ref(),
+            MmapOrVec::Vec(vec) => vec.as_slice(),
+        }
+    }
+
+    /// Get the length of the data
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            MmapOrVec::Mmap(mmap) => mmap.len(),
+            MmapOrVec::Vec(vec) => vec.len(),
+        }
+    }
+
+    /// Check if empty
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// SST file metadata for caching
 #[derive(Debug, Clone)]
 pub struct SstFileMetadata {
@@ -287,31 +322,53 @@ impl SharedSstFormatReader {
         })
     }
 
+    /// Read file data using mmap if available, otherwise fall back to regular read
+    /// This optimizes for local filesystem by avoiding allocation/copy overhead
+    async fn read_with_mmap_fallback(
+        &self,
+        file_path: &str,
+        use_cache: bool,
+    ) -> Result<MmapOrVec, ProximaDBError> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Try mmap first for local files (zero-copy)
+        if self.unified_filesystem.supports_mmap() {
+            if let Ok(Some(mmap)) = self.unified_filesystem.get_mmap(file_path).await {
+                tracing::debug!(
+                    "Using mmap for {} ({} bytes)",
+                    file_path,
+                    mmap.len()
+                );
+                return Ok(MmapOrVec::Mmap(mmap));
+            }
+        }
+
+        // Fall back to regular read (for cloud storage or unsupported paths)
+        let data = if use_cache {
+            self.unified_filesystem.read(file_path).await?
+        } else {
+            self.filesystem
+                .get_filesystem(file_path)?
+                .read(file_path)
+                .await?
+        };
+        Ok(MmapOrVec::Vec(data))
+    }
+
     /// Full scan read - reads all blocks without filtering
     async fn full_scan_read(
         &self,
         file_path: &str,
         use_block_cache: bool,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
-        use crate::storage::persistence::filesystem::FileSystem;
+        // Use mmap-first reading for zero-copy performance
+        let data = self.read_with_mmap_fallback(file_path, use_block_cache).await?;
 
-        // Read data from file
-        let data = if use_block_cache {
-            // Use unified filesystem with caching
-            self.unified_filesystem.read(file_path).await?
-        } else {
-            // Direct read without caching
-            self.filesystem
-                .get_filesystem(file_path)?
-                .read(file_path)
-                .await?
-        };
-
-        // Deserialize blocks from raw data
+        // Deserialize blocks from raw data (works with both mmap and Vec)
         // For now, try to deserialize as a single block
         // TODO: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
         } else {
             // If single block fails, assume empty or corrupted file
@@ -324,42 +381,31 @@ impl SharedSstFormatReader {
     async fn selective_cache_read(
         &self,
         file_path: &str,
-        use_range_reads: bool,
+        _use_range_reads: bool,
         enable_bloom_filters: bool,
         enable_cache_lookup: bool,
-        enable_metadata_cache: bool,
+        _enable_metadata_cache: bool,
         filter_expression: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        // Use unified filesystem with selective caching
-        let mut blocks = Vec::new();
-
-        // Read the entire file first
-        let data = if enable_cache_lookup {
-            self.unified_filesystem.read(file_path).await?
-        } else {
-            self.filesystem
-                .get_filesystem(file_path)?
-                .read(file_path)
-                .await?
-        };
+        // Use mmap-first reading for zero-copy performance
+        let data = self.read_with_mmap_fallback(file_path, enable_cache_lookup).await?;
 
         // Deserialize blocks
         // TODO: Implement multi-block file format
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
         } else {
             Vec::new()
         };
 
+        let mut blocks = Vec::new();
         for block in all_blocks {
             // Check bloom filter if enabled
             if enable_bloom_filters {
-                if let Some(ref filter_expr) = filter_expression {
+                if let Some(ref _filter_expr) = filter_expression {
                     // Proxima blocks have auto-generated bloom filters
-                    if let Some(ref bloom) = block.bloom_filter {
+                    if let Some(ref _bloom) = block.bloom_filter {
                         // Check if block might contain matching records
                         // TODO: Implement bloom filter check logic
                     }
@@ -376,22 +422,19 @@ impl SharedSstFormatReader {
     async fn compaction_read(
         &self,
         file_path: &str,
-        skip_bloom_filters: bool,
-        skip_indexes: bool,
-        bypass_write_cache: bool,
+        _skip_bloom_filters: bool,
+        _skip_indexes: bool,
+        _bypass_write_cache: bool,
         use_disk_cache_if_exists: bool,
-        sequential_io: bool,
+        _sequential_io: bool,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
-        // Compaction needs all blocks for merging
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        // Read the entire file
-        let data = self.unified_filesystem.read(file_path).await?;
+        // Use mmap-first reading (mmap is ideal for sequential compaction reads)
+        let data = self.read_with_mmap_fallback(file_path, use_disk_cache_if_exists).await?;
 
         // Deserialize blocks
         // TODO: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
         } else {
             Vec::new()
@@ -405,17 +448,14 @@ impl SharedSstFormatReader {
         file_path: &str,
         start_block: u32,
         end_block: u32,
-        use_bloom_filter: bool,
+        _use_bloom_filter: bool,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        // For now, read the entire file and filter blocks in memory
-        // TODO: Implement range-based reading when multi-block format is ready
-        let data = self.unified_filesystem.read(file_path).await?;
+        // Use mmap-first reading for zero-copy performance
+        let data = self.read_with_mmap_fallback(file_path, true).await?;
 
         // Deserialize and filter blocks by range
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
         } else {
             Vec::new()
@@ -437,25 +477,22 @@ impl SharedSstFormatReader {
         &self,
         file_path: &str,
         selected_blocks: &[u32],
-        skip_bloom_check: bool,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        _skip_bloom_check: bool,
+        _filter_expression: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
-        // Read only selected blocks
-        let mut blocks = Vec::new();
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        // Read the entire file once
-        let data = self.unified_filesystem.read(file_path).await?;
+        // Use mmap-first reading for zero-copy performance
+        let data = self.read_with_mmap_fallback(file_path, true).await?;
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
         } else {
             Vec::new()
         };
 
         // Select specific blocks
+        let mut blocks = Vec::new();
         for &block_id in selected_blocks {
             if (block_id as usize) < all_blocks.len() {
                 blocks.push(all_blocks[block_id as usize].clone());
@@ -470,21 +507,19 @@ impl SharedSstFormatReader {
         file_path: &str,
         block_ids: &[u32],
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
-        let mut blocks = Vec::new();
-        use crate::storage::persistence::filesystem::FileSystem;
-
-        // Read the entire file once
-        let data = self.unified_filesystem.read(file_path).await?;
+        // Use mmap-first reading for zero-copy performance
+        let data = self.read_with_mmap_fallback(file_path, true).await?;
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data, None) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
         } else {
             Vec::new()
         };
 
         // Select specific blocks
+        let mut blocks = Vec::new();
         for &block_id in block_ids {
             if (block_id as usize) < all_blocks.len() {
                 blocks.push(all_blocks[block_id as usize].clone());

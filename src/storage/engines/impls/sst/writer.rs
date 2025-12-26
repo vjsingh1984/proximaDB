@@ -912,6 +912,70 @@ impl SstableWriter {
         );
         data_block.block_id = block_id;
 
+        // ✅ STEP 1.5: Add quantized columns for progressive search (Binary → INT8 → FP32)
+        // This enables 10-50x speedup by filtering 95% of candidates with Hamming distance
+        use crate::storage::engines::core::formats::proximablocks::block_structures::QuantizedSection;
+
+        let vectors: Vec<Vec<f32>> = current_block.iter().map(|r| r.vector.clone()).collect();
+        if !vectors.is_empty() {
+            let dimension = vectors[0].len();
+
+            // Compute binary quantization (1-bit per dimension, 32x compression)
+            let binary_vectors: Vec<Vec<u8>> = vectors.iter().map(|v| {
+                // Simple sign-based binary quantization
+                let mut binary = vec![0u8; (dimension + 7) / 8];
+                for (i, &val) in v.iter().enumerate() {
+                    if val > 0.0 {
+                        binary[i / 8] |= 1 << (i % 8);
+                    }
+                }
+                binary
+            }).collect();
+
+            // Compute INT8 quantization (4x compression, ~95% recall)
+            // Find global min/max for this block
+            let (min_val, max_val) = vectors.iter()
+                .flat_map(|v| v.iter())
+                .fold((f32::MAX, f32::MIN), |(min, max), &val| {
+                    (min.min(val), max.max(val))
+                });
+
+            let scale = if (max_val - min_val).abs() > 1e-8 {
+                255.0 / (max_val - min_val)
+            } else {
+                1.0
+            };
+
+            let int8_vectors: Vec<Vec<i8>> = vectors.iter().map(|v| {
+                v.iter().map(|&val| {
+                    let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
+                    // Convert u8 [0,255] to i8 [-128,127] by subtracting 128
+                    (normalized as i16 - 128) as i8
+                }).collect()
+            }).collect();
+
+            // Create quantized section
+            data_block.quantized_section = Some(QuantizedSection {
+                binary_vectors: Some(binary_vectors),
+                int8_vectors: Some(int8_vectors),
+                pq_vectors: None, // PQ requires codebook training, deferred for now
+                codebooks: None,
+            });
+
+            // Update metadata stats
+            data_block.metadata.quantization_stats.has_binary = true;
+            data_block.metadata.quantization_stats.has_int8 = true;
+            data_block.metadata.quantization_stats.has_pq = false;
+
+            tracing::debug!(
+                "⚡ SST: Added quantization to block {} ({} vectors): binary={} bytes, int8={} bytes",
+                block_id,
+                vectors.len(),
+                vectors.len() * ((dimension + 7) / 8),
+                vectors.len() * dimension
+            );
+        }
+
         // ✅ STEP 2: Reuse Proxima auto-generated metadata (like HELIX pattern)
         let proxima_metadata = &data_block.metadata;
 

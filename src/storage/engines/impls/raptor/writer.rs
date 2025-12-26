@@ -134,7 +134,8 @@ struct CompactRow {
     // Core fields from VectorRecord
     id: String,                // VectorRecord.id (string)
     vector: Vec<f32>,          // VectorRecord.vector (original FP32)
-    quantized_vector: Vec<u8>, // VectorRecord.quantized_vector (pre-quantized)
+    quantized_vector: Vec<u8>, // VectorRecord.quantized_vector (pre-quantized INT8)
+    binary_sketch: Vec<u8>,    // Binary sketch for progressive search (1-bit per dimension)
     // TODO: Migrate to HashMap<String, SqlValue> for typed metadata (requires refactoring encoding/decoding logic)
     metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs as byte arrays)
 
@@ -1043,6 +1044,16 @@ impl IvfClusteringBuilder {
     fn build_inter_centroid_matrix(&self) -> InterCentroidMatrix {
         let k = self.centroids.len();
 
+        // Handle edge case: no centroids or single centroid
+        if k <= 1 {
+            return InterCentroidMatrix {
+                num_centroids: k as u32,
+                compressed_data: Vec::new(),
+                compression_metadata: InterCentroidCompressionMetadata::default(),
+                lookup_table: Vec::new(),
+            };
+        }
+
         // Calculate all pairwise distances (upper triangle only)
         let upper_triangle_size = k * (k - 1) / 2;
         let mut distances = Vec::with_capacity(upper_triangle_size);
@@ -1142,6 +1153,12 @@ impl IvfClusteringBuilder {
     /// Build P×K vector-to-centroid distance matrices for all rowgroups
     fn build_vector_centroid_matrices(&self, rowgroups: &[RowGroup]) -> Vec<VectorCentroidMatrix> {
         let k = self.centroids.len();
+
+        // Handle edge case: no centroids
+        if k == 0 {
+            return Vec::new();
+        }
+
         let k_f32 = k as f32;
         let dimension = self.centroids[0].vector.len() as f32;
 
@@ -2554,8 +2571,8 @@ impl RaptorWriter {
         // Store original FP32 vector for reconstruction
         let fp32_vector = vector.vector.clone();
 
-        // Get quantized vector - quantization internalized in storage
-        let quantized_vector = {
+        // Get quantized vectors - both INT8 (primary) and binary sketch for progressive search
+        let (quantized_vector, binary_sketch) = {
             // Quantize vector using unified engine
             let quantized_batch = self
                 .quantization_engine
@@ -2565,8 +2582,25 @@ impl RaptorWriter {
                 .into_iter()
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("Failed to quantize vector"))?;
-            // Get the primary quantized data
-            quantized.primary.map(|q| q.data).unwrap_or_else(Vec::new)
+
+            // Get the primary quantized data (INT8)
+            let int8_data = quantized.primary.map(|q| q.data).unwrap_or_else(Vec::new);
+
+            // Get binary sketch for progressive search (1-bit per dimension)
+            // Fall back to computing it directly if not available from quantization engine
+            let binary_data = quantized.filter.map(|q| q.data).unwrap_or_else(|| {
+                // Compute binary sketch: 1 bit per dimension (sign-based)
+                let dim = vector.vector.len();
+                let mut binary = vec![0u8; (dim + 7) / 8];
+                for (i, &val) in vector.vector.iter().enumerate() {
+                    if val > 0.0 {
+                        binary[i / 8] |= 1 << (i % 8);
+                    }
+                }
+                binary
+            });
+
+            (int8_data, binary_data)
         };
 
         // Extract metadata as key-value pairs (byte arrays for custom binary format)
@@ -2614,6 +2648,7 @@ impl RaptorWriter {
             id: id.clone(),
             vector: fp32_vector.clone(), // Clone for CompactRow, original used for IVF
             quantized_vector,
+            binary_sketch,  // Binary sketch for progressive search (1-bit per dimension)
             metadata,
             timestamp: vector.timestamp.unwrap_or(0) as u32,
             updated_at: vector.updated_at.map(|v| v as u32),
@@ -4473,6 +4508,10 @@ impl RaptorWriter {
             .append(&self.file_path, &constants::RAPTOR_MAGIC)
             .await?;
 
+        // CRITICAL: Sync file to ensure footer is written to disk before engine closes
+        // This fixes the 0% recall bug where footer wasn't flushed before reopen
+        self.filesystem.sync_file(&self.file_path).await?;
+
         tracing::info!(
             "Wrote centralized footer: {} centroids, {} bytes at offset {}, total file size approx {}",
             num_centroids,
@@ -4553,10 +4592,11 @@ impl RaptorWriter {
     }
 
     // HNSW removed - Matrix Trinity handles navigation
-    // Build IVF clusters but store as matrices, not graph
+    // Write matrix segment data (IVF clusters already built by flush())
     async fn write_matrix_segment(&mut self) -> Result<()> {
-        // Build IVF clusters for Matrix Trinity
-        self.build_ivf_clusters()?;
+        // NOTE: IVF clusters are built by flush() before this method is called
+        // Do NOT call build_ivf_clusters() here - it was causing duplicate clustering
+        // taking ~200s for 50K vectors (100s x 2)
 
         // Matrices are written as part of rowgroup metadata
         // P² matrix: Stored per rowgroup

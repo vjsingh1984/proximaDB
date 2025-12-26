@@ -942,6 +942,18 @@ fn select_blocks_by_centroid(
         return (0..superblock.blocks.len()).collect();
     }
 
+    // OPTIMIZATION: Skip pruning for small datasets where overhead exceeds benefit.
+    use crate::storage::engines::core::constants::pruning;
+    let min_blocks_threshold = prune.min_blocks_override.unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
+    if superblock.blocks.len() < min_blocks_threshold {
+        tracing::debug!(
+            "SWIFT block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
+            superblock.blocks.len(),
+            min_blocks_threshold
+        );
+        return (0..superblock.blocks.len()).collect();
+    }
+
     // Convert BlockPruneMode to unified PruningMode
     let prune_mode = match prune.mode {
         crate::core::search::BlockPruneMode::Sqrt => PruningMode::Sqrt {
@@ -1086,7 +1098,7 @@ mod tests {
         };
 
         let metric = DistanceMetric::Euclidean;
-        let prune = crate::core::search::BlockPruneConfig::default();
+        let prune = crate::core::search::BlockPruneConfig::for_testing();
         let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
         // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1 (sorted)
         assert_eq!(selected, vec![0, 1, 2]);
@@ -1123,7 +1135,8 @@ mod tests {
             ratio: 0.25, // keep ~1 of 4
             min_keep: 1,
             max_keep: 0,
-            ..Default::default()
+            force_exact: false,
+            min_blocks_override: Some(0), // Bypass threshold for testing
         };
         let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
         assert_eq!(selected.len(), 1);
@@ -1158,7 +1171,11 @@ mod tests {
         let metric = DistanceMetric::Euclidean;
         let prune = crate::core::search::BlockPruneConfig {
             force_exact: true,
-            ..Default::default()
+            mode: crate::core::search::BlockPruneMode::Sqrt,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0), // Bypass threshold for testing
         };
         let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);
         assert_eq!(selected, vec![0, 1, 2]);
@@ -1196,7 +1213,11 @@ mod tests {
 
         let prune = crate::core::search::BlockPruneConfig {
             mode: crate::core::search::BlockPruneMode::Fixed(3),
-            ..Default::default()
+            force_exact: false,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0), // Bypass threshold for testing
         };
         let metric = DistanceMetric::Euclidean;
         let selected = select_blocks_by_centroid(&superblock, &[0.0, 0.0], &metric, &prune);

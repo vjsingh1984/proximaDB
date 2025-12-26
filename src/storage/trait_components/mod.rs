@@ -35,16 +35,22 @@
 //! use crate::storage::traits::{StorageIdentity, StorageReader};
 //! ```
 
+pub mod capabilities;
 mod compactor;
 pub mod extractor;
 mod identity;
 mod lifecycle;
 mod metrics;
+pub mod path_resolver;
 mod reader;
 mod scan;
 mod writer;
 
 // Re-export all sub-traits
+pub use capabilities::{
+    EngineCapabilities, FlushThresholds, CompactionHeuristics, EngineBundle, CapabilityFactory,
+    SstCapabilities, HelixCapabilities, ViperCapabilities, SwiftCapabilities, NovaCapabilities, RaptorCapabilities,
+};
 pub use compactor::StorageCompactor;
 pub use extractor::{
     ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionFactory, ExtractionMode,
@@ -54,6 +60,10 @@ pub use extractor::{
 pub use identity::StorageIdentity;
 pub use lifecycle::StorageLifecycle;
 pub use metrics::StorageMetrics;
+pub use path_resolver::{
+    CollectionPathResolver, StorageAssignment, MetadataProviderResolver,
+    ConfigFallbackResolver, CachedResolver, CompositeResolver,
+};
 pub use reader::StorageReader;
 pub use scan::StorageScan;
 pub use writer::StorageWriter;

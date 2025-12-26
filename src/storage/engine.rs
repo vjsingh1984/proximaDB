@@ -141,6 +141,10 @@ impl StorageEngine {
         let axis_config = AxisConfig::default();
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
+        // Make AXIS manager available to SST engine for HNSW/IVF search
+        crate::storage::engines::impls::sst::core::set_sst_axis_manager(axis_index_manager.clone());
+        info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
+
         // Initialize compaction manager with default config if not provided
         let sst_config = config
             .sst_config

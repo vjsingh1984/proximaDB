@@ -95,8 +95,6 @@ impl NovaSearchOperations {
         use crate::core::search::results::OptimizedSearchRecord;
         use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
         use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-        
-        
 
         // Get search parameters from context
         let query_vector = ctx
@@ -170,7 +168,13 @@ impl NovaSearchOperations {
         let mut priority_queue = BoundedPriorityQueue::new(k);
         let dimension = query_vector.len();
 
+        // Track search statistics
+        let mut files_scanned = 0usize;
+        let total_files = files.len();
+
         for file_path in files {
+            files_scanned += 1;
+
             // Create unified caching filesystem
             let fs = self.filesystem.get_filesystem(&file_path)?;
             let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
@@ -232,6 +236,15 @@ impl NovaSearchOperations {
                 // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_record);
             }
+        }
+
+        // Log search statistics
+        if total_files > 1 {
+            debug!(
+                "📊 NOVA search: scanned {}/{} files",
+                files_scanned,
+                total_files
+            );
         }
 
         // Get sorted results from bounded queue

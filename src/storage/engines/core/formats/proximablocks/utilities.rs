@@ -675,10 +675,10 @@ mod tests {
     use super::*;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::common::FilenameCodec;
-    use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
-    use crate::storage::engines::impls::sst::blocks::{
-        BlockCompressionConfig, CompressionAlgorithm, ProximaBlockMetadata,
+    use crate::storage::engines::core::formats::proximablocks::block_structures::{
+        BlockStatistics, BlockCompressionConfig, ProximaBlockMetadata,
     };
+    use crate::core::compression::CompressionAlgorithm;
 
     #[test]
     fn test_memory_usage_calculation() {

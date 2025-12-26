@@ -42,6 +42,51 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
+// AXIS manager for HNSW/IVF index integration
+use crate::index::axis::management::manager::AxisManager;
+use std::sync::OnceLock;
+
+/// Global AXIS manager singleton for SST engine search optimization
+static GLOBAL_SST_AXIS_MANAGER: OnceLock<Arc<AxisManager>> = OnceLock::new();
+
+/// Register a global AXIS manager for SST engine to use in searches
+pub fn set_sst_axis_manager(axis_manager: Arc<AxisManager>) {
+    let _ = GLOBAL_SST_AXIS_MANAGER.set(axis_manager);
+}
+
+/// Get the global AXIS manager if registered
+pub fn get_sst_axis_manager() -> Option<Arc<AxisManager>> {
+    GLOBAL_SST_AXIS_MANAGER.get().cloned()
+}
+
+// Global PCA model cache for Z-Order spatial encoding
+// Uses lazy_static for thread-safe initialization
+lazy_static::lazy_static! {
+    /// Global PCA model cache for SST engine Z-Order spatial encoding
+    /// Key: collection_id, Value: PCA model
+    static ref GLOBAL_PCA_MODEL_CACHE: std::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>> =
+        std::sync::RwLock::new(std::collections::HashMap::new());
+}
+
+/// Register a PCA model for a collection in the global cache
+/// This is called during flush when a new PCA model is trained.
+pub fn set_collection_pca_model(collection_id: &str, model: super::pca_manager::EnhancedPCAModel) {
+    if let Ok(mut cache) = GLOBAL_PCA_MODEL_CACHE.write() {
+        cache.insert(collection_id.to_string(), model);
+        tracing::debug!("[SST] Cached PCA model for collection: {}", collection_id);
+    }
+}
+
+/// Get the PCA model for a collection from the global cache
+/// Returns None if no model is cached for the collection.
+pub fn get_collection_pca_model(collection_id: &str) -> Option<super::pca_manager::EnhancedPCAModel> {
+    if let Ok(cache) = GLOBAL_PCA_MODEL_CACHE.read() {
+        cache.get(collection_id).cloned()
+    } else {
+        None
+    }
+}
+
 /// SST Engine - Hybrid columnar (ProximaBlocks), write-optimized storage with three-stage filtering
 ///
 /// # Architecture Overview
@@ -203,6 +248,28 @@ pub struct SstEngine {
     ///
     /// None if caching disabled, Some in production
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
+
+    /// **AXIS Manager** (Optional)
+    ///
+    /// Integration with AXIS indexing service:
+    /// - Provides HNSW index for fast approximate search
+    /// - Enables IVF-based partition pruning
+    /// - Supports hybrid vector + metadata search
+    /// - Coordinated with query optimizer
+    ///
+    /// Initialized from global singleton or set explicitly
+    axis_manager: Option<Arc<AxisManager>>,
+
+    /// **PCA Model Cache** (Per-Collection)
+    ///
+    /// Cached PCA models for Z-Order spatial encoding:
+    /// - Key: collection_id
+    /// - Value: Trained PCA model for that collection
+    /// - Trained during flush, reused during search
+    /// - Eliminates per-query PCA training overhead (40ms+ saved)
+    ///
+    /// Models are persisted to `{collection_dir}/__model/pca_model.bin`
+    pca_model_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>>>,
 }
 
 impl SstEngine {
@@ -285,6 +352,12 @@ impl SstEngine {
                     ))
                 })?;
 
+        // Get AXIS manager from global singleton if available
+        let axis_manager = get_sst_axis_manager();
+        if axis_manager.is_some() {
+            info!("🔗 SST Engine: AXIS manager integration enabled (HNSW/IVF indexes available)");
+        }
+
         Ok(Self {
             config,
             compaction_manager,
@@ -298,6 +371,8 @@ impl SstEngine {
             fallback_quantization_engine,
             universal_optimizer,
             orchestrator,
+            axis_manager,
+            pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         })
     }
 
@@ -435,6 +510,202 @@ impl SstEngine {
         &self,
     ) -> Option<&Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>> {
         self.orchestrator.as_ref()
+    }
+
+    /// Get the AXIS manager for HNSW/IVF index operations
+    ///
+    /// Returns the AXIS manager if available, enabling:
+    /// - HNSW-based approximate nearest neighbor search
+    /// - IVF partition pruning
+    /// - Hybrid vector + metadata queries
+    pub fn axis_manager(&self) -> Option<&Arc<AxisManager>> {
+        self.axis_manager.as_ref()
+    }
+
+    // =========================================================================
+    // PCA Model Caching Methods (for Z-Order spatial encoding)
+    // =========================================================================
+
+    /// Get the PCA model cache for read access during search
+    ///
+    /// This is used by the search coordinator to project queries
+    /// to PCA space for Z-Order pruning.
+    pub fn pca_model_cache(
+        &self,
+    ) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>>> {
+        &self.pca_model_cache
+    }
+
+    /// Get cached PCA model for a collection (if available)
+    ///
+    /// Returns the in-memory cached model, or loads from disk if not in cache.
+    pub async fn get_pca_model(
+        &self,
+        collection_id: &str,
+        collection_data_dir: &str,
+    ) -> Option<super::pca_manager::EnhancedPCAModel> {
+        // First check in-memory cache
+        {
+            let cache = self.pca_model_cache.read().await;
+            if let Some(model) = cache.get(collection_id) {
+                return Some(model.clone());
+            }
+        }
+
+        // Try to load from disk
+        if let Ok(Some(model)) = self.load_pca_model(collection_data_dir).await {
+            // Cache it for future use
+            {
+                let mut cache = self.pca_model_cache.write().await;
+                cache.insert(collection_id.to_string(), model.clone());
+            }
+            return Some(model);
+        }
+
+        None
+    }
+
+    /// Construct the PCA model file path for a collection
+    /// Path: {collection_data_dir}/__model/pca_model.bin
+    fn get_pca_model_path(&self, collection_data_dir: &str) -> String {
+        format!("{}/__model/pca_model.bin", collection_data_dir)
+    }
+
+    /// Load PCA model from filesystem for a collection
+    pub async fn load_pca_model(
+        &self,
+        collection_data_dir: &str,
+    ) -> Result<Option<super::pca_manager::EnhancedPCAModel>> {
+        let model_path = self.get_pca_model_path(collection_data_dir);
+
+        let filesystem = self
+            .filesystem
+            .get_filesystem(collection_data_dir)
+            .map_err(|e| SstError::Internal(format!("Failed to get filesystem: {}", e)))?;
+
+        match filesystem.exists(&model_path).await {
+            Ok(true) => {
+                let data = filesystem
+                    .read(&model_path)
+                    .await
+                    .map_err(|e| SstError::Internal(format!("Failed to read PCA model: {}", e)))?;
+
+                let model: super::pca_manager::EnhancedPCAModel =
+                    bincode::deserialize(&data)
+                        .map_err(|e| SstError::Internal(format!("Failed to deserialize PCA model: {}", e)))?;
+
+                info!(
+                    "[SST] Loaded persisted PCA model for collection (version: {}, {} components)",
+                    model.version, model.n_components
+                );
+                Ok(Some(model))
+            }
+            Ok(false) => {
+                tracing::debug!(
+                    "[SST] No persisted PCA model found at {}",
+                    model_path
+                );
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "[SST] Error checking PCA model at {}: {}",
+                    model_path, e
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    /// Save PCA model to filesystem for a collection
+    pub async fn save_pca_model(
+        &self,
+        collection_data_dir: &str,
+        model: &super::pca_manager::EnhancedPCAModel,
+    ) -> Result<()> {
+        let model_path = self.get_pca_model_path(collection_data_dir);
+
+        let filesystem = self
+            .filesystem
+            .get_filesystem(collection_data_dir)
+            .map_err(|e| SstError::Internal(format!("Failed to get filesystem: {}", e)))?;
+
+        // Ensure __model directory exists
+        let model_dir = format!("{}/__model", collection_data_dir);
+        filesystem
+            .create_dir_all(&model_dir)
+            .await
+            .map_err(|e| SstError::Internal(format!("Failed to create __model directory: {}", e)))?;
+
+        // Serialize model with bincode
+        let data = bincode::serialize(model)
+            .map_err(|e| SstError::Internal(format!("Failed to serialize PCA model: {}", e)))?;
+
+        filesystem
+            .write(&model_path, &data, None)
+            .await
+            .map_err(|e| SstError::Internal(format!("Failed to write PCA model: {}", e)))?;
+
+        info!(
+            "[SST] Persisted PCA model for collection at {} ({} components)",
+            model_path, model.n_components
+        );
+        Ok(())
+    }
+
+    /// Train PCA model from vectors and cache it
+    ///
+    /// This should be called during flush when we have new vectors.
+    /// The model is trained using adaptive dimensions based on vector dimensionality.
+    pub async fn train_and_cache_pca_model(
+        &self,
+        collection_id: &str,
+        collection_data_dir: &str,
+        vectors: &[crate::proto::proximadb_v1::VectorRecord],
+    ) -> Result<()> {
+        use super::pca_manager::AdaptivePcaConfig;
+
+        if vectors.is_empty() {
+            return Ok(());
+        }
+
+        let vector_dim = vectors[0].vector.len();
+        if vector_dim == 0 {
+            return Ok(());
+        }
+
+        // Use adaptive configuration for optimal PCA dimensions
+        let pca_config = AdaptivePcaConfig::for_vector_dim(vector_dim);
+        let n_components = pca_config.n_components;
+
+        // Need at least n_components samples for training
+        if vectors.len() < n_components {
+            tracing::debug!(
+                "[SST] Not enough vectors ({}) for PCA training (need at least {})",
+                vectors.len(), n_components
+            );
+            return Ok(());
+        }
+
+        info!(
+            "[SST] Training PCA model: {} vectors → {} components (from {}-dim)",
+            vectors.len(), n_components, vector_dim
+        );
+
+        // Train PCA model
+        let model = super::pca_manager::EnhancedPCAModel::train(vectors, n_components)
+            .map_err(|e| SstError::Internal(format!("Failed to train PCA model: {}", e)))?;
+
+        // Save to disk
+        self.save_pca_model(collection_data_dir, &model).await?;
+
+        // Cache in memory
+        {
+            let mut cache = self.pca_model_cache.write().await;
+            cache.insert(collection_id.to_string(), model);
+        }
+
+        Ok(())
     }
 }
 

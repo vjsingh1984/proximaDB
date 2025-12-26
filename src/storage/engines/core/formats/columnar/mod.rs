@@ -397,6 +397,113 @@ impl FilterCondition {
     }
 }
 
+impl MetadataFilter {
+    /// Convert from core::search::FilterExpression to columnar::MetadataFilter
+    /// This enables row group pruning using FilterExpression
+    pub fn from_filter_expression(expr: &crate::core::search::FilterExpression) -> Option<Self> {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        fn convert_condition(expr: &FilterExpression) -> Option<FilterCondition> {
+            match expr {
+                FilterExpression::Comparison { field, operator, value } => {
+                    match operator {
+                        ComparisonOperator::Equals => {
+                            Some(FilterCondition::Equals(field.clone(), value.clone()))
+                        }
+                        ComparisonOperator::In => {
+                            if let Some(arr) = value.as_array() {
+                                Some(FilterCondition::In(field.clone(), arr.clone()))
+                            } else {
+                                Some(FilterCondition::In(field.clone(), vec![value.clone()]))
+                            }
+                        }
+                        ComparisonOperator::Between => {
+                            // Between expects an array of [min, max]
+                            if let Some(arr) = value.as_array() {
+                                if arr.len() >= 2 {
+                                    Some(FilterCondition::Range(
+                                        field.clone(),
+                                        arr[0].clone(),
+                                        arr[1].clone(),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
+                            // Range with open upper bound (use MAX values)
+                            let max_val = serde_json::json!(f64::MAX);
+                            Some(FilterCondition::Range(field.clone(), value.clone(), max_val))
+                        }
+                        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
+                            // Range with open lower bound (use MIN values)
+                            let min_val = serde_json::json!(f64::MIN);
+                            Some(FilterCondition::Range(field.clone(), min_val, value.clone()))
+                        }
+                        ComparisonOperator::IsNull => {
+                            Some(FilterCondition::IsNull(field.clone()))
+                        }
+                        ComparisonOperator::IsNotNull => {
+                            Some(FilterCondition::IsNotNull(field.clone()))
+                        }
+                        _ => None, // NotEquals, NotIn, Contains, StartsWith, EndsWith, Like not directly supported
+                    }
+                }
+                _ => None, // And, Or, Not handled at top level
+            }
+        }
+
+        fn collect_conditions(expr: &FilterExpression, conditions: &mut Vec<FilterCondition>, logic: &mut FilterLogic) {
+            match expr {
+                FilterExpression::And(exprs) => {
+                    *logic = FilterLogic::And;
+                    for e in exprs {
+                        if let Some(cond) = convert_condition(e) {
+                            conditions.push(cond);
+                        } else {
+                            // Recursively handle nested And/Or
+                            collect_conditions(e, conditions, logic);
+                        }
+                    }
+                }
+                FilterExpression::Or(exprs) => {
+                    *logic = FilterLogic::Or;
+                    for e in exprs {
+                        if let Some(cond) = convert_condition(e) {
+                            conditions.push(cond);
+                        } else {
+                            collect_conditions(e, conditions, logic);
+                        }
+                    }
+                }
+                FilterExpression::Comparison { .. } => {
+                    if let Some(cond) = convert_condition(expr) {
+                        conditions.push(cond);
+                    }
+                }
+                FilterExpression::Not(_) => {
+                    // NOT expressions can't be easily converted to MetadataFilter
+                    // Skip them for now
+                }
+            }
+        }
+
+        let mut conditions = Vec::new();
+        let mut logic = FilterLogic::And;
+
+        collect_conditions(expr, &mut conditions, &mut logic);
+
+        if conditions.is_empty() {
+            None
+        } else {
+            Some(MetadataFilter { conditions, logic })
+        }
+    }
+}
+
 /// Row group statistics for optimization
 #[derive(Debug, Clone)]
 pub struct RowGroupStats {
@@ -419,6 +526,7 @@ pub struct SearchCandidate {
 }
 
 /// Common columnar operations trait
+#[allow(async_fn_in_trait)]
 pub trait ColumnarOperations {
     /// Search vectors based on mode
     async fn search(&self, mode: ColumnarSearchMode) -> Result<Vec<VectorRecord>>;

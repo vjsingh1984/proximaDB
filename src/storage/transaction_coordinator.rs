@@ -763,7 +763,7 @@ impl TransactionCoordinator {
         &self,
         tx_id: &str,
         participants: Vec<String>,
-    ) -> Result<TransactionHandle> {
+    ) -> Result<TransactionHandle<'_>> {
         info!("🔄 Beginning transaction: {}", tx_id);
 
         // Check if transaction already exists

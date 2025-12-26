@@ -53,6 +53,7 @@ pub mod analysis;
 pub mod codec;
 pub mod registry;
 pub mod simd_analysis;
+pub mod strategy;
 pub mod traits;
 pub mod types;
 pub mod wire_format;
@@ -69,6 +70,11 @@ pub mod batching;
 // Re-export main types
 pub use codec::ProximaCodec;
 pub use registry::ImplementationRegistry;
+pub use strategy::{
+    CodecSelectionStrategy, DataAnalysis, DataDomain, SelectionContext,
+    IntegerAnalysisStrategy, MlEmbeddingStrategy, TimeSeriesStrategy, SparseDataStrategy,
+    StrategyRegistry,
+};
 pub use traits::{RawDecoder, RawEncoder};
 pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
 pub use wire_format::{WIRE_FORMAT_VERSION, WireFormatManager, WireHeader};

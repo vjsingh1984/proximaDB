@@ -542,54 +542,133 @@ impl NovaColumnarSearch {
     ) -> Result<Vec<SearchCandidate>> {
         debug!("Binary filter stage: max_candidates={}", max_candidates);
 
-        // Check if binary column exists
-        if nova_file.quantized_columns.binary_column.is_none() {
-            return Ok(Vec::new());
-        }
-
-        // Compute binary sketch of query
-        let query_binary = compute_binary_sketch(query_vector);
-
         let mut candidates = BinaryHeap::new();
 
-        // Process each row group's binary column
+        // Check if binary column exists - if not, fall back to full vector scan
+        let use_binary_filter = nova_file.quantized_columns.binary_column.is_some();
+
+        if !use_binary_filter {
+            debug!("Binary column not available, falling back to full vector scan for initial candidates");
+        }
+
+        // Compute binary sketch of query (used if binary filtering available)
+        let query_binary = if use_binary_filter {
+            Some(compute_binary_sketch(query_vector))
+        } else {
+            None
+        };
+
+        // Track pruning statistics
+        let mut row_groups_pruned = 0;
+        let total_row_groups = nova_file.row_groups.len();
+
+        // Process each row group
         for (rg_idx, _row_group) in nova_file.row_groups.iter().enumerate() {
-            // Load binary column only
+            // Use enhanced stats for zone map pruning if available
+            if let Some(enhanced_stats) = nova_file.enhanced_stats.get(rg_idx) {
+                // Use zone map intersection check for pruning
+                // Dynamic threshold: use k-th best distance if we have enough candidates,
+                // otherwise use a generous initial threshold based on metric
+                let metric_name = match distance_metric {
+                    DistanceMetric::Euclidean => "euclidean",
+                    DistanceMetric::Cosine => "cosine",
+                    DistanceMetric::DotProduct => "dot_product",
+                    _ => "euclidean", // Default fallback
+                }.to_string();
+
+                // Calculate dynamic threshold with expansion factor for safety margin
+                let current_threshold = if candidates.len() >= max_candidates {
+                    // Use the worst (k-th) candidate's distance with 50% expansion
+                    // This ensures we don't prune too aggressively
+                    let kth_best = candidates.peek().map(|c: &SearchCandidate| 1.0 - c.similarity).unwrap_or(f32::MAX);
+                    kth_best * 1.5
+                } else {
+                    // Initial generous threshold based on distance metric
+                    match distance_metric {
+                        DistanceMetric::Cosine => 2.0, // Cosine distance range: [0, 2]
+                        DistanceMetric::DotProduct => 10.0, // Generous for dot product
+                        _ => {
+                            // Euclidean: sqrt(dimensions) is a reasonable upper bound for normalized vectors
+                            let dim = query_vector.len() as f32;
+                            dim.sqrt() * 2.0
+                        }
+                    }
+                };
+
+                if !enhanced_stats.vector_zone_map.intersects_query(
+                    query_vector,
+                    metric_name,
+                    current_threshold,
+                ) {
+                    debug!("Skipping row group {} via zone map pruning (threshold={:.4})", rg_idx, current_threshold);
+                    row_groups_pruned += 1;
+                    continue;
+                }
+            }
+
+            // Load vectors (binary or full depending on availability)
+            let column_to_load = if use_binary_filter {
+                "vector_binary"
+            } else {
+                "vector" // Fall back to full vectors
+            };
+
             let batch = self
                 .parquet_reader
                 .read_row_groups_projected(
                     &nova_file.metadata.collection_id,
                     &[rg_idx],
-                    Some(&["vector_binary".to_string()]),
+                    Some(&[column_to_load.to_string()]),
                 )
                 .await?;
 
-            // Compute Hamming distances
-            for record in batch {
-                // Check if record has binary quantized vector
-                // VectorRecord doesn't have quantized field in proto
-                // TODO: Implement proper quantized vector access
-                // For now, skip binary processing
-                {
-                    // Skip binary distance computation for now
+            // Process records
+            for (row_offset, record) in batch.into_iter().enumerate() {
+                let similarity = if use_binary_filter {
+                    // Binary filtering: compute Hamming distance
+                    // For now, use a placeholder until quantized columns are stored
                     let hamming_distance = 0.0;
-
-                    candidates.push(SearchCandidate {
-                        row_group_id: rg_idx,
-                        row_offset: 0,
-                        similarity: 1.0 - (hamming_distance as f32 / 256.0),
-                        vector_id: Some(record.id.clone()),
-                    });
-
-                    if candidates.len() > max_candidates {
-                        candidates.pop();
+                    1.0 - (hamming_distance / 256.0)
+                } else {
+                    // Full vector mode: compute actual distance
+                    if !record.vector.is_empty() {
+                        let distance = self
+                            .distance_compute
+                            .calculate_distance(query_vector, &record.vector, &distance_metric);
+                        distance.normalized_score
+                    } else {
+                        0.0
                     }
-                    // Removed extra brace - not needed since we removed if let
+                };
+
+                candidates.push(SearchCandidate {
+                    row_group_id: rg_idx,
+                    row_offset: row_offset as u32,
+                    similarity,
+                    vector_id: Some(record.id.clone()),
+                });
+
+                if candidates.len() > max_candidates {
+                    candidates.pop();
                 }
             }
         }
 
-        Ok(candidates.into_sorted_vec())
+        let result = candidates.into_sorted_vec();
+        debug!(
+            "Binary filter stage completed: {} candidates (binary_filter={})",
+            result.len(),
+            use_binary_filter
+        );
+        if row_groups_pruned > 0 {
+            info!(
+                "Zone map pruning: skipped {} of {} row groups ({:.1}% pruned)",
+                row_groups_pruned,
+                total_row_groups,
+                (row_groups_pruned as f64 / total_row_groups as f64) * 100.0
+            );
+        }
+        Ok(result)
     }
 
     async fn int8_filter_stage(

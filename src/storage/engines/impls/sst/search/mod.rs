@@ -37,9 +37,10 @@ use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::FilterExpression;
+use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::index::axis::management::manager::{FilterOperator, HybridQuery, MetadataFilter, VectorQuery};
 use crate::storage::engines::impls::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
 
@@ -85,7 +86,16 @@ impl SstEngine {
         );
 
         // Determine search strategy based on context
-        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
+        // Use orchestration if:
+        // 1. AXIS indexes are explicitly configured, OR
+        // 2. Quantization is enabled, OR
+        // 3. AXIS manager is available (for collections built after AXIS became available)
+        let has_axis_manager = self.axis_manager().is_some();
+        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
+
+        if has_axis_manager {
+            debug!("🔍 SST: AXIS manager is available for HNSW/IVF search");
+        }
 
         if use_orchestration {
             // Use advanced orchestration when available
@@ -115,6 +125,9 @@ impl SstEngine {
     }
 
     /// Execute orchestrated search with intelligent routing
+    ///
+    /// This method uses the AXIS manager for HNSW/IVF-based approximate search
+    /// when available, falling back to direct search otherwise.
     async fn execute_orchestrated_search(
         &self,
         ctx: &StorageQueryContext,
@@ -127,12 +140,89 @@ impl SstEngine {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         info!("🎯 SST: Using orchestrated search strategy");
 
-        // For now, fall back to direct search since full orchestration requires
-        // integration with AdvancedSearchOptimizer which is not yet available
-        warn!(
-            "🔄 SST: Orchestration requested but falling back to direct search until integration complete"
-        );
+        // Check if AXIS manager is available for HNSW/IVF search
+        if let Some(axis_manager) = self.axis_manager() {
+            info!(
+                "🔗 SST: AXIS manager available, attempting HNSW index search for collection {}",
+                collection_id
+            );
 
+            // Convert filter expression to AXIS metadata filters
+            let axis_filters = Self::convert_filter_to_axis(filter_expression);
+
+            // Build hybrid query for AXIS
+            let hybrid_query = HybridQuery {
+                collection_id: collection_id.to_string(),
+                vector_query: Some(VectorQuery::Dense {
+                    vector: query_vector.to_vec(),
+                    similarity_threshold: 0.0, // Return all results up to k
+                }),
+                metadata_filters: axis_filters,
+                id_filters: Vec::new(),
+                top_k: k,
+                include_expired: false,
+            };
+
+            // Execute AXIS query (HNSW or IVF based on index type)
+            let axis_start = std::time::Instant::now();
+            match axis_manager.query(hybrid_query).await {
+                Ok(axis_results) => {
+                    let axis_duration = axis_start.elapsed();
+                    info!(
+                        "✅ SST: AXIS HNSW search completed in {:?} - found {} candidates",
+                        axis_duration,
+                        axis_results.results.len()
+                    );
+
+                    // Convert AXIS results to OptimizedSearchRecord
+                    let results: Vec<OptimizedSearchRecord> = axis_results
+                        .results
+                        .into_iter()
+                        .take(k)
+                        .map(|scored| OptimizedSearchRecord {
+                            id: scored.vector_id.to_string(),
+                            vector_id: Some(scored.vector_id.to_string()),
+                            score: scored.similarity,
+                            similarity: Some(scored.similarity),
+                            vector: None, // AXIS doesn't return vectors by default
+                            ..Default::default()
+                        })
+                        .collect();
+
+                    // If we need vectors or got fewer results, optionally refine with SST lookup
+                    if results.is_empty() {
+                        info!(
+                            "⚠️ SST: AXIS returned no results, falling back to direct search"
+                        );
+                        return self
+                            .fallback_to_direct_search(
+                                ctx,
+                                collection_id,
+                                storage_url,
+                                query_vector,
+                                k,
+                                distance_metric,
+                                filter_expression,
+                                true,
+                                true,
+                            )
+                            .await;
+                    }
+
+                    return Ok(results);
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ SST: AXIS query failed ({}), falling back to direct search",
+                        e
+                    );
+                }
+            }
+        } else {
+            debug!("🔍 SST: AXIS manager not available, using direct search");
+        }
+
+        // Fall back to direct search if AXIS is unavailable or failed
         self.fallback_to_direct_search(
             ctx,
             collection_id,
@@ -145,6 +235,60 @@ impl SstEngine {
             true, // include_metadata
         )
         .await
+    }
+
+    /// Convert FilterExpression to AXIS MetadataFilter format
+    fn convert_filter_to_axis(filter_expression: Option<&FilterExpression>) -> Vec<MetadataFilter> {
+        let Some(filter) = filter_expression else {
+            return Vec::new();
+        };
+
+        // Convert filter expressions to AXIS metadata filters
+        let mut axis_filters = Vec::new();
+
+        match filter {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                // Convert ComparisonOperator to AXIS FilterOperator
+                let axis_operator = match operator {
+                    ComparisonOperator::Equals => FilterOperator::Equals,
+                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
+                    ComparisonOperator::LessThan => FilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
+                    ComparisonOperator::In => FilterOperator::In,
+                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                    _ => {
+                        debug!(
+                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
+                            operator
+                        );
+                        return axis_filters;
+                    }
+                };
+
+                axis_filters.push(MetadataFilter {
+                    field: field.clone(),
+                    operator: axis_operator,
+                    value: value.clone(),
+                });
+            }
+            FilterExpression::And(filters) => {
+                for f in filters {
+                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
+                }
+            }
+            FilterExpression::Or(_) | FilterExpression::Not(_) => {
+                // OR and NOT are not directly supported by AXIS, will use post-filtering
+                debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
+            }
+        }
+
+        axis_filters
     }
 
     /// Execute direct search without orchestration
@@ -225,24 +369,28 @@ impl SstEngine {
             collection_id
         );
 
-        // Search each SSTable file
+        // Search each SSTable file with block-level pruning
+        // Uses Z-order spatial codes and centroid distances for intelligent block selection
+        let block_prune = &ctx.search_params.block_prune;
         for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
             trace!(
-                "SST: Searching SSTable [{}/{}]: {}",
+                "SST: Searching SSTable [{}/{}]: {} (force_exact={})",
                 file_idx + 1,
                 sstable_files.len(),
-                sstable_path
+                sstable_path,
+                block_prune.force_exact
             );
 
             match self
                 .sstable_reader()
-                .search_with_filter(
+                .search_with_filter_and_pruning(
                     sstable_path,
                     query_vector,
                     filter_expression.cloned(),
                     k * 2, // Get more candidates for better accuracy
                     distance_metric,
                     Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                    block_prune, // Pass block pruning config for Z-order/centroid pruning
                 )
                 .await
             {
@@ -313,6 +461,19 @@ impl SstEngine {
 
         // [AGENT_FIX] Use the configured min_keep value instead of a hardcoded number.
         let min_keep = prune_config.min_keep.max(1);
+
+        // OPTIMIZATION: Skip file-level pruning for small datasets where overhead exceeds benefit.
+        // Loading centroids from each file header and computing distances has significant I/O
+        // and CPU overhead. Only worth it when we have many files to prune.
+        use crate::storage::engines::core::constants::pruning;
+        if all_files.len() < pruning::MIN_FILES_FOR_PRUNING {
+            tracing::debug!(
+                "SST file pruning skipped: {} files < {} threshold (overhead would exceed benefit)",
+                all_files.len(),
+                pruning::MIN_FILES_FOR_PRUNING
+            );
+            return Ok(all_files);
+        }
 
         // For exact mode or small datasets (<= min_keep), search all files
         if matches!(search_mode, SearchMode::Exact) || all_files.len() <= min_keep {

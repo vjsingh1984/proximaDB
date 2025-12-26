@@ -150,6 +150,7 @@ pub mod engine;
 pub mod extraction;
 pub mod hierarchical_blocks;
 pub mod id_index;
+pub mod pca_manager; // PCA caching for spatial encoding
 // NOTE: quantization_blocks removed - using unified quantization from compute module
 pub mod batch_operations;
 pub mod optimized_operations;

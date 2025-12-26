@@ -250,6 +250,7 @@ pub mod search;
 pub mod trait_impl;
 pub mod utils;
 pub mod progressive_stages; // ISP-compliant progressive search stages
+pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 
 // Test modules
 #[cfg(test)]

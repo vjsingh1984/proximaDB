@@ -25,6 +25,8 @@ fn test_viper_metadata_serialization() {
             file_offset: 0,
             total_byte_size: 1024000,
             compressed_size: 512000,
+            centroid: Some(vec![0.1, 0.2, 0.3]),
+            radius: Some(0.5),
         }],
         column_stats: HashMap::new(),
         cluster_metadata: Some(vec![ClusterInfo {

@@ -573,6 +573,7 @@ pub struct PerformanceProfile {
 }
 
 /// Universal engine operations trait
+#[allow(async_fn_in_trait)]
 pub trait UniversalEngineOperations {
     /// Core CRUD operations
     async fn insert_vectors(&self, vectors: Vec<VectorRecord>) -> Result<Vec<String>>;

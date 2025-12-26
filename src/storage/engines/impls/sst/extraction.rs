@@ -66,6 +66,34 @@ impl VectorExtractor for SstExtractor {
             file_paths
         );
 
+        // Filter out non-existent files to handle race conditions gracefully
+        // (e.g., temp directories cleaned up before AXIS consumer processes events)
+        let mut existing_files = Vec::with_capacity(file_paths.len());
+        let mut missing_count = 0;
+        for path in &file_paths {
+            if std::path::Path::new(path).exists() {
+                existing_files.push(path.clone());
+            } else {
+                missing_count += 1;
+                debug!("[SST Extractor] File not found (skipping): {}", path);
+            }
+        }
+
+        if missing_count > 0 {
+            tracing::warn!(
+                "[SST Extractor] {} of {} files not found (temp dir cleanup race?)",
+                missing_count,
+                file_paths.len()
+            );
+        }
+
+        if existing_files.is_empty() {
+            debug!("[SST Extractor] No existing files to process, returning empty result");
+            return Ok(ExtractionResult::empty());
+        }
+
+        let file_paths = existing_files;
+
         // Create filesystem factory for this extraction operation
         let filesystem_factory = Arc::new(
             FilesystemFactory::create_default()

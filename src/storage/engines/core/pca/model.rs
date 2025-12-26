@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::VectorRecord;
@@ -16,7 +17,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 /// dimensionality reduction before spatial curve encoding. Each engine uses
 /// a different spatial curve (Z-order, Hilbert, AdaCurve) but they all share
 /// this PCA infrastructure.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedPCAModel {
     /// Principal components (eigenvectors) - each row is a component
     pub components: DMatrix<f32>,

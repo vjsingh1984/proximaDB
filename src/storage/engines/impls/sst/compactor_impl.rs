@@ -270,6 +270,14 @@ impl SstCompactor {
         // Perform streaming k-way merge
         let (merged_records, merge_stats) = self.k_way_merge(streaming_iterators).await?;
 
+        // Retrain PCA model on merged data for better Z-Order spatial encoding
+        // Extract collection_id from output file path
+        let collection_id = output_file.split('/').nth(1).unwrap_or("unknown");
+        if merged_records.len() >= 100 {
+            self.retrain_pca_model_for_compaction(collection_id, &output_file, &merged_records)
+                .await;
+        }
+
         // Merge the stats from k-way merge
         stats.records_read = merge_stats.records_read;
         stats.records_deleted = merge_stats.records_deleted;
@@ -320,7 +328,9 @@ impl SstCompactor {
         if !stats.deleted_vector_ids.is_empty() || !stats.updated_vector_ids.is_empty() {
             // Extract collection_id from output file path or use placeholder
             let collection_id = output_file.split('/').nth(1).unwrap_or("unknown");
-            self.notify_axis_of_changes(&stats, collection_id, &output_file)
+            // Best-effort notification - don't fail compaction if AXIS notification fails
+            let _ = self
+                .notify_axis_of_changes(&stats, collection_id, &output_file)
                 .await;
         }
 
@@ -1023,6 +1033,88 @@ impl SstCompactor {
         }
 
         Ok(all_stats)
+    }
+
+    /// Retrain PCA model on merged data during compaction
+    ///
+    /// This ensures the collection-level PCA model reflects the full
+    /// data distribution after compaction merges multiple files.
+    async fn retrain_pca_model_for_compaction(
+        &self,
+        collection_id: &str,
+        output_path: &str,
+        merged_records: &[VectorRecord],
+    ) {
+        use super::pca_manager::{AdaptivePcaConfig, EnhancedPCAModel};
+
+        if merged_records.is_empty() {
+            return;
+        }
+
+        let vector_dim = merged_records[0].vector.len();
+        if vector_dim == 0 {
+            return;
+        }
+
+        // Use adaptive configuration for optimal PCA dimensions
+        let pca_config = AdaptivePcaConfig::for_vector_dim(vector_dim);
+        let n_components = pca_config.n_components;
+
+        // Need at least n_components samples for training
+        if merged_records.len() < n_components {
+            debug!(
+                "[SST Compaction] Not enough vectors ({}) for PCA training (need at least {})",
+                merged_records.len(), n_components
+            );
+            return;
+        }
+
+        info!(
+            "[SST Compaction] Retraining PCA model: {} vectors → {} components (from {}-dim)",
+            merged_records.len(), n_components, vector_dim
+        );
+
+        // Train PCA model
+        match EnhancedPCAModel::train(merged_records, n_components) {
+            Ok(model) => {
+                // Update global cache for search access
+                super::core::set_collection_pca_model(collection_id, model.clone());
+
+                // Also save to disk at collection path
+                // Extract collection data directory from output path
+                if let Some(collection_dir) = output_path.rsplit_once('/').map(|(dir, _)| dir) {
+                    let model_dir = format!("{}/__model", collection_dir);
+                    let model_path = format!("{}/pca_model.bin", model_dir);
+
+                    if let Ok(fs) = self.filesystem_factory.get_filesystem(collection_dir) {
+                        // Create model directory
+                        let _ = futures::executor::block_on(async {
+                            let _ = fs.create_dir_all(&model_dir).await;
+
+                            if let Ok(data) = bincode::serialize(&model) {
+                                if let Err(e) = fs.write(&model_path, &data, None).await {
+                                    warn!(
+                                        "[SST Compaction] Failed to save PCA model to disk: {}",
+                                        e
+                                    );
+                                } else {
+                                    info!(
+                                        "[SST Compaction] Persisted PCA model at {} ({} components)",
+                                        model_path, n_components
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "[SST Compaction] Failed to train PCA model: {}. Z-Order pruning may be less effective.",
+                    e
+                );
+            }
+        }
     }
 }
 

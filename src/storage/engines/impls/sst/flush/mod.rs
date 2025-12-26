@@ -131,6 +131,34 @@ impl SstEngine {
             )
             .await?;
 
+        // Train/update PCA model for Z-Order spatial encoding
+        // This is done after flush to ensure collection-level PCA model is up-to-date
+        if params.vector_records.len() >= 100 {
+            // Only train with enough samples
+            match self
+                .train_and_cache_pca_model(
+                    collection_id,
+                    &collection_storage_url,
+                    &params.vector_records,
+                )
+                .await
+            {
+                Ok(()) => {
+                    // Also update the global cache for search access
+                    if let Some(model) = self.get_pca_model(collection_id, &collection_storage_url).await {
+                        super::core::set_collection_pca_model(collection_id, model);
+                    }
+                }
+                Err(e) => {
+                    // Log but don't fail flush - PCA is an optimization
+                    tracing::warn!(
+                        "[SST] Failed to train PCA model during flush: {}. Z-Order pruning may be less effective.",
+                        e
+                    );
+                }
+            }
+        }
+
         let duration = start_time.elapsed();
         info!(
             "🏁 SST FLUSH: Completed in {:.2}ms - {} vectors, {} bytes",

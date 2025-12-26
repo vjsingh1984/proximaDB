@@ -574,8 +574,11 @@ impl HilbertCurve {
     /// Inverse Gray code
     fn gray_code_inverse(&self, gray: u32, bits: usize) -> u32 {
         let mut result = gray;
-        let mut shift = 1;
-        while shift < bits {
+        let mut shift = 1usize;
+        // Cap bits to 32 since result is u32 (can't shift more than 31 bits)
+        let max_bits = bits.min(32);
+        while shift < max_bits {
+            // Safe shift: shift is always < 32 due to max_bits cap
             result ^= result >> shift;
             shift <<= 1;
         }

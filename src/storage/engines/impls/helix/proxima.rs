@@ -89,6 +89,63 @@ impl HelixSIMDWriter {
         );
         block.block_id = block_id;
 
+        // Add quantized columns for progressive search (Binary → INT8 → FP32)
+        // HELIX progressive search uses these for 10-50x speedup
+        use crate::storage::engines::core::formats::proximablocks::block_structures::QuantizedSection;
+
+        let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.clone()).collect();
+        if !vectors.is_empty() && !vectors[0].is_empty() {
+            let dimension = vectors[0].len();
+
+            // Compute binary quantization (1-bit per dimension, 32x compression)
+            let binary_vectors: Vec<Vec<u8>> = vectors.iter().map(|v| {
+                let mut binary = vec![0u8; (dimension + 7) / 8];
+                for (i, &val) in v.iter().enumerate() {
+                    if val > 0.0 {
+                        binary[i / 8] |= 1 << (i % 8);
+                    }
+                }
+                binary
+            }).collect();
+
+            // Compute INT8 quantization (4x compression, ~95% recall)
+            let (min_val, max_val) = vectors.iter()
+                .flat_map(|v| v.iter())
+                .fold((f32::MAX, f32::MIN), |(min, max), &val| {
+                    (min.min(val), max.max(val))
+                });
+
+            let scale = if (max_val - min_val).abs() > 1e-8 {
+                255.0 / (max_val - min_val)
+            } else {
+                1.0
+            };
+
+            let int8_vectors: Vec<Vec<i8>> = vectors.iter().map(|v| {
+                v.iter().map(|&val| {
+                    let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
+                    (normalized as i16 - 128) as i8
+                }).collect()
+            }).collect();
+
+            // Create quantized section for progressive search
+            block.quantized_section = Some(QuantizedSection {
+                binary_vectors: Some(binary_vectors),
+                int8_vectors: Some(int8_vectors),
+                pq_vectors: None,
+                codebooks: None,
+            });
+
+            block.metadata.quantization_stats.has_binary = true;
+            block.metadata.quantization_stats.has_int8 = true;
+
+            debug!(
+                "⚡ HELIX: Added quantization to block {} ({} vectors)",
+                block_id,
+                vectors.len()
+            );
+        }
+
         let encoding_time = start_time.elapsed();
 
         // Calculate spatial statistics for clustering
@@ -105,12 +162,7 @@ impl HelixSIMDWriter {
         };
 
         // Generate spatial clustering hints
-        // Extract vectors for spatial analysis
-        let vectors: Vec<Vec<f32>> = records
-            .iter()
-            .filter(|r| !r.vector.is_empty())
-            .map(|r| r.vector.clone())
-            .collect();
+        // Reuse vectors from quantization above (already extracted)
 
         let spatial_variance = self.calculate_spatial_variance(&vectors);
         let block_centroid = compute_centroid(&vectors);
@@ -779,19 +831,15 @@ pub async fn search_helix_sstable(
         select_blocks_by_centroid(query_vector, &header.block_metadata, distance_metric, prune);
 
     // Process only relevant blocks with Hilbert + centroid pruning
-    tracing::debug!(
-        "HELIX search: query_hilbert_key = {:?}, num_blocks = {}, centroid_selected = {}",
-        query_hilbert_key,
-        num_blocks,
-        centroid_selected.len()
-    );
-
     for &block_idx in &centroid_selected {
         let meta = &header.block_metadata[block_idx];
         let block_offset = header.block_offsets[block_idx];
 
         // Enhanced Hilbert-based pruning using metadata
-        let should_prune = if let Some(query_key) = query_hilbert_key {
+        // IMPORTANT: Skip Hilbert pruning for exact mode to ensure 100% recall
+        let should_prune = if prune.force_exact {
+            false // Never prune in exact mode - search all selected blocks
+        } else if let Some(query_key) = query_hilbert_key {
             if let Some((min_key, max_key)) = meta.hilbert_range {
                 tracing::debug!(
                     "Block {}: query_key={}, hilbert_range=({}, {})",
@@ -888,17 +936,6 @@ pub async fn search_helix_sstable(
     results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
     results.truncate(k);
 
-    // Log pruning statistics
-    if blocks_pruned > 0 {
-        tracing::info!(
-            "🎯 HELIX pruning: searched {}/{} blocks, pruned {} blocks ({:.1}% pruning rate)",
-            blocks_searched,
-            num_blocks,
-            blocks_pruned,
-            (blocks_pruned as f64 / num_blocks as f64) * 100.0
-        );
-    }
-
     Ok(results)
 }
 
@@ -918,6 +955,20 @@ fn select_blocks_by_centroid(
 
     if metas.is_empty() {
         return Vec::new();
+    }
+
+    // OPTIMIZATION: Skip pruning for small datasets where overhead exceeds benefit.
+    // Hilbert code computation and centroid distance calculations have overhead
+    // that only pays off with many blocks to prune.
+    use crate::storage::engines::core::constants::pruning;
+    let min_blocks_threshold = prune.min_blocks_override.unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
+    if metas.len() < min_blocks_threshold {
+        tracing::debug!(
+            "HELIX block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
+            metas.len(),
+            min_blocks_threshold
+        );
+        return (0..metas.len()).collect();
     }
 
     // Convert BlockPruneMode to unified PruningMode
@@ -1077,7 +1128,7 @@ mod tests {
             &query,
             &metas,
             &crate::compute::distance_computation::DistanceMetric::Euclidean,
-            &crate::core::search::BlockPruneConfig::default(),
+            &crate::core::search::BlockPruneConfig::for_testing(),
         );
         // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1
         // Block 0: [0.1, 0.1] - dist 0.141, Block 2: [0.2, 0.2] - dist 0.283, Block 1: [3.0, 3.0] - dist 4.243

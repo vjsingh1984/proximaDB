@@ -84,9 +84,10 @@ impl ProximaCodec {
     /// Encode f32 values with specified scheme
     pub fn encode(&self, values: &[f32], scheme: ProximaScheme) -> Result<Vec<u8>> {
         // Check if scheme is lossy for f32, if so, use Delta instead (lossless)
+        // Debug level since this is expected behavior and fallback works correctly
         let safe_scheme = if scheme.is_lossy(TypeId::F32) {
-            tracing::warn!(
-                "Scheme {:?} is lossy for F32, falling back to Delta encoding",
+            tracing::debug!(
+                "Scheme {:?} is lossy for F32, using Delta encoding for lossless encoding",
                 scheme
             );
             ProximaScheme::Delta { base: 0 }
@@ -114,9 +115,10 @@ impl ProximaCodec {
     /// Encode i64 values with specified scheme
     pub fn encode_i64(&self, values: &[i64], scheme: ProximaScheme) -> Result<Vec<u8>> {
         // Check if scheme is lossy for i64, if so, use Delta instead (lossless)
+        // This is expected behavior for schemes like BitPacked{bits:8} - debug level since fallback works
         let safe_scheme = if scheme.is_lossy(TypeId::I64) {
-            tracing::warn!(
-                "Scheme {:?} is lossy for I64, falling back to Delta encoding",
+            tracing::debug!(
+                "Scheme {:?} is lossy for I64, using Delta encoding for lossless encoding",
                 scheme
             );
             ProximaScheme::Delta { base: 0 }
@@ -138,9 +140,10 @@ impl ProximaCodec {
     /// Encode i32 values with specified scheme
     pub fn encode_i32(&self, values: &[i32], scheme: ProximaScheme) -> Result<Vec<u8>> {
         // Check if scheme is lossy for i32, if so, use Delta instead (lossless)
+        // Debug level since this is expected behavior and fallback works correctly
         let safe_scheme = if scheme.is_lossy(TypeId::I32) {
-            tracing::warn!(
-                "Scheme {:?} is lossy for I32, falling back to Delta encoding",
+            tracing::debug!(
+                "Scheme {:?} is lossy for I32, using Delta encoding for lossless encoding",
                 scheme
             );
             ProximaScheme::Delta { base: 0 }

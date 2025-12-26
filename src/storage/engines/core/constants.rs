@@ -165,6 +165,92 @@ pub mod quantization {
     pub const MIN_VECTORS_FOR_QUANTIZATION: usize = 1000;
 }
 
+/// Block size configuration constants
+/// These define vector-count based block sizing (more intuitive for vector DBs)
+/// To convert to bytes: bytes = vector_count * dimension * sizeof(f32) + metadata_overhead
+pub mod block_sizes {
+    // ====== Vector-count based block sizes (preferred) ======
+
+    /// Default vectors per block for SST engine (16KB at 384D = ~10 vectors)
+    pub const SST_DEFAULT_VECTORS_PER_BLOCK: usize = 128;
+
+    /// Default vectors per block for HELIX Proxima blocks
+    pub const HELIX_DEFAULT_VECTORS_PER_BLOCK: usize = 128;
+
+    /// Default vectors per SWIFT superblock
+    pub const SWIFT_DEFAULT_VECTORS_PER_SUPERBLOCK: usize = 256;
+
+    /// Default vectors per VIPER row group
+    pub const VIPER_DEFAULT_VECTORS_PER_ROWGROUP: usize = 2048;
+
+    /// Default vectors per NOVA progressive block
+    pub const NOVA_DEFAULT_VECTORS_PER_BLOCK: usize = 100;
+
+    /// Default vectors per RAPTOR row group (optimized for k<10 queries)
+    pub const RAPTOR_DEFAULT_VECTORS_PER_ROWGROUP: usize = 512;
+
+    // ====== Minimum and Maximum clamping values ======
+
+    /// Minimum vectors per block (for all engines)
+    pub const MIN_VECTORS_PER_BLOCK: usize = 16;
+
+    /// Maximum vectors per block (prevent memory issues)
+    pub const MAX_VECTORS_PER_BLOCK: usize = 8192;
+
+    /// Minimum row group size for meaningful clustering
+    pub const MIN_ROWGROUP_SIZE: usize = 256;
+
+    /// Maximum row group size
+    pub const MAX_ROWGROUP_SIZE: usize = 16384;
+
+    // ====== Bytes-based sizes (for I/O optimization) ======
+
+    /// Default block size in bytes for SST (16KB)
+    pub const SST_DEFAULT_BLOCK_SIZE_BYTES: usize = 16 * 1024;
+
+    /// Default page size for Parquet (256KB - balanced for embeddings)
+    pub const VIPER_DEFAULT_PAGE_SIZE_BYTES: usize = 256 * 1024;
+
+    /// Target file size for SST files (64MB)
+    pub const SST_TARGET_FILE_SIZE_BYTES: usize = 64 * 1024 * 1024;
+
+    /// Target superblock size for SWIFT (1GB)
+    pub const SWIFT_TARGET_SUPERBLOCK_SIZE_BYTES: usize = 1024 * 1024 * 1024;
+
+    /// Minimum file size before compaction (1MB)
+    pub const MIN_FILE_SIZE_FOR_COMPACTION_BYTES: usize = 1024 * 1024;
+
+    /// Helper: Estimate bytes per vector for a given dimension
+    #[inline]
+    pub const fn bytes_per_vector(dimension: usize) -> usize {
+        // 4 bytes per f32 + ~64 bytes metadata overhead (id, metadata hash, etc.)
+        dimension * 4 + 64
+    }
+
+    /// Helper: Calculate block size in bytes from vector count
+    #[inline]
+    pub const fn block_size_bytes(vectors_per_block: usize, dimension: usize) -> usize {
+        vectors_per_block * bytes_per_vector(dimension)
+    }
+}
+
+/// Block pruning configuration constants
+/// These control when block-level pruning is applied vs full scan
+pub mod pruning {
+    /// Minimum blocks before pruning is cost-effective (SST/HELIX/SWIFT)
+    pub const MIN_BLOCKS_FOR_PRUNING: usize = 100;
+
+    /// Minimum files before file-level pruning is effective
+    pub const MIN_FILES_FOR_PRUNING: usize = 10;
+
+    /// Default pruning distance threshold multiplier
+    /// Blocks within best_distance * threshold are scanned
+    pub const DEFAULT_PRUNING_THRESHOLD: f32 = 1.5;
+
+    /// Pruning efficiency threshold (skip if >90% blocks would be pruned)
+    pub const PRUNING_EFFICIENCY_THRESHOLD: f32 = 0.9;
+}
+
 /// Common vector dimensions for optimization defaults
 pub mod dimensions {
     /// OpenAI text-embedding-ada-002 dimension

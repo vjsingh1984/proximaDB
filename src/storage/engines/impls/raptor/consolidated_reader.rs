@@ -269,6 +269,13 @@ impl RaptorReader {
         Ok(Arc::new(footer.inter_centroid_distances.clone()))
     }
 
+    /// Get the number of rowgroups in this file (from footer centroids)
+    /// Used to calculate proper nprobe for hierarchical search
+    pub async fn get_rowgroup_count(&self) -> Result<usize> {
+        let footer = self.get_footer(&self.base_path).await?;
+        Ok(footer.centroids.decode_all().len())
+    }
+
     /// Load P×K matrix for a rowgroup - not cached since it's rowgroup data
     /// P×K matrices are stored inside rowgroups, not in file metadata
     async fn get_pxk_matrix(
@@ -328,7 +335,7 @@ impl RaptorReader {
                     .track_access_async(cache_key.clone(), CacheType::VectorData);
 
                 // Try zero-copy cached read first
-                if let Ok(cached_data) = FileSystem::read(self.filesystem.as_ref(), file_path).await
+                if let Ok(cached_data) = self.filesystem.read(file_path).await
                 {
                     // Check if we have cached row group data
                     debug!("✅ Zero-copy cache hit for row group {}", rg_idx);
@@ -346,7 +353,7 @@ impl RaptorReader {
                     .context("Row group index out of bounds")?;
 
                 // DIRECT filesystem read - no wrapper
-                let full_file_data = FileSystem::read(self.filesystem.as_ref(), file_path).await?;
+                let full_file_data = self.filesystem.read(file_path).await?;
                 let start = rg_metadata.offset;
                 let end = start + rg_metadata.compressed_size;
                 let compressed_data = &full_file_data[start as usize..end as usize];
@@ -374,7 +381,7 @@ impl RaptorReader {
             let metadata = self.read_metadata(file_path).await?;
             for (idx, rg_metadata) in metadata.row_groups.iter().enumerate() {
                 // DIRECT filesystem read
-                let full_file_data = FileSystem::read(self.filesystem.as_ref(), file_path).await?;
+                let full_file_data = self.filesystem.read(file_path).await?;
                 let start = rg_metadata.offset;
                 let end = start + rg_metadata.compressed_size;
                 let compressed_data = &full_file_data[start as usize..end as usize];
@@ -1043,7 +1050,7 @@ impl RaptorReader {
 
         // Fallback: DIRECT file read with proper footer size detection
         // Get file size using filesystem API
-        let file_metadata = FileSystem::metadata(self.filesystem.as_ref(), file_path).await?;
+        let file_metadata = self.filesystem.metadata(file_path).await?;
         let file_size = file_metadata.size as usize;
         tracing::debug!("RAPTOR read_metadata: File size: {} bytes", file_size);
 
@@ -1069,8 +1076,7 @@ impl RaptorReader {
 
         // Read magic number and footer size in one 8-byte read (optimization)
         let footer_metadata_offset = file_size - 8;
-        let footer_metadata_bytes = FileSystem::read_range(
-            self.filesystem.as_ref(),
+        let footer_metadata_bytes = self.filesystem.read_range(
             file_path,
             footer_metadata_offset as u64,
             8,
@@ -1106,8 +1112,7 @@ impl RaptorReader {
 
         // Now read the actual footer using the correct size
         let footer_offset = file_size as u64 - 8 - footer_size;
-        let footer_data = FileSystem::read_range(
-            self.filesystem.as_ref(),
+        let footer_data = self.filesystem.read_range(
             file_path,
             footer_offset,
             footer_size,
@@ -2208,7 +2213,7 @@ impl RaptorReader {
         tracing::debug!("RAPTOR load_footer: Starting for file: {}", file_path);
 
         // Read footer from file - the zero-copy filesystem will handle caching
-        let file_metadata = FileSystem::metadata(self.filesystem.as_ref(), file_path).await?;
+        let file_metadata = self.filesystem.metadata(file_path).await?;
         let file_size = file_metadata.size as usize;
         tracing::debug!("RAPTOR load_footer: File size: {} bytes", file_size);
 
@@ -2223,16 +2228,18 @@ impl RaptorReader {
         // Read magic number and footer size
         let footer_metadata_offset = file_size - 8;
         tracing::debug!(
-            "RAPTOR load_footer: Reading footer metadata from offset: {}",
-            footer_metadata_offset
+            "RAPTOR load_footer: Reading footer metadata from offset: {}, filesystem_type: {}",
+            footer_metadata_offset,
+            self.filesystem.filesystem_type()
         );
-        let footer_metadata_bytes = FileSystem::read_range(
-            self.filesystem.as_ref(),
-            file_path,
-            footer_metadata_offset as u64,
-            8,
-        )
-        .await?;
+
+        // CRITICAL FIX: Use direct method call instead of UFCS
+        // UFCS `FileSystem::read_range(self.filesystem.as_ref(), ...)` was calling the
+        // default trait implementation instead of dispatching through the vtable!
+        let footer_metadata_bytes = self
+            .filesystem
+            .read_range(file_path, footer_metadata_offset as u64, 8)
+            .await?;
         tracing::debug!(
             "RAPTOR load_footer: Footer metadata bytes: {:?}",
             footer_metadata_bytes
@@ -2273,8 +2280,7 @@ impl RaptorReader {
             footer_offset,
             footer_size
         );
-        let footer_bytes = FileSystem::read_range(
-            self.filesystem.as_ref(),
+        let footer_bytes = self.filesystem.read_range(
             file_path,
             footer_offset,
             footer_size,
@@ -2351,14 +2357,13 @@ impl RaptorReader {
     /// Traditional file I/O fallback for cloud storage
     async fn load_footer_traditional(&mut self, file_path: &str) -> Result<()> {
         // Read file size to find footer location
-        let file_size = FileSystem::metadata(self.filesystem.as_ref(), file_path)
+        let file_size = self.filesystem.metadata(file_path)
             .await?
             .size;
 
         // Read magic number and footer size in one 8-byte read (optimization)
         let footer_metadata_offset = file_size - 8;
-        let footer_metadata_bytes = FileSystem::read_range(
-            self.filesystem.as_ref(),
+        let footer_metadata_bytes = self.filesystem.read_range(
             file_path,
             footer_metadata_offset,
             8,
@@ -2379,8 +2384,7 @@ impl RaptorReader {
 
         // Read the actual footer
         let footer_offset = file_size - 8 - footer_size;
-        let footer_bytes = FileSystem::read_range(
-            self.filesystem.as_ref(),
+        let footer_bytes = self.filesystem.read_range(
             file_path,
             footer_offset,
             footer_size,
@@ -2474,16 +2478,16 @@ impl RaptorReader {
     /// Read bloom filter bytes from disk at specific offset
     async fn read_bloom_filter_bytes(&self, file_path: &str, offset: u64) -> Result<Vec<u8>> {
         // First, read the bloom filter size (4 bytes at offset)
-        let size_bytes =
-            FileSystem::read_range(self.filesystem.as_ref(), file_path, offset, 4).await?;
+        let size_bytes = self.filesystem.read_range(file_path, offset, 4).await?;
 
         let bloom_size =
             u32::from_le_bytes([size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]]) as u64;
 
         // Read the actual compressed bloom filter data
-        let bloom_data =
-            FileSystem::read_range(self.filesystem.as_ref(), file_path, offset + 4, bloom_size)
-                .await?;
+        let bloom_data = self
+            .filesystem
+            .read_range(file_path, offset + 4, bloom_size)
+            .await?;
 
         Ok(bloom_data)
     }
@@ -2840,8 +2844,7 @@ impl RaptorReader {
         size: u64,
     ) -> Result<Vec<u8>> {
         // Read the compressed P² matrix data directly
-        let matrix_data =
-            FileSystem::read_range(self.filesystem.as_ref(), file_path, offset, size).await?;
+        let matrix_data = self.filesystem.read_range(file_path, offset, size).await?;
 
         Ok(matrix_data)
     }
@@ -3566,13 +3569,10 @@ impl RaptorReader {
             for column_type in columns {
                 if let Some(page_meta) = rg_metadata.column_pages.get(column_type) {
                     // Read only this column page
-                    let compressed = FileSystem::read_range(
-                        self.filesystem.as_ref(),
-                        file_path,
-                        page_meta.offset,
-                        page_meta.compressed_size,
-                    )
-                    .await?;
+                    let compressed = self
+                        .filesystem
+                        .read_range(file_path, page_meta.offset, page_meta.compressed_size)
+                        .await?;
 
                     // Decompress with appropriate algorithm
                     let decompressed =
@@ -3840,8 +3840,7 @@ impl RaptorReader {
             vector_column_meta.offset,
             vector_column_meta.compressed_size
         );
-        let vector_compressed = FileSystem::read_range(
-            self.filesystem.as_ref(),
+        let vector_compressed = self.filesystem.read_range(
             &self.base_path,
             vector_column_meta.offset,
             vector_column_meta.compressed_size,
@@ -3865,8 +3864,7 @@ impl RaptorReader {
             id_column_meta.offset,
             id_column_meta.compressed_size
         );
-        let id_compressed = FileSystem::read_range(
-            self.filesystem.as_ref(),
+        let id_compressed = self.filesystem.read_range(
             &self.base_path,
             id_column_meta.offset,
             id_column_meta.compressed_size,
