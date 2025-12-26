@@ -409,3 +409,11 @@ docs/archive/sessions/
 # Obsolete files marked for removal
 *.obsolete
 /target/
+
+# AI Agent configuration files
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# AI tool data folders
+.victor/
