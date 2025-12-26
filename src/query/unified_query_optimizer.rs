@@ -19,6 +19,7 @@ use tracing::{debug, info, trace};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 pub use crate::core::search::{FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::{Collection, CompressionAlgorithm};
+use crate::query::rl_planner::{get_rl_planner, ExecutionAction};
 use crate::storage::engines::core::formats::columnar::common::EarlyTerminationConfig;
 // Note: SearchStageContext from search_modes is for search stages, not query context - using StorageQueryContext instead
 
@@ -234,6 +235,12 @@ pub struct UnifiedExecutionPlan {
 
     /// Fallback strategies
     pub fallback_strategies: Vec<FallbackStrategy>,
+
+    /// RL planner state used for this plan (for feedback loop)
+    pub rl_state: Option<crate::query::rl_planner::PlannerState>,
+
+    /// RL action selected for this plan (for feedback loop)
+    pub rl_action: Option<crate::query::rl_planner::ExecutionAction>,
 }
 
 /// Execution steps that combine search and filter operations
@@ -422,40 +429,129 @@ impl UnifiedQueryOptimizer {
         // Step 2: Build unified cost model
         let cost_analysis = self.build_cost_analysis(&context, &query_analysis)?;
 
-        // Step 3: Optimize execution order (KEY CONSOLIDATION POINT)
+        // Step 3: Check if RL planner is available and get optimized action
+        let (rl_state, rl_action) = self.get_rl_optimized_action(&context).await;
+
+        // Step 4: Optimize execution order (KEY CONSOLIDATION POINT)
         let execution_steps =
             self.optimize_execution_order(&cost_analysis, &query_analysis, &context)?;
 
-        // Step 4: Configure resources
+        // Step 5: Configure resources
         let resource_allocation = self.allocate_resources(&context, &execution_steps)?;
 
-        // Step 5: Estimate performance
+        // Step 6: Estimate performance
         let performance_estimate =
             self.estimate_unified_performance(&context, &execution_steps, &resource_allocation)?;
 
-        // Step 6: Configure parallelism
-        let parallelism = self.configure_parallelism(&context, &execution_steps);
+        // Step 7: Configure parallelism (may be modified by RL action)
+        let mut parallelism = self.configure_parallelism(&context, &execution_steps);
 
-        // Step 7: Setup fallback strategies
+        // Step 8: Setup fallback strategies
         let fallback_strategies = self.configure_fallbacks(&context, &execution_steps);
+
+        // Step 9: Build initial plan with RL context for feedback loop
+        let mut plan = UnifiedExecutionPlan {
+            execution_steps,
+            resource_allocation,
+            performance_estimate,
+            parallelism,
+            fallback_strategies,
+            rl_state: rl_state.clone(),
+            rl_action: rl_action.clone(),
+        };
+
+        // Step 10: Apply RL-selected action to modify the plan if available
+        if let Some(ref action) = rl_action {
+            self.apply_rl_action_to_plan(action, &mut plan);
+            trace!(
+                "🎯 RL planner applied action: {}",
+                action.describe()
+            );
+        }
 
         let optimization_time = start.elapsed();
 
         debug!(
             "✅ Unified optimization complete in {:?}: {} steps, est. latency {}ms, recall {:.2}",
             optimization_time,
-            execution_steps.len(),
-            performance_estimate.estimated_latency_ms,
-            performance_estimate.estimated_recall
+            plan.execution_steps.len(),
+            plan.performance_estimate.estimated_latency_ms,
+            plan.performance_estimate.estimated_recall
         );
 
-        Ok(UnifiedExecutionPlan {
-            execution_steps,
-            resource_allocation,
-            performance_estimate,
-            parallelism,
-            fallback_strategies,
-        })
+        Ok(plan)
+    }
+
+    /// Get optimized action from RL planner if available
+    ///
+    /// Returns both the state (for feedback loop) and the selected action.
+    async fn get_rl_optimized_action(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+    ) -> (Option<crate::query::rl_planner::PlannerState>, Option<ExecutionAction>) {
+        if let Some(rl_planner) = get_rl_planner() {
+            if rl_planner.is_enabled() {
+                let state = rl_planner.extract_state(context);
+                let action = rl_planner.select_action(&state).await;
+                trace!(
+                    "🎯 RL planner selected action for collection {}: {}",
+                    context.collection.id,
+                    action.describe()
+                );
+                return (Some(state), Some(action));
+            }
+        }
+        (None, None)
+    }
+
+    /// Apply RL-selected action to modify the execution plan
+    fn apply_rl_action_to_plan(&self, action: &ExecutionAction, plan: &mut UnifiedExecutionPlan) {
+        // Modify execution steps based on RL action
+        for step in &mut plan.execution_steps {
+            match step {
+                ExecutionStep::VectorSearch {
+                    execution_method,
+                    candidates,
+                    ..
+                } => {
+                    // Apply index strategy from action
+                    if let Some(ref strategy) = action.index_strategy {
+                        *execution_method = match strategy {
+                            crate::query::rl_planner::IndexStrategy::HNSW { .. } => {
+                                SearchExecutionMethod::IndexBased {
+                                    index_type: Index::HNSW,
+                                }
+                            }
+                            crate::query::rl_planner::IndexStrategy::IVF { .. } => {
+                                SearchExecutionMethod::IndexBased {
+                                    index_type: Index::IVF,
+                                }
+                            }
+                            crate::query::rl_planner::IndexStrategy::LSH { .. } => {
+                                SearchExecutionMethod::IndexBased {
+                                    index_type: Index::LSH,
+                                }
+                            }
+                            crate::query::rl_planner::IndexStrategy::DirectScan => {
+                                SearchExecutionMethod::DirectFP32
+                            }
+                            _ => execution_method.clone(),
+                        };
+                    }
+
+                    // Apply search mode expansion factor
+                    if let crate::query::rl_planner::SearchModeAction::Approximate { expansion_factor } =
+                        &action.search_mode
+                    {
+                        *candidates = (*candidates as f32 * expansion_factor) as usize;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Apply parallelism settings from RL action
+        plan.parallelism.use_simd = action.parallelism.enable_simd;
     }
 
     /// Optimize execution order - CORE CONSOLIDATION LOGIC
@@ -549,7 +645,7 @@ impl UnifiedQueryOptimizer {
         }
 
         // Add index lookups if beneficial
-        if let Some(index_strategy) = self.select_index_strategy(cost_analysis) {
+        if let Some(index_strategy) = self.select_index_strategy(cost_analysis, context) {
             steps.insert(
                 0,
                 ExecutionStep::IndexLookup {
@@ -1923,6 +2019,8 @@ impl UnifiedQueryOptimizer {
                         use_simd: false,
                     },
                     fallback_strategies: vec![],
+                    rl_state: None,
+                    rl_action: None,
                 }),
             });
         }
@@ -1965,6 +2063,8 @@ impl UnifiedQueryOptimizer {
                     use_simd: true,
                 },
                 fallback_strategies: vec![],
+                rl_state: None,
+                rl_action: None,
             }),
         });
 
@@ -1980,9 +2080,96 @@ impl UnifiedQueryOptimizer {
         }
     }
 
-    /// Select index strategy based on cost analysis
-    fn select_index_strategy(&self, _cost_analysis: &CostAnalysis) -> Option<IndexStrategy> {
-        // For now, return None - can be enhanced later
+    /// Select index strategy based on cost analysis and collection configuration
+    ///
+    /// This method checks if the collection has AXIS indexes configured (HNSW, IVF, etc.)
+    /// and returns an appropriate IndexStrategy if beneficial for the query.
+    fn select_index_strategy(
+        &self,
+        cost_analysis: &CostAnalysis,
+        context: &UnifiedQueryContext<'_>,
+    ) -> Option<IndexStrategy> {
+        // Check if collection has index configs
+        let index_configs = context
+            .collection
+            .config
+            .as_ref()
+            .map(|c| &c.index_configs)
+            .filter(|configs| !configs.is_empty())?;
+
+        // Only use indexes for large enough datasets
+        // Small datasets (<1000 vectors) are often faster with brute force
+        if cost_analysis.dataset_size < 1000 {
+            trace!(
+                "Skipping index lookup: dataset too small ({} vectors)",
+                cost_analysis.dataset_size
+            );
+            return None;
+        }
+
+        // Find the best index for this query
+        // Priority: HNSW > IVF > LSH
+        use crate::proto::proximadb_v1::IndexingAlgorithm;
+
+        for config in index_configs {
+            // Skip disabled indexes
+            if config.enabled == Some(false) {
+                continue;
+            }
+
+            match config.algorithm() {
+                IndexingAlgorithm::Hnsw => {
+                    debug!(
+                        "Using HNSW index '{}' for collection {} ({} vectors)",
+                        config.index_name, context.collection.id, cost_analysis.dataset_size
+                    );
+                    let mut params = HashMap::new();
+                    // Set ef_search based on query complexity
+                    let ef_search = if cost_analysis.total_cost > 100.0 {
+                        200 // Higher ef for complex queries
+                    } else {
+                        100 // Default ef for simple queries
+                    };
+                    params.insert("ef_search".to_string(), serde_json::json!(ef_search));
+                    return Some(IndexStrategy {
+                        index_type: Index::HNSW,
+                        params,
+                    });
+                }
+                IndexingAlgorithm::Ivf => {
+                    debug!(
+                        "Using IVF index '{}' for collection {} ({} vectors)",
+                        config.index_name, context.collection.id, cost_analysis.dataset_size
+                    );
+                    let mut params = HashMap::new();
+                    // Set nprobe based on dataset size
+                    let nprobe = if cost_analysis.dataset_size > 100_000 {
+                        32 // More probes for larger datasets
+                    } else {
+                        16 // Default nprobe
+                    };
+                    params.insert("nprobe".to_string(), serde_json::json!(nprobe));
+                    return Some(IndexStrategy {
+                        index_type: Index::IVF,
+                        params,
+                    });
+                }
+                IndexingAlgorithm::Lsh => {
+                    debug!(
+                        "Using LSH index '{}' for collection {} ({} vectors)",
+                        config.index_name, context.collection.id, cost_analysis.dataset_size
+                    );
+                    return Some(IndexStrategy {
+                        index_type: Index::LSH,
+                        params: HashMap::new(),
+                    });
+                }
+                _ => {
+                    trace!("Skipping index with algorithm {:?}", config.algorithm());
+                }
+            }
+        }
+
         None
     }
 }

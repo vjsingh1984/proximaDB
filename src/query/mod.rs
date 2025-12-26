@@ -115,6 +115,7 @@
 pub mod ast;
 pub mod execution; // New unified execution engine
 pub mod explain;
+pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
 pub mod unified_query_optimizer;
