@@ -92,6 +92,10 @@ pub struct EmbeddedConfig {
     pub block_prune_min_keep: usize,
     /// Maximum blocks to keep (0 = no cap)
     pub block_prune_max_keep: usize,
+    /// Enable RL-based adaptive query planner
+    pub enable_rl_planner: bool,
+    /// Path for RL policy persistence (default: data_dir/rl_policy.json)
+    pub rl_policy_path: Option<String>,
 }
 
 impl Default for EmbeddedConfig {
@@ -112,6 +116,9 @@ impl Default for EmbeddedConfig {
             block_prune_ratio: 0.2,
             block_prune_min_keep: 1,
             block_prune_max_keep: 0, // No cap
+            // RL planner defaults (enabled by default for adaptive query optimization)
+            enable_rl_planner: true,
+            rl_policy_path: None, // Default to data_dir/rl_policy.json
         }
     }
 }
@@ -141,6 +148,8 @@ impl EmbeddedConfig {
             block_prune_ratio: 0.2,
             block_prune_min_keep: 1,
             block_prune_max_keep: 0,
+            enable_rl_planner: true, // Enable RL for benchmark optimization
+            rl_policy_path: Some(format!("{}/rl_policy.json", path)),
         }
     }
 
@@ -164,6 +173,8 @@ impl EmbeddedConfig {
             block_prune_ratio: 0.2,
             block_prune_min_keep: 1,
             block_prune_max_keep: 0,
+            enable_rl_planner: false, // Disable RL for memory-constrained environments
+            rl_policy_path: None,
         }
     }
 }
@@ -506,6 +517,8 @@ pub struct GraphStats {
 /// db.create_collection("embeddings", 768, None)?;
 /// db.insert("embeddings", vec!["id1".into()], vec![vec![0.1; 768]], None)?;
 /// let results = db.search("embeddings", vec![0.1; 768], 10, None)?;
+/// // Call close() to persist RL policy before dropping
+/// db.close();
 /// ```
 pub struct EmbeddedProximaDB {
     /// Configuration
@@ -516,6 +529,8 @@ pub struct EmbeddedProximaDB {
     shared_services: crate::network::multi_server::SharedServices,
     /// Collection service for collection management
     collection_service: std::sync::Arc<crate::services::collection::manager::CollectionService>,
+    /// Path where RL planner policy is persisted (None if RL disabled)
+    rl_policy_path: Option<String>,
 }
 
 impl EmbeddedProximaDB {
@@ -547,11 +562,50 @@ impl EmbeddedProximaDB {
             Self::init_services(storage_config).await
         })?;
 
+        // Initialize RL planner if enabled
+        let rl_policy_path = if config.enable_rl_planner {
+            let policy_path = config.rl_policy_path.clone().unwrap_or_else(|| {
+                // Default to first storage location + /rl_policy.json
+                if let Some(loc) = config.storage_locations.first() {
+                    format!("{}/rl_policy.json", loc.path.trim_end_matches('/'))
+                } else {
+                    "./data/rl_policy.json".to_string()
+                }
+            });
+
+            // Initialize RL planner with default config
+            let rl_config = crate::query::rl_planner::RLPlannerConfig::default();
+            crate::query::rl_planner::init_rl_planner(rl_config);
+
+            // Try to load existing policy
+            if let Some(planner) = crate::query::rl_planner::get_rl_planner() {
+                if std::path::Path::new(&policy_path).exists() {
+                    runtime.block_on(async {
+                        match planner.load_policy(&policy_path).await {
+                            Ok(()) => {
+                                tracing::info!("🎯 EMBEDDED: RL policy loaded from {}", policy_path);
+                            }
+                            Err(e) => {
+                                tracing::debug!("EMBEDDED: No existing RL policy (starting fresh): {}", e);
+                            }
+                        }
+                    });
+                }
+            }
+
+            tracing::info!("🎯 EMBEDDED: RL Query Planner initialized");
+            Some(policy_path)
+        } else {
+            tracing::debug!("EMBEDDED: RL Query Planner disabled");
+            None
+        };
+
         Ok(Self {
             config,
             runtime,
             shared_services,
             collection_service,
+            rl_policy_path,
         })
     }
 
@@ -687,6 +741,14 @@ impl EmbeddedProximaDB {
                 Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
             })?;
 
+        // Set global metadata provider for WAL path resolution
+        // This eliminates the "No metadata provider after 100ms" warning
+        // by ensuring WAL operations can resolve collection paths immediately
+        crate::storage::persistence::write_ahead_log::set_global_metadata_provider(
+            collection_service.metadata_backend().clone()
+        ).await;
+        tracing::debug!("✅ Embedded: Global metadata provider set for WAL path resolution");
+
         Ok((shared_services, collection_service))
     }
 
@@ -814,6 +876,142 @@ impl EmbeddedProximaDB {
                 tracing::info!(
                     "📦 EMBEDDED: Registered collection '{}' in global cache for AXIS indexing",
                     name
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    /// Create a collection with explicit index configuration
+    ///
+    /// # Arguments
+    /// * `name` - Collection name
+    /// * `dimension` - Vector dimension
+    /// * `engine` - Optional storage engine ("sst", "helix", "viper", "swift", "nova", "raptor")
+    /// * `index_type` - Index type: "hnsw", "ivf", "flat", "lsh", or "none"
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// db.create_collection_with_index("my_collection", 768, Some("sst"), "hnsw")?;
+    /// ```
+    pub fn create_collection_with_index(
+        &self,
+        name: &str,
+        dimension: u32,
+        engine: Option<&str>,
+        index_type: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::{
+            CollectionConfig, CompressionAlgorithm, HnswConfig, IndexConfig, IndexingAlgorithm,
+            IvfConfig, LshConfig, StorageConfig,
+        };
+
+        let storage_engine = match engine.unwrap_or(&self.config.default_engine).to_lowercase().as_str() {
+            "sst" => crate::proto::proximadb_v1::StorageEngine::Sst,
+            "helix" => crate::proto::proximadb_v1::StorageEngine::Helix,
+            "viper" => crate::proto::proximadb_v1::StorageEngine::Viper,
+            "nova" => crate::proto::proximadb_v1::StorageEngine::Nova,
+            "swift" => crate::proto::proximadb_v1::StorageEngine::Swift,
+            "raptor" => crate::proto::proximadb_v1::StorageEngine::Raptor,
+            other => {
+                return Err(format!("Unknown storage engine: {}", other).into());
+            }
+        };
+
+        // Build index config based on requested type
+        let index_configs = match index_type.to_lowercase().as_str() {
+            "hnsw" => {
+                vec![IndexConfig {
+                    index_name: "hnsw_index".to_string(),
+                    algorithm: IndexingAlgorithm::Hnsw as i32,
+                    enabled: Some(true),
+                    hnsw_config: Some(HnswConfig {
+                        m: Some(16),
+                        ef_construction: Some(200),
+                        ef_search: Some(50),
+                        max_partition_size: Some(100_000),
+                        adaptive_parameters: Some(true),
+                        use_simd: Some(true),
+                        memory_limit_mb: Some(512),
+                        lazy_loading: Some(false),
+                    }),
+                    ..Default::default()
+                }]
+            }
+            "ivf" => {
+                // Use sqrt(n) clusters as default for IVF
+                let n_clusters = ((dimension as f64).sqrt() * 4.0) as u32;
+                vec![IndexConfig {
+                    index_name: "ivf_index".to_string(),
+                    algorithm: IndexingAlgorithm::Ivf as i32,
+                    enabled: Some(true),
+                    ivf_config: Some(IvfConfig {
+                        n_lists: Some(n_clusters.max(64)),
+                        n_probe: Some(10),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }]
+            }
+            "lsh" => {
+                vec![IndexConfig {
+                    index_name: "lsh_index".to_string(),
+                    algorithm: IndexingAlgorithm::Lsh as i32,
+                    enabled: Some(true),
+                    lsh_config: Some(LshConfig {
+                        n_hash_tables: Some(10),
+                        n_hash_functions: Some(8),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }]
+            }
+            "flat" | "none" => {
+                // No index - brute force search
+                vec![]
+            }
+            other => {
+                return Err(format!("Unknown index type: {}. Supported: hnsw, ivf, lsh, flat, none", other).into());
+            }
+        };
+
+        let collection_config = CollectionConfig {
+            name: name.to_string(),
+            dimension,
+            storage_engine: Some(storage_engine as i32),
+            storage_config: Some(StorageConfig {
+                compression: Some(CompressionAlgorithm::CompressionLz4 as i32),
+                ..Default::default()
+            }),
+            index_configs,
+            ..Default::default()
+        };
+
+        self.runtime.block_on(async {
+            let response = self.shared_services.collection_service
+                .create_collection(&collection_config)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            if !response.success {
+                let error_msg = response.error_code.unwrap_or_else(|| "Unknown error".to_string());
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Failed to create collection '{}': {}", name, error_msg)
+                )) as Box<dyn std::error::Error + Send + Sync>);
+            }
+
+            // Register the collection in the global cache for EventLog consumer
+            if let Some(collection) = response.collection {
+                crate::services::events::log::register_collection_in_cache(
+                    std::sync::Arc::new(collection)
+                );
+                tracing::info!(
+                    "📦 EMBEDDED: Registered collection '{}' with index type '{}' for AXIS indexing",
+                    name, index_type
                 );
             }
 
@@ -1652,6 +1850,51 @@ impl EmbeddedProximaDB {
                 cache_hit_rate: 0.0, // TODO: Get from cache orchestrator
             })
         })
+    }
+
+    /// Close the embedded database gracefully
+    ///
+    /// This method should be called before dropping the database to:
+    /// 1. Persist the RL planner policy to disk
+    /// 2. Log final statistics
+    ///
+    /// Note: Calling `flush()` before `close()` is recommended to ensure
+    /// all vector data is persisted.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let db = EmbeddedProximaDB::new(config)?;
+    /// // ... use the database ...
+    /// db.flush()?;  // Persist vector data
+    /// db.close();   // Persist RL policy and cleanup
+    /// ```
+    pub fn close(&self) {
+        // Persist RL planner policy if enabled
+        if let Some(ref policy_path) = self.rl_policy_path {
+            if let Some(planner) = crate::query::rl_planner::get_rl_planner() {
+                self.runtime.block_on(async {
+                    match planner.save_policy(policy_path).await {
+                        Ok(()) => {
+                            tracing::info!("🎯 EMBEDDED: RL policy persisted to {}", policy_path);
+                        }
+                        Err(e) => {
+                            tracing::warn!("EMBEDDED: Failed to persist RL policy: {}", e);
+                        }
+                    }
+
+                    // Log final stats
+                    let stats = planner.get_action_stats().await;
+                    if !stats.is_empty() {
+                        tracing::info!(
+                            "🎯 EMBEDDED: RL Planner final stats - {} actions tracked",
+                            stats.len()
+                        );
+                    }
+                });
+            }
+        }
+
+        tracing::info!("🛑 EMBEDDED: Database closed");
     }
 
     // ========================================================================

@@ -418,7 +418,7 @@ impl RunContainer {
         self.runs.iter().map(|(_, length)| *length as u32).sum()
     }
 
-    fn iter(&self) -> RunIterator {
+    fn iter(&self) -> RunIterator<'_> {
         RunIterator {
             runs: &self.runs,
             run_index: 0,
@@ -710,7 +710,7 @@ impl RoaringBitmap {
     }
 
     /// Get iterator over all values in the bitmap
-    pub fn iter(&self) -> BitmapIteratorAll {
+    pub fn iter(&self) -> BitmapIteratorAll<'_> {
         BitmapIteratorAll {
             containers_iter: self.containers.iter(),
             current_container: None,

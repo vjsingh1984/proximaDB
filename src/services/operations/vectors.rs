@@ -1155,6 +1155,31 @@ impl VectorOperationsService {
 
         let total_time_us = total_start.elapsed().as_micros();
 
+        // Report execution to RL planner for learning (if RL was used)
+        if let (Some(rl_state), Some(rl_action)) = (&execution_plan.rl_state, &execution_plan.rl_action) {
+            if let Some(rl_planner) = crate::query::rl_planner::get_rl_planner() {
+                // Calculate metrics for feedback
+                let latency_ms = total_time_us as f64 / 1000.0;
+                // Recall estimate: we got optimized_results.len() results out of k requested
+                // This is approximate - true recall requires ground truth
+                let recall = (optimized_results.len() as f32 / k as f32).min(1.0);
+                // Throughput: 1 query / total_time in seconds
+                let throughput_qps = if total_time_us > 0 {
+                    1_000_000.0 / total_time_us as f32
+                } else {
+                    1000.0 // Assume high throughput if instant
+                };
+
+                rl_planner.report_execution(
+                    rl_state,
+                    rl_action,
+                    latency_ms,
+                    recall,
+                    throughput_qps,
+                ).await;
+            }
+        }
+
         // Log query timing breakdown for performance analysis
         // Shows at RUST_LOG=info level for visibility
         tracing::info!(

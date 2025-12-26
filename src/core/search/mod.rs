@@ -194,6 +194,12 @@ pub struct BlockPruneConfig {
     pub min_keep: usize,
     /// Maximum number of blocks to keep (0 = no cap).
     pub max_keep: usize,
+    /// Override the minimum blocks threshold for pruning.
+    /// When set, bypasses the production MIN_BLOCKS_FOR_PRUNING (100) threshold.
+    /// Use `Some(0)` in tests to always apply pruning regardless of block count.
+    /// None = use production default (100 blocks).
+    #[serde(default)]
+    pub min_blocks_override: Option<usize>,
 }
 
 impl Default for BlockPruneConfig {
@@ -204,6 +210,19 @@ impl Default for BlockPruneConfig {
             ratio: 0.2,
             min_keep: 1,
             max_keep: 0,
+            min_blocks_override: None,
+        }
+    }
+}
+
+impl BlockPruneConfig {
+    /// Create a config for testing that bypasses the MIN_BLOCKS_FOR_PRUNING threshold.
+    /// Always applies pruning logic regardless of block count.
+    #[cfg(test)]
+    pub fn for_testing() -> Self {
+        Self {
+            min_blocks_override: Some(0),
+            ..Default::default()
         }
     }
 }

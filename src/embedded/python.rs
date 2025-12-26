@@ -1,3 +1,7 @@
+// PyO3 generates impl blocks for #[pymethods] macros that trigger the
+// non_local_definitions lint. This is a known issue with pyo3_macros.
+#![allow(non_local_definitions)]
+
 //! PyO3 Python Bindings for ProximaDB Embedded Mode
 //!
 //! This module provides the Python interface for ProximaDB embedded mode.
@@ -617,6 +621,9 @@ impl PyProximaDB {
             block_prune_ratio: 0.0,
             block_prune_min_keep: 0,
             block_prune_max_keep: 0,
+            // RL planner is enabled by default for adaptive query optimization
+            enable_rl_planner: true,
+            rl_policy_path: None, // Will use default path based on data_dir
         };
 
         let mut config = config;
@@ -1612,6 +1619,56 @@ fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
     }
 }
 
+/// Initialize tracing/logging for the embedded ProximaDB module.
+///
+/// This function sets up a tracing subscriber that outputs to stderr.
+/// Call this at the beginning of your Python script to enable debug logging.
+///
+/// Args:
+///     level: Log level - "error", "warn", "info", "debug", or "trace" (default: "info")
+///
+/// Example:
+///     import proximadb
+///     proximadb.init_logging("debug")  # Enable debug logging
+///     db = proximadb.ProximaDB("/tmp/test")
+#[pyfunction]
+#[pyo3(signature = (level = "info"))]
+fn init_logging(level: &str) -> PyResult<()> {
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+    let mut initialized = false;
+
+    INIT.call_once(|| {
+        // Build filter from environment or provided level
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(level));
+
+        // Create a simple stderr layer
+        let fmt_layer = fmt::layer()
+            .with_target(true)
+            .with_line_number(false)
+            .with_file(false)
+            .with_thread_ids(false)
+            .with_ansi(true)
+            .with_writer(std::io::stderr);
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .init();
+
+        initialized = true;
+    });
+
+    if !initialized {
+        eprintln!("Warning: Logging already initialized, ignoring init_logging() call");
+    }
+
+    Ok(())
+}
+
 /// Python module definition
 /// This exports as "proximadb" which is the module name used by benchmarks
 #[pymodule]
@@ -1627,6 +1684,9 @@ fn proximadb(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyGraphNode>()?;
     m.add_class::<PyGraphEdge>()?;
     m.add_class::<PyGraphStats>()?;
+
+    // Add logging initialization function
+    m.add_function(wrap_pyfunction!(init_logging, m)?)?;
 
     // Add version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

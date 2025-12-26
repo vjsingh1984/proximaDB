@@ -181,15 +181,26 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
+// RL Planner checkpoint interval (5 minutes default)
+const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;
+
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Main ProximaDB database instance
 pub struct ProximaDB {
+    /// Storage engine for vector data
     storage: Arc<RwLock<storage::StorageEngine>>,
     // consensus: consensus::ConsensusEngine,  // Disabled - requires raft dependency
+    /// Multi-server for REST and gRPC endpoints
     multi_server: Option<network::MultiServer>,
+    /// Configuration (stored for RL planner and other runtime access)
     _config: core::Config,
+    /// Security coordinator for auth/RBAC
     security: Option<Arc<security::SecurityCoordinator>>,
+    /// Handle for RL planner checkpoint task (if enabled)
+    rl_checkpoint_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Path where RL planner policy is persisted
+    rl_policy_path: Option<String>,
 }
 
 impl ProximaDB {
@@ -368,6 +379,8 @@ impl ProximaDB {
             multi_server: Some(multi_server),
             _config: config,
             security,
+            rl_checkpoint_handle: None,
+            rl_policy_path: None,
         })
     }
 
@@ -454,9 +467,13 @@ impl ProximaDB {
                 .await?;
         }
 
-        // Step 6: Start multi-server (HTTP and gRPC on separate ports)
+        // Step 6: Initialize RL Query Planner (if enabled)
+        tracing::info!("🎯 ProximaDB::start - Step 6: Initializing RL Query Planner...");
+        self.init_rl_planner().await?;
+
+        // Step 7: Start multi-server (HTTP and gRPC on separate ports)
         tracing::info!(
-            "🌐 ProximaDB::start - Step 6: Starting multi-server (gRPC:5679 + REST:5678)..."
+            "🌐 ProximaDB::start - Step 7: Starting multi-server (gRPC:5679 + REST:5678)..."
         );
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server
@@ -475,11 +492,16 @@ impl ProximaDB {
         tracing::info!("  3️⃣ Graphs: Recovered from snapshots + WAL replay");
         tracing::info!("  4️⃣ Assignments: Recovered from collection metadata");
         tracing::info!("  5️⃣ Vectors (Buffer): Recovered from in-memory write buffer");
-        tracing::info!("  6️⃣ Services: HTTP/gRPC servers started");
+        tracing::info!("  6️⃣ RL Planner: Initialized with policy recovery");
+        tracing::info!("  7️⃣ Services: HTTP/gRPC servers started");
         Ok(())
     }
 
     pub async fn stop(&mut self) -> Result<()> {
+        // Stop RL planner checkpoint task and persist policy
+        tracing::info!("Stopping RL Query Planner...");
+        self.shutdown_rl_planner().await;
+
         // Flush graph WAL for all graphs before shutdown
         tracing::info!("Flushing graph WAL for all graphs...");
         if let Some(ref multi_server) = self.multi_server {
@@ -543,6 +565,123 @@ impl ProximaDB {
 
         tracing::info!("Server shutdown complete");
         Ok(())
+    }
+
+    /// Initialize the RL Query Planner from configuration
+    ///
+    /// This method:
+    /// 1. Reads RL planner config from the main config
+    /// 2. Initializes the global RL planner
+    /// 3. Loads persisted policy if it exists
+    /// 4. Starts a background checkpoint task for periodic policy persistence
+    async fn init_rl_planner(&mut self) -> Result<()> {
+        // Get RL config from main config (or use defaults)
+        let rl_config = self._config
+            .query
+            .as_ref()
+            .map(|q| q.rl_planner.to_rl_planner_config())
+            .unwrap_or_default();
+
+        if !rl_config.enabled {
+            tracing::info!("RL Query Planner is disabled in configuration");
+            return Ok(());
+        }
+
+        // Determine policy path - use config path or default to data_dir
+        let policy_path = rl_config.log_path.clone().unwrap_or_else(|| {
+            format!("{}/rl_policy.json", self._config.server.data_dir.display())
+        });
+        self.rl_policy_path = Some(policy_path.clone());
+
+        // Initialize global RL planner
+        query::rl_planner::init_rl_planner(rl_config.clone());
+        tracing::info!("✅ RL Query Planner initialized");
+
+        // Try to load existing policy
+        if let Some(planner) = query::rl_planner::get_rl_planner() {
+            if std::path::Path::new(&policy_path).exists() {
+                match planner.load_policy(&policy_path).await {
+                    Ok(()) => {
+                        tracing::info!("✅ RL policy loaded from {}", policy_path);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load RL policy (starting fresh): {}", e);
+                    }
+                }
+            } else {
+                tracing::debug!("No existing RL policy found at {}, starting fresh", policy_path);
+            }
+
+            // Start periodic checkpoint task
+            let checkpoint_path = policy_path.clone();
+            let checkpoint_handle = tokio::spawn(async move {
+                let interval = std::time::Duration::from_secs(RL_CHECKPOINT_INTERVAL_SECS);
+                let mut ticker = tokio::time::interval(interval);
+                ticker.tick().await; // Skip first immediate tick
+
+                loop {
+                    ticker.tick().await;
+                    if let Some(planner) = query::rl_planner::get_rl_planner() {
+                        match planner.save_policy(&checkpoint_path).await {
+                            Ok(()) => {
+                                tracing::debug!("RL policy checkpoint saved to {}", checkpoint_path);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to save RL policy checkpoint: {}", e);
+                            }
+                        }
+                    } else {
+                        tracing::debug!("RL planner not available for checkpoint");
+                        break;
+                    }
+                }
+            });
+            self.rl_checkpoint_handle = Some(checkpoint_handle);
+            tracing::info!(
+                "✅ RL policy checkpoint task started (interval: {}s)",
+                RL_CHECKPOINT_INTERVAL_SECS
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Shutdown RL planner: stop checkpoint task and persist final policy
+    async fn shutdown_rl_planner(&mut self) {
+        // Stop checkpoint task
+        if let Some(handle) = self.rl_checkpoint_handle.take() {
+            handle.abort();
+            tracing::debug!("RL checkpoint task stopped");
+        }
+
+        // Persist final policy
+        if let Some(ref policy_path) = self.rl_policy_path {
+            if let Some(planner) = query::rl_planner::get_rl_planner() {
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(5),
+                    planner.save_policy(policy_path)
+                ).await {
+                    Ok(Ok(())) => {
+                        tracing::info!("✅ RL policy persisted to {}", policy_path);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("Failed to persist RL policy: {}", e);
+                    }
+                    Err(_) => {
+                        tracing::warn!("RL policy persist timeout");
+                    }
+                }
+
+                // Log final stats
+                let stats = planner.get_action_stats().await;
+                if !stats.is_empty() {
+                    tracing::info!("RL Planner final stats: {} actions tracked", stats.len());
+                    for (action, (avg_reward, count)) in stats.iter().take(5) {
+                        tracing::debug!("  {}: avg_reward={:.3}, count={}", action, avg_reward, count);
+                    }
+                }
+            }
+        }
     }
 
     /// Get the multi-server status

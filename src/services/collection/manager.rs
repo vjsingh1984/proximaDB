@@ -414,6 +414,36 @@ impl CollectionService {
             }
         }
 
+        // Add default HNSW index configuration if not provided
+        // This enables AXIS indexes for accelerated vector search
+        if enriched_config.index_configs.is_empty() {
+            use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm};
+
+            let default_hnsw_config = IndexConfig {
+                index_name: format!("{}_default_hnsw", config.name),
+                algorithm: IndexingAlgorithm::Hnsw as i32,
+                enabled: Some(true),
+                is_primary: Some(true),
+                hnsw_config: Some(HnswConfig {
+                    m: Some(16),                    // Balanced connectivity
+                    ef_construction: Some(200),     // Good build quality
+                    ef_search: Some(50),            // Fast search with good recall
+                    max_partition_size: Some(100_000),
+                    adaptive_parameters: Some(true),
+                    use_simd: Some(true),
+                    memory_limit_mb: Some(512),
+                    lazy_loading: Some(false),
+                }),
+                ..Default::default()
+            };
+
+            enriched_config.index_configs.push(default_hnsw_config);
+            info!(
+                "📊 Created default HNSW index for collection '{}' (dimension: {})",
+                config.name, config.dimension
+            );
+        }
+
         // Validate compression algorithm is supported by the storage engine
         // SDK defines compression config in collection metadata and it drives datablock compression
         if let Some(ref storage_cfg) = enriched_config.storage_config {

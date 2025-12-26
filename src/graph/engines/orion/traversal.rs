@@ -1453,14 +1453,14 @@ pub async fn k_shortest_paths(
         Ok(None)
     }
 
-    // Main Yen's
-    let mut A: Vec<(Vec<NodeId>, f64)> = Vec::new();
+    // Main Yen's algorithm - result_paths stores the k shortest paths found
+    let mut result_paths: Vec<(Vec<NodeId>, f64)> = Vec::new();
     if let Some(p0) =
         dijkstra_shortest_path(engine, start_node_id, target_node_id, config.clone()).await?
     {
-        A.push(p0);
+        result_paths.push(p0);
     } else {
-        return Ok(A);
+        return Ok(result_paths);
     }
     use std::cmp::Ordering;
     use std::collections::BinaryHeap;
@@ -1488,13 +1488,13 @@ pub async fn k_shortest_paths(
     let mut b: BinaryHeap<Cand> = BinaryHeap::new();
 
     for k_i in 1..k {
-        let (last_path, last_cost) = &A[k_i - 1];
+        let (last_path, _last_cost) = &result_paths[k_i - 1];
         for i in 0..last_path.len().saturating_sub(1) {
             let spur_node = &last_path[i];
             let root_path = &last_path[..=i];
-            // Exclusions: remove edges that would create same root with previous A paths
+            // Exclusions: remove edges that would create same root with previous paths
             let mut exclude_edges: HashSet<(NodeId, NodeId)> = HashSet::new();
-            for (p, _) in &A {
+            for (p, _) in &result_paths {
                 if p.len() > i && &p[..=i] == root_path {
                     exclude_edges.insert((p[i].clone(), p[i + 1].clone()));
                 }
@@ -1522,8 +1522,8 @@ pub async fn k_shortest_paths(
             }
         }
         if let Some(best) = b.pop() {
-            if !A.iter().any(|(p, _)| *p == best.path) {
-                A.push((best.path, best.cost));
+            if !result_paths.iter().any(|(p, _)| *p == best.path) {
+                result_paths.push((best.path, best.cost));
             } else {
                 break;
             }
@@ -1531,7 +1531,7 @@ pub async fn k_shortest_paths(
             break;
         }
     }
-    Ok(A)
+    Ok(result_paths)
 }
 
 /// Compute weakly connected components (treat edges as undirected)

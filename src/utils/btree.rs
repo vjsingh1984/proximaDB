@@ -315,7 +315,7 @@ impl NodeRef {
     }
 
     /// Read the node (acquire read lock)
-    fn read(&self) -> Result<std::sync::RwLockReadGuard<Node>, BTreeError> {
+    fn read(&self) -> Result<std::sync::RwLockReadGuard<'_, Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.read().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(page_id) => {
@@ -334,7 +334,7 @@ impl NodeRef {
     }
 
     /// Write to the node (acquire write lock)
-    fn write(&self) -> Result<std::sync::RwLockWriteGuard<Node>, BTreeError> {
+    fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.write().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(page_id) => {

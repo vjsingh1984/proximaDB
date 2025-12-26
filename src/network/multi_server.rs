@@ -627,6 +627,10 @@ impl SharedServices {
         // Make AXIS manager available to graph-first entity store by default
         crate::storage::entity_store::orion_backend::set_global_axis_manager(axis_manager.clone());
 
+        // Make AXIS manager available to SST engine for HNSW/IVF search
+        crate::storage::engines::impls::sst::core::set_sst_axis_manager(axis_manager.clone());
+        debug!("✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search");
+
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(
             "🔧 SharedServices::new - About to create VectorOperationsService with two-stage search..."

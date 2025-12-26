@@ -116,6 +116,7 @@ struct RoutingStats {
 /// Internal node state for routing
 struct RoutableNode {
     info: NodeInfo,
+    #[allow(dead_code)] // Reserved for per-node round-robin in future load balancing
     round_robin_counter: u64,
     last_latency_ms: f64,
     weight: u32,

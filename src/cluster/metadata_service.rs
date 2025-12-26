@@ -150,6 +150,7 @@ impl Default for ClusterConfiguration {
 
 /// Metadata service for cluster-wide metadata management
 pub struct MetadataService {
+    #[allow(dead_code)] // Config reserved for future use (TTL, replication settings)
     config: MetadataServiceConfig,
     metadata: Arc<RwLock<ClusterMetadata>>,
     version_counter: Arc<RwLock<u64>>,
