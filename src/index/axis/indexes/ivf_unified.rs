@@ -1044,6 +1044,11 @@ impl UnifiedIvfIndex {
         })
     }
 
+    /// Check if the index has been trained with centroids
+    pub fn is_trained(&self) -> bool {
+        self.centroids.is_trained()
+    }
+
     /// Train the index with sample vectors
     pub async fn train(&mut self, training_vectors: Vec<Vec<f32>>) -> Result<()> {
         if self.centroids.is_trained() {
@@ -1238,7 +1243,7 @@ impl UnifiedIvfIndex {
             return Err(anyhow!("Index must be trained before searching"));
         }
 
-        let n_probe = n_probe.unwrap_or(1); // Default to 1 probe if not specified
+        let n_probe = n_probe.unwrap_or(self.config.n_probe); // Use configured n_probe for recall
         self.search_count.fetch_add(1, Ordering::Relaxed);
 
         // Step 1: Find nearest centroids (always in memory - fast)

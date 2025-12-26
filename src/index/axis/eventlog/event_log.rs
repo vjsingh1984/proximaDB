@@ -316,17 +316,35 @@ impl EventLogQueue {
 
         #[cfg(not(test))]
         {
-            // Use transaction coordinator for safe cloud writes
+            // Try transaction coordinator first for cloud-safe writes, fall back to direct write
             let operation_id = crate::utils::uuid::Uuid::new_v4().to_string();
-            self.transaction_coordinator
+            let tc_result = self
+                .transaction_coordinator
                 .write_to_staging(&operation_id, "queue_state.json", &json)
-                .await
-                .context("Failed to write queue state to staging")?;
+                .await;
 
-            self.transaction_coordinator
-                .commit_transaction(&operation_id)
-                .await
-                .context("Failed to commit queue state")?;
+            if tc_result.is_ok() {
+                // Commit the transaction
+                self.transaction_coordinator
+                    .commit_transaction(&operation_id)
+                    .await
+                    .context("Failed to commit queue state")?;
+            } else {
+                // Fallback to direct write for embedded/local mode
+                debug!(
+                    "Transaction coordinator unavailable, using direct filesystem write for queue state"
+                );
+                let state_dir = format!("{}/queue/{}", self.base_url, self.collection_id);
+                self.filesystem
+                    .create_dir_all(&state_dir)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create queue directory: {}", e))?;
+
+                self.filesystem
+                    .write(&state_path, &json, None)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to persist queue state: {}", e))?;
+            }
         }
 
         debug!("Persisted queue state to {}", state_path);

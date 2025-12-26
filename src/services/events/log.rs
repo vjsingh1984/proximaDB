@@ -279,19 +279,37 @@ pub fn unregister_collection_from_cache(collection_id: &str) {
 
 /// Initialize the global EventLog service (called once at server startup)
 /// This follows the same pattern as collection service initialization
+///
+/// This function is idempotent - if already initialized, returns Ok without error.
+/// This allows multiple embedded database instances to share the same EventLog service.
 pub async fn initialize_event_log_service(
     collection_cache: Arc<DashMap<String, Arc<Collection>>>,
     filesystem_factory: Arc<FilesystemFactory>,
     base_storage_url: Option<String>,
 ) -> Result<()> {
+    // If already initialized, return Ok (idempotent initialization)
+    // This enables multiple EmbeddedProximaDB instances to share the same EventLog
+    // without causing "EventLog service already initialized" errors
+    if EVENT_LOG_SERVICE.get().is_some() {
+        tracing::debug!("EventLog service already initialized, reusing existing instance");
+        return Ok(());
+    }
+
     let service =
         EventLogService::new(collection_cache, filesystem_factory, base_storage_url).await?;
 
-    EVENT_LOG_SERVICE
-        .set(service)
-        .map_err(|_| anyhow::anyhow!("EventLog service already initialized"))?;
-
-    Ok(())
+    // Use get_or_init pattern to handle race conditions safely
+    match EVENT_LOG_SERVICE.set(service) {
+        Ok(()) => {
+            tracing::info!("EventLog service initialized successfully");
+            Ok(())
+        }
+        Err(_) => {
+            // Another thread initialized it first - that's fine, reuse it
+            tracing::debug!("EventLog service was initialized by another thread, reusing");
+            Ok(())
+        }
+    }
 }
 
 /// Get the global EventLog service instance

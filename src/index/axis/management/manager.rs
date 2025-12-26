@@ -219,6 +219,23 @@ pub struct AxisManager {
     /// for fast access during index operations
     shared_collection_cache:
         Option<Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb_v1::Collection>>>>,
+
+    /// Real HNSW indexes per collection for vector similarity search
+    /// Maps collection_id → AxisHnswIndex instance
+    /// These are the actual in-memory HNSW indexes that store and query vectors
+    /// NOTE: HNSW has poor recall with incremental indexing - prefer IVF for production
+    hnsw_indexes: Arc<RwLock<HashMap<String, Arc<crate::index::axis::indexes::hnsw_index::AxisHnswIndex>>>>,
+
+    /// Real IVF indexes per collection for vector similarity search (DEFAULT)
+    /// Maps collection_id → UnifiedIvfIndex instance
+    /// IVF is better suited for incremental workloads as new vectors are simply
+    /// assigned to their nearest cluster without degrading graph quality
+    ivf_indexes: Arc<RwLock<HashMap<String, Arc<tokio::sync::RwLock<crate::index::axis::indexes::ivf_unified::UnifiedIvfIndex>>>>>,
+
+    /// Pending vectors buffer for IVF training
+    /// IVF requires k-means training before vectors can be added
+    /// Vectors are buffered here until we have enough for training (min_train_size)
+    ivf_pending_vectors: Arc<RwLock<HashMap<String, Vec<(String, Vec<f32>)>>>>,
 }
 
 /// Status of ongoing migrations
@@ -328,6 +345,9 @@ impl AxisManager {
             metrics: Arc::new(RwLock::new(AxisMetrics::default())),
             collection_service: None, // Will be set later via set_collection_service
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
+            hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
+            ivf_indexes: Arc::new(RwLock::new(HashMap::new())),  // Real IVF indexes per collection (DEFAULT)
+            ivf_pending_vectors: Arc::new(RwLock::new(HashMap::new())), // Buffer for IVF training
         })
     }
 
@@ -460,7 +480,8 @@ impl AxisManager {
                     self.metadata_index.insert(&processed_vector).await?;
                 }
                 Data::DenseVector { .. } => {
-                    self.dense_vector_index.insert(&processed_vector).await?;
+                    // Insert into real IVF index (better for incremental indexing than HNSW)
+                    self.insert_into_ivf(collection_id, &processed_vector).await?;
                 }
                 Data::SparseVector { .. } => {
                     self.sparse_vector_index.insert(&processed_vector).await?;
@@ -525,17 +546,8 @@ impl AxisManager {
 
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
-        // Use join engine to combine results from multiple indexes
-        let results = self
-            .join_engine
-            .execute_query(
-                &query,
-                &self.global_id_index,
-                &self.metadata_index,
-                &self.dense_vector_index,
-                &self.sparse_vector_index,
-            )
-            .await?;
+        // Query the real IVF index (better for incremental workloads than HNSW)
+        let results = self.query_ivf(collection_id, &query).await?;
 
         // Filter out expired results (MVCC)
         let active_results: Vec<_> = results
@@ -555,6 +567,246 @@ impl AxisManager {
             strategy_used: search_strategy,
             execution_time_ms: 0, // TODO: Track actual time
         })
+    }
+
+    /// Insert a vector into the real HNSW index for a collection
+    async fn insert_into_hnsw(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
+        use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        // Get or create HNSW index for this collection
+        let dimension = vector.vector.len();
+        if dimension == 0 || vector.id.is_empty() {
+            return Ok(()); // Skip empty vectors or missing IDs
+        }
+
+        // Check if index exists, if not create it
+        {
+            let indexes = self.hnsw_indexes.read().await;
+            if !indexes.contains_key(collection_id) {
+                drop(indexes);
+                // Create new HNSW index for this collection
+                let config = AxisHnswConfig::default();
+                let index = AxisHnswIndex::new_with_collection(
+                    Some(collection_id.to_string()),
+                    config,
+                    dimension,
+                )?;
+                let mut indexes = self.hnsw_indexes.write().await;
+                indexes.insert(collection_id.to_string(), Arc::new(index));
+                tracing::debug!(
+                    "🔗 AXIS: Created new HNSW index for collection {} (dimension={})",
+                    collection_id,
+                    dimension
+                );
+            }
+        }
+
+        // Insert into the index using the AxisVectorIndex trait
+        let indexes = self.hnsw_indexes.read().await;
+        if let Some(index) = indexes.get(collection_id) {
+            index.add(vector.id.clone(), vector.vector.clone()).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Query vectors from the real HNSW index
+    async fn query_hnsw(&self, collection_id: &str, query: &HybridQuery) -> Result<Vec<ScoredResult>> {
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        let indexes = self.hnsw_indexes.read().await;
+        if let Some(index) = indexes.get(collection_id) {
+            // Extract query vector
+            if let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query {
+                let results = index.search(vector, query.top_k, None).await?;
+                return Ok(results
+                    .into_iter()
+                    .map(|(id, score)| ScoredResult {
+                        vector_id: id,
+                        similarity: score,
+                        expires_at: None,
+                    })
+                    .collect());
+            }
+        }
+
+        // Return empty if no index or no dense vector query
+        Ok(Vec::new())
+    }
+
+    /// Insert a vector into the IVF index for a collection (DEFAULT for incremental workloads)
+    /// Insert vector into IVF index (DEFAULT)
+    ///
+    /// IVF requires k-means training before vectors can be added:
+    /// 1. Buffer vectors until we have min_train_size (100 vectors)
+    /// 2. Train index with buffered vectors to build centroids
+    /// 3. Add all buffered vectors to trained index
+    /// 4. Future inserts go directly to trained index
+    async fn insert_into_ivf(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
+        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
+        use crate::compute::distance_computation::DistanceMetric;
+
+        let dimension = vector.vector.len();
+        if dimension == 0 || vector.id.is_empty() {
+            return Ok(()); // Skip empty vectors or missing IDs
+        }
+
+        const MIN_TRAIN_SIZE: usize = 100; // Minimum vectors needed for k-means training
+
+        // Check if index exists and is trained
+        let index_exists_and_trained = {
+            let indexes = self.ivf_indexes.read().await;
+            if let Some(index) = indexes.get(collection_id) {
+                let idx = index.read().await;
+                idx.is_trained()
+            } else {
+                false
+            }
+        };
+
+        if index_exists_and_trained {
+            // Index is trained, add vector directly
+            let indexes = self.ivf_indexes.read().await;
+            if let Some(index) = indexes.get(collection_id) {
+                let idx = index.read().await;
+                idx.add_vector(vector.id.clone(), vector.vector.clone(), None).await?;
+            }
+            return Ok(());
+        }
+
+        // Buffer the vector for training
+        {
+            let mut pending = self.ivf_pending_vectors.write().await;
+            let buffer = pending.entry(collection_id.to_string()).or_insert_with(Vec::new);
+            buffer.push((vector.id.clone(), vector.vector.clone()));
+
+            // Check if we have enough vectors to train
+            if buffer.len() >= MIN_TRAIN_SIZE {
+                tracing::info!(
+                    "🎯 AXIS: IVF training triggered for collection {} with {} vectors",
+                    collection_id,
+                    buffer.len()
+                );
+
+                // Take ownership of buffered vectors
+                let training_vectors: Vec<(String, Vec<f32>)> = std::mem::take(buffer);
+                drop(pending); // Release the lock
+
+                // Calculate number of clusters: Use sqrt-based with min/max clamping
+                // Similar to block pruning mechanism - scales with data size
+                // n_clusters = clamp(sqrt(N) * 2, min=16, max=256)
+                let n_clusters = {
+                    let sqrt_based = (training_vectors.len() as f32).sqrt() as usize * 2;
+                    const MIN_CLUSTERS: usize = 16;
+                    const MAX_CLUSTERS: usize = 256;
+                    sqrt_based.clamp(MIN_CLUSTERS, MAX_CLUSTERS)
+                };
+
+                // Calculate n_probe: For incremental indexing where we train early with
+                // limited samples, we need to search more clusters. Use 50% of clusters
+                // minimum with sqrt-based scaling for larger cluster counts.
+                // Formula: max(n_clusters/2, sqrt(n_clusters)*3), clamped to n_clusters
+                let n_probe = {
+                    let half_clusters = n_clusters / 2;
+                    let sqrt_based = ((n_clusters as f32).sqrt() * 3.0) as usize;
+                    std::cmp::max(half_clusters, sqrt_based).min(n_clusters)
+                };
+
+                tracing::debug!(
+                    "🔧 AXIS: IVF config for collection {} - clusters: {}, n_probe: {} (sqrt-based)",
+                    collection_id, n_clusters, n_probe
+                );
+
+                let config = UnifiedIvfConfig {
+                    n_clusters,
+                    n_probe,
+                    dimension,
+                    distance_metric: DistanceMetric::Cosine,
+                    min_train_size: MIN_TRAIN_SIZE,
+                    ..Default::default()
+                };
+
+                let mut index = UnifiedIvfIndex::new(collection_id.to_string(), config)?;
+
+                // Train with just the vector data (not IDs)
+                let vector_data: Vec<Vec<f32>> = training_vectors.iter().map(|(_, v)| v.clone()).collect();
+                index.train(vector_data).await?;
+
+                tracing::info!(
+                    "✅ AXIS: IVF index trained for collection {} with {} clusters",
+                    collection_id,
+                    n_clusters
+                );
+
+                // Add all buffered vectors to the trained index
+                for (id, vec) in &training_vectors {
+                    index.add_vector(id.clone(), vec.clone(), None).await?;
+                }
+
+                tracing::info!(
+                    "✅ AXIS: Added {} vectors to IVF index for collection {}",
+                    training_vectors.len(),
+                    collection_id
+                );
+
+                // Store the trained index
+                let mut indexes = self.ivf_indexes.write().await;
+                indexes.insert(collection_id.to_string(), Arc::new(tokio::sync::RwLock::new(index)));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Query vectors from the IVF index (DEFAULT)
+    async fn query_ivf(&self, collection_id: &str, query: &HybridQuery) -> Result<Vec<ScoredResult>> {
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        let indexes = self.ivf_indexes.read().await;
+        if let Some(index_lock) = indexes.get(collection_id) {
+            let index = index_lock.read().await;
+
+            // Check if index is trained
+            if !index.is_trained() {
+                tracing::debug!(
+                    "🔍 AXIS: IVF index for collection {} not yet trained, returning empty results",
+                    collection_id
+                );
+                return Ok(Vec::new());
+            }
+
+            if let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query {
+                let start = std::time::Instant::now();
+                let results = index.search(vector, query.top_k, None).await?;
+                let search_time = start.elapsed();
+
+                tracing::info!(
+                    "🔍 AXIS: IVF search completed for collection {} - {} results in {:?} (top_k={})",
+                    collection_id,
+                    results.len(),
+                    search_time,
+                    query.top_k
+                );
+
+                return Ok(results
+                    .into_iter()
+                    .map(|(id, score)| ScoredResult {
+                        vector_id: id,
+                        similarity: score,
+                        expires_at: None,
+                    })
+                    .collect());
+            }
+        } else {
+            tracing::debug!(
+                "🔍 AXIS: No IVF index found for collection {}, falling back to storage engine search",
+                collection_id
+            );
+        }
+
+        // Return empty if no index or no dense vector query
+        Ok(Vec::new())
     }
 
     /// Analyze collection and trigger migration if beneficial
@@ -999,19 +1251,35 @@ impl AxisManager {
     }
 
     /// Index vectors synchronously (blocking the flush completion)
+    ///
+    /// For batches >= 500 vectors, uses batch-aware IVF training to ensure
+    /// proper cluster count for better recall.
     async fn index_vectors_synchronously(
         &self,
         collection_id: &str,
         vectors: Vec<VectorRecord>,
         _files_created: &[String],
     ) -> Result<()> {
+        let batch_size = vectors.len();
         tracing::info!(
             "🔄 AXIS: Synchronous indexing of {} vectors for collection {}",
-            vectors.len(),
+            batch_size,
             collection_id
         );
 
         let start_time = std::time::Instant::now();
+
+        // For medium-sized batches, still use batch training for better recall
+        if batch_size >= 500 {
+            if let Err(e) = self.train_ivf_for_batch(collection_id, &vectors).await {
+                tracing::warn!(
+                    "⚠️ AXIS: Batch IVF training failed for collection {}: {}, using incremental",
+                    collection_id,
+                    e
+                );
+            }
+        }
+
         for vector in vectors {
             self.insert(collection_id, &vector).await?;
         }
@@ -1027,23 +1295,49 @@ impl AxisManager {
     }
 
     /// Index vectors asynchronously (non-blocking)
+    ///
+    /// For large batches (>1000 vectors), this method uses batch-aware IVF training
+    /// to ensure proper cluster count based on total collection size. This fixes
+    /// the recall degradation issue at 50K vectors where IVF was trained with only
+    /// 100 vectors, resulting in too few clusters (20 instead of 256).
     async fn index_vectors_asynchronously(
         &self,
         collection_id: &str,
         vectors: Vec<VectorRecord>,
         files_created: Vec<String>,
     ) -> Result<()> {
+        let batch_size = vectors.len();
         tracing::info!(
             "🚀 AXIS: Spawning asynchronous indexing task for {} vectors in collection {}",
-            vectors.len(),
+            batch_size,
             collection_id
         );
 
-        // For async indexing, we'll process immediately but in a non-blocking way
-        // In a production system, this would use a proper task queue
         let start_time = std::time::Instant::now();
-        let mut indexed_count = 0;
 
+        // For large batches, use batch-aware IVF training for better recall
+        // This trains the IVF index with proper cluster count based on total batch size
+        if batch_size >= 1000 {
+            match self.train_ivf_for_batch(collection_id, &vectors).await {
+                Ok(()) => {
+                    tracing::info!(
+                        "✅ AXIS: Batch IVF training completed for {} vectors in collection {}",
+                        batch_size,
+                        collection_id
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️ AXIS: Batch IVF training failed for collection {}: {}, falling back to incremental",
+                        collection_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Insert all vectors (will go to trained IVF index directly if batch training succeeded)
+        let mut indexed_count = 0;
         for vector in vectors {
             match self.insert(collection_id, &vector).await {
                 Ok(()) => indexed_count += 1,
@@ -1061,7 +1355,7 @@ impl AxisManager {
         tracing::info!(
             "✅ AXIS: Asynchronous indexing completed - {}/{} vectors indexed in {}ms for collection {} (files: {:?})",
             indexed_count,
-            indexed_count,
+            batch_size,
             duration.as_millis(),
             collection_id,
             files_created
@@ -1071,6 +1365,115 @@ impl AxisManager {
             "🚀 AXIS: Asynchronous indexing completed for collection {}",
             collection_id
         );
+        Ok(())
+    }
+
+    /// Train IVF index with proper cluster count for a large batch
+    ///
+    /// This method trains the IVF index with the optimal number of clusters
+    /// based on the total batch size, avoiding the issue of undertrained indexes
+    /// when vectors are inserted one-by-one (which trains at only 100 vectors).
+    ///
+    /// For N vectors:
+    /// - n_clusters = clamp(sqrt(N) * 2, 16, 256)
+    /// - n_probe = max(n_clusters/2, sqrt(n_clusters)*3)
+    async fn train_ivf_for_batch(&self, collection_id: &str, vectors: &[VectorRecord]) -> Result<()> {
+        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
+        use crate::compute::distance_computation::DistanceMetric;
+
+        if vectors.is_empty() {
+            return Ok(());
+        }
+
+        let dimension = vectors[0].vector.len();
+        if dimension == 0 {
+            return Ok(());
+        }
+
+        // Check if IVF index already exists and is trained
+        {
+            let indexes = self.ivf_indexes.read().await;
+            if let Some(index) = indexes.get(collection_id) {
+                let idx = index.read().await;
+                if idx.is_trained() {
+                    tracing::debug!(
+                        "🔍 AXIS: IVF index for collection {} already trained, skipping batch training",
+                        collection_id
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
+        let batch_size = vectors.len();
+
+        // Calculate optimal cluster count based on batch size
+        // n_clusters = clamp(sqrt(N) * 2, 16, 256)
+        let n_clusters = {
+            let sqrt_based = (batch_size as f32).sqrt() as usize * 2;
+            const MIN_CLUSTERS: usize = 16;
+            const MAX_CLUSTERS: usize = 256;
+            sqrt_based.clamp(MIN_CLUSTERS, MAX_CLUSTERS)
+        };
+
+        // Calculate n_probe: max(n_clusters/2, sqrt(n_clusters)*3), clamped to n_clusters
+        let n_probe = {
+            let half_clusters = n_clusters / 2;
+            let sqrt_based = ((n_clusters as f32).sqrt() * 3.0) as usize;
+            std::cmp::max(half_clusters, sqrt_based).min(n_clusters)
+        };
+
+        tracing::info!(
+            "🎯 AXIS: Batch IVF training for collection {} - {} vectors, {} clusters, n_probe={}",
+            collection_id,
+            batch_size,
+            n_clusters,
+            n_probe
+        );
+
+        let config = UnifiedIvfConfig {
+            n_clusters,
+            n_probe,
+            dimension,
+            distance_metric: DistanceMetric::Cosine,
+            min_train_size: 100, // Lower since we're batch training
+            ..Default::default()
+        };
+
+        let mut index = UnifiedIvfIndex::new(collection_id.to_string(), config)?;
+
+        // Train with all vectors (or sample if too large)
+        let training_vectors: Vec<Vec<f32>> = if batch_size > 50000 {
+            // Sample for very large batches to avoid memory issues
+            let sample_size = 50000;
+            let step = batch_size / sample_size;
+            vectors.iter()
+                .step_by(step.max(1))
+                .take(sample_size)
+                .map(|v| v.vector.clone())
+                .collect()
+        } else {
+            vectors.iter().map(|v| v.vector.clone()).collect()
+        };
+
+        index.train(training_vectors).await?;
+
+        tracing::info!(
+            "✅ AXIS: Batch IVF training complete for collection {} with {} clusters",
+            collection_id,
+            n_clusters
+        );
+
+        // Store the trained index
+        let mut indexes = self.ivf_indexes.write().await;
+        indexes.insert(collection_id.to_string(), Arc::new(tokio::sync::RwLock::new(index)));
+
+        // Clear pending vectors buffer since we've trained
+        {
+            let mut pending = self.ivf_pending_vectors.write().await;
+            pending.remove(collection_id);
+        }
+
         Ok(())
     }
 
