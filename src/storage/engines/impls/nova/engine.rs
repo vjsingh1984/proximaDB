@@ -223,6 +223,17 @@ pub struct NovaEngine {
     ///
     /// Replaces engine-specific optimizers, eliminates code duplication
     universal_optimizer: UniversalPerformanceOptimizer,
+
+    /// **AXIS Manager** (Optional)
+    ///
+    /// Index management for O(log N) approximate nearest neighbor search:
+    /// - HNSW (Hierarchical Navigable Small World) graphs
+    /// - IVF (Inverted File Index) with product quantization
+    /// - Automatic index updates on vector inserts/deletes
+    /// - Query-time index selection based on collection size
+    ///
+    /// None by default, set externally when AXIS indexes are enabled for collection
+    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
 impl NovaEngine {
     /// Create new NOVA engine instance
@@ -334,6 +345,7 @@ impl NovaEngine {
             fallback_quantization_engine,
             distance_engine: distance_compute,
             universal_optimizer,
+            axis_manager: None, // AXIS manager will be set externally if available
         })
     }
     /// Set metrics collector for monitoring
@@ -394,7 +406,33 @@ impl NovaEngine {
                 // Read vectors using the cached filesystem (metadata will be cached)
                 let vectors = reader.read_progressive(&file_path.name).await?;
 
-                // Create NovaFile structure (simplified - would include actual metadata)
+                // Compute dimension and zone maps from loaded vectors
+                let dimension = if !vectors.is_empty() {
+                    vectors[0].vector.len()
+                } else {
+                    0
+                };
+
+                // Compute zone maps for pruning optimization
+                let zone_maps = if !vectors.is_empty() && dimension > 0 {
+                    match self.compute_basic_zone_maps(&vectors, dimension) {
+                        Ok(zm) => {
+                            tracing::debug!(
+                                "[NOVA] Zone maps computed for file {}: {} dimensions, {} vectors",
+                                file_path.name, dimension, vectors.len()
+                            );
+                            Some(zm)
+                        }
+                        Err(e) => {
+                            tracing::warn!("[NOVA] Failed to compute zone maps: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Create NovaFile structure with zone maps for pruning
                 let nova_file = super::NovaFile {
                     quantized_columns: super::quantized_columns::QuantizedColumnMetadata::default(),
                     schema: Arc::new(arrow_schema::Schema::empty()),
@@ -402,11 +440,7 @@ impl NovaEngine {
                         crate::storage::engines::core::formats::columnar::ColumnarFileMetadata {
                             collection_id: collection_id.to_string(),
                             num_vectors: vectors.len() as u64,
-                            dimension: if !vectors.is_empty() {
-                                vectors[0].vector.len()
-                            } else {
-                                0
-                            },
+                            dimension,
                             distance_metric:
                                 crate::compute::distance_computation::DistanceMetric::Euclidean,
                             quantization: Default::default(),
@@ -418,7 +452,7 @@ impl NovaEngine {
                     row_groups: Vec::new(),
                     enhanced_stats: Vec::new(),
                     superblocks: Vec::new(),
-                    advanced_zone_maps: None,
+                    advanced_zone_maps: zone_maps,
                 };
 
                 nova_files.push(nova_file);
@@ -1394,7 +1428,95 @@ impl UnifiedStorageEngine for NovaEngine {
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        // Delegate directly to modularized search operations
+        let collection_id = ctx.collection_id();
+        let query_vector = ctx.query_vector().ok_or_else(|| {
+            anyhow!("Query vector required for search")
+        })?;
+        let k = ctx.top_k();
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
+
+        // ========================================================================
+        // PHASE 0: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF) - FASTEST PATH
+        // ========================================================================
+        // Use AXIS manager if available for O(log N) approximate search
+        let has_axis_manager = self.axis_manager().is_some();
+        if has_axis_manager {
+            tracing::debug!("🔍 NOVA: AXIS manager is available for HNSW/IVF search");
+        }
+
+        if let Some(axis_manager) = self.axis_manager() {
+            tracing::debug!(
+                "🔍 NOVA: Attempting AXIS search for collection='{}', top_k={}, dimension={}",
+                collection_id,
+                k,
+                query_vector.len()
+            );
+
+            // Convert filter expression to AXIS format
+            let axis_filters = Self::convert_filter_to_axis(filter_expression);
+
+            // Build hybrid query for AXIS
+            use crate::index::axis::management::manager::{HybridQuery, VectorQuery};
+            let hybrid_query = HybridQuery {
+                collection_id: collection_id.to_string(),
+                vector_query: Some(VectorQuery::Dense {
+                    vector: query_vector.to_vec(),
+                    similarity_threshold: 0.0, // Return all results up to k
+                }),
+                metadata_filters: axis_filters,
+                id_filters: Vec::new(),
+                top_k: k,
+                include_expired: false,
+            };
+
+            // Execute AXIS query (HNSW or IVF based on index type)
+            let axis_start = std::time::Instant::now();
+            match axis_manager.query(hybrid_query).await {
+                Ok(axis_results) => {
+                    let axis_duration = axis_start.elapsed();
+                    tracing::info!(
+                        "✅ NOVA: AXIS search completed in {:?} - found {} candidates",
+                        axis_duration,
+                        axis_results.results.len()
+                    );
+
+                    // Convert AXIS results to OptimizedSearchRecord
+                    let results: Vec<OptimizedSearchRecord> = axis_results
+                        .results
+                        .into_iter()
+                        .take(k)
+                        .map(|scored| OptimizedSearchRecord {
+                            id: scored.vector_id.to_string(),
+                            vector_id: Some(scored.vector_id.to_string()),
+                            score: scored.similarity,
+                            similarity: Some(scored.similarity),
+                            vector: None, // AXIS doesn't return vectors by default
+                            ..Default::default()
+                        })
+                        .collect();
+
+                    // If we got results, return them
+                    if !results.is_empty() {
+                        return Ok(results);
+                    }
+
+                    tracing::debug!(
+                        "⚠️ NOVA: AXIS returned no results, falling back to progressive columnar search"
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "⚠️ NOVA: AXIS search failed: {}, falling back to progressive columnar search",
+                        e
+                    );
+                }
+            }
+        }
+
+        // ========================================================================
+        // PHASE 1: PROGRESSIVE COLUMNAR SEARCH (Fallback)
+        // ========================================================================
+        // Delegate to modularized search operations for progressive columnar search
         self.search_ops.search_vectors_unified(ctx).await
     }
 
@@ -1558,19 +1680,81 @@ impl UniversallyOptimized for NovaEngine {
 
 // Helper methods for NovaEngine
 impl NovaEngine {
-    // Helper method for AXIS integration when needed
-    async fn get_axis_manager(
-        &self,
-    ) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
-        // Create AXIS manager with default config
-        let config = crate::index::axis::types::AxisConfig::default();
-        Ok(Arc::new(
-            crate::index::axis::management::manager::AxisManager::new(config).await?,
-        ))
+    /// Get the AXIS manager if configured
+    ///
+    /// Returns the optional AXIS manager for HNSW/IVF-based search.
+    /// When available, AXIS provides O(log N) approximate nearest neighbor search
+    /// that is significantly faster than progressive columnar search.
+    pub fn axis_manager(&self) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+        self.axis_manager.as_ref()
+    }
+
+    /// Convert FilterExpression to AXIS MetadataFilter format
+    ///
+    /// This helper converts our internal FilterExpression type to AXIS's
+    /// MetadataFilter format for hybrid vector + metadata queries.
+    fn convert_filter_to_axis(filter_expression: Option<&crate::core::search::FilterExpression>) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
+
+        let Some(filter) = filter_expression else {
+            return Vec::new();
+        };
+
+        // Convert filter expressions to AXIS metadata filters
+        let mut axis_filters = Vec::new();
+
+        match filter {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                // Convert ComparisonOperator to AXIS FilterOperator
+                let axis_operator = match operator {
+                    ComparisonOperator::Equals => FilterOperator::Equals,
+                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
+                    ComparisonOperator::LessThan => FilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
+                    ComparisonOperator::In => FilterOperator::In,
+                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                    _ => {
+                        tracing::debug!(
+                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
+                            operator
+                        );
+                        return axis_filters;
+                    }
+                };
+
+                axis_filters.push(MetadataFilter {
+                    field: field.clone(),
+                    operator: axis_operator,
+                    value: value.clone(),
+                });
+            }
+            FilterExpression::And(filters) => {
+                for f in filters {
+                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
+                }
+            }
+            FilterExpression::Or(_) | FilterExpression::Not(_) => {
+                // OR and NOT are not directly supported by AXIS, will use post-filtering
+                tracing::debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
+            }
+        }
+
+        axis_filters
     }
 
     // Removed unnecessary helper methods - engines receive all params directly
     // No need for CollectionService, distance/quantization engines are already in the struct
+}
+
+// Additional helper methods for NovaEngine
+impl NovaEngine {
 
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(
