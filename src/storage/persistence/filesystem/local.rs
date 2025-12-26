@@ -57,11 +57,29 @@ impl Default for LocalConfig {
     }
 }
 
-/// Local filesystem implementation
-#[derive(Debug)]
+/// Local filesystem implementation with mmap caching for faster reads
 pub struct LocalFileSystem {
     config: LocalConfig,
+    /// LRU cache for memory-mapped files (thread-safe)
+    /// Files above MIN_MMAP_SIZE are cached for faster subsequent reads
+    mmap_cache: parking_lot::RwLock<crate::utils::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>>,
 }
+
+impl std::fmt::Debug for LocalFileSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalFileSystem")
+            .field("config", &self.config)
+            .field("mmap_cache_size", &self.mmap_cache.read().len())
+            .finish()
+    }
+}
+
+/// Minimum file size to use mmap caching (512KB)
+/// Files smaller than this are read directly (mmap overhead not worth it)
+const MIN_MMAP_SIZE: u64 = 512 * 1024;
+
+/// Maximum number of files to keep in mmap cache
+const MMAP_CACHE_SIZE: usize = 64;
 
 impl LocalFileSystem {
     /// Extract path from URL for stateless operations (uses centralized utility)
@@ -139,6 +157,70 @@ impl LocalFileSystem {
         resolved_path
     }
 
+    /// Get or create mmap for a file (cached for efficiency)
+    ///
+    /// Returns None if:
+    /// - File is smaller than MIN_MMAP_SIZE
+    /// - File doesn't exist or can't be opened
+    /// - Mmap creation fails
+    fn get_or_create_mmap(&self, path: &PathBuf) -> Option<std::sync::Arc<memmap2::Mmap>> {
+        use memmap2::MmapOptions;
+        use std::fs::File;
+
+        // Check cache first (read lock)
+        {
+            let cache = self.mmap_cache.read();
+            if let Some(mmap) = cache.peek(path) {
+                return Some(std::sync::Arc::clone(mmap));
+            }
+        }
+
+        // Not in cache, try to create mmap (need to check file size first)
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => return None,
+        };
+
+        let metadata = match file.metadata() {
+            Ok(m) => m,
+            Err(_) => return None,
+        };
+
+        // Only mmap files above the threshold
+        if metadata.len() < MIN_MMAP_SIZE {
+            return None;
+        }
+
+        // Create the mmap
+        let mmap = match unsafe { MmapOptions::new().map(&file) } {
+            Ok(m) => std::sync::Arc::new(m),
+            Err(e) => {
+                tracing::debug!("Failed to mmap {}: {}", path.display(), e);
+                return None;
+            }
+        };
+
+        // Cache it (write lock)
+        {
+            let mut cache = self.mmap_cache.write();
+            cache.put(path.clone(), std::sync::Arc::clone(&mmap));
+        }
+
+        tracing::debug!(
+            "Created mmap for {} ({} bytes)",
+            path.display(),
+            metadata.len()
+        );
+
+        Some(mmap)
+    }
+
+    /// Invalidate mmap cache entry (call after file modification)
+    pub fn invalidate_mmap_cache(&self, path: &PathBuf) {
+        let mut cache = self.mmap_cache.write();
+        cache.pop(path);
+    }
+
     /// Create new local filesystem instance
     pub async fn new(config: LocalConfig) -> FsResult<Self> {
         // Capture the process start directory information
@@ -182,7 +264,12 @@ impl LocalFileSystem {
             }
         }
 
-        Ok(Self { config })
+        Ok(Self {
+            config,
+            mmap_cache: parking_lot::RwLock::new(
+                crate::utils::cache::LruCache::new(MMAP_CACHE_SIZE),
+            ),
+        })
     }
 
     /// Convert std::fs::Metadata to FileMetadata
@@ -403,9 +490,39 @@ impl FileSystem for LocalFileSystem {
 
         // Extract path from URL
         let path_str = self.resolve_path(path)?;
-        let resolved_path = PathBuf::from(path_str);
+        let resolved_path = PathBuf::from(&path_str);
 
-        // Open file for reading
+        // DEBUG: Log path resolution for RAPTOR files
+        if path.contains(".raptor") {
+            tracing::debug!(
+                "🔍 LocalFS read_range: input='{}', resolved='{}', offset={}, length={}",
+                path,
+                resolved_path.display(),
+                offset,
+                length
+            );
+        }
+
+        // OPTIMIZATION: Try mmap-based read first for large files
+        // Mmap is faster because:
+        // 1. Data is already in page cache (no syscall for subsequent reads)
+        // 2. No file handle overhead
+        // 3. Better read-ahead behavior from OS
+        if let Some(mmap) = self.get_or_create_mmap(&resolved_path) {
+            let start = offset as usize;
+            let end = (offset + length) as usize;
+
+            // Bounds check
+            if start >= mmap.len() {
+                return Ok(vec![]);
+            }
+            let end = end.min(mmap.len());
+
+            // Copy the slice (still faster than seek+read due to page cache)
+            return Ok(mmap[start..end].to_vec());
+        }
+
+        // Fall back to traditional read for small files or when mmap fails
         let mut file = match tokio::fs::File::open(&resolved_path).await {
             Ok(f) => f,
             Err(e) => match e.kind() {
@@ -427,6 +544,16 @@ impl FileSystem for LocalFileSystem {
         // Get file size to validate the range
         let metadata = file.metadata().await.map_err(FilesystemError::Io)?;
         let file_size = metadata.len();
+
+        // DEBUG: Log file size for RAPTOR files
+        if path.contains(".raptor") {
+            tracing::debug!(
+                "🔍 LocalFS read_range: file_size={}, offset={}, offset>=file_size={}",
+                file_size,
+                offset,
+                offset >= file_size
+            );
+        }
 
         // Check if offset is beyond file size
         if offset >= file_size {
@@ -953,9 +1080,15 @@ mod tests {
         // List the directory
         let entries = fs.list(test_url).await.unwrap();
 
+        // Filter out hidden files (like .DS_Store on macOS) and staging directories
+        let visible_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| !e.name.starts_with('.') && !e.name.starts_with("__"))
+            .collect();
+
         // Verify no path duplication
-        assert_eq!(entries.len(), 1);
-        let entry_url = &entries[0].url;
+        assert_eq!(visible_entries.len(), 1);
+        let entry_url = &visible_entries[0].url;
 
         // Count occurrences of "metadata" in the URL path segments
         let metadata_count = entry_url.matches("metadata").count();

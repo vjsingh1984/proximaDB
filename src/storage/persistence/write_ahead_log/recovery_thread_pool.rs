@@ -62,7 +62,7 @@ impl RecoveryThreadPool {
     }
 
     /// Start recovery phase - acquires all resources
-    pub async fn start_recovery(&self) -> Result<RecoveryGuard> {
+    pub async fn start_recovery(&self) -> Result<RecoveryGuard<'_>> {
         if self.is_recovering.load(Ordering::Acquire) {
             return Err(anyhow::anyhow!("Recovery already in progress"));
         }

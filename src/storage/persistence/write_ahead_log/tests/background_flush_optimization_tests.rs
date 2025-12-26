@@ -71,6 +71,7 @@ mod tests {
                 entries_flushed: Some(params.vector_records.len() as u64),
                 bytes_written: Some((params.vector_records.len() * 1024) as u64), // Mock size
                 files_created: Some(1),
+                file_paths: vec![],
                 duration_ms: Some(10),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
