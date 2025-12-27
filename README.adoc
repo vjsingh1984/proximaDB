@@ -228,7 +228,236 @@ ProximaDB eliminates the ETL pipeline between vector and graph databases:
 
 ---
 
-== Use Cases
+== Multi-Model Architecture
+
+ProximaDB is a **unified multi-model database** that integrates:
+
+* **Vector Store**: 6 specialized engines for semantic search
+* **Graph Store**: ORION/PULSAR/QUASAR for relationship traversal
+* **Document Store**: MongoDB-like JSON document storage
+* **Observability Store**: Cloud SIEM-like log/metric/trace ingestion
+* **PostgreSQL Wire Protocol**: pgvector migration path (psql compatible)
+
+=== Unified Query Engine
+
+All stores can be queried together through a single SQL-like interface:
+
+[source,sql]
+----
+-- Hybrid query: vector search + graph traversal + document filter
+SELECT d.id, d.title, v.similarity, g.path
+FROM documents d
+JOIN vectors v ON d.embedding_id = v.id
+FOLLOW GRAPH knowledge ON d.entity_id = knowledge.start_node
+WHERE SIMILAR(v.embedding, ?, 0.8)
+  AND d.category = 'technical'
+  AND g.depth <= 2
+LIMIT 10;
+----
+
+=== PostgreSQL/pgvector Compatibility
+
+Connect with any PostgreSQL client:
+
+[source,bash]
+----
+# Connect via psql
+psql -h localhost -p 5433 -U proximadb
+
+# Create table (creates ProximaDB collection)
+CREATE TABLE embeddings (id TEXT, embedding vector(768));
+
+# Insert vectors
+INSERT INTO embeddings VALUES ('doc1', '[0.1, 0.2, ...]');
+
+# pgvector-style similarity search
+SELECT * FROM embeddings ORDER BY embedding <-> '[0.1, ...]' LIMIT 10;
+----
+
+---
+
+== Unique Multi-Model Use Cases
+
+**Only ProximaDB** can solve these use cases in a single database by combining Vector + Graph + Document + Observability + PostgreSQL wire compatibility.
+
+=== 1. Intelligent Security Operations Center (SOC)
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    subgraph INGEST["Log Ingestion (1M/sec)"]
+        L1[Firewall Logs]
+        L2[Auth Logs]
+        L3[App Logs]
+    end
+
+    subgraph PROXIMADB["ProximaDB Unified Engine"]
+        OBS[Observability Store]
+        VEC[Vector Store<br/>Threat Patterns]
+        GRAPH[Graph Store<br/>Asset Relationships]
+        DOC[Document Store<br/>Playbooks]
+    end
+
+    subgraph DETECT["Detection"]
+        ALERT[Real-time Alerts]
+        PSQL[PostgreSQL BI Tools]
+    end
+
+    L1 --> OBS
+    L2 --> OBS
+    L3 --> OBS
+    OBS --> VEC
+    VEC --> GRAPH
+    GRAPH --> DOC
+    DOC --> ALERT
+    OBS --> PSQL
+
+    style PROXIMADB fill:#e6f3ff,stroke:#4a90e2,stroke-width:2px
+----
+
+**Why ProximaDB is unique**: Ingest security logs at SIEM scale, detect anomalies via vector similarity to known threat patterns, trace lateral movement through asset graph, retrieve response playbooks from document store, and query everything via PostgreSQL for Grafana/Tableau dashboards. No other database combines all five capabilities.
+
+=== 2. Knowledge-Augmented AI Agents
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    subgraph AGENT["AI Agent"]
+        LLM[Language Model]
+        MEM[Memory Retrieval]
+    end
+
+    subgraph PROXIMADB["ProximaDB Knowledge Base"]
+        VEC[Vector Store<br/>Semantic Memory]
+        GRAPH[Graph Store<br/>Entity Relationships]
+        DOC[Document Store<br/>Conversation History]
+        OBS[Observability<br/>Action Audit]
+    end
+
+    LLM --> MEM
+    MEM --> VEC
+    VEC --> GRAPH
+    GRAPH --> DOC
+    LLM --> OBS
+
+    style PROXIMADB fill:#e6ffe6,stroke:#93c47d,stroke-width:2px
+----
+
+**Why ProximaDB is unique**: AI agents need semantic retrieval (vectors), relationship understanding (graph), persistent memory (documents), and action auditing (observability). ProximaDB provides all in one database with ACID guarantees across modalities.
+
+=== 3. Real-time E-commerce Personalization
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    subgraph USER["User Session"]
+        BROWSE[Browsing Events]
+        CLICK[Click Stream]
+    end
+
+    subgraph PROXIMADB["ProximaDB"]
+        OBS[Event Stream<br/>1M events/sec]
+        VEC[Product Embeddings<br/>Similar Items]
+        GRAPH[User-Product Graph<br/>Recommendations]
+        DOC[Product Catalog<br/>Full Details]
+    end
+
+    subgraph OUTPUT["Personalization"]
+        REC[Recommendations]
+        PSQL[Analytics via psql]
+    end
+
+    BROWSE --> OBS
+    CLICK --> OBS
+    OBS --> VEC
+    VEC --> GRAPH
+    GRAPH --> DOC
+    DOC --> REC
+    OBS --> PSQL
+
+    style PROXIMADB fill:#fff3e6,stroke:#f4a261,stroke-width:2px
+----
+
+**Why ProximaDB is unique**: Real-time event ingestion feeds vector similarity for product matching, graph reveals social/purchase patterns, document store holds full catalog, PostgreSQL wire enables existing BI tools. Sub-10ms response for personalization.
+
+=== 4. Compliance-Ready Healthcare Data Platform
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    subgraph DATA["Healthcare Data"]
+        EHR[Patient Records]
+        IMG[Medical Images]
+        LAB[Lab Results]
+    end
+
+    subgraph PROXIMADB["ProximaDB with HIPAA Audit"]
+        DOC[Document Store<br/>Structured EHR]
+        VEC[Vector Store<br/>Clinical Embeddings]
+        GRAPH[Graph Store<br/>Care Team Network]
+        OBS[Audit Log<br/>HIPAA Compliance]
+    end
+
+    subgraph ACCESS["Access Methods"]
+        API[REST/gRPC API]
+        PSQL[PostgreSQL EHR Tools]
+    end
+
+    EHR --> DOC
+    IMG --> VEC
+    LAB --> DOC
+    DOC --> OBS
+    VEC --> OBS
+    GRAPH --> OBS
+    DOC --> API
+    DOC --> PSQL
+
+    style PROXIMADB fill:#ffe6e6,stroke:#e06666,stroke-width:2px
+----
+
+**Why ProximaDB is unique**: Healthcare requires structured records (documents), clinical similarity search (vectors), care team coordination (graph), and complete audit trails (observability). PostgreSQL compatibility enables existing EHR tools to connect directly.
+
+=== 5. Financial Fraud Detection Network
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    subgraph TRANSACTIONS["Transaction Stream"]
+        TXN[100K TPS]
+    end
+
+    subgraph PROXIMADB["ProximaDB Fraud Engine"]
+        OBS[Transaction Log]
+        VEC[Fraud Pattern<br/>Embeddings]
+        GRAPH[Account Network<br/>Money Flow]
+        DOC[Case Files<br/>Historical Fraud]
+    end
+
+    subgraph RESPONSE["< 100ms Response"]
+        BLOCK[Block Transaction]
+        REPORT[Compliance Report]
+    end
+
+    TXN --> OBS
+    OBS --> VEC
+    VEC --> GRAPH
+    GRAPH --> DOC
+    DOC --> BLOCK
+    OBS --> REPORT
+
+    style PROXIMADB fill:#e6e6ff,stroke:#6666e0,stroke-width:2px
+----
+
+**Why ProximaDB is unique**: Ingest transactions at scale (observability), match against fraud patterns (vectors), trace money flow networks (graph), retrieve case history (documents), all in <100ms for real-time blocking. PostgreSQL reporting for compliance.
+
+---
+
+== Simple Use Cases
 
 [cols="2,3,2"]
 |===
@@ -254,6 +483,75 @@ ProximaDB eliminates the ETL pipeline between vector and graph databases:
 | Paper similarity + citation traversal
 | 2.14ms hybrid queries
 |===
+
+---
+
+== API Examples
+
+=== REST API
+
+[source,bash]
+----
+# Vector Search
+curl -X POST http://localhost:5678/api/v1/search \
+  -d '{"collection_id": "docs", "query_vector": [...], "top_k": 10}'
+
+# Document Store
+curl -X POST http://localhost:5678/v1/documents/products \
+  -d '{"id": "prod1", "document": {"name": "Widget", "price": 99.99}}'
+
+# Graph Operations
+curl -X POST http://localhost:5678/v1/graphs/knowledge/nodes \
+  -d '{"id": "entity1", "labels": ["Person"], "properties": {"name": "Alice"}}'
+
+# Observability Ingestion
+curl -X POST http://localhost:5678/v1/observability/logs/_bulk \
+  -d '{"logs": [{"message": "User login", "service": "auth", "level": "info"}]}'
+----
+
+=== Python SDK
+
+[source,python]
+----
+from proximadb_sdk import ProximaDBClient
+from proximadb_sdk.embedded import EmbeddedProximaDB
+
+# Server mode
+client = ProximaDBClient("http://localhost:5678")
+client.create_collection("docs", dimension=768)
+client.insert_vectors("docs", vectors=[...], ids=["v1", "v2"])
+results = client.search("docs", query_vector=[...], top_k=10)
+
+# Embedded mode (no server needed)
+db = EmbeddedProximaDB(data_path="/data/proximadb")
+
+# Vector operations
+db.create_collection("embeddings", dimension=768, engine="sst")
+db.insert("embeddings", ids=["e1"], vectors=[[0.1] * 768])
+results = db.search("embeddings", query=[0.1] * 768, top_k=5)
+
+# Graph operations
+db.create_graph("knowledge")
+db.create_nodes("knowledge", [
+    GraphNode("alice").with_label("Person").with_property("name", "Alice")
+])
+db.create_edges("knowledge", [
+    GraphEdge("alice", "bob", "KNOWS").with_weight(0.9)
+])
+neighbors = db.get_neighbors("knowledge", "alice")
+
+# Document operations
+db.create_document_collection("products")
+db.insert_document("products", "p1", {"name": "Widget", "price": 99.99})
+docs = db.query_documents("products", filter="$.price > 50")
+----
+
+=== Embedded Mode Features
+
+* **Search Modes**: `exact` (100% recall), `approximate` (faster), `adaptive` (auto-tuned)
+* **Graph Traversal**: BFS, DFS, shortest path, PageRank
+* **Document Queries**: JSON path filtering, full-text search, array operations
+* **Multi-Language Bindings**: Python, Java (JNI), Node.js (NAPI-RS), C FFI
 
 ---
 
