@@ -8,8 +8,6 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::storage::tenant::context::ResourceLimits;
-
 /// Clean tenant manager without over-engineering
 pub struct TenantManager {
     /// Active tenants

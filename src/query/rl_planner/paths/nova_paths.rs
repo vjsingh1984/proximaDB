@@ -5,7 +5,7 @@
 
 use super::{OptimizationPath, PathExpectation};
 use crate::query::rl_planner::action::{
-    ExecutionAction, IndexStrategy, QuantizationStage, SearchModeAction,
+    ExecutionAction, QuantizationStage, SearchModeAction,
 };
 
 /// Get all NOVA optimization paths

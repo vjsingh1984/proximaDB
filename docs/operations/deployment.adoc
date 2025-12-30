@@ -4,259 +4,47 @@
 :icons: font
 
 [.lead]
-Deploy ProximaDB in development, staging, and production environments.
+Developer‑first deployment guide for local, container, and single‑node setups.
 
-== Quick Start
-
-=== Docker (Recommended)
+== Local (From Source)
 
 [source,bash]
 ----
-docker run -d \
+cd proximaDB
+cargo run --release --bin proximadb-server
+----
+
+== Docker
+
+[source,bash]
+----
+docker run -it --rm \
   -p 5678:5678 \
   -p 5679:5679 \
-  -v /data/proximadb:/var/lib/proximadb \
   proximadb/proximadb:latest
 ----
 
-=== Binary
+== Config‑Driven Run
 
 [source,bash]
 ----
-# Download release
-curl -L https://github.com/vjsingh1984/proximaDB/releases/latest/download/proximadb-linux-amd64 -o proximadb
-chmod +x proximadb
-
-# Run
-./proximadb --config config.toml
+./proximadb-server --config config/config.toml
 ----
 
-=== From Source
-
-[source,bash]
-----
-git clone https://github.com/vjsingh1984/proximaDB
-cd proximaDB
-cargo build --release
-./target/release/proximadb-server
-----
-
----
-
-== Production Deployment
-
-=== System Requirements
-
-|===
-| Component | Minimum | Recommended
-
-| CPU | 4 cores | 16+ cores
-| RAM | 8 GB | 32+ GB
-| Disk | 100 GB SSD | 1+ TB NVMe
-| Network | 1 Gbps | 10 Gbps
-|===
-
-=== Directory Structure
+== Data Layout
 
 [source,text]
 ----
 /var/lib/proximadb/
-├── config/
-│   └── config.toml
-├── data/
-│   └── collections/
-├── metadata/
-├── manifest/
-└── logs/
+  data/        # engine data
+  manifest/    # WAL + manifests
+  documents/   # document WAL (default)
+  observability/ # observability WAL (default)
+  logs/
 ----
 
-=== Systemd Service
+== Notes For Builders
 
-[source,ini]
-----
-# /etc/systemd/system/proximadb.service
-[Unit]
-Description=ProximaDB Vector Database
-After=network.target
+* `server.data_dir` controls where WAL and model data are stored.
+* Observability namespaces are created via the REST API.
 
-[Service]
-Type=simple
-User=proximadb
-ExecStart=/usr/local/bin/proximadb-server --config /etc/proximadb/config.toml
-Restart=always
-RestartSec=5
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-----
-
-[source,bash]
-----
-sudo systemctl daemon-reload
-sudo systemctl enable proximadb
-sudo systemctl start proximadb
-----
-
----
-
-== Configuration
-
-=== Production Config
-
-[source,toml]
-----
-[server]
-bind_address = "0.0.0.0"
-port = 5678
-data_dir = "/var/lib/proximadb/data"
-log_level = "info"
-
-[api]
-grpc_port = 5679
-max_request_size = 67108864
-rate_limit = 5000
-
-[storage]
-default_engine = "sst"
-metadata_url = "file:///var/lib/proximadb/metadata"
-
-[[storage.storage_locations]]
-url = "file:///var/lib/proximadb/data"
-weight = 1
-
-[storage.wal_config]
-enable_wal = true
-global_manifest_url = "file:///var/lib/proximadb/manifest"
-memory_flush_size_bytes = 67108864  # 64MB
-sync_mode = "periodic"
-----
-
----
-
-== Scaling
-
-=== Vertical Scaling
-
-More RAM = larger working set in memory:
-
-|===
-| RAM | Vector Capacity (768-dim)
-
-| 8 GB | ~2M vectors
-| 32 GB | ~8M vectors
-| 128 GB | ~32M vectors
-|===
-
-=== Horizontal Scaling (Future)
-
-ProximaDB supports sharding via PULSAR graph engine. Vector sharding is on the roadmap.
-
----
-
-== Backup & Recovery
-
-=== Snapshot Backup
-
-[source,bash]
-----
-# Stop writes (optional but recommended)
-curl -X POST http://localhost:5678/api/v1/admin/pause
-
-# Snapshot data directory
-tar -czf proximadb-backup-$(date +%Y%m%d).tar.gz /var/lib/proximadb
-
-# Resume writes
-curl -X POST http://localhost:5678/api/v1/admin/resume
-----
-
-=== WAL Recovery
-
-ProximaDB automatically recovers from WAL on startup:
-
-[source,text]
-----
-1. Load manifest → discover WAL segments
-2. Replay operations in LSN order
-3. Reconstruct in-memory state
-4. Ready for queries
-----
-
----
-
-== Health Checks
-
-=== Liveness
-
-[source,bash]
-----
-curl http://localhost:5678/health
-# Returns 200 if server is running
-----
-
-=== Readiness
-
-[source,bash]
-----
-curl http://localhost:5678/health/ready
-# Returns 200 if ready to accept traffic
-----
-
-=== Kubernetes Probes
-
-[source,yaml]
-----
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 5678
-  initialDelaySeconds: 10
-  periodSeconds: 30
-
-readinessProbe:
-  httpGet:
-    path: /health/ready
-    port: 5678
-  initialDelaySeconds: 5
-  periodSeconds: 10
-----
-
----
-
-== Troubleshooting
-
-=== Server Won't Start
-
-[source,bash]
-----
-# Check port availability
-lsof -i :5678
-
-# Check permissions
-ls -la /var/lib/proximadb
-
-# Run with debug logging
-RUST_LOG=debug ./proximadb-server
-----
-
-=== Slow Queries
-
-[source,bash]
-----
-# Enable query logging
-RUST_LOG=proximadb::services::operations=debug ./proximadb-server
-
-# Check collection stats
-curl http://localhost:5678/api/v1/collections/mydata/stats
-----
-
-=== Recovery Failures
-
-[source,bash]
-----
-# Check WAL manifest
-cat /var/lib/proximadb/manifest/manifest_*.jsonl
-
-# Force clean start (CAUTION: data loss)
-rm -rf /var/lib/proximadb/manifest/*
-----

@@ -4,98 +4,90 @@
 :icons: font
 
 [.lead]
-Unified vector + graph database for AI applications.
+Developer-first documentation for building multi-model applications on ProximaDB.
 
-== Start Here
-
-|===
-| Goal | Document | Time
-
-| **Get running** | link:../README.adoc[README] | 5 min
-| **Understand architecture** | link:concepts/architecture.adoc[Architecture] | 15 min
-| **Choose an engine** | link:concepts/storage-engines.adoc[Storage Engines] | 10 min
-|===
-
----
-
-== Documentation Map
-
-[source,mermaid]
-----
-%%{init: {"theme": "neutral"}}%%
-flowchart TB
-    subgraph LEARN["LEARN (Concepts)"]
-        A1[Architecture]
-        A2[Storage Engines]
-        A3[Graph Engines]
-    end
-
-    subgraph USE["USE (API)"]
-        B1[REST API]
-        B2[Graph API]
-        B3[Configuration]
-    end
-
-    subgraph OPERATE["OPERATE (Ops)"]
-        C1[Deployment]
-        C2[Monitoring]
-        C3[Security]
-    end
-
-    style LEARN fill:#e6f3ff,stroke:#4a90e2
-    style USE fill:#fff3e6,stroke:#f4a261
-    style OPERATE fill:#e6ffe6,stroke:#93c47d
-----
-
----
-
-== By Role
-
-=== I'm New Here
+== Start Building (Recommended)
 
 |===
-| Document | Description
+| Goal | Doc | Time
 
-| link:../README.adoc[README] | Why ProximaDB, quick start
-| link:concepts/architecture.adoc[Architecture] | System design overview
-|===
-
-=== I'm Building an App
-
-|===
-| Document | Description
-
-| link:api/rest.adoc[REST API] | Vector operations
-| link:api/graph.adoc[Graph API] | Node, edge, traversal
-| link:api/configuration.adoc[Configuration] | Settings reference
-|===
-
-=== I'm Operating Production
-
-|===
-| Document | Description
-
-| link:operations/deployment.adoc[Deployment] | Install, configure, scale
-| link:operations/monitoring.adoc[Monitoring] | Metrics, logging, alerts
-| link:operations/security.adoc[Security] | Auth, TLS, access control
-|===
-
-=== I'm Choosing Architecture
-
-|===
-| Document | Description
-
-| link:concepts/storage-engines.adoc[Storage Engines] | SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR comparison
-| link:concepts/graph-engines.adoc[Graph Engines] | ORION, PULSAR, QUASAR comparison
+| **Run locally** | link:../README.adoc[README] | 5 min
+| **REST API usage** | link:api/rest.adoc[REST API] | 15 min
+| **Python SDK** | link:../clients/python/SDK_DOCUMENTATION.adoc[Python SDK] | 10 min
+| **Architecture overview** | link:concepts/architecture.adoc[Architecture] | 15 min
 |===
 
 ---
 
-== Quick Links
+== Vision & Strategy
 
-* **GitHub**: https://github.com/vjsingh1984/proximaDB
-* **Python SDK**: link:../clients/python/README.adoc[Client Documentation]
+ProximaDB is a format-first, multi-model database. Development follows three phases:
+
+|===
+| Phase | Focus | Status
+
+| **Phase 1** | Storage formats, catalog, core APIs | ✅ Complete
+| **Phase 2** | Cross-model queries, graph, observability | ✅ Complete
+| **Phase 3** | Ecosystem integration, streaming, SDKs | 🔄 In Progress
+|===
+
+For detailed strategy, see link:concepts/vision.adoc[Vision Document].
 
 ---
 
-_Version 0.1.5_
+== Core Concepts (Developer Focus)
+
+|===
+| Topic | Doc | Why it matters
+
+| Multi-model design | link:concepts/architecture.adoc[Architecture] | How models share the data plane
+| Vision and use cases | link:concepts/vision.adoc[Vision] | Strategy, guiding principles, and roadmap framing
+| Storage engine selection | link:concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
+| Graph engines | link:concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
+|===
+
+---
+
+== API References
+
+|===
+| API | Doc | Notes
+
+| REST | link:api/rest.adoc[REST API] | Primary builder interface
+| Graph | link:api/graph.adoc[Graph API] | Nodes, edges, traversal
+| Configuration | link:api/configuration.adoc[Configuration] | Local and production settings
+|===
+
+---
+
+== Operate (Optional For Builders)
+
+|===
+| Topic | Doc | Focus
+
+| Deployment | link:operations/deployment.adoc[Deployment] | Local and production setup
+| Monitoring | link:operations/monitoring.adoc[Monitoring] | Metrics + health checks
+| Security | link:operations/security.adoc[Security] | Auth, TLS, RBAC
+|===
+
+---
+
+== Deep Dives (For Engine Builders)
+
+|===
+| Topic | Doc
+
+| Storage internals | link:internals/columnar-storage-architecture.adoc[Columnar Storage Architecture]
+| SST engine | link:internals/sst-engine-deep-dive.adoc[SST Deep Dive]
+| Graph internals | link:internals/graph-engines-deep-dive.adoc[Graph Engines Deep Dive]
+|===
+
+---
+
+== Status Notes
+
+* ProximaDB is evolving quickly; experimental features are documented in each API section.
+* Internal roadmap and archived docs live under `docs/_internal/` and are not part of the public API.
+* MVP (Phase 1 + Phase 2) is 96% complete; Phase 3 ecosystem features are in progress.
+
+_Version 0.1.5_ | _December 2025_

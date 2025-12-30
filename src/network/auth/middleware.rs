@@ -19,6 +19,7 @@
 use crate::network::auth::{
     AuthError, AuthResult, AuthService, Permission, PermissionContext, ResourceType,
 };
+use crate::network::tls::ClientCertificateInfo;
 use crate::security::{AuthenticationData, SecurityCoordinator};
 use axum::{
     extract::State,
@@ -26,9 +27,9 @@ use axum::{
     middleware::Next,
     response::{Json, Response},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 /// Authentication middleware state
 pub struct AuthMiddlewareState {
@@ -422,6 +423,299 @@ pub async fn check_permission(
         .await
 }
 
+// ============================================================================
+// mTLS (Mutual TLS) Authentication Middleware
+// ============================================================================
+
+/// mTLS configuration for certificate-based authentication
+#[derive(Debug, Clone, Deserialize)]
+pub struct MtlsConfig {
+    /// Require client certificates
+    pub enabled: bool,
+    /// Allowed CN patterns (supports wildcards like "*.example.com")
+    pub allowed_cn_patterns: Vec<String>,
+    /// Map certificate CNs to user IDs
+    pub cn_to_user_mapping: std::collections::HashMap<String, String>,
+    /// Default roles for mTLS authenticated users
+    pub default_roles: Vec<String>,
+}
+
+impl Default for MtlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            allowed_cn_patterns: vec![],
+            cn_to_user_mapping: std::collections::HashMap::new(),
+            default_roles: vec!["reader".to_string()],
+        }
+    }
+}
+
+/// mTLS authentication state
+pub struct MtlsAuthState {
+    pub config: MtlsConfig,
+    pub auth_service: Arc<AuthService>,
+}
+
+/// Authenticated user from mTLS
+#[derive(Debug, Clone)]
+pub struct MtlsAuthenticatedUser {
+    /// User ID derived from certificate CN
+    pub user_id: String,
+    /// Certificate common name
+    pub common_name: String,
+    /// Organization from certificate
+    pub organization: Option<String>,
+    /// Certificate fingerprint (SHA-256)
+    pub certificate_fingerprint: String,
+    /// Roles assigned to this user
+    pub roles: Vec<String>,
+    /// Authentication method
+    pub auth_method: String,
+}
+
+/// Middleware for mTLS (client certificate) authentication
+///
+/// This middleware extracts client certificate information from TLS connections
+/// and authenticates users based on their certificate's Common Name (CN).
+///
+/// ## Usage
+///
+/// ```rust,no_run
+/// use axum::Router;
+/// use axum::middleware;
+///
+/// let mtls_config = MtlsConfig {
+///     enabled: true,
+///     allowed_cn_patterns: vec!["*.mycompany.com".to_string()],
+///     ..Default::default()
+/// };
+///
+/// let app = Router::new()
+///     .route("/api/v1/secure", get(handler))
+///     .layer(middleware::from_fn_with_state(mtls_state, mtls_auth_middleware));
+/// ```
+pub async fn mtls_auth_middleware<B>(
+    State(mtls_state): State<Arc<MtlsAuthState>>,
+    mut request: Request<B>,
+    next: Next<B>,
+) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
+    // Skip if mTLS is not enabled
+    if !mtls_state.config.enabled {
+        return Ok(next.run(request).await);
+    }
+
+    let path = request.uri().path();
+
+    // Skip auth for health endpoints
+    if should_skip_auth(path) {
+        return Ok(next.run(request).await);
+    }
+
+    // Extract client certificate from request extensions
+    // The certificate is set by the TLS layer when using mTLS
+    let client_cert_info = request
+        .extensions()
+        .get::<ClientCertificateInfo>()
+        .cloned();
+
+    let cert_info = client_cert_info.ok_or_else(|| {
+        warn!("mTLS authentication failed: no client certificate provided");
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AuthErrorResponse {
+                error: "client_certificate_required".to_string(),
+                message: "Client certificate is required for mTLS authentication".to_string(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    // Check if certificate is valid
+    if !cert_info.is_valid {
+        warn!("mTLS authentication failed: certificate expired or not yet valid");
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(AuthErrorResponse {
+                error: "certificate_invalid".to_string(),
+                message: "Client certificate is expired or not yet valid".to_string(),
+                code: 401,
+            }),
+        ));
+    }
+
+    // Extract CN from certificate
+    let common_name = cert_info.common_name.clone().ok_or_else(|| {
+        warn!("mTLS authentication failed: certificate has no CN");
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AuthErrorResponse {
+                error: "certificate_missing_cn".to_string(),
+                message: "Client certificate must have a Common Name (CN)".to_string(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    // Validate CN against allowed patterns
+    if !mtls_state.config.allowed_cn_patterns.is_empty() {
+        let cn_allowed = mtls_state
+            .config
+            .allowed_cn_patterns
+            .iter()
+            .any(|pattern| matches_cn_pattern(&common_name, pattern));
+
+        if !cn_allowed {
+            warn!(
+                "mTLS authentication failed: CN '{}' not in allowed patterns",
+                common_name
+            );
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(AuthErrorResponse {
+                    error: "certificate_cn_not_allowed".to_string(),
+                    message: format!("Certificate CN '{}' is not in the allowed list", common_name),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    // Map CN to user ID
+    let user_id = mtls_state
+        .config
+        .cn_to_user_mapping
+        .get(&common_name)
+        .cloned()
+        .unwrap_or_else(|| {
+            // Default: use CN as user ID
+            common_name.clone()
+        });
+
+    // Create authenticated user
+    let authenticated_user = MtlsAuthenticatedUser {
+        user_id: user_id.clone(),
+        common_name: common_name.clone(),
+        organization: cert_info.organization.clone(),
+        certificate_fingerprint: cert_info.fingerprint.clone(),
+        roles: mtls_state.config.default_roles.clone(),
+        auth_method: "mtls".to_string(),
+    };
+
+    info!(
+        "mTLS authentication successful: user_id={}, cn={}, fingerprint={}...",
+        user_id,
+        common_name,
+        &cert_info.fingerprint[..16.min(cert_info.fingerprint.len())]
+    );
+
+    // Add authenticated user to request extensions
+    request.extensions_mut().insert(authenticated_user);
+
+    Ok(next.run(request).await)
+}
+
+/// Check if a Common Name matches a pattern (supports wildcards)
+///
+/// Patterns:
+/// - Exact match: "client.example.com" matches "client.example.com"
+/// - Wildcard: "*.example.com" matches "client.example.com"
+/// - Star: "*" matches any CN
+pub fn matches_cn_pattern(cn: &str, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        // Wildcard pattern - CN must end with the suffix and have at least one character before
+        cn.ends_with(suffix) && cn.len() > suffix.len() + 1
+    } else {
+        // Exact match
+        cn == pattern
+    }
+}
+
+/// Combined authentication middleware that tries mTLS first, then falls back to token auth
+///
+/// This middleware provides flexibility for services that want to accept both
+/// mTLS and token-based authentication.
+pub async fn hybrid_auth_middleware<B>(
+    State((mtls_state, security_coordinator)): State<(
+        Option<Arc<MtlsAuthState>>,
+        Arc<SecurityCoordinator>,
+    )>,
+    mut request: Request<B>,
+    next: Next<B>,
+) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
+    let path = request.uri().path();
+
+    // Skip auth for health endpoints
+    if should_skip_auth(path) {
+        return Ok(next.run(request).await);
+    }
+
+    // First, try mTLS authentication if configured
+    if let Some(ref mtls_state) = mtls_state {
+        if mtls_state.config.enabled {
+            if let Some(cert_info) = request.extensions().get::<ClientCertificateInfo>().cloned() {
+                if cert_info.is_valid {
+                    if let Some(cn) = &cert_info.common_name {
+                        // CN is valid, check against allowed patterns
+                        let cn_allowed = mtls_state.config.allowed_cn_patterns.is_empty()
+                            || mtls_state
+                                .config
+                                .allowed_cn_patterns
+                                .iter()
+                                .any(|p| matches_cn_pattern(cn, p));
+
+                        if cn_allowed {
+                            let user_id = mtls_state
+                                .config
+                                .cn_to_user_mapping
+                                .get(cn)
+                                .cloned()
+                                .unwrap_or_else(|| cn.clone());
+
+                            let authenticated_user = MtlsAuthenticatedUser {
+                                user_id,
+                                common_name: cn.clone(),
+                                organization: cert_info.organization.clone(),
+                                certificate_fingerprint: cert_info.fingerprint.clone(),
+                                roles: mtls_state.config.default_roles.clone(),
+                                auth_method: "mtls".to_string(),
+                            };
+
+                            request.extensions_mut().insert(authenticated_user);
+                            return Ok(next.run(request).await);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to token-based authentication
+    let auth_header = extract_auth_header(&request)?;
+    let auth_data = map_header_to_auth_data(&auth_header)?;
+
+    let user_context = security_coordinator
+        .authenticate_request(auth_data)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(AuthErrorResponse {
+                    error: "authentication_failed".to_string(),
+                    message: format!("{}", e),
+                    code: 401,
+                }),
+            )
+        })?;
+
+    request.extensions_mut().insert(user_context);
+    Ok(next.run(request).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,6 +859,8 @@ mod tests {
                 encryption_at_rest: false,
                 encryption_in_transit: false,
             },
+            encryption: crate::security::EncryptionConfig::default(),
+            key_store: crate::security::KeyStoreConfig::default(),
         }
     }
 
@@ -610,6 +906,8 @@ mod tests {
                 encryption_at_rest: false,
                 encryption_in_transit: false,
             },
+            encryption: crate::security::EncryptionConfig::default(),
+            key_store: crate::security::KeyStoreConfig::default(),
         }
     }
 

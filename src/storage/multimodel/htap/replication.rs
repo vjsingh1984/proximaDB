@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use tokio::sync::{mpsc, RwLock, Notify};
-use tokio::time::interval;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 
 /// Configuration for HTAP replication
 #[derive(Debug, Clone)]

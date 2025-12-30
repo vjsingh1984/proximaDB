@@ -1,9 +1,11 @@
 //! Unified Security Module for ProximaDB
 //!
 //! This module consolidates all security-related functionality including
-//! authentication, authorization, RBAC, audit, and security coordination.
+//! authentication, authorization, RBAC, RLS, audit, and security coordination.
 
 pub mod advanced_features;
+pub mod encryption;
+pub mod rls;
 pub mod security_coordinator;
 pub mod unified_auth;
 pub mod unified_rbac;
@@ -23,6 +25,16 @@ pub use security_coordinator::{SecurityConfig, SecurityCoordinator, SecurityMode
 pub use advanced_features::{
     IPAccessConfig, IPAccessControlService, IPAccessResult, MFAChallenge, MFAConfig, MFAProvider,
     MFAService, MFAVerificationResult, RateLimitConfig, RateLimitResult, RateLimitingService,
+};
+
+pub use rls::{
+    CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy,
+    RLSPolicyBuilder, SecurityPredicate, SecurityPredicateBuilder,
+};
+
+pub use encryption::{
+    EncryptedField, EncryptionConfig, EncryptionType, FieldEncryption, FieldEncryptionError,
+    KeyInfo, KeyStore, KeyStoreConfig, KeyStoreError,
 };
 
 /// Re-export common types for convenience

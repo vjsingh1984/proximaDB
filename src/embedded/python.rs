@@ -1554,6 +1554,465 @@ impl PyProximaDB {
             .delete_graph(graph_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete graph: {}", e)))
     }
+
+    // ========================================================================
+    // Document Storage Operations
+    // ========================================================================
+
+    /// Create a new document collection
+    ///
+    /// Args:
+    ///     name: Collection name
+    ///     indexed_paths: Optional list of JSON paths to index (e.g., ["$.email", "$.profile.name"])
+    ///
+    /// Example:
+    ///     ```python
+    ///     db.create_document_collection("users", indexed_paths=["$.email", "$.profile.name"])
+    ///     ```
+    #[pyo3(signature = (name, indexed_paths=None))]
+    fn create_document_collection(
+        &self,
+        name: &str,
+        indexed_paths: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        self.inner
+            .create_document_collection(name, indexed_paths)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create document collection: {}", e)))
+    }
+
+    /// Insert a document into a collection
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     document: Dictionary representing the JSON document
+    ///     doc_id: Optional document ID (auto-generated if not provided)
+    ///
+    /// Returns:
+    ///     Tuple of (doc_id, version)
+    ///
+    /// Example:
+    ///     ```python
+    ///     doc_id, version = db.insert_document("users", {
+    ///         "name": "John",
+    ///         "email": "john@example.com",
+    ///         "profile": {"age": 30, "city": "NYC"}
+    ///     })
+    ///     ```
+    #[pyo3(signature = (collection, document, doc_id=None))]
+    fn insert_document(
+        &self,
+        collection: &str,
+        document: &PyDict,
+        doc_id: Option<&str>,
+    ) -> PyResult<(String, u64)> {
+        // Convert Python dict to serde_json::Value
+        let json_doc = python_to_json(document.as_ref())?;
+
+        self.inner
+            .insert_document(collection, doc_id, json_doc)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert document: {}", e)))
+    }
+
+    /// Get a document by ID
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     doc_id: Document ID
+    ///
+    /// Returns:
+    ///     Document as dictionary, or None if not found
+    ///
+    /// Example:
+    ///     ```python
+    ///     doc = db.get_document("users", "user_123")
+    ///     if doc:
+    ///         print(f"Name: {doc['name']}")
+    ///     ```
+    fn get_document(&self, py: Python<'_>, collection: &str, doc_id: &str) -> PyResult<Option<PyObject>> {
+        match self.inner.get_document(collection, doc_id) {
+            Ok(Some(doc)) => json_to_python(py, &doc).map(Some),
+            Ok(None) => Ok(None),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Failed to get document: {}", e))),
+        }
+    }
+
+    /// Query documents with optional filter
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     filter: Optional filter expression (e.g., "$.profile.city = 'NYC'")
+    ///     limit: Maximum number of documents to return (default: 100)
+    ///
+    /// Returns:
+    ///     List of (doc_id, document) tuples
+    ///
+    /// Example:
+    ///     ```python
+    ///     results = db.query_documents("users", filter="$.profile.age > 25", limit=10)
+    ///     for doc_id, doc in results:
+    ///         print(f"{doc_id}: {doc['name']}")
+    ///     ```
+    #[pyo3(signature = (collection, filter=None, limit=100))]
+    fn query_documents(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        filter: Option<&str>,
+        limit: u32,
+    ) -> PyResult<Vec<(String, PyObject)>> {
+        self.inner
+            .query_documents(collection, filter, limit)
+            .map(|results| {
+                results
+                    .into_iter()
+                    .filter_map(|(id, doc)| {
+                        json_to_python(py, &doc).ok().map(|py_doc| (id, py_doc))
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query documents: {}", e)))
+    }
+
+    /// Delete a document by ID
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     doc_id: Document ID
+    ///
+    /// Returns:
+    ///     True if deleted, False if not found
+    fn delete_document(&self, collection: &str, doc_id: &str) -> PyResult<bool> {
+        self.inner
+            .delete_document(collection, doc_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete document: {}", e)))
+    }
+
+    /// List all document collections
+    ///
+    /// Returns:
+    ///     List of collection names
+    fn list_document_collections(&self) -> PyResult<Vec<String>> {
+        self.inner
+            .list_document_collections()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list document collections: {}", e)))
+    }
+
+    // ========================================================================
+    // Observability Operations (Logs, Metrics, Traces)
+    // ========================================================================
+
+    /// Create an observability namespace
+    ///
+    /// Args:
+    ///     name: Namespace name
+    ///     retention_days: Optional retention period in days (default: 30)
+    ///
+    /// Example:
+    ///     ```python
+    ///     db.create_observability_namespace("production", retention_days=90)
+    ///     ```
+    #[pyo3(signature = (name, retention_days=None))]
+    fn create_observability_namespace(
+        &self,
+        name: &str,
+        retention_days: Option<u32>,
+    ) -> PyResult<()> {
+        self.inner
+            .create_observability_namespace(name, retention_days)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create observability namespace: {}", e)))
+    }
+
+    /// Ingest log entries
+    ///
+    /// Args:
+    ///     namespace: Observability namespace
+    ///     logs: List of log entry dicts with keys: timestamp_ns, severity, message, source, service, fields
+    ///
+    /// Returns:
+    ///     Number of logs successfully ingested
+    ///
+    /// Example:
+    ///     ```python
+    ///     logs = [
+    ///         {"timestamp_ns": 1703000000000000000, "severity": "INFO", "message": "Server started", "source": "main", "service": "api"},
+    ///         {"timestamp_ns": 1703000001000000000, "severity": "ERROR", "message": "Connection failed", "source": "db", "service": "api"}
+    ///     ]
+    ///     count = db.ingest_logs("production", logs)
+    ///     ```
+    fn ingest_logs(&self, namespace: &str, logs: &PyList) -> PyResult<u64> {
+        use super::EmbeddedLogEntry;
+
+        let mut rust_logs = Vec::with_capacity(logs.len());
+        for item in logs.iter() {
+            let dict: &PyDict = item.downcast()?;
+
+            let timestamp_ns: i64 = dict.get_item("timestamp_ns")?
+                .ok_or_else(|| PyValueError::new_err("Log entry missing 'timestamp_ns'"))?
+                .extract()?;
+            let severity: String = dict.get_item("severity")?
+                .ok_or_else(|| PyValueError::new_err("Log entry missing 'severity'"))?
+                .extract()?;
+            let message: String = dict.get_item("message")?
+                .ok_or_else(|| PyValueError::new_err("Log entry missing 'message'"))?
+                .extract()?;
+            let source: String = dict.get_item("source")?
+                .map(|v| v.extract().unwrap_or_default())
+                .unwrap_or_default();
+            let service: String = dict.get_item("service")?
+                .map(|v| v.extract().unwrap_or_default())
+                .unwrap_or_default();
+
+            let mut fields = HashMap::new();
+            if let Some(fields_dict) = dict.get_item("fields")? {
+                if let Ok(d) = fields_dict.downcast::<PyDict>() {
+                    for (k, v) in d.iter() {
+                        let key: String = k.extract()?;
+                        let value: String = v.extract().unwrap_or_else(|_| v.str().map(|s| s.to_string()).unwrap_or_default());
+                        fields.insert(key, value);
+                    }
+                }
+            }
+
+            rust_logs.push(EmbeddedLogEntry {
+                timestamp_ns,
+                severity,
+                message,
+                source,
+                service,
+                fields,
+            });
+        }
+
+        self.inner
+            .ingest_logs(namespace, rust_logs)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest logs: {}", e)))
+    }
+
+    /// Query logs
+    ///
+    /// Args:
+    ///     namespace: Observability namespace
+    ///     start_time_ns: Start timestamp in nanoseconds
+    ///     end_time_ns: End timestamp in nanoseconds
+    ///     query: Optional search query string
+    ///     limit: Maximum number of logs to return (default: 100)
+    ///
+    /// Returns:
+    ///     List of log entry dicts
+    ///
+    /// Example:
+    ///     ```python
+    ///     import time
+    ///     now = int(time.time() * 1e9)
+    ///     hour_ago = now - 3600_000_000_000
+    ///     logs = db.query_logs("production", hour_ago, now, query="error", limit=50)
+    ///     ```
+    #[pyo3(signature = (namespace, start_time_ns, end_time_ns, query=None, limit=100))]
+    fn query_logs(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        query: Option<&str>,
+        limit: u32,
+    ) -> PyResult<Vec<PyObject>> {
+        self.inner
+            .query_logs(namespace, start_time_ns, end_time_ns, query, limit)
+            .map(|logs| {
+                logs.into_iter()
+                    .map(|log| {
+                        let dict = PyDict::new(py);
+                        dict.set_item("timestamp_ns", log.timestamp_ns).ok();
+                        dict.set_item("severity", &log.severity).ok();
+                        dict.set_item("message", &log.message).ok();
+                        dict.set_item("source", &log.source).ok();
+                        dict.set_item("service", &log.service).ok();
+
+                        let fields_dict = PyDict::new(py);
+                        for (k, v) in &log.fields {
+                            fields_dict.set_item(k, v).ok();
+                        }
+                        dict.set_item("fields", fields_dict).ok();
+
+                        dict.into()
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
+    }
+
+    /// Ingest metric samples
+    ///
+    /// Args:
+    ///     namespace: Observability namespace
+    ///     samples: List of metric sample dicts with keys: metric_name, timestamp_ns, value, labels
+    ///
+    /// Returns:
+    ///     Number of samples successfully ingested
+    ///
+    /// Example:
+    ///     ```python
+    ///     samples = [
+    ///         {"metric_name": "http_latency", "timestamp_ns": 1703000000000000000, "value": 0.123, "labels": {"endpoint": "/api/search"}},
+    ///         {"metric_name": "cpu_usage", "timestamp_ns": 1703000001000000000, "value": 65.5, "labels": {"host": "server1"}}
+    ///     ]
+    ///     count = db.ingest_metrics("production", samples)
+    ///     ```
+    fn ingest_metrics(&self, namespace: &str, samples: &PyList) -> PyResult<u64> {
+        use super::EmbeddedMetricSample;
+
+        let mut rust_samples = Vec::with_capacity(samples.len());
+        for item in samples.iter() {
+            let dict: &PyDict = item.downcast()?;
+
+            let metric_name: String = dict.get_item("metric_name")?
+                .ok_or_else(|| PyValueError::new_err("Metric sample missing 'metric_name'"))?
+                .extract()?;
+            let timestamp_ns: i64 = dict.get_item("timestamp_ns")?
+                .ok_or_else(|| PyValueError::new_err("Metric sample missing 'timestamp_ns'"))?
+                .extract()?;
+            let value: f64 = dict.get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Metric sample missing 'value'"))?
+                .extract()?;
+
+            let mut labels = HashMap::new();
+            if let Some(labels_dict) = dict.get_item("labels")? {
+                if let Ok(d) = labels_dict.downcast::<PyDict>() {
+                    for (k, v) in d.iter() {
+                        let key: String = k.extract()?;
+                        let val: String = v.extract().unwrap_or_else(|_| v.str().map(|s| s.to_string()).unwrap_or_default());
+                        labels.insert(key, val);
+                    }
+                }
+            }
+
+            rust_samples.push(EmbeddedMetricSample {
+                metric_name,
+                timestamp_ns,
+                value,
+                labels,
+            });
+        }
+
+        self.inner
+            .ingest_metrics(namespace, rust_samples)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest metrics: {}", e)))
+    }
+
+    // ============================================
+    // Unified Multi-Model Query API
+    // ============================================
+
+    /// Execute a unified multi-model query
+    ///
+    /// This executes a SQL-like query that can span multiple data models
+    /// (vector, document, graph, observability).
+    ///
+    /// Args:
+    ///     query: SQL-like query string (e.g., "SELECT * FROM products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)")
+    ///     query_vector: Optional query vector for VECTOR_SIMILAR clauses
+    ///     fusion_strategy: Strategy for combining results ("intersection", "union", "rrf", "ranked")
+    ///
+    /// Returns:
+    ///     List of unified record dicts with keys: id, source_model, data, score, metadata
+    ///
+    /// Example:
+    ///     ```python
+    ///     # Hybrid vector + document query
+    ///     results = db.execute_unified_query(
+    ///         "SELECT * FROM products WHERE $.category = 'electronics' AND VECTOR_SIMILAR(embedding, ?, 0.8)",
+    ///         query_vector=[0.1] * 384,
+    ///         fusion_strategy="intersection"
+    ///     )
+    ///     for r in results:
+    ///         print(f"{r['id']}: {r['score']}")
+    ///     ```
+    #[pyo3(signature = (query, query_vector=None, fusion_strategy=None))]
+    fn execute_unified_query(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        query_vector: Option<Vec<f32>>,
+        fusion_strategy: Option<&str>,
+    ) -> PyResult<Vec<PyObject>> {
+        self.inner
+            .execute_unified_query(query, query_vector, fusion_strategy)
+            .map(|records| {
+                records.into_iter()
+                    .map(|r| {
+                        let dict = PyDict::new(py);
+                        dict.set_item("id", &r.id).ok();
+                        dict.set_item("source_model", &r.source_model).ok();
+                        dict.set_item("score", r.score).ok();
+
+                        // Convert data from JSON string to Python
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&r.data) {
+                            if let Ok(data_py) = json_to_python(py, &parsed) {
+                                dict.set_item("data", data_py).ok();
+                            }
+                        } else {
+                            // Fallback: use raw string
+                            dict.set_item("data", &r.data).ok();
+                        }
+
+                        // Convert metadata
+                        let meta_dict = PyDict::new(py);
+                        for (k, v) in &r.metadata {
+                            meta_dict.set_item(k, v).ok();
+                        }
+                        dict.set_item("metadata", meta_dict).ok();
+
+                        dict.into()
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute unified query: {}", e)))
+    }
+
+    /// Explain a unified query's execution plan
+    ///
+    /// Returns the decomposition and execution plan for a multi-model query
+    /// without actually executing it.
+    ///
+    /// Args:
+    ///     query: SQL-like query string
+    ///
+    /// Returns:
+    ///     Dict with plan details: components, fusion_strategy, component_count
+    ///
+    /// Example:
+    ///     ```python
+    ///     plan = db.explain_unified_query(
+    ///         "SELECT * FROM products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)"
+    ///     )
+    ///     print(f"Components: {plan['component_count']}")
+    ///     for comp in plan['components']:
+    ///         print(f"  {comp['model']}: cost={comp['estimated_cost']}")
+    ///     ```
+    fn explain_unified_query(&self, py: Python<'_>, query: &str) -> PyResult<PyObject> {
+        self.inner
+            .explain_unified_query(query)
+            .map(|plan| {
+                let dict = PyDict::new(py);
+                dict.set_item("fusion_strategy", &plan.fusion_strategy).ok();
+                dict.set_item("component_count", plan.component_count).ok();
+
+                // Convert components
+                let components_list = PyList::empty(py);
+                for comp in plan.components {
+                    let comp_dict = PyDict::new(py);
+                    comp_dict.set_item("model", &comp.model).ok();
+                    comp_dict.set_item("parallelizable", comp.parallelizable).ok();
+                    comp_dict.set_item("estimated_cost", comp.estimated_cost).ok();
+                    components_list.append(comp_dict).ok();
+                }
+                dict.set_item("components", components_list).ok();
+
+                dict.into()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to explain query: {}", e)))
+    }
 }
 
 /// Convert Python value to serde_json::Value

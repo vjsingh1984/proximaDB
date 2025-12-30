@@ -14,7 +14,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::trait_components::extractor::{
     ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode, ExtractionRequest,
-    ExtractionResult, ExtractionStats, ExtractedVector, QuantizedVector, VectorExtractor,
+    ExtractionResult, ExtractionStats, ExtractedVector, VectorExtractor,
 };
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 

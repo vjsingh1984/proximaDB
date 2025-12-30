@@ -42,8 +42,10 @@
 //! ```
 
 pub mod consensus;
+pub mod distributed_ops;
 pub mod metadata_service;
 pub mod node_registry;
+pub mod replication;
 pub mod routing;
 pub mod shard;
 
@@ -52,10 +54,23 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
+pub use distributed_ops::{
+    ConsistencyLevel, DistributedCollectionOps, DistributedOpsConfig,
+    DistributedSearchRequest, DistributedSearchResult, DistributedWriteRequest,
+    DistributedWriteResult, QueryContext, RetryConfig, SearchResult, WriteRecord,
+};
 pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConfig};
+pub use replication::{
+    EngineReplication, ReplicationAck, ReplicationConfig, ReplicationEntry,
+    ReplicationHealth, ReplicationOperation, ReplicationRetryConfig,
+    ReplicationStatsSummary, ReplicaState,
+};
 pub use node_registry::{NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus};
-pub use routing::{RouteDecision, RoutingConfig, RoutingService};
-pub use shard::{Shard, ShardConfig, ShardId, ShardManager, ShardPlacement, ShardState};
+pub use routing::{RouteContext, RouteDecision, RoutingConfig, RoutingService};
+pub use shard::{
+    MetadataBounds, PartitionConfig, PartitionStrategy, Shard, ShardConfig, ShardId,
+    ShardManager, ShardPlacement, ShardState,
+};
 
 /// Cluster configuration
 #[derive(Debug, Clone)]

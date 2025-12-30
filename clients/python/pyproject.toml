@@ -49,6 +49,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# LLM integration via Victor framework
+llm = [
+    "victor-ai>=0.2.0",  # Victor AI framework for embeddings and LLM
+    "sentence-transformers>=2.2.0",  # Local embedding models
+]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.20.0",

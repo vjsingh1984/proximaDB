@@ -55,3 +55,15 @@ pub mod mvcc_resolution_tests;
 
 // Assignment service recovery tests
 // pub mod assignment_service_recovery_test; // File not found - commented for now
+
+// CentroidTree and pruning strategies tests (WS-1: Enhanced ProximaHeaderCache)
+pub mod centroid_tree_test;
+
+// DataFusion TableProvider integration tests (WS-4: DataFusion TableProvider)
+pub mod table_provider_test;
+
+// ProximaSchema migration and VectorRecord compatibility tests (WS-5)
+pub mod schema_test;
+
+// Engine-specific TableProvider adapters tests (WS-6: Engine TableProvider Adapters)
+pub mod engine_adapters_test;

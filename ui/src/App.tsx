@@ -1,12 +1,15 @@
 import React from 'react';
+import { ThemeProvider } from './contexts/ThemeContext';
 import Dashboard from './components/Dashboard';
-import './App.css'; // Keep existing App.css if it contains global styles
+import './App.css';
 
 function App() {
   return (
-    <div className="App">
-      <Dashboard />
-    </div>
+    <ThemeProvider>
+      <div className="App">
+        <Dashboard />
+      </div>
+    </ThemeProvider>
   );
 }
 

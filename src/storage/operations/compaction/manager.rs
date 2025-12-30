@@ -7,10 +7,10 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info};
 
 // Import from parent operations module
-use crate::storage::operations::{CompactionResult, OperationType};
+use crate::storage::operations::CompactionResult;
 use crate::storage::types::StorageEngineType;
 
 // Import from our strategies module (unused but kept for future integration)

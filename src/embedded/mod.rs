@@ -1972,7 +1972,7 @@ impl EmbeddedProximaDB {
         graph_id: &str,
         edges: Vec<GraphEdge>,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        let count = edges.len();
+        let _count = edges.len(); // Tracking original count for potential logging
 
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
@@ -2142,6 +2142,1028 @@ impl EmbeddedProximaDB {
         let _ = self.shared_services.graph_service.remove_graph(graph_id);
         Ok(())
     }
+
+    // ========================================================================
+    // Document Store Operations (MongoDB-like JSON documents)
+    // ========================================================================
+
+    /// Create a document collection for storing JSON documents
+    ///
+    /// # Arguments
+    /// * `name` - Collection name
+    /// * `indexes` - Optional list of JSON path expressions to index for faster queries
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// db.create_document_collection("products", Some(vec!["$.category", "$.price"]))?;
+    /// ```
+    pub fn create_document_collection(
+        &self,
+        name: &str,
+        indexes: Option<Vec<String>>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::{DocIndexType, DocumentCollectionConfig, IndexDefinition};
+        use crate::storage::document::DocumentService;
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            // Build index definitions from paths
+            let index_defs: Vec<IndexDefinition> = indexes
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path| IndexDefinition {
+                    name: Some(format!("idx_{}", path.replace("$.", "").replace('.', "_"))),
+                    path: path.clone(),
+                    index_type: DocIndexType::Btree as i32, // B-tree for range queries
+                    unique: false,
+                    ..Default::default()
+                })
+                .collect();
+
+            let config = DocumentCollectionConfig {
+                name: name.to_string(),
+                indexes: index_defs,
+                ..Default::default()
+            };
+
+            doc_service
+                .create_collection(name, config)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            tracing::info!("📄 EMBEDDED: Created document collection '{}'", name);
+            Ok(())
+        })
+    }
+
+    /// Insert a JSON document into a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `id` - Optional document ID (auto-generated UUID if not provided)
+    /// * `document` - JSON document as serde_json::Value
+    ///
+    /// # Returns
+    /// The document ID
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let doc = serde_json::json!({
+    ///     "name": "Widget",
+    ///     "price": 99.99,
+    ///     "tags": ["electronics", "sale"]
+    /// });
+    /// let id = db.insert_document("products", Some("prod_001"), doc)?;
+    /// ```
+    pub fn insert_document(
+        &self,
+        collection: &str,
+        id: Option<&str>,
+        document: serde_json::Value,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::SqlObject;
+        use crate::storage::document::DocumentService;
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            // Convert serde_json::Value to SqlObject
+            let sql_object = Self::json_to_sql_object(&document);
+
+            let record = doc_service
+                .insert_document(collection, id, sql_object)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(record.id)
+        })
+    }
+
+    /// Get a document by ID
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `id` - Document ID
+    ///
+    /// # Returns
+    /// The document as serde_json::Value if found
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// if let Some(doc) = db.get_document("products", "prod_001")? {
+    ///     println!("Product: {}", doc["name"]);
+    /// }
+    /// ```
+    pub fn get_document(
+        &self,
+        collection: &str,
+        id: &str,
+    ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::storage::document::DocumentService;
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            let record = doc_service
+                .get_document(collection, id, None)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(record.map(|r| Self::sql_object_to_json(&r.document)))
+        })
+    }
+
+    /// Query documents with a filter expression
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `filter` - JSON path filter expression (e.g., "$.price > 50 AND $.category = 'electronics'")
+    /// * `limit` - Maximum number of results
+    ///
+    /// # Returns
+    /// List of matching documents as serde_json::Value
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let results = db.query_documents("products", "$.price > 50", 100)?;
+    /// for doc in results {
+    ///     println!("Found: {}", doc["name"]);
+    /// }
+    /// ```
+    pub fn query_documents(
+        &self,
+        collection: &str,
+        filter: &str,
+        limit: u32,
+    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, DocumentFilter};
+        use crate::storage::document::{DocumentQueryParams, DocumentService};
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            // Parse filter expression into DocumentFilter
+            let conditions = Self::parse_document_filter(filter);
+            let doc_filter = if conditions.is_empty() {
+                None
+            } else {
+                Some(DocumentFilter {
+                    conditions,
+                    or_filters: vec![],
+                    and_filters: vec![],
+                })
+            };
+
+            let params = DocumentQueryParams {
+                filter: doc_filter,
+                limit,
+                ..Default::default()
+            };
+
+            let result = doc_service
+                .query_documents(collection, params)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(result
+                .documents
+                .into_iter()
+                .map(|r| Self::sql_object_to_json(&r.document))
+                .collect())
+        })
+    }
+
+    /// Update a document by ID with patch operations
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `id` - Document ID
+    /// * `updates` - Map of field paths to new values
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let mut updates = HashMap::new();
+    /// updates.insert("$.price".to_string(), serde_json::json!(79.99));
+    /// updates.insert("$.sale".to_string(), serde_json::json!(true));
+    /// db.update_document("products", "prod_001", updates)?;
+    /// ```
+    pub fn update_document(
+        &self,
+        collection: &str,
+        id: &str,
+        updates: std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::{DocumentUpdate, UpdateOperation};
+        use crate::storage::document::DocumentService;
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            // Convert updates to DocumentUpdate operations
+            let doc_updates: Vec<DocumentUpdate> = updates
+                .into_iter()
+                .map(|(path, value)| DocumentUpdate {
+                    operation: UpdateOperation::Set as i32,
+                    path,
+                    value: Some(Self::json_to_sql_value(&value)),
+                })
+                .collect();
+
+            doc_service
+                .update_document(collection, id, doc_updates, None)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(())
+        })
+    }
+
+    /// Delete a document by ID
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `id` - Document ID
+    ///
+    /// # Returns
+    /// true if document was deleted, false if not found
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let deleted = db.delete_document("products", "prod_001")?;
+    /// ```
+    pub fn delete_document(
+        &self,
+        collection: &str,
+        id: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::storage::document::DocumentService;
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            doc_service
+                .delete_document(collection, id)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })
+        })
+    }
+
+    /// Delete a document collection
+    ///
+    /// # Arguments
+    /// * `name` - Collection name
+    ///
+    /// # Returns
+    /// true if collection was deleted, false if not found
+    pub fn delete_document_collection(
+        &self,
+        name: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::storage::document::DocumentService;
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            doc_service
+                .delete_collection(name)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })
+        })
+    }
+
+    // ========================================================================
+    // Document Store Helper Methods
+    // ========================================================================
+
+    /// Convert serde_json::Value to SqlObject
+    fn json_to_sql_object(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlObject {
+        use crate::proto::proximadb_v1::SqlObject;
+
+        let mut fields = std::collections::HashMap::new();
+        if let serde_json::Value::Object(map) = value {
+            for (key, val) in map {
+                fields.insert(key.clone(), Self::json_to_sql_value(val));
+            }
+        }
+        SqlObject { fields }
+    }
+
+    /// Convert serde_json::Value to SqlValue
+    fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
+        use crate::proto::proximadb_v1::{sql_value::Value, SqlArray, SqlObject, SqlValue};
+
+        let inner = match value {
+            serde_json::Value::Null => Value::NullValue(0),
+            serde_json::Value::Bool(b) => Value::BoolValue(*b),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Value::Int64Value(i)
+                } else if let Some(f) = n.as_f64() {
+                    Value::NumberValue(f)
+                } else {
+                    Value::StringValue(n.to_string())
+                }
+            }
+            serde_json::Value::String(s) => Value::StringValue(s.clone()),
+            serde_json::Value::Array(arr) => {
+                let values: Vec<SqlValue> = arr.iter().map(Self::json_to_sql_value).collect();
+                Value::ArrayValue(SqlArray { values })
+            }
+            serde_json::Value::Object(_) => {
+                Value::ObjectValue(Self::json_to_sql_object(value))
+            }
+        };
+        SqlValue { value: Some(inner) }
+    }
+
+    /// Convert SqlObject to serde_json::Value
+    fn sql_object_to_json(obj: &crate::proto::proximadb_v1::SqlObject) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for (key, value) in &obj.fields {
+            map.insert(key.clone(), Self::sql_value_to_json(value));
+        }
+        serde_json::Value::Object(map)
+    }
+
+    /// Convert SqlValue to serde_json::Value
+    fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+        use crate::proto::proximadb_v1::sql_value::Value;
+
+        match &value.value {
+            None | Some(Value::NullValue(_)) => serde_json::Value::Null,
+            Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+            Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
+            Some(Value::NumberValue(f)) => {
+                serde_json::Number::from_f64(*f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            }
+            Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+            Some(Value::ArrayValue(arr)) => {
+                serde_json::Value::Array(arr.values.iter().map(Self::sql_value_to_json).collect())
+            }
+            Some(Value::ObjectValue(obj)) => Self::sql_object_to_json(obj),
+            Some(Value::BytesValue(b)) => {
+                // Encode binary as hex string
+                let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+                serde_json::Value::String(format!("0x{}", hex))
+            }
+        }
+    }
+
+    /// Parse a simple filter expression into DocumentFilter conditions
+    fn parse_document_filter(filter: &str) -> Vec<crate::proto::proximadb_v1::DocFilterCondition> {
+        use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator};
+
+        let mut conditions = Vec::new();
+        if filter.trim().is_empty() {
+            return conditions;
+        }
+
+        // Split by AND for now (simplified parser)
+        let parts: Vec<&str> = filter.split(" AND ").collect();
+        for part in parts {
+            let part = part.trim();
+
+            // Try to parse operators: >=, <=, !=, =, >, <, CONTAINS
+            let operators = [">=", "<=", "!=", "=", ">", "<", "CONTAINS"];
+            for op_str in operators {
+                if let Some(op_pos) = part.find(op_str) {
+                    let path = part[..op_pos].trim().to_string();
+                    let value_str = part[op_pos + op_str.len()..].trim();
+
+                    let operator = match op_str {
+                        "=" => DocFilterOperator::Eq as i32,
+                        "!=" => DocFilterOperator::Ne as i32,
+                        ">" => DocFilterOperator::Gt as i32,
+                        ">=" => DocFilterOperator::Gte as i32,
+                        "<" => DocFilterOperator::Lt as i32,
+                        "<=" => DocFilterOperator::Lte as i32,
+                        "CONTAINS" => DocFilterOperator::Contains as i32,
+                        _ => DocFilterOperator::Eq as i32,
+                    };
+
+                    // Parse value
+                    let value = Self::parse_filter_value(value_str);
+
+                    conditions.push(DocFilterCondition {
+                        path,
+                        operator,
+                        value: Some(value),
+                        values: vec![], // Empty for non-IN operators
+                    });
+                    break;
+                }
+            }
+        }
+
+        conditions
+    }
+
+    /// Parse a value string into SqlValue
+    fn parse_filter_value(value_str: &str) -> crate::proto::proximadb_v1::SqlValue {
+        use crate::proto::proximadb_v1::{sql_value::Value, SqlValue};
+
+        let value_str = value_str.trim();
+
+        // Check for quoted string
+        if (value_str.starts_with('\'') && value_str.ends_with('\''))
+            || (value_str.starts_with('"') && value_str.ends_with('"'))
+        {
+            return SqlValue {
+                value: Some(Value::StringValue(
+                    value_str[1..value_str.len() - 1].to_string(),
+                )),
+            };
+        }
+
+        // Check for boolean
+        if value_str == "true" {
+            return SqlValue {
+                value: Some(Value::BoolValue(true)),
+            };
+        }
+        if value_str == "false" {
+            return SqlValue {
+                value: Some(Value::BoolValue(false)),
+            };
+        }
+
+        // Check for integer
+        if let Ok(i) = value_str.parse::<i64>() {
+            return SqlValue {
+                value: Some(Value::Int64Value(i)),
+            };
+        }
+
+        // Check for float
+        if let Ok(f) = value_str.parse::<f64>() {
+            return SqlValue {
+                value: Some(Value::NumberValue(f)),
+            };
+        }
+
+        // Default to string
+        SqlValue {
+            value: Some(Value::StringValue(value_str.to_string())),
+        }
+    }
+
+    // ========================================================================
+    // Observability Operations (Cloud SIEM / Datadog-like logs & metrics)
+    // ========================================================================
+
+    /// Create an observability namespace for logs and metrics
+    ///
+    /// # Arguments
+    /// * `name` - Namespace name
+    /// * `retention_hours` - Optional data retention period in hours (default: 720 = 30 days)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// db.create_observability_namespace("production", Some(720))?; // 30 days retention
+    /// ```
+    pub fn create_observability_namespace(
+        &self,
+        name: &str,
+        retention_hours: Option<u64>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use crate::observability::storage::ObservabilityStorage;
+        use crate::proto::proximadb_v1::{ObservabilityNamespaceConfig, RetentionConfig};
+
+        // Get base path for observability data
+        let base_path = self.config.storage_locations
+            .first()
+            .map(|loc| format!("{}/observability", loc.path))
+            .unwrap_or_else(|| "./data/observability".to_string());
+
+        self.runtime.block_on(async {
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
+
+            // Default: 24h hot, 7 days warm, 30 days cold
+            let retention_hours_val = retention_hours.unwrap_or(720);
+            let retention_days = retention_hours_val / 24;
+            let config = ObservabilityNamespaceConfig {
+                name: name.to_string(),
+                retention: Some(RetentionConfig {
+                    hot_retention_hours: retention_hours_val.min(24),
+                    warm_retention_days: retention_days.min(7),
+                    cold_retention_days: retention_days,
+                    archive_retention_days: 0, // No archive by default
+                }),
+                ..Default::default()
+            };
+
+            storage
+                .create_namespace(name, &config)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            tracing::info!("📊 EMBEDDED: Created observability namespace '{}'", name);
+            Ok(())
+        })
+    }
+
+    /// Ingest log entries into a namespace
+    ///
+    /// # Arguments
+    /// * `namespace` - Namespace name
+    /// * `logs` - Log entries to ingest
+    ///
+    /// # Returns
+    /// Number of logs ingested
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let logs = vec![
+    ///     EmbeddedLogEntry {
+    ///         message: "User logged in".to_string(),
+    ///         severity: "INFO".to_string(),
+    ///         service: Some("auth".to_string()),
+    ///         source: Some("api-gateway".to_string()),
+    ///         fields: HashMap::new(),
+    ///     },
+    /// ];
+    /// let count = db.ingest_logs("production", logs)?;
+    /// ```
+    pub fn ingest_logs(
+        &self,
+        namespace: &str,
+        logs: Vec<EmbeddedLogEntry>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::observability::storage::ObservabilityStorage;
+        use crate::proto::proximadb_v1::{LogEntry, Severity};
+
+        let base_path = self.config.storage_locations
+            .first()
+            .map(|loc| format!("{}/observability", loc.path))
+            .unwrap_or_else(|| "./data/observability".to_string());
+
+        self.runtime.block_on(async {
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
+
+            // Convert EmbeddedLogEntry to proto LogEntry
+            let proto_logs: Vec<LogEntry> = logs
+                .into_iter()
+                .map(|log| {
+                    let severity = match log.severity.to_uppercase().as_str() {
+                        "TRACE" => Severity::Trace,
+                        "DEBUG" => Severity::Debug,
+                        "INFO" => Severity::Info,
+                        "WARN" | "WARNING" => Severity::Warn,
+                        "ERROR" => Severity::Error,
+                        "FATAL" | "CRITICAL" => Severity::Fatal,
+                        _ => Severity::Unspecified,
+                    };
+
+                    LogEntry {
+                        timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                        severity: severity as i32,
+                        message: log.message,
+                        fields: log.fields.into_iter().map(|(k, v)| {
+                            (k, Self::json_to_sql_value(&v))
+                        }).collect(),
+                        source: log.source,
+                        service: log.service,
+                    }
+                })
+                .collect();
+
+            let count = proto_logs.len() as u64;
+
+            for log in proto_logs {
+                storage
+                    .write_log(namespace, &log)
+                    .await
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    })?;
+            }
+
+            Ok(count)
+        })
+    }
+
+    /// Query logs from a namespace
+    ///
+    /// # Arguments
+    /// * `namespace` - Namespace name
+    /// * `query` - Query string (text search in message)
+    /// * `start_time` - Start of time range (ISO 8601 or epoch millis)
+    /// * `end_time` - End of time range (ISO 8601 or epoch millis)
+    /// * `limit` - Maximum number of results
+    ///
+    /// # Returns
+    /// List of matching log entries
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let logs = db.query_logs(
+    ///     "production",
+    ///     Some("error"),
+    ///     Some("2024-01-01T00:00:00Z"),
+    ///     None,
+    ///     100,
+    /// )?;
+    /// ```
+    pub fn query_logs(
+        &self,
+        namespace: &str,
+        query: Option<&str>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<EmbeddedLogEntry>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::observability::query::ObservabilityQueryEngine;
+        use crate::observability::storage::ObservabilityStorage;
+        use crate::observability::LogQueryParams;
+        use crate::proto::proximadb_v1::Severity;
+
+        let base_path = self.config.storage_locations
+            .first()
+            .map(|loc| format!("{}/observability", loc.path))
+            .unwrap_or_else(|| "./data/observability".to_string());
+
+        self.runtime.block_on(async {
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
+            let query_engine = ObservabilityQueryEngine::new(storage);
+
+            let start_ns = Self::parse_time_to_nanos(start_time).unwrap_or(0);
+            let end_ns = Self::parse_time_to_nanos(end_time).unwrap_or(i64::MAX);
+
+            let params = LogQueryParams {
+                start_time_ns: start_ns,
+                end_time_ns: end_ns,
+                query: query.map(|s| s.to_string()),
+                severities: vec![],
+                services: vec![],
+                sources: vec![],
+                limit,
+                cursor: None,
+            };
+
+            let result = query_engine
+                .query_logs(namespace, params)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            // Convert proto LogEntry to EmbeddedLogEntry
+            let logs = result
+                .logs
+                .into_iter()
+                .map(|log| {
+                    let severity_str = match Severity::try_from(log.severity).unwrap_or(Severity::Unspecified) {
+                        Severity::Trace => "TRACE",
+                        Severity::Debug => "DEBUG",
+                        Severity::Info => "INFO",
+                        Severity::Warn => "WARN",
+                        Severity::Error => "ERROR",
+                        Severity::Fatal => "FATAL",
+                        Severity::Unspecified => "UNKNOWN",
+                    };
+
+                    EmbeddedLogEntry {
+                        message: log.message,
+                        severity: severity_str.to_string(),
+                        service: log.service,
+                        source: log.source,
+                        fields: log.fields.into_iter().map(|(k, v)| {
+                            (k, Self::sql_value_to_json(&v))
+                        }).collect(),
+                    }
+                })
+                .collect();
+
+            Ok(logs)
+        })
+    }
+
+    /// Ingest metric samples into a namespace
+    ///
+    /// # Arguments
+    /// * `namespace` - Namespace name
+    /// * `metrics` - Metric samples to ingest
+    ///
+    /// # Returns
+    /// Number of metrics ingested
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let metrics = vec![
+    ///     EmbeddedMetricSample {
+    ///         name: "http_requests_total".to_string(),
+    ///         value: 1234.0,
+    ///         labels: [("endpoint".to_string(), "/api/v1/users".to_string())].into(),
+    ///     },
+    /// ];
+    /// let count = db.ingest_metrics("production", metrics)?;
+    /// ```
+    pub fn ingest_metrics(
+        &self,
+        namespace: &str,
+        metrics: Vec<EmbeddedMetricSample>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::observability::storage::ObservabilityStorage;
+        use crate::proto::proximadb_v1::MetricSample;
+
+        let base_path = self.config.storage_locations
+            .first()
+            .map(|loc| format!("{}/observability", loc.path))
+            .unwrap_or_else(|| "./data/observability".to_string());
+
+        self.runtime.block_on(async {
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
+
+            // Convert EmbeddedMetricSample to proto MetricSample
+            let proto_metrics: Vec<MetricSample> = metrics
+                .into_iter()
+                .map(|m| MetricSample {
+                    name: m.name,
+                    timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                    value: m.value,
+                    labels: m.labels,
+                    ..Default::default()
+                })
+                .collect();
+
+            let count = proto_metrics.len() as u64;
+
+            for metric in proto_metrics {
+                storage
+                    .write_metric(namespace, &metric)
+                    .await
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    })?;
+            }
+
+            Ok(count)
+        })
+    }
+
+    /// Aggregate metrics from a namespace
+    ///
+    /// # Arguments
+    /// * `namespace` - Namespace name
+    /// * `metric_name` - Name of the metric
+    /// * `aggregation` - Aggregation function ("avg", "sum", "min", "max", "count", "p50", "p90", "p95", "p99")
+    /// * `start_time` - Start of time range
+    /// * `end_time` - End of time range
+    /// * `step_seconds` - Resolution/step in seconds
+    ///
+    /// # Returns
+    /// List of aggregated data points
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let results = db.aggregate_metrics(
+    ///     "production",
+    ///     "http_latency_ms",
+    ///     "avg",
+    ///     Some("2024-01-01T00:00:00Z"),
+    ///     None,
+    ///     60, // 1 minute buckets
+    /// )?;
+    /// ```
+    pub fn aggregate_metrics(
+        &self,
+        namespace: &str,
+        metric_name: &str,
+        aggregation: &str,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        step_seconds: u32,
+    ) -> Result<Vec<EmbeddedDataPoint>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::observability::query::ObservabilityQueryEngine;
+        use crate::observability::storage::ObservabilityStorage;
+        use crate::observability::{MetricAggParams, MetricAggregation};
+
+        let base_path = self.config.storage_locations
+            .first()
+            .map(|loc| format!("{}/observability", loc.path))
+            .unwrap_or_else(|| "./data/observability".to_string());
+
+        self.runtime.block_on(async {
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
+            let query_engine = ObservabilityQueryEngine::new(storage);
+
+            let start_ns = Self::parse_time_to_nanos(start_time).unwrap_or(0);
+            let end_ns = Self::parse_time_to_nanos(end_time).unwrap_or(i64::MAX);
+
+            let agg = match aggregation.to_lowercase().as_str() {
+                "avg" | "average" => MetricAggregation::Avg,
+                "sum" => MetricAggregation::Sum,
+                "min" => MetricAggregation::Min,
+                "max" => MetricAggregation::Max,
+                "count" => MetricAggregation::Count,
+                "rate" => MetricAggregation::Rate,
+                "p50" => MetricAggregation::P50,
+                "p90" => MetricAggregation::P90,
+                "p95" => MetricAggregation::P95,
+                "p99" => MetricAggregation::P99,
+                _ => MetricAggregation::Avg,
+            };
+
+            let params = MetricAggParams {
+                metric_name: metric_name.to_string(),
+                start_time_ns: start_ns,
+                end_time_ns: end_ns,
+                aggregation: agg,
+                step_seconds,
+                label_filters: std::collections::HashMap::new(),
+                group_by: vec![],
+            };
+
+            let result = query_engine
+                .aggregate_metrics(namespace, params)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            // Flatten all series into data points
+            let points: Vec<EmbeddedDataPoint> = result
+                .series
+                .into_iter()
+                .flat_map(|series| {
+                    series.points.into_iter().map(|p| EmbeddedDataPoint {
+                        timestamp_ns: p.timestamp_ns,
+                        value: p.value,
+                    })
+                })
+                .collect();
+
+            Ok(points)
+        })
+    }
+
+    // ========================================================================
+    // Observability Helper Methods
+    // ========================================================================
+
+    /// Parse time string to nanoseconds
+    fn parse_time_to_nanos(time_str: Option<&str>) -> Option<i64> {
+        let s = time_str?;
+
+        // Try ISO 8601 format
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+            return Some(dt.timestamp_nanos_opt().unwrap_or(0));
+        }
+
+        // Try epoch milliseconds
+        if let Ok(ms) = s.parse::<i64>() {
+            return Some(ms * 1_000_000); // Convert ms to ns
+        }
+
+        // Try relative time (e.g., "now-1h")
+        if s.starts_with("now") {
+            let now = chrono::Utc::now();
+            if s == "now" {
+                return Some(now.timestamp_nanos_opt().unwrap_or(0));
+            }
+            // Parse "now-1h", "now-30m", etc.
+            if let Some(offset_str) = s.strip_prefix("now-") {
+                if let Some(duration) = Self::parse_duration(offset_str) {
+                    return Some((now - duration).timestamp_nanos_opt().unwrap_or(0));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Parse duration string (e.g., "1h", "30m", "1d")
+    fn parse_duration(s: &str) -> Option<chrono::Duration> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+
+        let (num_str, unit) = s.split_at(s.len() - 1);
+        let num: i64 = num_str.parse().ok()?;
+
+        match unit {
+            "s" => Some(chrono::Duration::seconds(num)),
+            "m" => Some(chrono::Duration::minutes(num)),
+            "h" => Some(chrono::Duration::hours(num)),
+            "d" => Some(chrono::Duration::days(num)),
+            "w" => Some(chrono::Duration::weeks(num)),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// Embedded Mode Types for Observability
+// ============================================================================
+
+/// Log entry for embedded mode
+#[derive(Debug, Clone)]
+pub struct EmbeddedLogEntry {
+    /// Log message
+    pub message: String,
+    /// Severity level (DEBUG, INFO, WARN, ERROR, FATAL)
+    pub severity: String,
+    /// Service name
+    pub service: Option<String>,
+    /// Source (hostname, component)
+    pub source: Option<String>,
+    /// Additional fields
+    pub fields: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl EmbeddedLogEntry {
+    /// Create a new log entry
+    pub fn new(message: impl Into<String>, severity: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            severity: severity.into(),
+            service: None,
+            source: None,
+            fields: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set service name
+    pub fn with_service(mut self, service: impl Into<String>) -> Self {
+        self.service = Some(service.into());
+        self
+    }
+
+    /// Set source
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    /// Add a field
+    pub fn with_field(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.fields.insert(key.into(), value);
+        self
+    }
+}
+
+/// Metric sample for embedded mode
+#[derive(Debug, Clone)]
+pub struct EmbeddedMetricSample {
+    /// Metric name
+    pub name: String,
+    /// Metric value
+    pub value: f64,
+    /// Labels (dimensions)
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+impl EmbeddedMetricSample {
+    /// Create a new metric sample
+    pub fn new(name: impl Into<String>, value: f64) -> Self {
+        Self {
+            name: name.into(),
+            value,
+            labels: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Add a label
+    pub fn with_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.labels.insert(key.into(), value.into());
+        self
+    }
+}
+
+/// Data point from metric aggregation
+#[derive(Debug, Clone)]
+pub struct EmbeddedDataPoint {
+    /// Timestamp in nanoseconds since epoch
+    pub timestamp_ns: i64,
+    /// Aggregated value
+    pub value: f64,
 }
 
 #[cfg(test)]

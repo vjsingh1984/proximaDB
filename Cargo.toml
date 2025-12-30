@@ -24,6 +24,10 @@ path = "src/bin/server.rs"
 name = "proximadb-bench"
 path = "src/bin/proximadb-bench-consolidated.rs"
 
+[[bin]]
+name = "proximadb-migrate"
+path = "src/bin/proximadb-migrate.rs"
+
 # Python embedded library (cdylib for PyO3)
 [lib]
 name = "proximadb"
@@ -59,7 +63,7 @@ once_cell = "1.19"
 lazy_static = "1.5"
 
 # Networking & gRPC
-tonic = { version = "0.14", features = ["gzip"] }
+tonic = { version = "0.14", features = ["gzip", "tls-ring", "tls-webpki-roots"] }
 tonic-prost = "0.14"  # Runtime codec for tonic-build 0.14+ generated code
 # tonic-reflection = "0.14"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
 prost = "0.14"
@@ -88,6 +92,10 @@ arrow-select = { version = "57.1", default-features = false }
 arrow-ord = { version = "57.1", default-features = false }
 arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
 arrow-cast = { version = "57.1", default-features = false }
+
+# DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
+datafusion = { version = "51.0", default-features = false, features = ["regex_expressions", "unicode_expressions"], optional = true }
+datafusion-common = { version = "51.0", optional = true }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
@@ -128,6 +136,16 @@ rand_distr = "0.4"  # For generating realistic probability distributions
 # Cryptographic hashing
 sha2 = "0.10"
 
+# TLS/mTLS certificate management
+rcgen = "0.12"                   # Certificate generation
+x509-parser = "0.16"             # Certificate parsing and validation
+rustls = { version = "0.21", features = ["dangerous_configuration"] }  # TLS implementation
+rustls-pemfile = "1.0"           # PEM file parsing
+tokio-rustls = "0.24"            # Async TLS streams
+webpki-roots = "0.25"            # Mozilla root certificates
+axum-server = { version = "0.5", features = ["tls-rustls"] }  # Axum TLS support
+time = { version = "0.3", features = ["std"] }  # Time handling for certificates
+
 # Logging & Monitoring
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -150,15 +168,27 @@ thiserror = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
 jsonwebtoken = "9.2"  # JWT token creation and validation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
-# crossbeam = "0.8"  # REMOVED: Unused dependency (confirmed by cargo-udeps)
+chrono-tz = "0.10"  # Timezone support for log parsing
+hex = "0.4"  # Hex encoding for bytea types
+base64 = "0.22"  # Base64 encoding for encryption
+ring = "0.17"  # Cryptographic operations for field-level encryption
+crossbeam = "0.8"  # Lock-free ring buffers for observability ingestion
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
 nom = "7"
 
+# Multi-model storage (Document + Observability)
+tantivy = "0.22"  # Full-text search for documents
+jsonpath-rust = "0.5"  # JSON path queries for document filtering (actively maintained)
+flume = "0.11"  # High-performance MPSC channels for observability
+
+# PostgreSQL wire protocol compatibility
+pgwire = "0.21"  # PostgreSQL wire protocol for pgvector migration
+
 # REST API
-axum = { version = "0.6", features = ["json"] }
+axum = { version = "0.6", features = ["json", "ws"] }
 urlencoding = "2.1.3"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
@@ -195,6 +225,7 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
+tokio-postgres = "0.7"  # PostgreSQL client for integration testing
 
 [features]
 default = ["sql_frontend", "graph-first-sks"]
@@ -227,12 +258,44 @@ sql_frontend = []
 # When disabled, falls back to legacy split storage
 graph-first-sks = []
 
+# DataFusion integration for compute engine compatibility
+# NOTE: Disabled by default due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x)
+# TODO: Upgrade when DataFusion releases version with Arrow 57.x support
+datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
+
+# ============================================================================
+# EXPERIMENTAL GRAPH ENGINE FEATURES
+# ============================================================================
+# These engines are experimental and not production-ready. Use ORION for production.
+
+# PULSAR: Distributed sharded graph engine (experimental)
+# WARNING: Cross-shard queries may miss edges, no distributed WAL
+# For production, use ORION with application-level sharding
+distributed-graph = []
+
+# QUASAR: Hybrid hot/cold tiering graph engine (experimental)
+# WARNING: No WAL for cold tier, simple LRU tiering, not integrated with storage engines
+# For production, use ORION with appropriate memory sizing
+tiered-graph = []
+
 # Hardware acceleration features
 gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
 metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
 debug-filters = []  # Enable debug filtering for search operations
+
+# ============================================================================
+# CDC (CHANGE DATA CAPTURE) FEATURES
+# ============================================================================
+# CDC core is always available (event types, outbound CDC, sinks, transforms).
+# Database connectors are experimental and require feature flags.
+
+# EXPERIMENTAL: Native database CDC connectors (PostgreSQL, MySQL, MongoDB)
+# WARNING: These connectors have partial implementations without network I/O.
+# For production MySQL/MongoDB CDC, use Debezium with Kafka sink.
+# PostgreSQL connector has pgoutput decoder but no connection layer.
+experimental-cdc-connectors = []
 
 # ============================================================================
 # EMBEDDED DATABASE MODE FEATURES
@@ -259,6 +322,15 @@ embedded-all = ["python", "java", "nodejs", "c_ffi"]
 # intel-mkl = ["intel-mkl-src"]
 
 # GPU acceleration (removed - was placeholder code)
+
+# Enterprise catalog integrations (optional)
+unity-catalog = []      # Databricks Unity Catalog integration
+polaris-catalog = []    # Apache Polaris (Iceberg REST Catalog) integration
+delta-lake = []         # Delta Lake table format support
+enterprise-catalogs = ["unity-catalog", "polaris-catalog", "delta-lake"]
+
+# TLS/mTLS support (enabled by default)
+tls = []  # Enable TLS/mTLS certificate management and secure connections
 
 # External libraries
 # faiss-cpu = ["faiss"]  # Unused - no FAISS integration

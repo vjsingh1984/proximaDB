@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info};
 
-use super::{RequantizationResult, OperationType};
+use super::RequantizationResult;
 use crate::storage::types::StorageEngineType;
 
 /// Re-quantization manager coordinates codebook updates across storage engines

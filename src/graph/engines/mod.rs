@@ -35,8 +35,198 @@
 
 pub mod generic_traversal;
 pub mod orion;
-pub mod pulsar; // Distributed graph engine
-pub mod quasar; // Hybrid hot/cold tiering // Engine-agnostic traversal utilities
+
+// PULSAR: Distributed graph engine (experimental)
+// Enable with: cargo build --features distributed-graph
+#[cfg(feature = "distributed-graph")]
+pub mod pulsar;
+
+// QUASAR: Hybrid hot/cold tiering engine (experimental)
+// Enable with: cargo build --features tiered-graph
+#[cfg(feature = "tiered-graph")]
+pub mod quasar;
+
+// Provide stub modules when features are disabled to maintain API compatibility
+#[cfg(not(feature = "distributed-graph"))]
+pub mod pulsar {
+    //! # PULSAR Graph Engine - FEATURE DISABLED
+    //!
+    //! This module is disabled by default. To enable PULSAR, build with:
+    //! ```bash
+    //! cargo build --features distributed-graph
+    //! ```
+    //!
+    //! **Note**: PULSAR is experimental and not production-ready.
+    //! For production use, use ORION with application-level sharding.
+
+    use crate::core::error::ProximaDBError;
+    use crate::graph::{Edge, EdgeId, Node, NodeId};
+    use std::sync::Arc;
+
+    /// PULSAR configuration (stub)
+    #[derive(Debug, Clone, Default)]
+    pub struct PulsarConfig {
+        pub shard_count: usize,
+    }
+
+    /// PULSAR engine (stub - requires distributed-graph feature)
+    #[derive(Debug)]
+    pub struct PulsarGraphEngine;
+
+    impl PulsarGraphEngine {
+        pub fn new(_config: PulsarConfig) -> Result<Self, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR requires 'distributed-graph' feature. Build with: cargo build --features distributed-graph".to_string()
+            ))
+        }
+
+        /// Cross-shard traversal (stub - returns error when feature disabled)
+        pub async fn cross_shard_traversal(
+            &self,
+            _start_node_id: &str,
+            _max_depth: u32,
+        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR cross_shard_traversal requires 'distributed-graph' feature".to_string()
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::GraphEngine for PulsarGraphEngine {
+        async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn get_outgoing_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn get_incoming_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn get_neighbors(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn node_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn edge_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+        fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        }
+    }
+}
+
+#[cfg(not(feature = "tiered-graph"))]
+pub mod quasar {
+    //! # QUASAR Graph Engine - FEATURE DISABLED
+    //!
+    //! This module is disabled by default. To enable QUASAR, build with:
+    //! ```bash
+    //! cargo build --features tiered-graph
+    //! ```
+    //!
+    //! **Note**: QUASAR is experimental and not production-ready.
+    //! For production use, use ORION.
+
+    use crate::core::error::ProximaDBError;
+    use crate::graph::{Edge, EdgeId, Node, NodeId};
+    use std::sync::Arc;
+
+    /// QUASAR configuration (stub)
+    #[derive(Debug, Clone, Default)]
+    pub struct QuasarConfig {
+        pub hot_tier_capacity: usize,
+        /// Cold tier storage path (stub field for API compatibility)
+        pub cold_tier_path: std::path::PathBuf,
+    }
+
+    /// QUASAR engine (stub - requires tiered-graph feature)
+    #[derive(Debug)]
+    pub struct QuasarGraphEngine;
+
+    impl QuasarGraphEngine {
+        pub async fn new(_config: QuasarConfig) -> Result<Self, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR requires 'tiered-graph' feature. Build with: cargo build --features tiered-graph".to_string()
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::GraphEngine for QuasarGraphEngine {
+        async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn get_outgoing_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn get_incoming_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn get_neighbors(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn node_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn edge_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+        fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        }
+    }
+}
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;

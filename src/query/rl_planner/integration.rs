@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
 use super::{
-    ExecutionAction, ExecutionLog, OptimizationGoal, OptimizationTarget, PlannerState,
+    ExecutionAction, ExecutionLog, PlannerState,
     RLPlanner, RLPlannerConfig, StageLog,
 };
 use crate::query::unified_query_optimizer::{

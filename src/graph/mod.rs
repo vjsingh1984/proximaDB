@@ -61,6 +61,7 @@ pub mod hybrid;
 pub mod monitoring;
 pub mod query;
 pub mod service;
+pub mod service_algorithms;
 
 // Re-export public types
 pub use engines::orion::OrionGraphEngine;
@@ -73,6 +74,12 @@ pub use query::{PatternMatcher, QueryPlanner};
 pub use service::GraphOperationsService;
 // Backward compatibility alias
 pub use service::GraphOperationsService as GraphService;
+
+// Algorithm types for high-level API
+pub use service_algorithms::{
+    CentralityAlgorithm, CentralityConfig, CentralityResult, CommunityAlgorithm,
+    CommunityConfig, CommunityResult,
+};
 
 // Export proto types for convenience
 pub use crate::proto::proximadb_v1::{

@@ -18,6 +18,7 @@
 
 use axum::{Router, extract::DefaultBodyLimit, middleware};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
@@ -26,18 +27,20 @@ use tower_http::trace::TraceLayer;
 
 use super::v1::handlers::{AppState, create_router};
 use crate::api_handlers::UnifiedHandlers;
-use crate::network::auth::middleware::auth_middleware_unified;
 use crate::monitoring::MetricsCollector;
+use crate::network::tls::TlsConfig as NetworkTlsConfig;
 use crate::security::SecurityCoordinator;
 use crate::network::middleware::backpressure::{BackpressureConfig, create_concurrency_limit_layer};
 use crate::network::middleware::cors::{CorsConfig, create_cors_layer};
 use crate::network::middleware::request_id::request_id_middleware;
+use crate::network::middleware::tenant::{TenantExtractorConfig, TenantExtractor, tenant_middleware};
 use crate::network::middleware::timeout::{TimeoutConfig, create_timeout_layer};
 
 /// REST server for ProximaDB
 pub struct RestServer {
     router: Router,
     bind_addr: SocketAddr,
+    tls_config: Option<NetworkTlsConfig>,
 }
 
 /// Authentication configuration for the REST server
@@ -67,8 +70,81 @@ pub struct RestServerSecurityConfig {
     pub backpressure: BackpressureConfig,
     /// Unified authentication configuration
     pub auth: RestAuthConfig,
+    /// Multi-tenant configuration
+    pub tenant: TenantExtractorConfig,
     /// Whether to run in development mode (relaxed security)
     pub development_mode: bool,
+    /// TLS configuration (None = plaintext, Some = TLS enabled)
+    pub tls: Option<RestTlsConfig>,
+}
+
+/// TLS configuration for REST server
+#[derive(Debug, Clone)]
+pub struct RestTlsConfig {
+    /// Path to certificate file (PEM format)
+    pub cert_file: PathBuf,
+    /// Path to private key file (PEM format)
+    pub key_file: PathBuf,
+    /// Path to CA certificate file for mTLS (optional)
+    pub ca_file: Option<PathBuf>,
+    /// Require client certificates (mTLS)
+    pub require_client_certs: bool,
+    /// Allowed CN patterns for mTLS (empty = allow all)
+    pub allowed_cn_patterns: Vec<String>,
+    /// CN to user ID mappings
+    pub cn_to_user_mapping: std::collections::HashMap<String, String>,
+    /// Default roles for mTLS-authenticated users
+    pub default_roles: Vec<String>,
+}
+
+impl Default for RestTlsConfig {
+    fn default() -> Self {
+        Self {
+            cert_file: PathBuf::new(),
+            key_file: PathBuf::new(),
+            ca_file: None,
+            require_client_certs: false,
+            allowed_cn_patterns: vec![],
+            cn_to_user_mapping: std::collections::HashMap::new(),
+            default_roles: vec!["reader".to_string()],
+        }
+    }
+}
+
+impl RestTlsConfig {
+    /// Create new TLS config with certificate paths
+    pub fn new(cert_file: PathBuf, key_file: PathBuf) -> Self {
+        Self {
+            cert_file,
+            key_file,
+            ..Default::default()
+        }
+    }
+
+    /// Enable mTLS with CA certificate
+    pub fn with_mtls(mut self, ca_file: PathBuf) -> Self {
+        self.ca_file = Some(ca_file);
+        self.require_client_certs = true;
+        self
+    }
+
+    /// Set allowed CN patterns
+    pub fn with_allowed_cn_patterns(mut self, patterns: Vec<String>) -> Self {
+        self.allowed_cn_patterns = patterns;
+        self
+    }
+
+    /// Set CN to user mappings
+    pub fn with_cn_mappings(mut self, mappings: std::collections::HashMap<String, String>) -> Self {
+        self.cn_to_user_mapping = mappings;
+        self
+    }
+
+    /// Set default roles for mTLS users
+    pub fn with_default_roles(mut self, roles: Vec<String>) -> Self {
+        self.default_roles = roles;
+        self
+    }
 }
 
 impl Default for RestServerSecurityConfig {
@@ -79,7 +155,9 @@ impl Default for RestServerSecurityConfig {
             timeout: TimeoutConfig::default(),
             backpressure: BackpressureConfig::default(),
             auth: RestAuthConfig::default(),
+            tenant: TenantExtractorConfig::default(), // Single-tenant mode by default
             development_mode: false,
+            tls: None, // Plaintext by default
         }
     }
 }
@@ -99,7 +177,9 @@ impl RestServerSecurityConfig {
             timeout: TimeoutConfig::default(),
             backpressure: BackpressureConfig::disabled(),
             auth: RestAuthConfig { enabled: false },
+            tenant: TenantExtractorConfig::single_tenant("default"), // Single-tenant for dev
             development_mode: true,
+            tls: None,
         }
     }
 
@@ -111,8 +191,42 @@ impl RestServerSecurityConfig {
             cors,
             timeout: TimeoutConfig::default(),
             backpressure: BackpressureConfig::default(),
-            development_mode: false,
             auth: RestAuthConfig::default(),
+            tenant: TenantExtractorConfig::default(),
+            development_mode: false,
+            tls: None,
+        }
+    }
+
+    /// Create a production configuration with TLS enabled.
+    pub fn production_with_tls(tls_config: RestTlsConfig) -> Self {
+        Self {
+            cors: CorsConfig::production(),
+            timeout: TimeoutConfig::default(),
+            backpressure: BackpressureConfig::default(),
+            auth: RestAuthConfig::default(),
+            tenant: TenantExtractorConfig::default(),
+            development_mode: false,
+            tls: Some(tls_config),
+        }
+    }
+
+    /// Enable TLS on this configuration.
+    pub fn with_tls(mut self, tls_config: RestTlsConfig) -> Self {
+        self.tls = Some(tls_config);
+        self
+    }
+
+    /// Create a multi-tenant configuration.
+    pub fn multi_tenant() -> Self {
+        Self {
+            cors: CorsConfig::production(),
+            timeout: TimeoutConfig::default(),
+            backpressure: BackpressureConfig::default(),
+            auth: RestAuthConfig { enabled: true }, // Auth required for multi-tenant
+            tenant: TenantExtractorConfig::multi_tenant(),
+            development_mode: false,
+            tls: None,
         }
     }
 }
@@ -176,9 +290,33 @@ impl RestServer {
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         security_config: RestServerSecurityConfig,
     ) -> Self {
+        Self::with_security_and_config(
+            bind_addr,
+            unified_handlers,
+            max_request_size_mb,
+            compression,
+            metrics_collector,
+            security_coordinator,
+            security_config,
+            std::path::PathBuf::from("/tmp/proximadb/data"), // Default fallback
+        )
+    }
+
+    /// Create new REST server with custom security configuration and data directory from config.
+    pub fn with_security_and_config(
+        bind_addr: SocketAddr,
+        unified_handlers: Arc<UnifiedHandlers>,
+        max_request_size_mb: Option<u64>,
+        compression: bool,
+        metrics_collector: Option<Arc<MetricsCollector>>,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+        security_config: RestServerSecurityConfig,
+        data_dir: std::path::PathBuf,
+    ) -> Self {
         let state = AppState {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
+            data_dir,
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -207,6 +345,12 @@ impl RestServer {
         // Add dashboard route
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
 
+        // Add WebSocket streaming routes
+        let ws_state = super::websocket::WebSocketState::new();
+        let ws_routes = super::websocket::websocket_routes(ws_state);
+        base_router = base_router.nest("/ws", ws_routes);
+        tracing::info!("✅ WebSocket streaming enabled at /ws");
+
         // Create CORS layer using secure configuration
         let cors_layer = create_cors_layer(&security_config.cors);
 
@@ -230,6 +374,13 @@ impl RestServer {
         } else {
             None
         };
+
+        // Tenant extraction layer for multi-tenant isolation
+        let tenant_extractor = TenantExtractor::with_config(security_config.tenant.clone());
+        let tenant_layer = middleware::from_fn_with_state(
+            tenant_extractor,
+            tenant_middleware,
+        );
 
         // Log security configuration
         if security_config.development_mode {
@@ -310,22 +461,169 @@ impl RestServer {
             }
         };
 
+        // Apply tenant layer (runs after auth to access JWT claims)
+        router = router.layer(tenant_layer);
+        tracing::info!(
+            "🏢 Tenant isolation: {}",
+            if security_config.tenant.require_tenant {
+                "MULTI-TENANT (tenant ID required)"
+            } else {
+                "SINGLE-TENANT (default tenant fallback)"
+            }
+        );
+
         // Apply auth layer last so request IDs/backpressure/cors are preserved
         if let Some(auth) = auth_layer {
             router = router.layer(auth);
         }
 
-        Self { router, bind_addr }
+        // Build TLS config if specified
+        let tls_config = security_config.tls.as_ref().map(|tls| {
+            NetworkTlsConfig::new(true)
+                .with_cert_file(tls.cert_file.clone())
+                .with_key_file(tls.key_file.clone())
+                .with_ca_file(tls.ca_file.clone().unwrap_or_default())
+        });
+
+        if tls_config.is_some() {
+            tracing::info!("TLS configured for REST server");
+        }
+
+        Self { router, bind_addr, tls_config }
     }
 
     /// Start the REST server
     pub async fn start(self) -> anyhow::Result<()> {
-        tracing::info!("🌐 Starting REST server on {}", self.bind_addr);
-        tracing::info!("🔧 REST server using v1 handlers with collection endpoints enabled");
+        if self.tls_config.is_some() {
+            self.start_with_tls().await
+        } else {
+            self.start_plaintext().await
+        }
+    }
 
-        tracing::info!("✅ REST server listening on {}", self.bind_addr);
-        tracing::info!("🗜️  Compression enabled: deflate, gzip, zstd, brotli (in priority order)");
-        tracing::info!("📋 Available endpoints:");
+    /// Start the REST server with TLS
+    async fn start_with_tls(self) -> anyhow::Result<()> {
+        let tls_config = self.tls_config.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("TLS config required for TLS server"))?;
+
+        let (cert_path, key_path) = tls_config.get_certificate_paths()
+            .ok_or_else(|| anyhow::anyhow!("Certificate paths not configured"))?;
+
+        let require_client_certs = tls_config.require_client_certs;
+        let ca_path = tls_config.get_ca_path();
+
+        tracing::info!("Starting REST server with TLS on {}", self.bind_addr);
+        tracing::info!("  Certificate: {:?}", cert_path);
+        tracing::info!("  Private key: {:?}", key_path);
+        tracing::info!("  mTLS mode: {}", if require_client_certs { "ENABLED" } else { "DISABLED" });
+        if let Some(ref ca) = ca_path {
+            tracing::info!("  CA Certificate: {:?}", ca);
+        }
+
+        Self::log_endpoints(&self.bind_addr, true);
+
+        // Build rustls config - either mTLS or standard TLS
+        if require_client_certs && ca_path.is_some() {
+            self.start_with_mtls(cert_path, key_path, ca_path.unwrap()).await
+        } else {
+            // Standard TLS (no client certificates)
+            let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+                &cert_path,
+                &key_path,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to load TLS certificates: {}", e))?;
+
+            axum_server::bind_rustls(self.bind_addr, rustls_config)
+                .serve(self.router.into_make_service())
+                .await
+                .map_err(|e| anyhow::anyhow!("TLS server error: {}", e))?;
+
+            Ok(())
+        }
+    }
+
+    /// Start REST server with mTLS (mutual TLS) - requires client certificates
+    async fn start_with_mtls(
+        self,
+        cert_path: PathBuf,
+        key_path: PathBuf,
+        ca_path: PathBuf,
+    ) -> anyhow::Result<()> {
+        use crate::network::tls::certificate_manager::utils::{load_certs_from_pem, load_private_key_from_pem};
+        use rustls::{server::AllowAnyAuthenticatedClient, RootCertStore, ServerConfig};
+        use std::sync::Arc;
+
+        tracing::info!("Configuring mTLS with client certificate verification");
+
+        // Load server certificate and key
+        let cert_pem = tokio::fs::read(&cert_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to read server certificate: {}", e))?;
+        let key_pem = tokio::fs::read(&key_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to read server private key: {}", e))?;
+
+        let certs = load_certs_from_pem(&cert_pem)
+            .map_err(|e| anyhow::anyhow!("Failed to parse server certificate: {}", e))?;
+        let key = load_private_key_from_pem(&key_pem)
+            .map_err(|e| anyhow::anyhow!("Failed to parse server private key: {}", e))?;
+
+        // Load CA certificate for client verification
+        let ca_pem = tokio::fs::read(&ca_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to read CA certificate: {}", e))?;
+        let ca_certs = load_certs_from_pem(&ca_pem)
+            .map_err(|e| anyhow::anyhow!("Failed to parse CA certificate: {}", e))?;
+
+        // Build root cert store for client verification
+        let mut root_store = RootCertStore::empty();
+        for ca_cert in ca_certs {
+            root_store.add(&ca_cert)
+                .map_err(|e| anyhow::anyhow!("Failed to add CA certificate to root store: {}", e))?;
+        }
+
+        // Create client certificate verifier - allows any cert signed by our CA
+        let client_verifier = AllowAnyAuthenticatedClient::new(root_store);
+
+        // Build mTLS server config
+        let server_config = ServerConfig::builder()
+            .with_safe_defaults()
+            .with_client_cert_verifier(Arc::new(client_verifier))
+            .with_single_cert(certs, key)
+            .map_err(|e| anyhow::anyhow!("Failed to build mTLS server config: {}", e))?;
+
+        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(server_config));
+
+        tracing::info!("mTLS server configured - client certificates will be verified against CA");
+        tracing::info!("Note: Client certificate info will be available in request extensions");
+
+        axum_server::bind_rustls(self.bind_addr, rustls_config)
+            .serve(self.router.into_make_service())
+            .await
+            .map_err(|e| anyhow::anyhow!("mTLS server error: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Start the REST server without TLS (plaintext)
+    async fn start_plaintext(self) -> anyhow::Result<()> {
+        tracing::info!("Starting REST server (plaintext) on {}", self.bind_addr);
+
+        Self::log_endpoints(&self.bind_addr, false);
+
+        // For axum 0.6, use axum::Server
+        axum::Server::bind(&self.bind_addr)
+            .serve(self.router.into_make_service())
+            .await?;
+
+        Ok(())
+    }
+
+    /// Log available endpoints
+    fn log_endpoints(bind_addr: &SocketAddr, tls: bool) {
+        let protocol = if tls { "https" } else { "http" };
+        tracing::info!("REST server using v1 handlers with collection endpoints enabled");
+        tracing::info!("REST server listening on {}://{}", protocol, bind_addr);
+        tracing::info!("Compression enabled: deflate, gzip, zstd, brotli (in priority order)");
+        tracing::info!("Available endpoints:");
         tracing::info!("   GET    /health                           - Health check");
         tracing::info!("   GET    /dashboard                        - Web dashboard");
         tracing::info!("   GET    /metrics                          - Prometheus metrics");
@@ -341,13 +639,9 @@ impl RestServer {
         tracing::info!("   GET    /api/v1/collections/:id           - Get collection by ID");
         tracing::info!("   DELETE /api/v1/collections/:id           - Delete collection");
         tracing::info!("   POST   /api/v1/search/with_metadata      - Vector search with metadata");
-
-        // For axum 0.6, use axum::Server
-        axum::Server::bind(&self.bind_addr)
-            .serve(self.router.into_make_service())
-            .await?;
-
-        Ok(())
+        tracing::info!("   WS     /ws/insert                        - WebSocket vector streaming");
+        tracing::info!("   WS     /ws/subscribe                     - WebSocket live query subscription");
+        tracing::info!("   WS     /ws/status                        - WebSocket session status");
     }
 }
 
@@ -1393,6 +1687,8 @@ mod tests {
                 encryption_at_rest: false,
                 encryption_in_transit: false,
             },
+            encryption: crate::security::EncryptionConfig::default(),
+            key_store: crate::security::KeyStoreConfig::default(),
         }
     }
 

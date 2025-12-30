@@ -1,0 +1,1403 @@
+// Copyright 2025 ProximaDB
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+//! # Unified Query Handler
+//!
+//! Abstracts protocol differences (REST, gRPC, PostgreSQL wire protocol) by providing
+//! a unified request/response model that can be used across all network protocols.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+//! │    REST     │   │    gRPC     │   │  PostgreSQL │
+//! │   Handler   │   │   Handler   │   │   Handler   │
+//! └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+//!        │                 │                 │
+//!        ▼                 ▼                 ▼
+//! ┌─────────────────────────────────────────────────┐
+//! │            UnifiedQueryHandler                   │
+//! │  ┌─────────────────────────────────────────┐    │
+//! │  │     UnifiedQueryRequest (normalized)     │    │
+//! │  └─────────────────────────────────────────┘    │
+//! │                      │                          │
+//! │                      ▼                          │
+//! │  ┌─────────────────────────────────────────┐    │
+//! │  │         ComputeScheduler                 │    │
+//! │  └─────────────────────────────────────────┘    │
+//! │                      │                          │
+//! │                      ▼                          │
+//! │  ┌─────────────────────────────────────────┐    │
+//! │  │    UnifiedQueryResponse (normalized)     │    │
+//! │  └─────────────────────────────────────────┘    │
+//! └─────────────────────────────────────────────────┘
+//!        │                 │                 │
+//!        ▼                 ▼                 ▼
+//! ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+//! │    JSON     │   │   Proto     │   │  PG Wire    │
+//! │  Response   │   │  Response   │   │  Response   │
+//! └─────────────┘   └─────────────┘   └─────────────┘
+//! ```
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use proximadb::network::unified_handler::{UnifiedQueryHandler, UnifiedQueryRequest};
+//!
+//! // Create handler with services
+//! let handler = UnifiedQueryHandler::new(vector_ops, collection_service);
+//!
+//! // From REST: Convert JSON to unified request
+//! let request = UnifiedQueryRequest::from_rest_search(json_request)?;
+//! let response = handler.execute(request).await?;
+//! let json_response = response.into_rest_json()?;
+//!
+//! // From gRPC: Convert proto to unified request
+//! let request = UnifiedQueryRequest::from_grpc_search(proto_request)?;
+//! let response = handler.execute(request).await?;
+//! let proto_response = response.into_grpc_proto()?;
+//!
+//! // From PostgreSQL: Convert SQL to unified request
+//! let request = UnifiedQueryRequest::from_postgres_query(sql_query, params)?;
+//! let response = handler.execute(request).await?;
+//! let pg_rows = response.into_postgres_rows()?;
+//! ```
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, instrument};
+
+use crate::compute::plan::{ComputePlan, PlanHints, PlanNode};
+use crate::compute::scheduler::ComputeScheduler;
+use crate::graph::service::GraphOperationsService;
+use crate::proto::proximadb_v1;
+use crate::services::{CollectionService, VectorOperationsService};
+
+// ============================================================================
+// Unified Request Types
+// ============================================================================
+
+/// Source protocol for the request
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RequestProtocol {
+    /// REST API (HTTP/JSON)
+    Rest,
+    /// gRPC (Protocol Buffers)
+    Grpc,
+    /// PostgreSQL wire protocol
+    Postgres,
+    /// Arrow Flight
+    ArrowFlight,
+}
+
+/// Unified query request that normalizes all protocol-specific requests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UnifiedQueryRequest {
+    /// Vector similarity search
+    VectorSearch(VectorSearchQuery),
+
+    /// Vector batch operations (insert/update/delete)
+    VectorBatch(VectorBatchOperation),
+
+    /// SQL query execution
+    SqlQuery(SqlQueryRequest),
+
+    /// Collection operations (create/delete/list/get)
+    Collection(CollectionOperation),
+
+    /// Graph operations (traversal/query)
+    Graph(GraphOperation),
+
+    /// Health check
+    HealthCheck,
+}
+
+/// Vector search query (normalized from all protocols)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorSearchQuery {
+    /// Collection to search
+    pub collection_id: String,
+    /// Query vectors
+    pub query_vectors: Vec<Vec<f32>>,
+    /// Number of results per query
+    pub top_k: u32,
+    /// Metadata filters (string key -> string value for simple equality)
+    pub filters: HashMap<String, String>,
+    /// Distance metric override
+    pub distance_metric: Option<DistanceMetric>,
+    /// Search parameters
+    pub search_params: Option<SearchParams>,
+    /// Source protocol
+    pub source: RequestProtocol,
+    /// Request ID for tracing
+    pub request_id: Option<String>,
+}
+
+/// Distance metric
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum DistanceMetric {
+    Cosine,
+    Euclidean,
+    DotProduct,
+    Manhattan,
+}
+
+/// Search parameters
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchParams {
+    pub top_k: Option<u32>,
+    pub accuracy_threshold: Option<f64>,
+    pub timeout_ms: Option<u32>,
+}
+
+/// Vector batch operation (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorBatchOperation {
+    /// Collection ID
+    pub collection_id: String,
+    /// Vectors to insert/update
+    pub vectors: Vec<VectorRecord>,
+    /// Source protocol
+    pub source: RequestProtocol,
+}
+
+/// Vector record (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorRecord {
+    pub id: String,
+    pub vector: Vec<f32>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// SQL query request (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SqlQueryRequest {
+    /// SQL query string
+    pub query: String,
+    /// Query parameters
+    pub parameters: Vec<SqlParameter>,
+    /// Default collection context
+    pub collection: Option<String>,
+    /// Timeout in milliseconds
+    pub timeout_ms: Option<u64>,
+    /// Source protocol
+    pub source: RequestProtocol,
+}
+
+/// SQL parameter value
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SqlParameter {
+    Null,
+    String(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Bytes(Vec<u8>),
+    Array(Vec<SqlParameter>),
+}
+
+/// Collection operation (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionOperation {
+    pub operation: CollectionOperationType,
+    pub collection_id: Option<String>,
+    pub config: Option<CollectionConfig>,
+    pub source: RequestProtocol,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CollectionOperationType {
+    Create,
+    Delete,
+    Get,
+    List,
+    Update,
+}
+
+/// Collection configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionConfig {
+    pub name: String,
+    pub dimension: u32,
+    pub distance_metric: Option<DistanceMetric>,
+    pub storage_engine: Option<String>,
+}
+
+/// Graph operation (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphOperation {
+    pub operation: GraphOperationType,
+    pub graph_name: String,
+    pub source: RequestProtocol,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GraphOperationType {
+    CreateGraph,
+    DeleteGraph,
+    Traverse {
+        start_nodes: Vec<String>,
+        edge_types: Vec<String>,
+        max_depth: u32,
+    },
+    Query(String), // Cypher-like query
+}
+
+// ============================================================================
+// Unified Response Types
+// ============================================================================
+
+/// Unified query response that can be converted to any protocol format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedQueryResponse {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Response data
+    pub data: ResponseData,
+    /// Execution metadata
+    pub metadata: ResponseMetadata,
+}
+
+/// Response data variants
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ResponseData {
+    /// Vector search results
+    SearchResults(Vec<SearchResult>),
+    /// Batch operation result
+    BatchResult { inserted: u32, updated: u32, deleted: u32 },
+    /// SQL query results
+    SqlResults { columns: Vec<String>, rows: Vec<Vec<serde_json::Value>> },
+    /// Collection info
+    CollectionInfo(CollectionInfo),
+    /// Collection list
+    CollectionList(Vec<CollectionInfo>),
+    /// Graph traversal results
+    GraphResults { nodes: Vec<GraphNode>, edges: Vec<GraphEdge> },
+    /// Health check result
+    HealthStatus { status: String, version: String },
+    /// Empty response
+    Empty,
+}
+
+/// Search result (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub id: String,
+    pub score: f64,
+    pub vector: Option<Vec<f32>>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Collection info (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionInfo {
+    pub id: String,
+    pub dimension: u32,
+    pub vector_count: u64,
+    pub storage_engine: String,
+    pub created_at: i64,
+}
+
+/// Graph node (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub labels: Vec<String>,
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+/// Graph edge (normalized)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub edge_type: String,
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+/// Response metadata
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ResponseMetadata {
+    pub execution_time_ms: u64,
+    pub request_id: Option<String>,
+    pub rows_scanned: Option<u64>,
+    pub cache_hit: Option<bool>,
+}
+
+// ============================================================================
+// Protocol Conversion: From REST
+// ============================================================================
+
+impl UnifiedQueryRequest {
+    /// Convert from REST VectorSearchRequest proto
+    pub fn from_rest_search(
+        request: &proximadb_v1::VectorSearchRequest,
+    ) -> Result<Self> {
+        let query_vectors: Vec<Vec<f32>> = request
+            .queries
+            .iter()
+            .map(|q| q.vector.clone())
+            .collect();
+
+        // Extract simple string filters from the first query
+        let filters = Self::extract_filters_from_proto(&request.queries);
+
+        Ok(UnifiedQueryRequest::VectorSearch(VectorSearchQuery {
+            collection_id: request.collection_id.clone(),
+            query_vectors,
+            top_k: request.top_k,
+            filters,
+            distance_metric: None,
+            search_params: request.search_params.as_ref().map(|p| SearchParams {
+                top_k: p.top_k,
+                accuracy_threshold: p.accuracy_threshold,
+                timeout_ms: p.timeout_ms,
+            }),
+            source: RequestProtocol::Rest,
+            request_id: None,
+        }))
+    }
+
+    /// Convert from REST VectorBatchRequest proto
+    pub fn from_rest_batch(
+        request: &proximadb_v1::VectorBatchRequest,
+    ) -> Result<Self> {
+        let vectors = request
+            .vectors
+            .iter()
+            .map(|v| VectorRecord {
+                id: v.id.clone(),
+                vector: v.vector.clone(),
+                metadata: v
+                    .metadata
+                    .iter()
+                    .map(|(k, sv)| (k.clone(), sql_value_to_json(sv)))
+                    .collect(),
+            })
+            .collect();
+
+        Ok(UnifiedQueryRequest::VectorBatch(VectorBatchOperation {
+            collection_id: request.collection_id.clone(),
+            vectors,
+            source: RequestProtocol::Rest,
+        }))
+    }
+
+    /// Convert from REST SQL query
+    pub fn from_rest_sql(query: String, params: Option<Vec<proximadb_v1::SqlValue>>) -> Result<Self> {
+        let parameters = params
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| Self::convert_sql_value(v))
+            .collect();
+
+        Ok(UnifiedQueryRequest::SqlQuery(SqlQueryRequest {
+            query,
+            parameters,
+            collection: None,
+            timeout_ms: None,
+            source: RequestProtocol::Rest,
+        }))
+    }
+
+    fn extract_filters_from_proto(
+        queries: &[proximadb_v1::SearchQuery],
+    ) -> HashMap<String, String> {
+        let mut filters = HashMap::new();
+        if let Some(first_query) = queries.first() {
+            for (k, v) in &first_query.filters {
+                // Convert SqlValue to string for simple filter storage
+                filters.insert(k.clone(), sql_value_to_string(v));
+            }
+        }
+        filters
+    }
+
+    fn convert_sql_value(v: proximadb_v1::SqlValue) -> SqlParameter {
+        use proximadb_v1::sql_value::Value;
+        match v.value {
+            Some(Value::StringValue(s)) => SqlParameter::String(s),
+            Some(Value::NumberValue(n)) => SqlParameter::Float(n),
+            Some(Value::Int64Value(i)) => SqlParameter::Int(i),
+            Some(Value::BoolValue(b)) => SqlParameter::Bool(b),
+            Some(Value::BytesValue(b)) => SqlParameter::Bytes(b),
+            Some(Value::NullValue(_)) => SqlParameter::Null,
+            Some(Value::ArrayValue(arr)) => SqlParameter::Array(
+                arr.values.into_iter().map(Self::convert_sql_value).collect(),
+            ),
+            Some(Value::ObjectValue(_)) => SqlParameter::Null,
+            None => SqlParameter::Null,
+        }
+    }
+}
+
+/// Convert SqlValue to JSON for metadata storage
+fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
+    use proximadb_v1::sql_value::Value;
+    match v.value.as_ref() {
+        Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+        Some(Value::NumberValue(n)) => {
+            serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)))
+        }
+        Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
+        Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+        Some(Value::BytesValue(b)) => {
+            serde_json::Value::Array(b.iter().map(|x| serde_json::Value::Number((*x as u64).into())).collect())
+        }
+        Some(Value::NullValue(_)) => serde_json::Value::Null,
+        Some(Value::ArrayValue(arr)) => {
+            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
+        }
+        Some(Value::ObjectValue(obj)) => {
+            let mut map = serde_json::Map::new();
+            for (k, sv) in &obj.fields {
+                map.insert(k.clone(), sql_value_to_json(sv));
+            }
+            serde_json::Value::Object(map)
+        }
+        None => serde_json::Value::Null,
+    }
+}
+
+/// Convert SqlValue to string for simple filter representation
+fn sql_value_to_string(v: &proximadb_v1::SqlValue) -> String {
+    use proximadb_v1::sql_value::Value;
+    match v.value.as_ref() {
+        Some(Value::StringValue(s)) => s.clone(),
+        Some(Value::NumberValue(n)) => n.to_string(),
+        Some(Value::Int64Value(i)) => i.to_string(),
+        Some(Value::BoolValue(b)) => b.to_string(),
+        Some(Value::BytesValue(b)) => format!("{:?}", b),
+        Some(Value::NullValue(_)) => "null".to_string(),
+        Some(Value::ArrayValue(_)) => "[array]".to_string(),
+        Some(Value::ObjectValue(_)) => "{object}".to_string(),
+        None => "null".to_string(),
+    }
+}
+
+/// Convert JSON value to SqlValue proto
+fn json_to_sql_value(v: &serde_json::Value) -> proximadb_v1::SqlValue {
+    use proximadb_v1::sql_value::Value;
+    proximadb_v1::SqlValue {
+        value: Some(match v {
+            serde_json::Value::Null => Value::NullValue(0),
+            serde_json::Value::Bool(b) => Value::BoolValue(*b),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Value::Int64Value(i)
+                } else if let Some(f) = n.as_f64() {
+                    Value::NumberValue(f)
+                } else {
+                    Value::NullValue(0)
+                }
+            }
+            serde_json::Value::String(s) => Value::StringValue(s.clone()),
+            serde_json::Value::Array(arr) => Value::ArrayValue(proximadb_v1::SqlArray {
+                values: arr.iter().map(json_to_sql_value).collect(),
+            }),
+            serde_json::Value::Object(obj) => Value::ObjectValue(proximadb_v1::SqlObject {
+                fields: obj.iter().map(|(k, v)| (k.clone(), json_to_sql_value(v))).collect(),
+            }),
+        }),
+    }
+}
+
+// ============================================================================
+// Protocol Conversion: From gRPC
+// ============================================================================
+
+impl UnifiedQueryRequest {
+    /// Convert from gRPC VectorSearchRequest
+    pub fn from_grpc_search(
+        request: proximadb_v1::VectorSearchRequest,
+    ) -> Result<Self> {
+        Self::from_rest_search(&request)
+            .map(|mut r| {
+                if let UnifiedQueryRequest::VectorSearch(ref mut q) = r {
+                    q.source = RequestProtocol::Grpc;
+                }
+                r
+            })
+    }
+
+    /// Convert from gRPC VectorBatchRequest
+    pub fn from_grpc_batch(
+        request: proximadb_v1::VectorBatchRequest,
+    ) -> Result<Self> {
+        Self::from_rest_batch(&request)
+            .map(|mut r| {
+                if let UnifiedQueryRequest::VectorBatch(ref mut op) = r {
+                    op.source = RequestProtocol::Grpc;
+                }
+                r
+            })
+    }
+}
+
+// ============================================================================
+// Protocol Conversion: From PostgreSQL
+// ============================================================================
+
+impl UnifiedQueryRequest {
+    /// Convert from PostgreSQL simple query
+    pub fn from_postgres_query(sql: String, params: Vec<SqlParameter>) -> Result<Self> {
+        Ok(UnifiedQueryRequest::SqlQuery(SqlQueryRequest {
+            query: sql,
+            parameters: params,
+            collection: None,
+            timeout_ms: None,
+            source: RequestProtocol::Postgres,
+        }))
+    }
+
+    /// Convert PostgreSQL query to vector search if applicable
+    ///
+    /// Detects patterns like:
+    /// - `SELECT * FROM collection ORDER BY embedding <-> '[...]' LIMIT k`
+    /// - `SELECT * FROM collection WHERE vector_distance(embedding, '[...]') < threshold`
+    pub fn from_postgres_vector_query(
+        _sql: &str,
+        collection: &str,
+        query_vector: Vec<f32>,
+        top_k: u32,
+    ) -> Result<Self> {
+        Ok(UnifiedQueryRequest::VectorSearch(VectorSearchQuery {
+            collection_id: collection.to_string(),
+            query_vectors: vec![query_vector],
+            top_k,
+            filters: HashMap::new(),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            search_params: None,
+            source: RequestProtocol::Postgres,
+            request_id: None,
+        }))
+    }
+}
+
+// ============================================================================
+// Response Conversion: To REST
+// ============================================================================
+
+impl UnifiedQueryResponse {
+    /// Convert to REST JSON response
+    pub fn into_rest_json(self) -> Result<serde_json::Value> {
+        Ok(serde_json::to_value(self)?)
+    }
+
+    /// Convert to REST VectorOperationResponse proto
+    pub fn into_rest_vector_response(self) -> Result<proximadb_v1::VectorOperationResponse> {
+        if !self.success {
+            return Ok(proximadb_v1::VectorOperationResponse {
+                success: false,
+                operation: 0,
+                metrics: None,
+                results: None,
+                vector_ids: vec![],
+                error_message: self.error,
+                error_code: Some("INTERNAL".to_string()),
+            });
+        }
+
+        match self.data {
+            ResponseData::SearchResults(results) => {
+                let proto_results: Vec<proximadb_v1::SearchVectorRecord> = results
+                    .into_iter()
+                    .map(|r| proximadb_v1::SearchVectorRecord {
+                        id: r.id,
+                        score: r.score,
+                        vector: r.vector.unwrap_or_default(),
+                        metadata: r
+                            .metadata
+                            .into_iter()
+                            .map(|(k, v)| (k, json_to_sql_value(&v)))
+                            .collect(),
+                        version: None,
+                        similarity: Some(r.score as f32),
+                        timestamp: None,
+                        source: None,
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: HashMap::new(),
+                        index_path: None,
+                    })
+                    .collect();
+
+                Ok(proximadb_v1::VectorOperationResponse {
+                    success: true,
+                    operation: proximadb_v1::VectorOperation::VectorSearch as i32,
+                    metrics: Some(proximadb_v1::OperationMetrics {
+                        total_processed: proto_results.len() as i64,
+                        successful_count: proto_results.len() as i64,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: (self.metadata.execution_time_ms * 1000) as i64,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    results: Some(proximadb_v1::SearchResult {
+                        results: proto_results,
+                        total_found: 0,
+                        collection_id: None,
+                    }),
+                    vector_ids: vec![],
+                    error_message: None,
+                    error_code: None,
+                })
+            }
+            ResponseData::BatchResult { inserted, updated, deleted } => {
+                Ok(proximadb_v1::VectorOperationResponse {
+                    success: true,
+                    operation: proximadb_v1::VectorOperation::VectorBatch as i32,
+                    metrics: Some(proximadb_v1::OperationMetrics {
+                        total_processed: (inserted + updated + deleted) as i64,
+                        successful_count: (inserted + updated) as i64,
+                        failed_count: 0,
+                        updated_count: updated as i64,
+                        processing_time_us: (self.metadata.execution_time_ms * 1000) as i64,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    results: None,
+                    vector_ids: vec![],
+                    error_message: None,
+                    error_code: None,
+                })
+            }
+            _ => Ok(proximadb_v1::VectorOperationResponse {
+                success: true,
+                operation: 0,
+                metrics: None,
+                results: None,
+                vector_ids: vec![],
+                error_message: None,
+                error_code: None,
+            }),
+        }
+    }
+}
+
+// ============================================================================
+// Response Conversion: To gRPC
+// ============================================================================
+
+impl UnifiedQueryResponse {
+    /// Convert to gRPC VectorOperationResponse
+    pub fn into_grpc_response(self) -> Result<proximadb_v1::VectorOperationResponse> {
+        self.into_rest_vector_response()
+    }
+}
+
+// ============================================================================
+// Response Conversion: To PostgreSQL
+// ============================================================================
+
+impl UnifiedQueryResponse {
+    /// Convert to PostgreSQL row format for wire protocol
+    pub fn into_postgres_rows(self) -> Result<PostgresResult> {
+        match self.data {
+            ResponseData::SearchResults(results) => {
+                let columns = vec![
+                    PostgresColumn::new("id", PostgresType::Text),
+                    PostgresColumn::new("score", PostgresType::Float8),
+                    PostgresColumn::new("metadata", PostgresType::Jsonb),
+                ];
+
+                let rows: Vec<Vec<PostgresValue>> = results
+                    .into_iter()
+                    .map(|r| {
+                        vec![
+                            PostgresValue::Text(r.id),
+                            PostgresValue::Float8(r.score),
+                            PostgresValue::Jsonb(serde_json::to_string(&r.metadata).unwrap_or_default()),
+                        ]
+                    })
+                    .collect();
+
+                Ok(PostgresResult { columns, rows })
+            }
+            ResponseData::SqlResults { columns, rows } => {
+                let pg_columns: Vec<PostgresColumn> = columns
+                    .into_iter()
+                    .map(|c| PostgresColumn::new(&c, PostgresType::Text))
+                    .collect();
+
+                let pg_rows: Vec<Vec<PostgresValue>> = rows
+                    .into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|v| PostgresValue::Text(v.to_string()))
+                            .collect()
+                    })
+                    .collect();
+
+                Ok(PostgresResult {
+                    columns: pg_columns,
+                    rows: pg_rows,
+                })
+            }
+            ResponseData::CollectionList(collections) => {
+                let columns = vec![
+                    PostgresColumn::new("id", PostgresType::Text),
+                    PostgresColumn::new("dimension", PostgresType::Int4),
+                    PostgresColumn::new("vector_count", PostgresType::Int8),
+                    PostgresColumn::new("storage_engine", PostgresType::Text),
+                ];
+
+                let rows: Vec<Vec<PostgresValue>> = collections
+                    .into_iter()
+                    .map(|c| {
+                        vec![
+                            PostgresValue::Text(c.id),
+                            PostgresValue::Int4(c.dimension as i32),
+                            PostgresValue::Int8(c.vector_count as i64),
+                            PostgresValue::Text(c.storage_engine),
+                        ]
+                    })
+                    .collect();
+
+                Ok(PostgresResult { columns, rows })
+            }
+            _ => Ok(PostgresResult {
+                columns: vec![PostgresColumn::new("result", PostgresType::Text)],
+                rows: vec![vec![PostgresValue::Text("OK".to_string())]],
+            }),
+        }
+    }
+}
+
+/// PostgreSQL result format
+#[derive(Debug, Clone)]
+pub struct PostgresResult {
+    pub columns: Vec<PostgresColumn>,
+    pub rows: Vec<Vec<PostgresValue>>,
+}
+
+/// PostgreSQL column definition
+#[derive(Debug, Clone)]
+pub struct PostgresColumn {
+    pub name: String,
+    pub pg_type: PostgresType,
+}
+
+impl PostgresColumn {
+    pub fn new(name: &str, pg_type: PostgresType) -> Self {
+        Self {
+            name: name.to_string(),
+            pg_type,
+        }
+    }
+}
+
+/// PostgreSQL types (subset)
+#[derive(Debug, Clone, Copy)]
+pub enum PostgresType {
+    Text,
+    Int4,
+    Int8,
+    Float8,
+    Bool,
+    Jsonb,
+    Bytea,
+}
+
+/// PostgreSQL value
+#[derive(Debug, Clone)]
+pub enum PostgresValue {
+    Null,
+    Text(String),
+    Int4(i32),
+    Int8(i64),
+    Float8(f64),
+    Bool(bool),
+    Jsonb(String),
+    Bytea(Vec<u8>),
+}
+
+// ============================================================================
+// Unified Query Handler
+// ============================================================================
+
+/// Unified query handler that routes requests to the compute scheduler
+pub struct UnifiedQueryHandler {
+    /// Compute scheduler for query execution
+    scheduler: Option<Arc<ComputeScheduler>>,
+    /// Vector operations service
+    vector_ops: Arc<VectorOperationsService>,
+    /// Collection service
+    collection_service: Arc<CollectionService>,
+    /// Graph operations service
+    graph_service: Option<Arc<GraphOperationsService>>,
+}
+
+impl UnifiedQueryHandler {
+    /// Create a new unified query handler
+    pub fn new(
+        vector_ops: Arc<VectorOperationsService>,
+        collection_service: Arc<CollectionService>,
+    ) -> Self {
+        Self {
+            scheduler: None,
+            vector_ops,
+            collection_service,
+            graph_service: None,
+        }
+    }
+
+    /// Create with compute scheduler for advanced query planning
+    pub fn with_scheduler(
+        scheduler: Arc<ComputeScheduler>,
+        vector_ops: Arc<VectorOperationsService>,
+        collection_service: Arc<CollectionService>,
+    ) -> Self {
+        Self {
+            scheduler: Some(scheduler),
+            vector_ops,
+            collection_service,
+            graph_service: None,
+        }
+    }
+
+    /// Add graph service
+    pub fn with_graph_service(mut self, graph_service: Arc<GraphOperationsService>) -> Self {
+        self.graph_service = Some(graph_service);
+        self
+    }
+
+    /// Execute a unified query request
+    #[instrument(skip(self, request), fields(protocol = ?request.protocol()))]
+    pub async fn execute(&self, request: UnifiedQueryRequest) -> Result<UnifiedQueryResponse> {
+        let start = std::time::Instant::now();
+
+        let result = match &request {
+            UnifiedQueryRequest::VectorSearch(query) => {
+                self.execute_vector_search(query).await
+            }
+            UnifiedQueryRequest::VectorBatch(batch) => {
+                self.execute_vector_batch(batch).await
+            }
+            UnifiedQueryRequest::SqlQuery(_sql) => {
+                self.execute_sql_query().await
+            }
+            UnifiedQueryRequest::Collection(op) => {
+                self.execute_collection_op(op).await
+            }
+            UnifiedQueryRequest::Graph(op) => {
+                self.execute_graph_op(op).await
+            }
+            UnifiedQueryRequest::HealthCheck => {
+                self.execute_health_check().await
+            }
+        };
+
+        let elapsed = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(mut response) => {
+                response.metadata.execution_time_ms = elapsed;
+                Ok(response)
+            }
+            Err(e) => Ok(UnifiedQueryResponse {
+                success: false,
+                error: Some(e.to_string()),
+                data: ResponseData::Empty,
+                metadata: ResponseMetadata {
+                    execution_time_ms: elapsed,
+                    ..Default::default()
+                },
+            }),
+        }
+    }
+
+    /// Execute vector search
+    async fn execute_vector_search(&self, query: &VectorSearchQuery) -> Result<UnifiedQueryResponse> {
+        debug!(
+            collection = %query.collection_id,
+            top_k = query.top_k,
+            num_queries = query.query_vectors.len(),
+            "Executing vector search"
+        );
+
+        // If scheduler is available, use compute plan
+        if let Some(scheduler) = &self.scheduler {
+            return self.execute_search_via_scheduler(scheduler, query).await;
+        }
+
+        // Direct execution via VectorOperationsService
+        let search_request = self.build_search_request(query)?;
+        let response = self.vector_ops.search_v1(search_request).await
+            .map_err(|e| anyhow!("Vector search failed: {}", e))?;
+
+        // Convert to unified response
+        let results = response
+            .results
+            .map(|r| {
+                r.results
+                    .into_iter()
+                    .map(|sr| SearchResult {
+                        id: sr.id,
+                        score: sr.score,
+                        vector: if sr.vector.is_empty() { None } else { Some(sr.vector) },
+                        metadata: sr
+                            .metadata
+                            .into_iter()
+                            .map(|(k, v)| (k, sql_value_to_json(&v)))
+                            .collect(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(UnifiedQueryResponse {
+            success: true,
+            error: None,
+            data: ResponseData::SearchResults(results),
+            metadata: ResponseMetadata::default(),
+        })
+    }
+
+    /// Execute search via compute scheduler
+    async fn execute_search_via_scheduler(
+        &self,
+        scheduler: &ComputeScheduler,
+        query: &VectorSearchQuery,
+    ) -> Result<UnifiedQueryResponse> {
+        // Build compute plan for the search
+        let plan = self.build_search_plan(query)?;
+
+        // Execute via scheduler
+        let _stream = scheduler.schedule(plan).await?;
+
+        // For now, fall back to direct execution
+        // TODO: Process stream and collect results
+        let search_request = self.build_search_request(query)?;
+        let response = self.vector_ops.search_v1(search_request).await
+            .map_err(|e| anyhow!("Vector search failed: {}", e))?;
+
+        let results = response
+            .results
+            .map(|r| {
+                r.results
+                    .into_iter()
+                    .map(|sr| SearchResult {
+                        id: sr.id,
+                        score: sr.score,
+                        vector: if sr.vector.is_empty() { None } else { Some(sr.vector) },
+                        metadata: sr
+                            .metadata
+                            .into_iter()
+                            .map(|(k, v)| (k, sql_value_to_json(&v)))
+                            .collect(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(UnifiedQueryResponse {
+            success: true,
+            error: None,
+            data: ResponseData::SearchResults(results),
+            metadata: ResponseMetadata::default(),
+        })
+    }
+
+    /// Build a compute plan for vector search
+    fn build_search_plan(&self, query: &VectorSearchQuery) -> Result<ComputePlan> {
+        let query_vector = query.query_vectors.first()
+            .cloned()
+            .ok_or_else(|| anyhow!("At least one query vector required"))?;
+
+        let node = PlanNode::vector_scan(&query.collection_id, query_vector, query.top_k);
+
+        Ok(ComputePlan::new(
+            query.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            node,
+        ).with_hints(PlanHints::default().with_timeout(30000)))
+    }
+
+    /// Build a VectorSearchRequest from unified query
+    fn build_search_request(&self, query: &VectorSearchQuery) -> Result<proximadb_v1::VectorSearchRequest> {
+        let queries: Vec<proximadb_v1::SearchQuery> = query
+            .query_vectors
+            .iter()
+            .map(|v| proximadb_v1::SearchQuery {
+                vector: v.clone(),
+                filters: query
+                    .filters
+                    .iter()
+                    .map(|(k, v)| {
+                        let sql_val = proximadb_v1::SqlValue {
+                            value: Some(proximadb_v1::sql_value::Value::StringValue(v.clone())),
+                        };
+                        (k.clone(), sql_val)
+                    })
+                    .collect(),
+                advanced_filter: None,
+            })
+            .collect();
+
+        Ok(proximadb_v1::VectorSearchRequest {
+            collection_id: query.collection_id.clone(),
+            queries,
+            top_k: query.top_k,
+            include_fields: None,
+            search_params: query.search_params.as_ref().map(|p| proximadb_v1::SearchParams {
+                top_k: p.top_k,
+                accuracy_threshold: p.accuracy_threshold,
+                include_expired: None,
+                timeout_ms: p.timeout_ms,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            distance_metric_override: None,
+            search_optimization: None,
+        })
+    }
+
+    /// Execute vector batch operation
+    async fn execute_vector_batch(&self, batch: &VectorBatchOperation) -> Result<UnifiedQueryResponse> {
+        debug!(
+            collection = %batch.collection_id,
+            count = batch.vectors.len(),
+            "Executing vector batch"
+        );
+
+        let vectors: Vec<proximadb_v1::VectorRecord> = batch
+            .vectors
+            .iter()
+            .map(|v| proximadb_v1::VectorRecord {
+                id: v.id.clone(),
+                vector: v.vector.clone(),
+                metadata: v
+                    .metadata
+                    .iter()
+                    .map(|(k, v)| (k.clone(), json_to_sql_value(v)))
+                    .collect(),
+                version: None,
+                timestamp: None,
+                source: None,
+                updated_at: None,
+                expires_at: None,
+            })
+            .collect();
+
+        let request = proximadb_v1::VectorBatchRequest {
+            collection_id: batch.collection_id.clone(),
+            vectors,
+        };
+
+        let response = self.vector_ops.vector_batch_v1(request).await
+            .map_err(|e| anyhow!("Vector batch failed: {}", e))?;
+
+        let metrics = response.metrics.as_ref();
+        let inserted = metrics.map(|m| m.successful_count as u32).unwrap_or(0);
+
+        Ok(UnifiedQueryResponse {
+            success: response.success,
+            error: response.error_message.clone(),
+            data: ResponseData::BatchResult {
+                inserted,
+                updated: 0,
+                deleted: 0,
+            },
+            metadata: ResponseMetadata::default(),
+        })
+    }
+
+    /// Execute SQL query
+    async fn execute_sql_query(&self) -> Result<UnifiedQueryResponse> {
+        // For now, return a placeholder response
+        // Full SQL execution would go through the query engine
+        Ok(UnifiedQueryResponse {
+            success: true,
+            error: None,
+            data: ResponseData::SqlResults {
+                columns: vec!["result".to_string()],
+                rows: vec![vec![serde_json::Value::String("SQL execution not yet integrated".to_string())]],
+            },
+            metadata: ResponseMetadata::default(),
+        })
+    }
+
+    /// Execute collection operation
+    async fn execute_collection_op(&self, op: &CollectionOperation) -> Result<UnifiedQueryResponse> {
+        match &op.operation {
+            CollectionOperationType::List => {
+                let collections = self.collection_service.list_collections().await
+                    .map_err(|e| anyhow!("Failed to list collections: {}", e))?;
+
+                let collection_info: Vec<CollectionInfo> = collections
+                    .into_iter()
+                    .map(|c| {
+                        let dimension = c.config.as_ref()
+                            .map(|cfg| cfg.dimension)
+                            .unwrap_or(0);
+                        let vector_count = c.stats.as_ref()
+                            .map(|s| s.vector_count as u64)
+                            .unwrap_or(0);
+                        let storage_engine = c.storage_assignment.as_ref()
+                            .map(|sa| proximadb_v1::StorageEngine::try_from(sa.engine)
+                                .map(|e| format!("{:?}", e).to_lowercase())
+                                .unwrap_or_else(|_| "sst".to_string()))
+                            .unwrap_or_else(|| "sst".to_string());
+
+                        CollectionInfo {
+                            id: c.id,
+                            dimension,
+                            vector_count,
+                            storage_engine,
+                            created_at: c.created_at,
+                        }
+                    })
+                    .collect();
+
+                Ok(UnifiedQueryResponse {
+                    success: true,
+                    error: None,
+                    data: ResponseData::CollectionList(collection_info),
+                    metadata: ResponseMetadata::default(),
+                })
+            }
+            CollectionOperationType::Get => {
+                let name = op.collection_id.as_ref()
+                    .ok_or_else(|| anyhow!("Collection ID required for GET"))?;
+
+                let collection = self.collection_service.collection(name).await
+                    .map_err(|e| anyhow!("Failed to get collection: {}", e))?
+                    .ok_or_else(|| anyhow!("Collection not found: {}", name))?;
+
+                let dimension = collection.config.as_ref()
+                    .map(|cfg| cfg.dimension)
+                    .unwrap_or(0);
+                let vector_count = collection.stats.as_ref()
+                    .map(|s| s.vector_count as u64)
+                    .unwrap_or(0);
+                let storage_engine = collection.storage_assignment.as_ref()
+                    .map(|sa| proximadb_v1::StorageEngine::try_from(sa.engine)
+                        .map(|e| format!("{:?}", e).to_lowercase())
+                        .unwrap_or_else(|_| "sst".to_string()))
+                    .unwrap_or_else(|| "sst".to_string());
+
+                Ok(UnifiedQueryResponse {
+                    success: true,
+                    error: None,
+                    data: ResponseData::CollectionInfo(CollectionInfo {
+                        id: collection.id,
+                        dimension,
+                        vector_count,
+                        storage_engine,
+                        created_at: collection.created_at,
+                    }),
+                    metadata: ResponseMetadata::default(),
+                })
+            }
+            _ => Ok(UnifiedQueryResponse {
+                success: false,
+                error: Some("Collection operation not yet implemented".to_string()),
+                data: ResponseData::Empty,
+                metadata: ResponseMetadata::default(),
+            }),
+        }
+    }
+
+    /// Execute graph operation
+    async fn execute_graph_op(&self, op: &GraphOperation) -> Result<UnifiedQueryResponse> {
+        let _graph_service = self.graph_service.as_ref()
+            .ok_or_else(|| anyhow!("Graph service not available"))?;
+
+        match &op.operation {
+            GraphOperationType::Traverse { start_nodes, edge_types: _, max_depth } => {
+                debug!(
+                    graph = %op.graph_name,
+                    start_nodes = ?start_nodes,
+                    max_depth = max_depth,
+                    "Executing graph traversal"
+                );
+
+                // Graph traversal would go through GraphOperationsService
+                Ok(UnifiedQueryResponse {
+                    success: true,
+                    error: None,
+                    data: ResponseData::GraphResults {
+                        nodes: vec![],
+                        edges: vec![],
+                    },
+                    metadata: ResponseMetadata::default(),
+                })
+            }
+            _ => Ok(UnifiedQueryResponse {
+                success: false,
+                error: Some("Graph operation not yet implemented".to_string()),
+                data: ResponseData::Empty,
+                metadata: ResponseMetadata::default(),
+            }),
+        }
+    }
+
+    /// Execute health check
+    async fn execute_health_check(&self) -> Result<UnifiedQueryResponse> {
+        Ok(UnifiedQueryResponse {
+            success: true,
+            error: None,
+            data: ResponseData::HealthStatus {
+                status: "healthy".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            metadata: ResponseMetadata::default(),
+        })
+    }
+}
+
+impl UnifiedQueryRequest {
+    /// Get the source protocol
+    pub fn protocol(&self) -> RequestProtocol {
+        match self {
+            UnifiedQueryRequest::VectorSearch(q) => q.source,
+            UnifiedQueryRequest::VectorBatch(b) => b.source,
+            UnifiedQueryRequest::SqlQuery(s) => s.source,
+            UnifiedQueryRequest::Collection(c) => c.source,
+            UnifiedQueryRequest::Graph(g) => g.source,
+            UnifiedQueryRequest::HealthCheck => RequestProtocol::Rest,
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unified_request_from_rest_search() {
+        let proto_request = proximadb_v1::VectorSearchRequest {
+            collection_id: "test_collection".to_string(),
+            queries: vec![proximadb_v1::SearchQuery {
+                vector: vec![0.1, 0.2, 0.3],
+                filters: HashMap::new(),
+                advanced_filter: None,
+            }],
+            top_k: 10,
+            include_fields: None,
+            search_params: None,
+            distance_metric_override: None,
+            search_optimization: None,
+        };
+
+        let request = UnifiedQueryRequest::from_rest_search(&proto_request).unwrap();
+
+        match request {
+            UnifiedQueryRequest::VectorSearch(q) => {
+                assert_eq!(q.collection_id, "test_collection");
+                assert_eq!(q.top_k, 10);
+                assert_eq!(q.query_vectors.len(), 1);
+                assert_eq!(q.source, RequestProtocol::Rest);
+            }
+            _ => panic!("Expected VectorSearch"),
+        }
+    }
+
+    #[test]
+    fn test_unified_request_from_grpc_search() {
+        let proto_request = proximadb_v1::VectorSearchRequest {
+            collection_id: "grpc_collection".to_string(),
+            queries: vec![proximadb_v1::SearchQuery {
+                vector: vec![0.5, 0.5, 0.5],
+                filters: HashMap::new(),
+                advanced_filter: None,
+            }],
+            top_k: 5,
+            include_fields: None,
+            search_params: None,
+            distance_metric_override: None,
+            search_optimization: None,
+        };
+
+        let request = UnifiedQueryRequest::from_grpc_search(proto_request).unwrap();
+
+        match request {
+            UnifiedQueryRequest::VectorSearch(q) => {
+                assert_eq!(q.collection_id, "grpc_collection");
+                assert_eq!(q.source, RequestProtocol::Grpc);
+            }
+            _ => panic!("Expected VectorSearch"),
+        }
+    }
+
+    #[test]
+    fn test_unified_request_from_postgres() {
+        let sql = "SELECT * FROM embeddings ORDER BY vector <-> '[0.1,0.2,0.3]' LIMIT 10";
+        let request = UnifiedQueryRequest::from_postgres_query(sql.to_string(), vec![]).unwrap();
+
+        match request {
+            UnifiedQueryRequest::SqlQuery(q) => {
+                assert_eq!(q.source, RequestProtocol::Postgres);
+                assert!(q.query.contains("embeddings"));
+            }
+            _ => panic!("Expected SqlQuery"),
+        }
+    }
+
+    #[test]
+    fn test_response_to_postgres_rows() {
+        let response = UnifiedQueryResponse {
+            success: true,
+            error: None,
+            data: ResponseData::SearchResults(vec![
+                SearchResult {
+                    id: "vec1".to_string(),
+                    score: 0.95,
+                    vector: None,
+                    metadata: HashMap::new(),
+                },
+                SearchResult {
+                    id: "vec2".to_string(),
+                    score: 0.85,
+                    vector: None,
+                    metadata: HashMap::new(),
+                },
+            ]),
+            metadata: ResponseMetadata::default(),
+        };
+
+        let pg_result = response.into_postgres_rows().unwrap();
+        assert_eq!(pg_result.columns.len(), 3);
+        assert_eq!(pg_result.rows.len(), 2);
+    }
+
+    #[test]
+    fn test_response_to_rest_json() {
+        let response = UnifiedQueryResponse {
+            success: true,
+            error: None,
+            data: ResponseData::HealthStatus {
+                status: "healthy".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            metadata: ResponseMetadata::default(),
+        };
+
+        let json = response.into_rest_json().unwrap();
+        assert!(json.get("success").unwrap().as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_sql_value_conversion() {
+        let json_val = serde_json::json!({"key": "value", "count": 42});
+        let sql_val = json_to_sql_value(&json_val);
+        let back = sql_value_to_json(&sql_val);
+        assert_eq!(json_val, back);
+    }
+}

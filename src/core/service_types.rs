@@ -6,6 +6,8 @@
 
 use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::security::EncryptionConfig;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 // SearchResult is now only used from proto layer - not re-exported in core::search
 
@@ -92,6 +94,42 @@ impl Default for CompactionConfig {
     }
 }
 
+/// Security configuration for a collection
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CollectionSecurityConfig {
+    /// Enable Row-Level Security for this collection
+    pub rls_enabled: bool,
+    /// Names of RLS policies applied to this collection
+    /// Policies are registered separately with the RLS service
+    #[serde(default)]
+    pub rls_policy_names: Vec<String>,
+    /// Enable field-level encryption
+    pub field_encryption_enabled: bool,
+    /// Field encryption configuration
+    #[serde(default)]
+    pub encryption_config: EncryptionConfig,
+    /// Enable audit logging for this collection
+    pub audit_enabled: bool,
+    /// Audit logging level
+    #[serde(default)]
+    pub audit_level: AuditLevel,
+}
+
+/// Audit logging level for collection operations
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditLevel {
+    /// No audit logging
+    #[default]
+    None,
+    /// Log read operations only
+    Reads,
+    /// Log write operations only
+    Writes,
+    /// Log all operations
+    All,
+}
+
 /// Collection configuration for CREATE and UPDATE operations
 #[derive(Debug, Clone)]
 pub struct CollectionConfig {
@@ -111,6 +149,9 @@ pub struct CollectionConfig {
     pub indexing_config: HashMap<String, String>,
     /// New filterable columns API (replaces filterable_metadata_fields)
     pub filterable_columns: Vec<String>,
+    /// Security configuration for the collection
+    #[allow(dead_code)]
+    pub security: Option<CollectionSecurityConfig>,
 }
 
 /// Service-level Collection type (JSON-serializable)

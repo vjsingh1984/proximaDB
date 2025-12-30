@@ -5,7 +5,6 @@
 
 use super::{
     evaluate_property_filter, ColumnSpec, EdgeDirection, PhysicalOperator, QueryValue, ResultTuple,
-    ValueType,
 };
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Edge, Node, PropertyFilter};

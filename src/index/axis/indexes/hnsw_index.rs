@@ -894,6 +894,199 @@ impl AxisHnswIndex {
 
         self.search_with_filter(query, top_k, filter).await
     }
+
+    // ============================================================================
+    // SERIALIZATION HELPER METHODS
+    // ============================================================================
+
+    /// Get number of vectors via ID mapping (for serialization)
+    pub fn id_mapping_len(&self) -> usize {
+        self.id_mapping.len()
+    }
+
+    /// Get dimension from vector collection config
+    pub fn get_dimension(&self) -> usize {
+        let vectors = self.vectors.read().unwrap();
+        vectors.config().dimension
+    }
+
+    /// Get config M parameter
+    pub fn get_config_m(&self) -> usize {
+        self.config.m
+    }
+
+    /// Get config ef_construction parameter
+    pub fn get_config_ef_construction(&self) -> usize {
+        self.config.ef_construction
+    }
+
+    /// Get config ef parameter
+    pub fn get_config_ef(&self) -> usize {
+        self.config.ef
+    }
+
+    /// Get config max_layers parameter
+    pub fn get_config_max_layers(&self) -> usize {
+        self.config.max_layers
+    }
+
+    /// Get distance metric as numeric code for serialization
+    /// Codes: 0=Unspecified, 1=Cosine, 2=Euclidean, 3=DotProduct, 4=Hamming, 5=Manhattan,
+    /// 6=Jaccard, 7=Angular, 8=Chebyshev, 9=Canberra, 10=Minkowski, 11=BrayCurtis,
+    /// 12=Hellinger, 13=Custom
+    pub fn get_config_distance_metric_code(&self) -> u8 {
+        match self.config.distance_metric {
+            DistanceMetric::Unspecified => 0,
+            DistanceMetric::Cosine => 1,
+            DistanceMetric::Euclidean => 2,
+            DistanceMetric::DotProduct => 3,
+            DistanceMetric::Hamming => 4,
+            DistanceMetric::Manhattan => 5,
+            DistanceMetric::Jaccard => 6,
+            DistanceMetric::Angular => 7,
+            DistanceMetric::Chebyshev => 8,
+            DistanceMetric::Canberra => 9,
+            DistanceMetric::Minkowski => 10,
+            DistanceMetric::BrayCurtis => 11,
+            DistanceMetric::Hellinger => 12,
+            DistanceMetric::Custom => 13,
+        }
+    }
+
+    /// Get collection config details for serialization
+    pub fn get_collection_config_details(&self) -> (usize, bool, Option<u8>) {
+        let vectors = self.vectors.read().unwrap();
+        let config = vectors.config();
+        let quant_method = config.quantization_method.map(|m| match m {
+            crate::index::axis::zero_overhead_vector::QuantizationMethod::INT8 => 0,
+            crate::index::axis::zero_overhead_vector::QuantizationMethod::PQ8 => 1,
+            crate::index::axis::zero_overhead_vector::QuantizationMethod::PQ4 => 2,
+            crate::index::axis::zero_overhead_vector::QuantizationMethod::Binary => 3,
+        });
+        (config.dimension, config.is_quantized, quant_method)
+    }
+
+    /// Serialize ID mapping to portable format
+    pub fn serialize_id_mapping(&self) -> crate::index::axis::storage::serialization::SerializableIdMapping {
+        use crate::index::axis::storage::serialization::SerializableIdMapping;
+
+        // Collect all external->internal mappings
+        let external_to_internal: Vec<(String, usize)> = self.id_mapping
+            .iter_external_to_internal()
+            .collect();
+
+        SerializableIdMapping {
+            external_to_internal,
+            next_id: self.id_mapping.next_id(),
+        }
+    }
+
+    /// Serialize graph layers to portable format
+    pub fn serialize_layers(&self) -> Vec<((usize, usize), Vec<usize>)> {
+        self.layers
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect()
+    }
+
+    /// Get max layer value
+    pub fn get_max_layer(&self) -> usize {
+        self.max_layer.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Get entry point
+    pub fn get_entry_point(&self) -> Option<usize> {
+        *self.entry_point.read().unwrap()
+    }
+
+    /// Serialize vectors to portable format
+    pub fn serialize_vectors(&self) -> Vec<crate::index::axis::storage::serialization::SerializableVector> {
+        use crate::index::axis::storage::serialization::SerializableVector;
+
+        let vectors = self.vectors.read().unwrap();
+        vectors
+            .iter()
+            .map(|view| SerializableVector {
+                id: view.id().to_string(),
+                data: view.raw().as_bytes().to_vec(),
+            })
+            .collect()
+    }
+
+    /// Serialize quantized vectors
+    pub fn serialize_quantized_vectors(&self) -> Vec<(String, Vec<u8>)> {
+        self.quantized_vectors
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
+    }
+
+    /// Restore HNSW state from deserialized data
+    pub fn restore_from_state(
+        &self,
+        id_mapping: crate::index::axis::storage::serialization::SerializableIdMapping,
+        layers: Vec<((usize, usize), Vec<usize>)>,
+        max_layer: usize,
+        entry_point: Option<usize>,
+        vectors: Vec<crate::index::axis::storage::serialization::SerializableVector>,
+        quantized_vectors: Vec<(String, Vec<u8>)>,
+        collection_config: crate::index::axis::storage::serialization::SerializableCollectionConfig,
+    ) -> Result<()> {
+        use crate::index::axis::zero_overhead_vector::ZeroOverheadVector;
+
+        info!("Restoring HNSW state: {} vectors, {} layers, {} quantized vectors",
+              vectors.len(), layers.len(), quantized_vectors.len());
+
+        // 1. Restore ID mapping
+        for (external_id, internal_id) in id_mapping.external_to_internal {
+            self.id_mapping.restore_mapping(external_id, internal_id)?;
+        }
+        self.id_mapping.set_next_id(id_mapping.next_id);
+
+        // 2. Restore graph layers
+        for ((layer, node_id), connections) in layers {
+            self.layers.insert((layer, node_id), connections);
+        }
+
+        // 3. Restore max_layer
+        self.max_layer.store(max_layer, AtomicOrdering::Relaxed);
+
+        // 4. Restore entry point
+        *self.entry_point.write().unwrap() = entry_point;
+
+        // 5. Restore vectors
+        {
+            let mut vec_store = self.vectors.write().unwrap();
+            for vec in vectors {
+                let zero_vec = ZeroOverheadVector::from_bytes(vec.data);
+                // Get the ID from the zero-overhead vector
+                let id = zero_vec.id(collection_config.dimension * std::mem::size_of::<f32>());
+                // For FP32 vectors, add directly
+                if !collection_config.is_quantized {
+                    let fp32_data = zero_vec.as_f32(collection_config.dimension);
+                    vec_store.add_fp32(id.to_string(), fp32_data)?;
+                } else {
+                    let quant_size = match collection_config.quantization_method {
+                        Some(0) => collection_config.dimension, // INT8
+                        Some(1) => collection_config.dimension, // PQ8
+                        Some(2) => (collection_config.dimension * 4 + 7) / 8, // PQ4
+                        Some(3) => (collection_config.dimension + 7) / 8, // Binary
+                        _ => collection_config.dimension,
+                    };
+                    let quant_data = zero_vec.as_quantized(quant_size);
+                    vec_store.add_quantized(id.to_string(), quant_data)?;
+                }
+            }
+        }
+
+        // 6. Restore quantized vectors
+        for (id, data) in quantized_vectors {
+            self.quantized_vectors.insert(id, data);
+        }
+
+        info!("HNSW state restoration complete");
+        Ok(())
+    }
 }
 
 /// Factory function to create HNSW index instances
@@ -1134,5 +1327,54 @@ mod tests {
         // Remove should work
         index.remove("duplicate").await.unwrap();
         assert_eq!(index.stats().vector_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_hnsw_serialization_roundtrip() {
+        use crate::index::axis::storage::serialization::{IndexSerializer, SerializableIndex};
+
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let config = AxisHnswConfig::default();
+        let index = AxisHnswIndex::new(config.clone(), 4).unwrap();
+
+        // Add test vectors
+        let test_vectors = vec![
+            ("v1", vec![1.0, 0.0, 0.0, 0.0]),
+            ("v2", vec![0.0, 1.0, 0.0, 0.0]),
+            ("v3", vec![0.0, 0.0, 1.0, 0.0]),
+            ("v4", vec![0.5, 0.5, 0.0, 0.0]),
+        ];
+
+        for (id, vector) in test_vectors.iter() {
+            index.add(id.to_string(), vector.clone()).await.unwrap();
+        }
+
+        // Verify initial state
+        assert_eq!(index.stats().vector_count, 4);
+        let original_results = index.search(&[1.0, 0.0, 0.0, 0.0], 2, None).await.unwrap();
+        assert!(!original_results.is_empty());
+
+        // Serialize
+        let serialized = IndexSerializer::serialize_hnsw(&index, "test_collection").unwrap();
+        assert!(!serialized.is_empty(), "Serialized data should not be empty");
+
+        // Deserialize
+        let (restored_index, metadata) =
+            IndexSerializer::deserialize_hnsw(&serialized, &config).unwrap();
+
+        // Verify metadata
+        assert_eq!(metadata.num_vectors, 4);
+        assert_eq!(metadata.dimension, 4);
+
+        // Verify restored index has same vector count
+        assert_eq!(restored_index.stats().vector_count, 4);
+
+        // Verify search works on restored index
+        let restored_results = restored_index.search(&[1.0, 0.0, 0.0, 0.0], 2, None).await.unwrap();
+        assert!(!restored_results.is_empty());
+
+        // The top result should be the same (v1 is closest to query)
+        assert_eq!(original_results[0].0, restored_results[0].0);
     }
 }

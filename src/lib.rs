@@ -16,6 +16,9 @@
 
 // SIMD optimization features (using stable AVX2 instead of unstable AVX-512)
 
+// Increase recursion limit for complex types with serde
+#![recursion_limit = "1024"]
+
 // Enforce error handling best practices
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
@@ -146,12 +149,24 @@ pub mod index;
 /// AutoML Framework for automated optimization and tuning
 pub mod automl;
 
+/// LLM Integration for embeddings, RAG, and semantic caching
+/// Leverages Victor (codingagent) framework for embedding generation
+pub mod llm;
+
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
 pub mod metrics;
 pub mod monitoring;
 pub mod network;
 pub mod proto;
 pub mod query;
+
+/// DataFusion integration for compute engine compatibility.
+/// Provides TableProvider implementations for SQL queries over ProximaDB collections.
+/// NOTE: Feature-gated due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x,
+/// ProximaDB uses Arrow 57.x). Enable with `--features datafusion-integration`.
+#[cfg(feature = "datafusion-integration")]
+pub mod datafusion;
+
 pub mod schema;
 // NOTE: schema_constants module removed - using hardcoded schema_types.rs instead
 // schema_types removed - use core::avro_unified instead
@@ -160,6 +175,23 @@ pub mod server;
 pub mod services;
 pub mod storage;
 pub mod utils;
+
+/// DataSource Connector interface (Spark DataSource V2-style)
+/// Provides pluggable connectors for external storage systems and pushdown negotiation
+pub mod connectors;
+
+/// Observability module for Cloud SIEM / Datadog-like capabilities
+/// Provides high-throughput ingestion and querying for logs, metrics, and traces
+pub mod observability;
+
+/// Real-time streaming module for continuous vector ingestion
+/// Provides lock-free ring buffers, backpressure handling, and live queries
+pub mod streaming;
+
+/// Change Data Capture (CDC) module for database synchronization
+/// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks
+pub mod cdc;
+
 pub mod version;
 
 /// Embedded mode for in-process database usage without network layer
@@ -170,6 +202,10 @@ pub mod embedded;
 /// Provides consensus, metadata management, shard routing, and node registry
 pub mod cluster;
 
+/// Unified Catalog System with pluggable backends
+/// Supports: Native, AWS Glue, Databricks Unity, Apache Polaris, Hive, Iceberg
+pub mod catalog;
+
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {
 //     include!(concat!(env!("OUT_DIR"), "/compiled_schemas.rs"));
@@ -177,6 +213,68 @@ pub mod cluster;
 
 // Re-export commonly used types from core
 pub use core::{Config, VectorRecord, error::ProximaDBError as Error};
+
+// Re-export catalog types for unified schema management
+pub use catalog::{
+    // Catalog management
+    CatalogManager, TableIdentifier, CatalogCache,
+    // Internal schema registry
+    internal::{
+        InternalSchemaRegistry,
+        // Object model
+        CatalogObject, ObjectType, SchemaEnforcementMode, ObjectSchema,
+        // Constraints
+        TableConstraint, ConstraintType, ForeignKeyReference, ReferentialAction,
+        // Information schema
+        InformationSchema, InformationSchemaView,
+        // Enforcement
+        ConstraintEnforcer, ConstraintViolation, EnforcementResult,
+        // Model properties
+        ModelProperties, VectorProperties, DocumentProperties, GraphProperties,
+        RdbmsProperties, ObservabilityProperties,
+    },
+    // Catalog federation for unified view across internal and external catalogs
+    federation::{
+        FederatedCatalog, FederatedCatalogConfig, FederatedTableInfo, ConstraintSupport,
+        ExternalCatalog, ExternalCatalogConfig, ExternalCatalogType,
+    },
+};
+
+// ============================================================================
+// Storage-Compute Separation Re-exports (Hadoop-style architecture)
+// ============================================================================
+
+// Re-export key compute types for the pluggable compute layer
+pub use compute::{
+    // Compute provider interface
+    ComputeProvider, ComputeCapabilities, CostEstimate, LocalComputeProvider,
+    // Compute plan types
+    ComputePlan, PlanNode, Expr as ComputeExpr,
+    // Compute scheduler
+    ComputeScheduler, SchedulingPolicy,
+};
+
+// Re-export key connector types for external system integration
+pub use connectors::{
+    // Core connector traits
+    DataSourceConnector, DataReader, DataWriter,
+    // Context types
+    ReadContext, WriteContext,
+    // Pushdown types
+    PushdownRequest, PushdownResponse,
+    // Result types
+    WriteResult, TableInfo, TableStatistics,
+};
+
+// Re-export key storage format types for format abstraction
+pub use storage::formats::{
+    // Core format traits
+    StorageFormat, FormatType,
+    // Context types
+    ReadContext as FormatReadContext, WriteContext as FormatWriteContext,
+    // Format registry
+    FormatRegistry,
+};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -321,7 +419,8 @@ impl ProximaDB {
         let mut builder = network::MultiServerBuilder::custom()
             .http(|h| h.bind_address(rest_addr))
             .grpc(|g| g.bind_address(grpc_addr))
-            .with_api_config(config.api.clone());
+            .with_api_config(config.api.clone())
+            .with_data_dir(config.server.data_dir.clone());
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {
@@ -365,13 +464,15 @@ impl ProximaDB {
             .as_ref()
             .map(|s| s.authentication.enabled)
             .unwrap_or(false);
-        let multi_server = network::MultiServer::new(
+        let mut multi_server = network::MultiServer::new(
             multi_config,
             shared_services,
             security.clone(),
             rest_auth_enabled,
         );
-        tracing::debug!("✅ ProximaDB::new - MultiServer created successfully");
+        // Wire storage engine for PostgreSQL wire protocol support
+        multi_server.set_storage(storage.clone());
+        tracing::debug!("✅ ProximaDB::new - MultiServer created with storage engine wired");
 
         Ok(Self {
             storage,

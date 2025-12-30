@@ -552,6 +552,9 @@ async fn phase4_full_precision(
         let distance_metric = sst.header.distance_metric.clone();
 
         let handle = tokio::spawn(async move {
+            // SAFETY: acquire().unwrap() is safe because the semaphore is never closed
+            // during the search operation. The semaphore remains valid for the lifetime
+            // of the search and is only used for concurrency limiting.
             let _permit = sem.acquire().await.unwrap();
 
             // In real implementation, would load block from disk

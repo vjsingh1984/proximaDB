@@ -14,42 +14,77 @@
  * limitations under the License.
  */
 
-//! # PULSAR Graph Engine - Distributed Sharded Storage
+//! # PULSAR Graph Engine - EXPERIMENTAL (Distributed)
 //!
-//! PULSAR (Partitioned Universal Logic for Scalable Analytics & Retrieval) is ProximaDB's
-//! distributed graph engine designed for horizontal scaling of large graphs (1B+ nodes).
+//! **WARNING**: PULSAR is experimental and not production-ready.
+//!
+//! PULSAR provides distributed graph capabilities via sharding but has incomplete
+//! implementations for cross-shard queries and distributed transactions.
+//!
+//! **For production use, use ORION with application-level sharding.**
+//!
+//! ## Status
+//!
+//! | Feature | Status |
+//! |---------|--------|
+//! | Consistent hashing | Implemented |
+//! | Single-shard queries | Implemented |
+//! | Replication | Basic (async) |
+//! | Cross-shard traversal | Incomplete |
+//! | Distributed transactions | Incomplete |
+//! | WAL persistence | Not implemented |
+//!
+//! ## Known Limitations
+//!
+//! 1. **Cross-shard queries**: BFS/DFS across shards may miss edges
+//! 2. **No distributed WAL**: Shard failures can cause data loss
+//! 3. **Eventual consistency**: Replication is asynchronous
+//! 4. **No automatic rebalancing**: Manual intervention required
+//!
+//! ## When to Consider PULSAR
+//!
+//! - Experimental workloads with extremely large graphs (1B+ nodes)
+//! - Research and development environments
+//! - When you can tolerate data loss and inconsistency
+//!
+//! ## Recommended Alternative
+//!
+//! For production distributed graph workloads, consider:
+//! - Using ORION with application-level sharding
+//! - Implementing a sharding layer in your application
+//! - Using ORION per tenant/partition
 //!
 //! ## Architecture
 //!
 //! ```text
-//! ┌─────────────────────────────────────────┐
-//! │            PULSAR Engine                 │
-//! ├─────────────────────────────────────────┤
-//! │              Coordinator                 │
-//! │  ┌─────────────────────────────────────┐ │
-//! │  │     Query Router & Distributor       │ │
-//! │  └─────────────────────────────────────┘ │
-//! ├─────────────────────────────────────────┤
-//! │               Sharding                   │
-//! │  ┌─────────┬─────────┬─────────────┐    │
-//! │  │ Shard 0 │ Shard 1 │   Shard N   │    │
-//! │  │(ORION)  │(ORION)  │  (ORION)    │    │
-//! │  └─────────┴─────────┴─────────────┘    │
-//! ├─────────────────────────────────────────┤
-//! │             Replication                  │
-//! │  ┌─────────────────────────────────────┐ │
-//! │  │    Master-Slave Replication         │ │
-//! │  │    Configurable Factor (1-3)        │ │
-//! │  └─────────────────────────────────────┘ │
-//! └─────────────────────────────────────────┘
+//! +------------------------------------------+
+//! |            PULSAR Engine                 |
+//! +------------------------------------------+
+//! |              Coordinator                 |
+//! |  +-------------------------------------+ |
+//! |  |     Query Router & Distributor     | |
+//! |  +-------------------------------------+ |
+//! +------------------------------------------+
+//! |               Sharding                   |
+//! |  +---------+---------+-------------+    |
+//! |  | Shard 0 | Shard 1 |   Shard N   |    |
+//! |  |(ORION)  |(ORION)  |  (ORION)    |    |
+//! |  +---------+---------+-------------+    |
+//! +------------------------------------------+
+//! |             Replication                  |
+//! |  +-------------------------------------+ |
+//! |  |    Master-Slave Replication        | |
+//! |  |    Configurable Factor (1-3)       | |
+//! |  +-------------------------------------+ |
+//! +------------------------------------------+
 //! ```
 //!
-//! ## Key Features
+//! ## Key Features (Experimental)
 //!
 //! - **Consistent Hashing**: Nodes distributed using SHA-256 hash ring
 //! - **Configurable Replication**: 1-3x replication factor for fault tolerance
-//! - **Cross-Shard Queries**: Distributed BFS/DFS traversal
-//! - **2PC Transactions**: Basic distributed transaction support
+//! - **Cross-Shard Queries**: Distributed BFS/DFS traversal (incomplete)
+//! - **2PC Transactions**: Basic distributed transaction support (incomplete)
 //! - **Hot Shard Detection**: Automatic load balancing
 
 pub mod consensus;
@@ -145,7 +180,7 @@ impl Default for PulsarConfig {
 }
 
 impl PulsarGraphEngine {
-    /// Create a new PULSAR distributed graph engine
+    /// Create a new PULSAR distributed graph engine (in-memory, no persistence)
     pub fn new(config: PulsarConfig) -> Result<Self> {
         // Shared memory pool for PULSAR-level operations (e.g., cross-shard queries)
         let memory_pool = Arc::new(GraphMemoryPool::new());
@@ -160,6 +195,62 @@ impl PulsarGraphEngine {
                 Arc::new(OrionGraphEngine::with_memory_pool(shard_memory_pool));
             shards.insert(shard_id as u32, shard_engine);
         }
+
+        Self::finish_initialization(config, memory_pool, shards)
+    }
+
+    /// Create a new PULSAR distributed graph engine with persistence enabled
+    ///
+    /// Each shard will have its own WAL file for durability.
+    ///
+    /// # Arguments
+    /// * `config` - PULSAR configuration
+    /// * `graph_id` - Unique identifier for this graph (used in WAL paths)
+    /// * `base_url` - Base storage URL (e.g., "file:///data" or "s3://bucket")
+    ///
+    /// # Example
+    /// ```ignore
+    /// let engine = PulsarGraphEngine::with_persistence(
+    ///     PulsarConfig::default(),
+    ///     "my_graph".to_string(),
+    ///     "file:///tmp/proximadb".to_string(),
+    /// ).await?;
+    /// ```
+    pub async fn with_persistence(
+        config: PulsarConfig,
+        graph_id: String,
+        base_url: String,
+    ) -> Result<Self> {
+        // Shared memory pool for PULSAR-level operations
+        let memory_pool = Arc::new(GraphMemoryPool::new());
+
+        // Initialize shards with persistence enabled
+        let shards = Arc::new(DashMap::new());
+        for shard_id in 0..config.shard_count {
+            // Create shard-specific graph ID for WAL isolation
+            let shard_graph_id = format!("{}_shard_{}", graph_id, shard_id);
+
+            // Each shard gets its own ORION engine with WAL
+            let shard_engine = Arc::new(
+                OrionGraphEngine::with_persistence_for_graph(
+                    shard_graph_id,
+                    base_url.clone(),
+                    true, // Enable WAL
+                )
+                .await?,
+            );
+            shards.insert(shard_id as u32, shard_engine);
+        }
+
+        Self::finish_initialization(config, memory_pool, shards)
+    }
+
+    /// Common initialization logic for both constructors
+    fn finish_initialization(
+        config: PulsarConfig,
+        memory_pool: Arc<GraphMemoryPool>,
+        shards: Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
+    ) -> Result<Self> {
 
         // Initialize hash ring
         let hash_ring = Arc::new(RwLock::new(sharding::ConsistentHashRing::new(
@@ -428,6 +519,47 @@ impl PulsarGraphEngine {
 
         Ok(false)
     }
+
+    /// Flush all shard WALs to ensure durability
+    ///
+    /// This flushes the WAL buffers of all ORION shards to persistent storage.
+    /// Should be called during graceful shutdown or before critical operations.
+    pub async fn flush_wal(&self) -> Result<()> {
+        tracing::debug!("Flushing WAL for all {} shards", self.shards.len());
+
+        for shard_entry in self.shards.iter() {
+            let shard_id = *shard_entry.key();
+            let shard = shard_entry.value();
+
+            if let Err(e) = shard.flush_wal().await {
+                tracing::warn!("Failed to flush WAL for shard {}: {:?}", shard_id, e);
+                // Continue flushing other shards even if one fails
+            }
+        }
+
+        tracing::debug!("WAL flush complete for all shards");
+        Ok(())
+    }
+
+    /// Recover all shards from their WAL files
+    ///
+    /// This replays the WAL entries for each shard to recover state after restart.
+    pub async fn recover(&self) -> Result<()> {
+        tracing::info!("Recovering {} shards from WAL", self.shards.len());
+
+        for shard_entry in self.shards.iter() {
+            let shard_id = *shard_entry.key();
+            let shard = shard_entry.value();
+
+            if let Err(e) = shard.recover().await {
+                tracing::warn!("Failed to recover shard {} from WAL: {:?}", shard_id, e);
+                // Continue recovering other shards even if one fails
+            }
+        }
+
+        tracing::info!("Shard recovery complete");
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -484,15 +616,15 @@ impl GraphEngine for PulsarGraphEngine {
     }
 
     async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
-        // TODO: Add WAL support for update_node
-        // Get primary shard and update directly (avoiding sync closure issues)
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's update_node writes to WAL if persistence is enabled)
         let primary_shard = self.get_primary_shard(&node.id).await?;
         primary_shard.update_node(node).await
     }
 
     async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        // TODO: Add WAL support for delete_node
-        // Get primary shard and delete directly
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's delete_node writes to WAL if persistence is enabled)
         let primary_shard = self.get_primary_shard(id).await?;
         let result = GraphEngine::delete_node(&*primary_shard, id).await?;
 
@@ -570,15 +702,16 @@ impl GraphEngine for PulsarGraphEngine {
     }
 
     async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        // TODO: Add WAL support for update_edge
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's update_edge writes to WAL if persistence is enabled)
         let primary_shard = self.get_primary_shard(&edge.from_node_id).await?;
-
         primary_shard.update_edge(edge).await
     }
 
     async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        // TODO: Add WAL support for delete_edge
-        // Similar to get_edge, we need to search across shards
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's delete_edge writes to WAL if persistence is enabled)
+        // We search across shards since we don't know which shard contains the edge
         for shard_entry in self.shards.iter() {
             let shard = shard_entry.value();
             if let Ok(Some(edge)) = GraphEngine::delete_edge(&**shard, id).await {

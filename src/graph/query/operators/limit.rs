@@ -2,9 +2,8 @@
 //!
 //! Limits result set size (LIMIT/SKIP clauses).
 
-use super::{ColumnSpec, PhysicalOperator, QueryValue, ResultTuple, ValueType};
+use super::{ColumnSpec, PhysicalOperator, ResultTuple};
 use anyhow::Result;
-use std::sync::Arc;
 
 /// Limit operator
 ///

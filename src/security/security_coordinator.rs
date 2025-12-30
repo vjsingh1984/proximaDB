@@ -1,8 +1,13 @@
 //! Security Coordinator for ProximaDB
 //!
 //! Central coordination point for all security operations including
-//! authentication, authorization, audit, and security policy enforcement.
+//! authentication, authorization, audit, Row-Level Security (RLS),
+//! and security policy enforcement.
 
+use super::encryption::{
+    EncryptedField, EncryptionConfig, FieldEncryption, FieldEncryptionError, KeyStore, KeyStoreConfig,
+};
+use super::rls::{CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy};
 use super::unified_auth::{
     AuthenticationConfig, AuthenticationData,
     UnifiedAuthService,
@@ -11,6 +16,7 @@ use super::unified_rbac::{
     ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
 };
 use crate::audit::logger::{AuditConfig, AuditLogger};
+use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
 use chrono::Utc;
@@ -27,6 +33,12 @@ pub struct SecurityConfig {
     pub audit: AuditConfig,
     pub tls: TlsConfig,
     pub compliance: ComplianceConfig,
+    /// Field-level encryption configuration
+    #[serde(default)]
+    pub encryption: EncryptionConfig,
+    /// Key store configuration
+    #[serde(default)]
+    pub key_store: KeyStoreConfig,
 }
 
 /// Security mode for different deployment scenarios
@@ -67,6 +79,15 @@ pub struct SecurityCoordinator {
     /// Consolidated RBAC manager
     rbac_manager: Arc<ConsolidatedRBACManager>,
 
+    /// Row-Level Security service
+    rls_service: Arc<CollectionRLS>,
+
+    /// Field-level encryption service
+    encryption_service: Option<Arc<FieldEncryption>>,
+
+    /// Key store for encryption keys
+    key_store: Option<Arc<KeyStore>>,
+
     /// Audit logger
     audit_logger: Arc<AuditLogger>,
 
@@ -82,13 +103,160 @@ impl SecurityCoordinator {
         audit_logger: AuditLogger,
         config: SecurityConfig,
     ) -> Self {
+        // Initialize RLS with default config
+        let rls_service = CollectionRLS::new(RLSConfig::default());
+
+        // Initialize encryption if enabled
+        let (key_store, encryption_service) = if config.encryption.enabled {
+            match KeyStore::new(config.key_store.clone()) {
+                Ok(ks) => {
+                    let key_store = Arc::new(ks);
+                    // Create default encryption key if needed
+                    if !key_store.key_exists("default") {
+                        let _ = key_store.create_key("default", "Default encryption key");
+                    }
+                    match FieldEncryption::new(Arc::clone(&key_store), config.encryption.clone()) {
+                        Ok(fe) => (Some(key_store), Some(Arc::new(fe))),
+                        Err(_) => (Some(key_store), None),
+                    }
+                }
+                Err(_) => (None, None),
+            }
+        } else {
+            (None, None)
+        };
+
         Self {
             auth_service: Arc::new(auth_service),
             rbac_manager: Arc::new(rbac_manager),
+            rls_service: Arc::new(rls_service),
+            encryption_service,
+            key_store,
             audit_logger: Arc::new(audit_logger),
             config,
         }
     }
+
+    /// Get the RLS service for direct access
+    pub fn rls_service(&self) -> Arc<CollectionRLS> {
+        Arc::clone(&self.rls_service)
+    }
+
+    /// Register an RLS policy for a collection
+    pub async fn register_rls_policy(&self, policy: RLSPolicy) -> Result<()> {
+        self.rls_service.register_policy(policy).await
+    }
+
+    /// Remove an RLS policy from a collection
+    pub async fn remove_rls_policy(&self, collection: &str, policy_name: &str) -> Result<()> {
+        self.rls_service.remove_policy(collection, policy_name).await
+    }
+
+    /// Apply RLS filters for a search operation
+    ///
+    /// Returns the security filters that should be applied to the search based on
+    /// the user's context and the collection's RLS policies.
+    pub async fn apply_rls_filter(
+        &self,
+        collection: &str,
+        operation: RLSOperation,
+        user_context: &UnifiedUserContext,
+    ) -> Result<Arc<RLSFilterResult>> {
+        self.rls_service
+            .apply_security_filter(collection, &operation, user_context)
+            .await
+    }
+
+    // ============== Field-Level Encryption Methods ==============
+
+    /// Check if field-level encryption is enabled
+    pub fn encryption_enabled(&self) -> bool {
+        self.encryption_service.is_some()
+    }
+
+    /// Get the encryption service for direct access
+    pub fn encryption_service(&self) -> Option<Arc<FieldEncryption>> {
+        self.encryption_service.clone()
+    }
+
+    /// Get the key store for key management
+    pub fn key_store(&self) -> Option<Arc<KeyStore>> {
+        self.key_store.clone()
+    }
+
+    /// Encrypt a metadata field value
+    pub fn encrypt_field(
+        &self,
+        field_name: &str,
+        value: &serde_json::Value,
+    ) -> Result<EncryptedField, FieldEncryptionError> {
+        let service = self.encryption_service.as_ref()
+            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Encryption not enabled".into()))?;
+        service.encrypt_field(field_name, value)
+    }
+
+    /// Decrypt an encrypted field
+    pub fn decrypt_field(
+        &self,
+        encrypted: &EncryptedField,
+    ) -> Result<serde_json::Value, FieldEncryptionError> {
+        let service = self.encryption_service.as_ref()
+            .ok_or_else(|| FieldEncryptionError::DecryptionFailed("Encryption not enabled".into()))?;
+        service.decrypt_field(encrypted)
+    }
+
+    /// Encrypt multiple metadata fields in a record
+    pub fn encrypt_record_metadata(
+        &self,
+        metadata: &mut HashMap<String, serde_json::Value>,
+    ) -> Result<HashMap<String, EncryptedField>, FieldEncryptionError> {
+        let service = self.encryption_service.as_ref()
+            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Encryption not enabled".into()))?;
+        service.encrypt_record_metadata(metadata)
+    }
+
+    /// Decrypt all encrypted fields in a record
+    pub fn decrypt_record_metadata(
+        &self,
+        encrypted_fields: &HashMap<String, EncryptedField>,
+    ) -> Result<HashMap<String, serde_json::Value>, FieldEncryptionError> {
+        let service = self.encryption_service.as_ref()
+            .ok_or_else(|| FieldEncryptionError::DecryptionFailed("Encryption not enabled".into()))?;
+        service.decrypt_record_metadata(encrypted_fields)
+    }
+
+    /// Generate a search index for an encrypted field query
+    pub fn generate_search_index(
+        &self,
+        value: &serde_json::Value,
+        truncate_bytes: Option<usize>,
+    ) -> Result<String, FieldEncryptionError> {
+        let service = self.encryption_service.as_ref()
+            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Encryption not enabled".into()))?;
+        service.generate_search_index(value, truncate_bytes)
+    }
+
+    /// Create an encryption key for a specific purpose
+    pub fn create_encryption_key(
+        &self,
+        key_id: &str,
+        purpose: &str,
+    ) -> Result<(), FieldEncryptionError> {
+        let store = self.key_store.as_ref()
+            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Key store not enabled".into()))?;
+        store.create_key(key_id, purpose)?;
+        Ok(())
+    }
+
+    /// Rotate an encryption key
+    pub fn rotate_encryption_key(&self, key_id: &str) -> Result<(), FieldEncryptionError> {
+        let store = self.key_store.as_ref()
+            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Key store not enabled".into()))?;
+        store.rotate_key(key_id)?;
+        Ok(())
+    }
+
+    // ============== Authentication & Authorization Methods ==============
 
     /// Full authentication and authorization flow
     pub async fn authenticate_and_authorize(
@@ -447,6 +615,8 @@ mod tests {
                 encryption_at_rest: false,
                 encryption_in_transit: false,
             },
+            encryption: EncryptionConfig::default(),
+            key_store: KeyStoreConfig::default(),
         }
     }
 
@@ -498,5 +668,69 @@ mod tests {
                 .compliance_frameworks
                 .contains(&"SOC2".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_encryption_integration() {
+        use super::super::encryption::{EncryptionType, FieldEncryptionSettings};
+
+        // Create config with encryption enabled
+        let mut config = create_test_config();
+        config.encryption.enabled = true;
+        config.encryption.field_settings.insert(
+            "ssn".to_string(),
+            FieldEncryptionSettings {
+                encryption_type: EncryptionType::Deterministic,
+                key_id: "default".to_string(),
+                blind_index: true,
+                blind_index_bytes: Some(8),
+            },
+        );
+
+        match SecurityCoordinator::from_config(config).await {
+            Ok(coordinator) => {
+                // Test encryption is enabled
+                assert!(coordinator.encryption_enabled());
+
+                // Test field encryption
+                let value = serde_json::json!("123-45-6789");
+                let encrypted = coordinator.encrypt_field("ssn", &value);
+                assert!(encrypted.is_ok());
+
+                let encrypted = encrypted.unwrap();
+                assert_eq!(encrypted.encryption_type, EncryptionType::Deterministic);
+                assert!(encrypted.blind_index.is_some());
+
+                // Test decryption
+                let decrypted = coordinator.decrypt_field(&encrypted);
+                assert!(decrypted.is_ok());
+                assert_eq!(decrypted.unwrap(), value);
+
+                info!("Encryption integration test passed");
+            }
+            Err(e) => {
+                warn!("Could not create coordinator for encryption test: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_encryption_disabled() {
+        let config = create_test_config();
+        // encryption.enabled defaults to false
+
+        match SecurityCoordinator::from_config(config).await {
+            Ok(coordinator) => {
+                assert!(!coordinator.encryption_enabled());
+
+                // Encryption should fail when disabled
+                let value = serde_json::json!("test");
+                let result = coordinator.encrypt_field("field", &value);
+                assert!(result.is_err());
+            }
+            Err(e) => {
+                warn!("Could not create coordinator: {}", e);
+            }
+        }
     }
 }

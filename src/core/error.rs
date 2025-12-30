@@ -34,6 +34,34 @@ pub enum VectorDBError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    // Transaction errors
+    #[error("Transaction not found: {id}")]
+    TransactionNotFound { id: String },
+
+    #[error("Transaction not active: {id}")]
+    TransactionNotActive { id: String },
+
+    #[error("Transaction timed out: {id}")]
+    TransactionTimedOut { id: String },
+
+    #[error("Transaction conflict: {transaction} conflicts with {conflicting_with}")]
+    TransactionConflict {
+        transaction: String,
+        conflicting_with: String,
+    },
+
+    #[error("Too many transactions: maximum {max} concurrent transactions allowed")]
+    TooManyTransactions { max: usize },
+
+    #[error("Lock timeout for resource: {resource}")]
+    LockTimeout { resource: String },
+
+    #[error("Deadlock detected for transaction: {transaction}")]
+    DeadlockDetected { transaction: String },
+
+    #[error("Savepoint not found: {name}")]
+    SavepointNotFound { name: String },
 }
 
 // Type alias for backward compatibility

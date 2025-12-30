@@ -1,0 +1,216 @@
+// Document storage module for MongoDB-like JSON document capabilities
+//
+// This module provides first-class document storage with:
+// - JSON path indexing (B+ tree for range queries)
+// - Array indexing (inverted index for containment queries)
+// - Full-text search (Tantivy integration)
+// - Schema validation and evolution
+//
+// Storage strategy:
+// - Hot tier: SST engine with document-optimized blocks
+// - Cold tier: VIPER/Parquet columnar storage
+
+pub mod indexes;
+pub mod query;
+pub mod service;
+pub mod storage;
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+use crate::proto::proximadb_v1::{
+    DocumentCollectionConfig, DocumentContent,
+    DocumentFilter, DocumentResult, IndexDefinition, SortField,
+    SqlObject,
+};
+
+pub use self::service::DocumentService;
+
+/// Document record with ID, version, and content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentRecord {
+    /// Unique document ID
+    pub id: String,
+    /// Document content as nested JSON
+    pub document: SqlObject,
+    /// Version number for optimistic locking
+    pub version: u64,
+    /// Collection this document belongs to
+    pub collection_id: String,
+    /// Timestamp of last modification (nanoseconds)
+    pub updated_at_ns: i64,
+    /// Optional schema ID for validation
+    pub schema_id: Option<String>,
+    /// Document type/kind for type-based queries
+    pub document_type: Option<String>,
+}
+
+impl DocumentRecord {
+    /// Create a new document record
+    pub fn new(id: String, document: SqlObject, collection_id: String) -> Self {
+        Self {
+            id,
+            document,
+            version: 1,
+            collection_id,
+            updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            schema_id: None,
+            document_type: None,
+        }
+    }
+
+    /// Create from proto DocumentContent
+    pub fn from_proto(
+        id: String,
+        content: DocumentContent,
+        collection_id: String,
+    ) -> Result<Self> {
+        Ok(Self {
+            id,
+            document: content.document.unwrap_or_default(),
+            version: 1,
+            collection_id,
+            updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            schema_id: content.schema_id,
+            document_type: content.document_type,
+        })
+    }
+
+    /// Convert to proto DocumentContent
+    pub fn to_proto_content(&self) -> DocumentContent {
+        DocumentContent {
+            document: Some(self.document.clone()),
+            schema_id: self.schema_id.clone(),
+            indexed_paths: vec![], // TODO: populate from collection config
+            document_type: self.document_type.clone(),
+        }
+    }
+
+    /// Convert to proto DocumentResult
+    pub fn to_proto_result(&self, score: Option<f32>) -> DocumentResult {
+        DocumentResult {
+            id: self.id.clone(),
+            document: Some(self.document.clone()),
+            version: self.version,
+            score,
+        }
+    }
+}
+
+/// Document collection metadata
+#[derive(Debug, Clone)]
+pub struct DocumentCollection {
+    /// Collection name
+    pub name: String,
+    /// Collection configuration
+    pub config: DocumentCollectionConfig,
+    /// Index definitions
+    pub indexes: Vec<IndexDefinition>,
+    /// Number of documents
+    pub document_count: u64,
+    /// Storage size in bytes
+    pub storage_size_bytes: u64,
+    /// Created timestamp (nanoseconds)
+    pub created_at_ns: i64,
+    /// Updated timestamp (nanoseconds)
+    pub updated_at_ns: i64,
+}
+
+impl DocumentCollection {
+    /// Create a new document collection
+    pub fn new(name: String, config: DocumentCollectionConfig) -> Self {
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let indexes = config.indexes.clone();
+        Self {
+            name,
+            config,
+            indexes,
+            document_count: 0,
+            storage_size_bytes: 0,
+            created_at_ns: now,
+            updated_at_ns: now,
+        }
+    }
+}
+
+/// Query parameters for document search
+#[derive(Debug, Clone, Default)]
+pub struct DocumentQueryParams {
+    /// Filter conditions
+    pub filter: Option<DocumentFilter>,
+    /// Fields to project (empty = all fields)
+    pub projection: Vec<String>,
+    /// Sort fields
+    pub sort: Vec<SortField>,
+    /// Maximum results
+    pub limit: u32,
+    /// Offset for pagination
+    pub offset: u32,
+    /// Include total count (slower query)
+    pub include_count: bool,
+}
+
+/// Result of a document query
+#[derive(Debug, Clone)]
+pub struct DocumentQueryResult {
+    /// Matched documents
+    pub documents: Vec<DocumentRecord>,
+    /// Total count (if requested)
+    pub total_count: Option<u64>,
+    /// Query execution time in milliseconds
+    pub query_time_ms: u64,
+}
+
+/// Ingest result for bulk operations
+#[derive(Debug, Clone, Default)]
+pub struct DocumentIngestResult {
+    /// Number of documents successfully ingested
+    pub ingested: u64,
+    /// Number of documents that failed
+    pub failed: u64,
+    /// Error messages for failed documents
+    pub errors: Vec<String>,
+    /// Processing time in milliseconds
+    pub processing_time_ms: u64,
+}
+
+/// Result of flushing documents to storage engine
+#[derive(Debug, Clone, Default)]
+pub struct FlushToStorageResult {
+    /// Number of documents flushed
+    pub documents_flushed: usize,
+    /// Bytes written to storage
+    pub bytes_written: usize,
+    /// Duration of the flush operation in milliseconds
+    pub duration_ms: u64,
+    /// Whether the operation was successful
+    pub success: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_document_record_new() {
+        let doc = DocumentRecord::new(
+            "doc1".to_string(),
+            SqlObject::default(),
+            "test_collection".to_string(),
+        );
+        assert_eq!(doc.id, "doc1");
+        assert_eq!(doc.version, 1);
+        assert_eq!(doc.collection_id, "test_collection");
+    }
+
+    #[test]
+    fn test_document_collection_new() {
+        let config = DocumentCollectionConfig {
+            name: "test".to_string(),
+            ..Default::default()
+        };
+        let collection = DocumentCollection::new("test".to_string(), config);
+        assert_eq!(collection.name, "test");
+        assert_eq!(collection.document_count, 0);
+    }
+}

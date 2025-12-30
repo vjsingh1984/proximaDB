@@ -65,7 +65,7 @@ use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Node, NodeId};
 use crate::proto::proximadb_v1::DistanceMetric;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 /// Input for semantic BFS traversal

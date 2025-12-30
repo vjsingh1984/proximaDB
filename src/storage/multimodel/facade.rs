@@ -9,9 +9,7 @@ use anyhow::Result;
 
 use crate::catalog::internal::{
     InternalSchemaRegistry, InformationSchema, CatalogObject, ObjectType,
-    SchemaEnforcementMode, ObjectSchema,
 };
-use crate::catalog::TableIdentifier;
 use crate::storage::traits::{
     DocumentStorageOperations, MultiModelStats, ObservabilityStorageOperations,
     UnifiedStorageEngine, FlushParameters, CompactionParameters,

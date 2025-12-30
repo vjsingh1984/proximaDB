@@ -1,19 +1,66 @@
-//! INFORMATION_SCHEMA Views
+//! # INFORMATION_SCHEMA Views
 //!
-//! Provides PostgreSQL-compatible introspection views plus ProximaDB extensions.
-//!
-//! ## Standard Views
-//! - `information_schema.tables` - All tables/collections/graphs
-//! - `information_schema.columns` - Column metadata
-//! - `information_schema.table_constraints` - Constraint definitions
-//! - `information_schema.key_column_usage` - PK/FK column details
-//! - `information_schema.referential_constraints` - FK relationships
+//! Provides PostgreSQL-compatible introspection views:
+//! - `information_schema.tables`
+//! - `information_schema.columns`
+//! - `information_schema.table_constraints`
+//! - `information_schema.key_column_usage`
+//! - `information_schema.referential_constraints`
+//! - `information_schema.schemata`
 //!
 //! ## ProximaDB Extensions
-//! - `information_schema.vector_collections` - Vector collection details
-//! - `information_schema.graphs` - Graph database details
-//! - `information_schema.document_collections` - Document store details
-//! - `information_schema.observability_streams` - Log/metric/trace streams
+//! - `information_schema.vector_collections`
+//! - `information_schema.graphs`
+//! - `information_schema.document_collections`
+//! - `information_schema.observability_streams`
+//!
+//! ## PostgreSQL Compatibility
+//!
+//! Standard PostgreSQL introspection queries work:
+//!
+//! ```sql
+//! -- List all tables
+//! SELECT * FROM information_schema.tables
+//! WHERE table_schema = 'public';
+//!
+//! -- List columns for a table
+//! SELECT column_name, data_type, is_nullable
+//! FROM information_schema.columns
+//! WHERE table_name = 'users';
+//!
+//! -- List all constraints
+//! SELECT constraint_name, constraint_type
+//! FROM information_schema.table_constraints
+//! WHERE table_name = 'orders';
+//! ```
+//!
+//! ## ProximaDB Extension Queries
+//!
+//! ```sql
+//! -- List all vector collections with dimensions
+//! SELECT collection_name, dimension, distance_metric
+//! FROM information_schema.vector_collections;
+//!
+//! -- List all graphs with node/edge counts
+//! SELECT graph_name, node_count, edge_count
+//! FROM information_schema.graphs;
+//!
+//! -- List document collections
+//! SELECT collection_name, has_json_schema
+//! FROM information_schema.document_collections;
+//! ```
+//!
+//! ## Usage from Rust
+//!
+//! ```ignore
+//! let info_schema = InformationSchema::new(registry);
+//!
+//! // Query tables view
+//! let tables = info_schema.tables().await;
+//!
+//! // Query specific view
+//! let result = info_schema.query(InformationSchemaView::VectorCollections).await;
+//! ```
 
 use std::sync::Arc;
 

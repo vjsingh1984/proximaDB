@@ -113,11 +113,16 @@
 //!
 
 pub mod ast;
+pub mod compute_bridge; // Bridge to Hadoop-style storage-compute separation
+pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
+pub mod distributed; // Distributed query coordination across cluster nodes
 pub mod execution; // New unified execution engine
 pub mod explain;
+pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
+pub mod unified; // Multi-model query engine (vector, document, graph, observability)
 pub mod unified_query_optimizer;
 pub mod vector_search;
 
@@ -130,3 +135,17 @@ pub use unified_query_optimizer::{
     UnifiedOptimizerConfig, UnifiedQueryOptimizer as QueryOptimizer,
 };
 pub use vector_search::{SearchParameters, VectorSearchQuery, VectorSearchResult};
+
+// Re-export federated query types
+pub use federated::{
+    FederatedParser, FederatedQuery, QueryType as FederatedQueryType,
+    CrossModelOptimizer, QueryPlan as FederatedQueryPlan, PlanNode,
+    FederatedExecutor, ExecutionResult as FederatedExecutionResult,
+    FederatedQueryContext,
+};
+
+// Re-export compute bridge types for storage-compute separation
+pub use compute_bridge::{
+    ComputeBridge, BridgeConfig, QueryContext as ComputeQueryContext,
+    ExecutionResult as ComputeExecutionResult, BridgeStatistics,
+};

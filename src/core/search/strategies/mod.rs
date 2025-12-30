@@ -48,10 +48,6 @@ pub use registry::SearchStrategyRegistry;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
-
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::FilterExpression;
 
 /// A scored search candidate with vector ID and distance
 #[derive(Debug, Clone)]

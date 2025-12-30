@@ -24,10 +24,8 @@
 //! - **Dependency Inversion**: Algorithms depend on abstractions (traits), not concrete types
 
 use crate::core::error::ProximaDBError;
-use crate::graph::engines::orion::storage::CsrStorage;
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Algorithm complexity estimate for cost-based optimization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

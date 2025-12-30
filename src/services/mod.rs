@@ -168,6 +168,8 @@
 //! - Cache hit rates
 
 pub mod collection;
+pub mod ddl;
+pub mod dml;
 pub mod events;
 pub mod graph_collection;
 pub mod operations;
@@ -181,6 +183,8 @@ pub mod tests;
 
 // Re-export main service types with cleaner names
 pub use collection::Collections;
+pub use ddl::{DdlService, DdlStatement, DdlResult, ColumnDefinition, SqlDataType, AlterTableChange, IndexType};
+pub use dml::{DmlService, DmlStatement, DmlResult, SqlValueLiteral, WhereClause, Condition, ComparisonOperator, LogicalOperator};
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;
 pub use operations::VectorOps;

@@ -1,0 +1,67 @@
+/*
+ * Copyright 2025 ProximaDB
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Multi-Model Transaction Manager
+//!
+//! Provides ACID transaction support across Vector, Document, Graph, and Observability stores.
+//! Implements distributed two-phase commit (2PC) with proper isolation and rollback.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                 MultiModelTransactionManager                     │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
+//! │  │ Transaction  │  │   2PC        │  │   Isolation Level   │  │
+//! │  │   Context    │  │ Coordinator  │  │   Management        │  │
+//! │  └──────┬───────┘  └──────┬───────┘  └──────────┬──────────┘  │
+//! ├─────────┼─────────────────┼─────────────────────┼─────────────┤
+//! │   ┌─────▼─────┐     ┌─────▼─────┐         ┌─────▼─────┐       │
+//! │   │  Vector   │     │ Document  │         │   Graph   │       │
+//! │   │  Store    │     │  Store    │         │   Store   │       │
+//! │   └───────────┘     └───────────┘         └───────────┘       │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! let tx_manager = MultiModelTransactionManager::new(config);
+//!
+//! // Begin transaction
+//! let tx = tx_manager.begin(IsolationLevel::Serializable).await?;
+//!
+//! // Perform operations across different stores
+//! tx.vector_insert("embeddings", records).await?;
+//! tx.document_insert("metadata", docs).await?;
+//! tx.graph_add_edge("relationships", edge).await?;
+//!
+//! // Commit atomically across all stores
+//! tx.commit().await?;
+//! ```
+
+pub mod manager;
+pub mod context;
+pub mod operations;
+pub mod isolation;
+
+pub use manager::{MultiModelTransactionManager, TransactionConfig};
+pub use context::{TransactionContext, TransactionOperation, OperationType};
+pub use operations::{
+    VectorOperation, DocumentOperation, GraphOperation, ObservabilityOperation,
+};
+pub use isolation::{IsolationLevel, ConflictResolution};

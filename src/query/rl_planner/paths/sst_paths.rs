@@ -5,7 +5,7 @@
 
 use super::{OptimizationPath, PathExpectation};
 use crate::query::rl_planner::action::{
-    BlockPruneConfig, ExecutionAction, IndexStrategy, QuantizationStage, SearchModeAction,
+    BlockPruneConfig, ExecutionAction,
 };
 
 /// Get all SST optimization paths

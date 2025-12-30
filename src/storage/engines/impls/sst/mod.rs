@@ -251,6 +251,7 @@ pub mod trait_impl;
 pub mod utils;
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
+pub mod tiering_integration; // Tiered storage integration (opt-in)
 
 // Test modules
 #[cfg(test)]
@@ -274,6 +275,9 @@ pub use core::SstEngine;
 pub use flush::{FlushCoordinator, FlushOperations, FlushOptimizer, SortStats};
 pub use search::{SearchCoordinator, SearchOperations, SearchOptimizer};
 pub use utils::{MemoryEstimate, SortingStats, SstableFileInfo, SstableFileUtils};
+
+// Tiering integration exports (opt-in feature)
+pub use tiering_integration::{SstTieringConfig, SstTieringIntegration, TieringIntegrationStatus};
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::search::results::OptimizedSearchRecord;
@@ -641,6 +645,15 @@ pub struct SstableHeader {
     pub min_distance_to_centroid: Option<f32>,   // Minimum distance from any vector to centroid
     #[serde(default)]
     pub max_distance_to_centroid: Option<f32>,   // Maximum distance from any vector to centroid
+
+    // NEW: ProximaSchema integration for compute engine compatibility
+    // Schema reference for DataFusion/Spark/Trino integration
+    #[serde(default)]
+    pub schema_id: Option<String>,               // Reference to schema in SchemaRegistry
+    #[serde(default)]
+    pub schema_version: Option<u32>,             // Schema version for compatibility checking
+    #[serde(default)]
+    pub schema_fingerprint: Option<u64>,         // Fast schema comparison (xxhash64)
 }
 
 // SST compression now uses unified_compression::CompressionAlgorithm directly
@@ -1525,7 +1538,7 @@ mod block_utils {
     use super::*;
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
     use crate::core::bloom::{
-        adaptive::AdaptiveBloomConfig, factory::BloomFilterFactory, BloomFilterConfig,
+        adaptive::AdaptiveBloomConfig, factory::BloomFilterFactory,
         BloomFilterStats, BloomFilterStrategy, SstableBloomFilter,
     };
 

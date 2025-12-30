@@ -706,6 +706,8 @@ impl IvfClusteringBuilder {
             .iter()
             .enumerate()
             .map(|(node_idx, node)| {
+                // SAFETY: node.vector_id is guaranteed to be in id_to_node map because
+                // nodes are only created via add_node() which inserts into id_to_node.
                 let source_idx = *self.id_to_node.get(&node.vector_id).unwrap() as usize;
                 let source_cluster = Self::find_cluster_for_node_static(source_idx, clusters);
                 (node_idx, source_idx, source_cluster)

@@ -190,6 +190,7 @@ pub mod metadata_traits;
 pub mod orchestrator_integration;
 pub mod prefetch_engine;
 pub mod range_optimizer;
+pub mod smart_io;
 pub mod unified;
 pub mod unified_cache;
 pub mod unified_config;

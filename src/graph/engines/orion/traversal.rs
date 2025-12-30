@@ -541,7 +541,7 @@ pub async fn parallel_breadth_first_search(
     config: TraversalConfig,
 ) -> Result<TraversalResult> {
     use rayon::prelude::*;
-    use std::collections::{HashSet, VecDeque};
+    use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
 
     let start_time = std::time::Instant::now();

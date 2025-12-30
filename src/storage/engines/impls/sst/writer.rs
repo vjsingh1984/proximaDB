@@ -716,6 +716,10 @@ impl SstableWriter {
             centroid_distance_sum,
             min_distance_to_centroid,
             max_distance_to_centroid,
+            // ProximaSchema integration (None = legacy VectorRecord format)
+            schema_id: None,
+            schema_version: None,
+            schema_fingerprint: None,
         };
         // Serialize header without compression (minimal savings not worth complexity)
         let header_bytes = bincode::serialize(&header)?;
@@ -1226,6 +1230,10 @@ impl SstableWriter {
             centroid_distance_sum,
             min_distance_to_centroid,
             max_distance_to_centroid,
+            // ProximaSchema integration (None = legacy VectorRecord format)
+            schema_id: None,
+            schema_version: None,
+            schema_fingerprint: None,
         };
         let header_bytes = bincode::serialize(&header)?;
         let header_len = header_bytes.len() as u32;

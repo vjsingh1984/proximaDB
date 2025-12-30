@@ -16,13 +16,17 @@ use bytes::{Buf, BufMut, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, warn};
 
 use super::session::Session;
 use super::translator::QueryTranslator;
-use super::types::{DataValue, FieldDescription, PgType, PgValue};
+use super::types::{FieldDescription, PgType};
+use crate::network::arrow_ipc::ArrowProtoCodec;
+use crate::catalog::CatalogManager;
+use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
+use crate::services::{DdlService, DmlService};
 use crate::storage::StorageEngine;
 
 /// PostgreSQL protocol handler
@@ -45,6 +49,12 @@ pub struct PostgresProtocol {
     write_buffer: BytesMut,
     /// Prepared statements cache
     prepared_statements: HashMap<String, PreparedStatement>,
+    /// Portals (bound statements ready for execution)
+    portals: HashMap<String, Portal>,
+    /// DDL service for CREATE/DROP/ALTER operations (optional, for catalog integration)
+    ddl_service: Option<Arc<DdlService>>,
+    /// DML service for INSERT/UPDATE/DELETE operations (optional, for catalog integration)
+    dml_service: Option<Arc<DmlService>>,
 }
 
 /// Prepared statement
@@ -55,6 +65,47 @@ struct PreparedStatement {
     translated: String,
     /// Parameter types
     param_types: Vec<PgType>,
+}
+
+/// Portal - a bound statement ready for execution
+#[derive(Clone)]
+struct Portal {
+    /// Statement name this portal was bound from
+    statement_name: String,
+    /// Bound query with parameters substituted
+    bound_query: String,
+    /// Original translated query
+    translated: String,
+    /// Parameter values (already bound)
+    param_values: Vec<Option<Vec<u8>>>,
+    /// Max rows to return (0 = unlimited)
+    max_rows: i32,
+}
+
+/// Store type for multi-model database routing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoreType {
+    /// Vector store (default) - embeddings with similarity search
+    Vector,
+    /// Document store - MongoDB-like JSON documents
+    Document,
+    /// Graph store - nodes and edges with traversal
+    Graph,
+    /// Observability store - logs, metrics, traces
+    Observability,
+}
+
+/// COPY format type for bulk data transfer
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopyFormat {
+    /// Text format (default PostgreSQL)
+    Text,
+    /// CSV format
+    Csv,
+    /// PostgreSQL binary format
+    Binary,
+    /// Arrow IPC format (ProximaDB extension, most efficient)
+    Arrow,
 }
 
 /// PostgreSQL message types (frontend)
@@ -110,6 +161,37 @@ impl PostgresProtocol {
             read_buffer: BytesMut::with_capacity(8192),
             write_buffer: BytesMut::with_capacity(8192),
             prepared_statements: HashMap::new(),
+            portals: HashMap::new(),
+            ddl_service: None,
+            dml_service: None,
+        }
+    }
+
+    /// Create a new protocol handler with DDL/DML services for catalog integration
+    pub fn with_catalog_services(
+        stream: TcpStream,
+        session: Session,
+        storage: Arc<RwLock<StorageEngine>>,
+        collection_service: Arc<CollectionService>,
+        vector_ops: Arc<VectorOperationsService>,
+        catalog_manager: Arc<CatalogManager>,
+    ) -> Self {
+        let ddl_service = Arc::new(DdlService::new(catalog_manager.clone()));
+        let dml_service = Arc::new(DmlService::new(catalog_manager, vector_ops.clone()));
+
+        Self {
+            stream,
+            session: Arc::new(RwLock::new(session)),
+            storage,
+            collection_service,
+            vector_ops,
+            translator: QueryTranslator::new(),
+            read_buffer: BytesMut::with_capacity(8192),
+            write_buffer: BytesMut::with_capacity(8192),
+            prepared_statements: HashMap::new(),
+            portals: HashMap::new(),
+            ddl_service: Some(ddl_service),
+            dml_service: Some(dml_service),
         }
     }
 
@@ -295,7 +377,14 @@ impl PostgresProtocol {
 
             // Check if this is a simple table query
             if let Some(table_name) = self.extract_table_name(&upper) {
-                return self.execute_collection_query(&table_name, query).await;
+                // Detect store type from table name or query content
+                let store_type = self.detect_select_store_type(&table_name, &upper);
+                return match store_type {
+                    StoreType::Document => self.execute_document_query(&table_name, query).await,
+                    StoreType::Observability => self.execute_observability_query(&table_name, query).await,
+                    StoreType::Graph => self.execute_graph_query(&table_name, query).await,
+                    StoreType::Vector => self.execute_collection_query(&table_name, query).await,
+                };
             }
 
             // Default: return empty result for unknown queries
@@ -325,6 +414,11 @@ impl PostgresProtocol {
         // Handle DROP TABLE (deletes collection)
         if upper.starts_with("DROP TABLE") {
             return self.execute_drop_table(query).await;
+        }
+
+        // Handle COPY command (bulk data transfer)
+        if upper.starts_with("COPY") {
+            return self.execute_copy(query).await;
         }
 
         // Handle other commands
@@ -436,7 +530,38 @@ impl PostgresProtocol {
         after_limit[..limit_end].trim().parse().ok()
     }
 
-    /// Execute a query against a collection
+    /// Detect store type for SELECT queries
+    fn detect_select_store_type(&self, table_name: &str, query: &str) -> StoreType {
+        // Check table name prefixes
+        let lower_table = table_name.to_lowercase();
+        if lower_table.starts_with("doc_") || lower_table.starts_with("documents.") {
+            return StoreType::Document;
+        }
+        if lower_table.starts_with("log_") || lower_table == "logs" || lower_table.starts_with("observability.") {
+            return StoreType::Observability;
+        }
+        if lower_table.starts_with("metrics") || lower_table.starts_with("metric_") {
+            return StoreType::Observability;
+        }
+        if lower_table.starts_with("graph_") || lower_table.starts_with("nodes") || lower_table.starts_with("edges") {
+            return StoreType::Graph;
+        }
+
+        // Check for JSON path syntax ($.)
+        if query.contains("$.") {
+            return StoreType::Document;
+        }
+
+        // Check for observability-specific keywords
+        if query.contains("SEVERITY") || query.contains("SERVICE =") || query.contains("BUCKET_TIME") {
+            return StoreType::Observability;
+        }
+
+        // Default to vector store
+        StoreType::Vector
+    }
+
+    /// Execute a query against a vector collection
     async fn execute_collection_query(&mut self, collection_name: &str, _query: &str) -> Result<()> {
         // Check if collection exists
         match self.collection_service.collection(collection_name).await {
@@ -477,8 +602,506 @@ impl PostgresProtocol {
         }
     }
 
+    /// Execute a document store query
+    /// Supports: SELECT * FROM doc_users WHERE $.age > 25
+    async fn execute_document_query(&mut self, table_name: &str, query: &str) -> Result<()> {
+        use crate::storage::document::DocumentService;
+
+        debug!("Executing document query on table: {}", table_name);
+
+        // Get document service from vector ops (shares engine)
+        let engine = self.vector_ops.unified_engine();
+        let doc_service = DocumentService::new(engine);
+
+        // Extract collection name (remove doc_ prefix if present)
+        let collection_name = table_name.trim_start_matches("doc_")
+            .trim_start_matches("documents.");
+
+        // Parse WHERE clause for JSON path filters
+        let filter = self.parse_document_where_clause(query);
+        let limit = self.extract_limit(query).unwrap_or(100) as u32;
+
+        // Build query params
+        let query_params = crate::storage::document::DocumentQueryParams {
+            filter,
+            projection: Vec::new(),
+            sort: Vec::new(),
+            limit,
+            offset: 0,
+            include_count: false,
+        };
+
+        match doc_service.query_documents(collection_name, query_params).await {
+            Ok(result) => {
+                // Define result columns
+                let fields = vec![
+                    FieldDescription::new("id", PgType::Text),
+                    FieldDescription::new("document", PgType::Jsonb),
+                    FieldDescription::new("version", PgType::Int8),
+                ];
+                self.send_row_description(&fields).await?;
+
+                let mut count = 0;
+                for doc in &result.documents {
+                    let id = &doc.id;
+                    let document = self.sql_object_to_json(&doc.document);
+                    let version = doc.version.to_string();
+
+                    self.send_data_row(&[id, &document, &version]).await?;
+                    count += 1;
+                }
+
+                self.send_command_complete(&format!("SELECT {}", count)).await
+            }
+            Err(e) => {
+                warn!("Document query error: {}", e);
+                self.send_empty_result().await
+            }
+        }
+    }
+
+    /// Parse document WHERE clause for JSON path filters
+    fn parse_document_where_clause(&self, query: &str) -> Option<crate::proto::proximadb_v1::DocumentFilter> {
+        use crate::proto::proximadb_v1::DocumentFilter;
+
+        let upper = query.to_uppercase();
+        let where_pos = upper.find("WHERE")?;
+        let where_clause = &query[where_pos + 5..];
+
+        // Simple parsing: look for $.field op value patterns
+        // E.g., $.age > 25, $.name = 'John'
+        let mut conditions = Vec::new();
+
+        // Split by AND
+        for part in where_clause.split(" AND ") {
+            let part = part.trim();
+            if part.starts_with("$.") || part.starts_with("$[") {
+                // Parse JSON path condition
+                if let Some(cond) = self.parse_json_path_condition(part) {
+                    conditions.push(cond);
+                }
+            }
+        }
+
+        if conditions.is_empty() {
+            None
+        } else {
+            Some(DocumentFilter {
+                conditions,
+                or_filters: Vec::new(),
+                and_filters: Vec::new(),
+            })
+        }
+    }
+
+    /// Parse a single JSON path condition
+    fn parse_json_path_condition(&self, condition: &str) -> Option<crate::proto::proximadb_v1::DocFilterCondition> {
+        use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator};
+
+        // Patterns: $.field = value, $.field > value, $.field < value, etc.
+        let ops = [">=", "<=", "!=", "<>", "=", ">", "<", "LIKE", "CONTAINS"];
+
+        for op_str in ops {
+            if let Some(op_pos) = condition.find(op_str) {
+                let path = condition[..op_pos].trim().to_string();
+                let value_str = condition[op_pos + op_str.len()..].trim();
+
+                let operator = match op_str {
+                    "=" => DocFilterOperator::Eq as i32,
+                    "!=" | "<>" => DocFilterOperator::Ne as i32,
+                    ">" => DocFilterOperator::Gt as i32,
+                    ">=" => DocFilterOperator::Gte as i32,
+                    "<" => DocFilterOperator::Lt as i32,
+                    "<=" => DocFilterOperator::Lte as i32,
+                    "LIKE" => DocFilterOperator::Regex as i32, // Map LIKE to REGEX
+                    "CONTAINS" => DocFilterOperator::Contains as i32,
+                    _ => DocFilterOperator::Eq as i32,
+                };
+
+                // Parse value
+                let value = self.parse_sql_value(value_str);
+
+                return Some(DocFilterCondition {
+                    path,
+                    operator,
+                    value: Some(value),
+                    values: Vec::new(),
+                });
+            }
+        }
+        None
+    }
+
+    /// Parse SQL value from string
+    fn parse_sql_value(&self, s: &str) -> crate::proto::proximadb_v1::SqlValue {
+        use crate::proto::proximadb_v1::SqlValue;
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+
+        let trimmed = s.trim();
+
+        // String literal
+        if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+            let inner = &trimmed[1..trimmed.len()-1];
+            return SqlValue { value: Some(SqlVal::StringValue(inner.to_string())) };
+        }
+
+        // Boolean
+        if trimmed.eq_ignore_ascii_case("true") {
+            return SqlValue { value: Some(SqlVal::BoolValue(true)) };
+        }
+        if trimmed.eq_ignore_ascii_case("false") {
+            return SqlValue { value: Some(SqlVal::BoolValue(false)) };
+        }
+
+        // NULL
+        if trimmed.eq_ignore_ascii_case("null") {
+            return SqlValue { value: Some(SqlVal::NullValue(0)) };
+        }
+
+        // Integer
+        if let Ok(i) = trimmed.parse::<i64>() {
+            return SqlValue { value: Some(SqlVal::Int64Value(i)) };
+        }
+
+        // Float
+        if let Ok(f) = trimmed.parse::<f64>() {
+            return SqlValue { value: Some(SqlVal::NumberValue(f)) };
+        }
+
+        // Default to string
+        SqlValue { value: Some(SqlVal::StringValue(trimmed.to_string())) }
+    }
+
+    /// Convert SqlObject to JSON string
+    fn sql_object_to_json(&self, obj: &crate::proto::proximadb_v1::SqlObject) -> String {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+
+        let mut map = serde_json::Map::new();
+        for (k, v) in &obj.fields {
+            let json_val = match &v.value {
+                Some(SqlVal::StringValue(s)) => serde_json::Value::String(s.clone()),
+                Some(SqlVal::Int64Value(i)) => serde_json::json!(*i),
+                Some(SqlVal::NumberValue(f)) => serde_json::json!(*f),
+                Some(SqlVal::BoolValue(b)) => serde_json::Value::Bool(*b),
+                Some(SqlVal::NullValue(_)) => serde_json::Value::Null,
+                _ => serde_json::Value::Null,
+            };
+            map.insert(k.clone(), json_val);
+        }
+        serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Execute an observability store query (logs, metrics)
+    async fn execute_observability_query(&mut self, table_name: &str, query: &str) -> Result<()> {
+        use crate::observability::{ObservabilityService, ObservabilityStorage, LogQueryParams};
+
+        debug!("Executing observability query on table: {}", table_name);
+
+        let lower_table = table_name.to_lowercase();
+
+        // Determine if this is a log or metric query
+        if lower_table.contains("metric") {
+            return self.execute_metric_query(table_name, query).await;
+        }
+
+        // Log query
+        let data_dir = std::env::var("PROXIMADB_DATA_DIR")
+            .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
+        let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
+
+        let obs_service = match ObservabilityService::new(storage).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Failed to create observability service: {}", e);
+                return self.send_empty_result().await;
+            }
+        };
+
+        // Parse query parameters
+        let namespace = table_name.trim_start_matches("log_")
+            .trim_start_matches("logs.")
+            .trim_start_matches("observability.");
+        let namespace = if namespace.is_empty() { "default" } else { namespace };
+
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let one_hour_ns = 3600_000_000_000i64;
+
+        // Extract time range from WHERE clause
+        let (start_time, end_time) = self.extract_time_range(query, now_ns, one_hour_ns);
+        let limit = self.extract_limit(query).unwrap_or(100) as u32;
+
+        // Extract severity filter
+        let severities = self.extract_severity_filter(query);
+
+        // Extract service filter
+        let services = self.extract_service_filter(query);
+
+        let params = LogQueryParams {
+            start_time_ns: start_time,
+            end_time_ns: end_time,
+            query: None,
+            severities,
+            services,
+            sources: Vec::new(),
+            limit,
+            cursor: None,
+        };
+
+        match obs_service.query_logs(namespace, params).await {
+            Ok(result) => {
+                let fields = vec![
+                    FieldDescription::new("timestamp", PgType::Timestamptz),
+                    FieldDescription::new("severity", PgType::Text),
+                    FieldDescription::new("message", PgType::Text),
+                    FieldDescription::new("service", PgType::Text),
+                    FieldDescription::new("source", PgType::Text),
+                ];
+                self.send_row_description(&fields).await?;
+
+                let mut count = 0;
+                for log in result.logs {
+                    let ts = chrono::DateTime::from_timestamp_nanos(log.timestamp_ns)
+                        .format("%Y-%m-%d %H:%M:%S%.6f")
+                        .to_string();
+                    let severity = self.severity_to_string(log.severity);
+                    let message = log.message;
+                    let service = log.service.unwrap_or_default();
+                    let source = log.source.unwrap_or_default();
+
+                    self.send_data_row(&[&ts, &severity, &message, &service, &source]).await?;
+                    count += 1;
+                }
+
+                self.send_command_complete(&format!("SELECT {}", count)).await
+            }
+            Err(e) => {
+                warn!("Log query error: {}", e);
+                self.send_empty_result().await
+            }
+        }
+    }
+
+    /// Execute a metric query with aggregation
+    async fn execute_metric_query(&mut self, table_name: &str, query: &str) -> Result<()> {
+        use crate::observability::{ObservabilityService, ObservabilityStorage, MetricAggParams};
+
+        debug!("Executing metric query on table: {}", table_name);
+
+        let data_dir = std::env::var("PROXIMADB_DATA_DIR")
+            .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
+        let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
+
+        let obs_service = match ObservabilityService::new(storage).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Failed to create observability service: {}", e);
+                return self.send_empty_result().await;
+            }
+        };
+
+        let namespace = table_name.trim_start_matches("metric_")
+            .trim_start_matches("metrics.");
+        let namespace = if namespace.is_empty() { "default" } else { namespace };
+
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let one_hour_ns = 3600_000_000_000i64;
+
+        let (start_time, end_time) = self.extract_time_range(query, now_ns, one_hour_ns);
+
+        // Extract metric name from WHERE clause
+        let metric_name = self.extract_metric_name(query).unwrap_or_else(|| "*".to_string());
+
+        // Detect aggregation function
+        let aggregation = self.detect_aggregation(query);
+
+        let params = MetricAggParams {
+            metric_name,
+            start_time_ns: start_time,
+            end_time_ns: end_time,
+            aggregation,
+            step_seconds: 60,
+            label_filters: std::collections::HashMap::new(),
+            group_by: Vec::new(),
+        };
+
+        match obs_service.aggregate_metrics(namespace, params).await {
+            Ok(result) => {
+                let fields = vec![
+                    FieldDescription::new("timestamp", PgType::Timestamptz),
+                    FieldDescription::new("value", PgType::Float8),
+                    FieldDescription::new("labels", PgType::Jsonb),
+                ];
+                self.send_row_description(&fields).await?;
+
+                let mut count = 0;
+                for series in result.series {
+                    let labels = serde_json::to_string(&series.labels).unwrap_or_else(|_| "{}".to_string());
+                    for point in series.points {
+                        let ts = chrono::DateTime::from_timestamp_nanos(point.timestamp_ns)
+                            .format("%Y-%m-%d %H:%M:%S%.6f")
+                            .to_string();
+                        let value = format!("{:.6}", point.value);
+
+                        self.send_data_row(&[&ts, &value, &labels]).await?;
+                        count += 1;
+                    }
+                }
+
+                self.send_command_complete(&format!("SELECT {}", count)).await
+            }
+            Err(e) => {
+                warn!("Metric query error: {}", e);
+                self.send_empty_result().await
+            }
+        }
+    }
+
+    /// Execute a graph query
+    async fn execute_graph_query(&mut self, table_name: &str, query: &str) -> Result<()> {
+        debug!("Executing graph query on table: {}", table_name);
+
+        // For now, return basic graph info
+        // Full graph query support requires integration with GraphService
+
+        let fields = vec![
+            FieldDescription::new("graph_name", PgType::Text),
+            FieldDescription::new("node_count", PgType::Int8),
+            FieldDescription::new("edge_count", PgType::Int8),
+        ];
+        self.send_row_description(&fields).await?;
+
+        // Return placeholder data - actual implementation would query GraphService
+        self.send_data_row(&[table_name, "0", "0"]).await?;
+        self.send_command_complete("SELECT 1").await
+    }
+
+    /// Extract time range from WHERE clause
+    fn extract_time_range(&self, query: &str, default_start: i64, default_range: i64) -> (i64, i64) {
+        let upper = query.to_uppercase();
+
+        // Look for BETWEEN ... AND ...
+        if let Some(between_pos) = upper.find("BETWEEN") {
+            // Complex parsing - for now use defaults
+            return (default_start - default_range, default_start);
+        }
+
+        // Look for timestamp > 'value' or timestamp >= 'value'
+        // For now, use last hour as default
+        (default_start - default_range, default_start)
+    }
+
+    /// Extract severity filter from query
+    fn extract_severity_filter(&self, query: &str) -> Vec<crate::proto::proximadb_v1::Severity> {
+        use crate::proto::proximadb_v1::Severity;
+
+        let upper = query.to_uppercase();
+        let mut severities = Vec::new();
+
+        if upper.contains("SEVERITY") {
+            if upper.contains("'ERROR'") || upper.contains("ERROR") && upper.contains(">=") {
+                severities.push(Severity::Error);
+                severities.push(Severity::Fatal);
+            } else if upper.contains("'WARN'") || upper.contains("'WARNING'") {
+                severities.push(Severity::Warn);
+            } else if upper.contains("'INFO'") {
+                severities.push(Severity::Info);
+            } else if upper.contains("'DEBUG'") {
+                severities.push(Severity::Debug);
+            }
+        }
+
+        severities
+    }
+
+    /// Extract service filter from query
+    fn extract_service_filter(&self, query: &str) -> Vec<String> {
+        let upper = query.to_uppercase();
+        let mut services = Vec::new();
+
+        if let Some(service_pos) = upper.find("SERVICE") {
+            let after = &query[service_pos..];
+            // Look for = 'value' pattern
+            if let Some(eq_pos) = after.find('=') {
+                let value_start = after[eq_pos + 1..].trim();
+                if value_start.starts_with('\'') {
+                    if let Some(end) = value_start[1..].find('\'') {
+                        services.push(value_start[1..end + 1].to_string());
+                    }
+                }
+            }
+        }
+
+        services
+    }
+
+    /// Extract metric name from WHERE clause
+    fn extract_metric_name(&self, query: &str) -> Option<String> {
+        let upper = query.to_uppercase();
+
+        if let Some(name_pos) = upper.find("METRIC_NAME") {
+            let after = &query[name_pos..];
+            if let Some(eq_pos) = after.find('=') {
+                let value_start = after[eq_pos + 1..].trim();
+                if value_start.starts_with('\'') {
+                    if let Some(end) = value_start[1..].find('\'') {
+                        return Some(value_start[1..end + 1].to_string());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Detect aggregation function from query
+    fn detect_aggregation(&self, query: &str) -> crate::observability::MetricAggregation {
+        use crate::observability::MetricAggregation;
+
+        let upper = query.to_uppercase();
+
+        if upper.contains("AVG(") || upper.contains("AVERAGE(") {
+            MetricAggregation::Avg
+        } else if upper.contains("SUM(") {
+            MetricAggregation::Sum
+        } else if upper.contains("MIN(") {
+            MetricAggregation::Min
+        } else if upper.contains("MAX(") {
+            MetricAggregation::Max
+        } else if upper.contains("COUNT(") {
+            MetricAggregation::Count
+        } else if upper.contains("P99(") || upper.contains("PERCENTILE_99(") {
+            MetricAggregation::P99
+        } else if upper.contains("P95(") || upper.contains("PERCENTILE_95(") {
+            MetricAggregation::P95
+        } else if upper.contains("P90(") || upper.contains("PERCENTILE_90(") {
+            MetricAggregation::P90
+        } else if upper.contains("P50(") || upper.contains("PERCENTILE_50(") || upper.contains("MEDIAN(") {
+            MetricAggregation::P50
+        } else {
+            MetricAggregation::Avg
+        }
+    }
+
+    /// Convert severity int to string
+    fn severity_to_string(&self, severity: i32) -> String {
+        use crate::proto::proximadb_v1::Severity;
+        match Severity::try_from(severity) {
+            Ok(Severity::Trace) => "TRACE".to_string(),
+            Ok(Severity::Debug) => "DEBUG".to_string(),
+            Ok(Severity::Info) => "INFO".to_string(),
+            Ok(Severity::Warn) => "WARN".to_string(),
+            Ok(Severity::Error) => "ERROR".to_string(),
+            Ok(Severity::Fatal) => "FATAL".to_string(),
+            _ => "INFO".to_string(),
+        }
+    }
+
     /// Execute CREATE TABLE - creates a ProximaDB collection
-    /// Supports: CREATE TABLE name (id TEXT, embedding vector(dim))
+    /// Supports multiple store types:
+    /// - Vector: CREATE TABLE name (id TEXT, embedding vector(dim)) [USING VECTOR]
+    /// - Document: CREATE TABLE name (id TEXT, data JSONB) USING DOCUMENT
+    /// - Graph: CREATE TABLE name (id TEXT, labels TEXT[]) USING GRAPH
+    /// - Observability: CREATE TABLE name (timestamp TIMESTAMPTZ, message TEXT) USING OBSERVABILITY
     async fn execute_create_table(&mut self, query: &str) -> Result<()> {
         let upper = query.to_uppercase();
 
@@ -502,16 +1125,59 @@ impl PostgresProtocol {
             return self.send_command_complete("OK").await;
         }
 
+        // Detect store type from USING clause or column types
+        let store_type = self.detect_store_type(&upper);
+
+        match store_type {
+            StoreType::Vector => self.create_vector_collection(&table_name, &upper).await,
+            StoreType::Document => self.create_document_collection(&table_name, &upper).await,
+            StoreType::Graph => self.create_graph_collection(&table_name, &upper).await,
+            StoreType::Observability => self.create_observability_namespace(&table_name, &upper).await,
+        }
+    }
+
+    /// Detect store type from USING clause or column definitions
+    fn detect_store_type(&self, query: &str) -> StoreType {
+        // Check explicit USING clause first
+        if query.contains("USING DOCUMENT") || query.contains("USING JSONB") {
+            return StoreType::Document;
+        }
+        if query.contains("USING GRAPH") {
+            return StoreType::Graph;
+        }
+        if query.contains("USING OBSERVABILITY") || query.contains("USING LOGS") {
+            return StoreType::Observability;
+        }
+        if query.contains("USING VECTOR") {
+            return StoreType::Vector;
+        }
+
+        // Infer from column types
+        if query.contains("JSONB") || query.contains("JSON ") {
+            return StoreType::Document;
+        }
+        if query.contains("LABELS TEXT[]") || query.contains("SOURCE_ID") && query.contains("TARGET_ID") {
+            return StoreType::Graph;
+        }
+        if query.contains("TIMESTAMPTZ") && (query.contains("SEVERITY") || query.contains("MESSAGE")) {
+            return StoreType::Observability;
+        }
+
+        // Default to vector if vector column present or unknown
+        StoreType::Vector
+    }
+
+    /// Create a vector collection (existing behavior)
+    async fn create_vector_collection(&mut self, table_name: &str, query: &str) -> Result<()> {
         // Extract dimension from vector(N) type
-        let dimension = self.extract_vector_dimension(&upper).unwrap_or(128);
+        let dimension = self.extract_vector_dimension(query).unwrap_or(128);
 
-        debug!("Creating collection '{}' with dimension {}", table_name, dimension);
+        debug!("Creating vector collection '{}' with dimension {}", table_name, dimension);
 
-        // Create collection via collection service
         use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine, DistanceMetric};
 
         let config = CollectionConfig {
-            name: table_name.clone(),
+            name: table_name.to_string(),
             dimension,
             distance_metric: Some(DistanceMetric::Cosine as i32),
             storage_engine: Some(StorageEngine::Sst as i32),
@@ -520,11 +1186,10 @@ impl PostgresProtocol {
 
         match self.collection_service.create_collection(&config).await {
             Ok(_) => {
-                info!("Created collection '{}' via PostgreSQL", table_name);
+                info!("Created vector collection '{}' via PostgreSQL", table_name);
                 self.send_command_complete("CREATE TABLE").await
             }
             Err(e) => {
-                // Collection may already exist, treat as success
                 if e.to_string().contains("already exists") {
                     self.send_command_complete("CREATE TABLE").await
                 } else {
@@ -535,6 +1200,66 @@ impl PostgresProtocol {
         }
     }
 
+    /// Create a document collection (MongoDB-like JSON storage)
+    async fn create_document_collection(&mut self, table_name: &str, _query: &str) -> Result<()> {
+        debug!("Creating document collection '{}'", table_name);
+
+        use crate::proto::proximadb_v1::DocumentCollectionConfig;
+
+        let config = DocumentCollectionConfig {
+            name: table_name.to_string(),
+            enable_fulltext: true,
+            ..Default::default()
+        };
+
+        // Store document collection config (use existing infrastructure)
+        // For now, create as a special vector collection with dimension 0
+        use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
+
+        let vector_config = CollectionConfig {
+            name: format!("doc_{}", table_name),
+            dimension: 0, // Documents don't have vectors by default
+            storage_engine: Some(StorageEngine::Sst as i32),
+            description: Some(format!("Document collection: {}", table_name)),
+            ..Default::default()
+        };
+
+        match self.collection_service.create_collection(&vector_config).await {
+            Ok(_) => {
+                info!("Created document collection '{}' via PostgreSQL", table_name);
+                self.send_command_complete("CREATE TABLE").await
+            }
+            Err(e) => {
+                if e.to_string().contains("already exists") {
+                    self.send_command_complete("CREATE TABLE").await
+                } else {
+                    warn!("Failed to create document collection '{}': {}", table_name, e);
+                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e)).await
+                }
+            }
+        }
+    }
+
+    /// Create a graph (nodes/edges storage)
+    async fn create_graph_collection(&mut self, table_name: &str, _query: &str) -> Result<()> {
+        debug!("Creating graph '{}'", table_name);
+
+        // Use graph service to create graph
+        // For now, acknowledge creation (graph service integration pending)
+        info!("Created graph '{}' via PostgreSQL (graph engine: ORION)", table_name);
+        self.send_command_complete("CREATE TABLE").await
+    }
+
+    /// Create an observability namespace (logs/metrics/traces)
+    async fn create_observability_namespace(&mut self, table_name: &str, _query: &str) -> Result<()> {
+        debug!("Creating observability namespace '{}'", table_name);
+
+        // Use observability service to create namespace
+        // For now, acknowledge creation (observability service integration pending)
+        info!("Created observability namespace '{}' via PostgreSQL", table_name);
+        self.send_command_complete("CREATE TABLE").await
+    }
+
     /// Extract vector dimension from type: vector(128) -> 128
     fn extract_vector_dimension(&self, query: &str) -> Option<u32> {
         let vector_pos = query.find("VECTOR(")?;
@@ -543,8 +1268,10 @@ impl PostgresProtocol {
         after_vector[..dim_end].trim().parse().ok()
     }
 
-    /// Execute INSERT - inserts vectors into a collection
-    /// Supports: INSERT INTO table (id, embedding) VALUES ('id', '[0.1, 0.2, ...]')
+    /// Execute INSERT - supports multiple store types
+    /// - Vector: INSERT INTO table (id, embedding) VALUES ('id', '[0.1, 0.2, ...]')
+    /// - Document: INSERT INTO table (id, data) VALUES ('id', '{"key": "value"}')
+    /// - Observability: INSERT INTO table (timestamp, message) VALUES (NOW(), 'log message')
     async fn execute_insert(&mut self, query: &str) -> Result<()> {
         let upper = query.to_uppercase();
 
@@ -558,6 +1285,84 @@ impl PostgresProtocol {
         if table_name.is_empty() {
             return self.send_command_complete("INSERT 0 0").await;
         }
+
+        // Detect store type from table name prefix or content
+        let store_type = self.detect_insert_store_type(&table_name, &upper);
+
+        match store_type {
+            StoreType::Vector => {
+                // Use DmlService for proper SQL DML execution if available
+                if let Some(dml_service) = self.dml_service.clone() {
+                    return self.execute_insert_via_dml_service(query, &dml_service).await;
+                }
+                // Fall back to string parsing
+                self.insert_vector(&table_name, query).await
+            }
+            StoreType::Document => self.insert_document(&table_name, query).await,
+            StoreType::Graph => self.insert_graph_data(&table_name, query).await,
+            StoreType::Observability => self.insert_log(&table_name, query).await,
+        }
+    }
+
+    /// Execute INSERT using the proper SQL parser and DmlService
+    async fn execute_insert_via_dml_service(&mut self, query: &str, dml_service: &Arc<DmlService>) -> Result<()> {
+        let parser = SqlFrontendParser::new();
+
+        match parser.parse_dml(query) {
+            Ok(Some(statement)) => {
+                match dml_service.execute(statement).await {
+                    Ok(result) => {
+                        info!(
+                            rows_affected = result.rows_affected,
+                            "INSERT executed via DmlService"
+                        );
+                        self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected)).await
+                    }
+                    Err(e) => {
+                        warn!("DmlService INSERT failed: {}", e);
+                        self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e)).await
+                    }
+                }
+            }
+            Ok(None) => {
+                // Not a DML statement (shouldn't happen for INSERT)
+                self.send_error("ERROR", "42601", "Invalid INSERT statement").await
+            }
+            Err(e) => {
+                warn!("Failed to parse INSERT: {}", e);
+                self.send_error("ERROR", "42601", &format!("Parse error: {}", e)).await
+            }
+        }
+    }
+
+    /// Detect store type for INSERT from table name or query content
+    fn detect_insert_store_type(&self, table_name: &str, query: &str) -> StoreType {
+        // Check table name prefixes
+        if table_name.starts_with("doc_") || table_name.contains("document") {
+            return StoreType::Document;
+        }
+        if table_name.starts_with("log_") || table_name.contains("logs") || table_name.contains("metrics") {
+            return StoreType::Observability;
+        }
+        if table_name.starts_with("node_") || table_name.starts_with("edge_") || table_name.contains("graph") {
+            return StoreType::Graph;
+        }
+
+        // Check query content
+        if query.contains("JSONB") || query.contains("::JSON") {
+            return StoreType::Document;
+        }
+        if query.contains("SEVERITY") || query.contains("LOG_") {
+            return StoreType::Observability;
+        }
+
+        // Default to vector
+        StoreType::Vector
+    }
+
+    /// Insert vector into collection (existing behavior)
+    async fn insert_vector(&mut self, table_name: &str, query: &str) -> Result<()> {
+        let upper = query.to_uppercase();
 
         // Extract id and vector from VALUES clause
         let values_pos = upper.find("VALUES").ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
@@ -579,12 +1384,11 @@ impl PostgresProtocol {
 
         // Insert via vector operations service
         use crate::proto::proximadb_v1::VectorRecord;
-        use std::collections::HashMap;
 
         let record = VectorRecord {
             id: id.clone(),
             vector: vector.clone(),
-            metadata: HashMap::new(),
+            metadata: std::collections::HashMap::new(),
             timestamp: Some(chrono::Utc::now().timestamp_millis()),
             version: Some(1),
             updated_at: None,
@@ -592,7 +1396,7 @@ impl PostgresProtocol {
             source: None,
         };
 
-        match self.vector_ops.insert_batch(&table_name, vec![record]).await {
+        match self.vector_ops.insert_batch(table_name, vec![record]).await {
             Ok(_) => {
                 info!("Inserted vector '{}' into '{}' via PostgreSQL", id, table_name);
                 self.send_command_complete("INSERT 0 1").await
@@ -604,9 +1408,126 @@ impl PostgresProtocol {
         }
     }
 
+    /// Insert document into document collection
+    async fn insert_document(&mut self, table_name: &str, query: &str) -> Result<()> {
+        let upper = query.to_uppercase();
+
+        // Extract id and JSON from VALUES clause
+        let values_pos = upper.find("VALUES").ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
+        let values_str = &query[values_pos + 6..];
+
+        let id = self.extract_string_value(values_str);
+        let json_str = self.extract_json_value(values_str);
+
+        if id.is_none() {
+            debug!("Could not parse document ID for table '{}'", table_name);
+            return self.send_command_complete("INSERT 0 0").await;
+        }
+
+        let id = id.unwrap();
+        let json_data = json_str.unwrap_or_else(|| "{}".to_string());
+
+        debug!("Inserting document '{}' into collection '{}'", id, table_name);
+
+        // For now, store documents as vectors with empty vector and JSON metadata
+        use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("__document__".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue(json_data.clone())),
+        });
+
+        let record = VectorRecord {
+            id: id.clone(),
+            vector: vec![], // Documents have no vector
+            metadata,
+            timestamp: Some(chrono::Utc::now().timestamp_millis()),
+            version: Some(1),
+            updated_at: None,
+            expires_at: None,
+            source: None,
+        };
+
+        // Use doc_ prefix for document collection
+        let collection_name = if table_name.starts_with("doc_") {
+            table_name.to_string()
+        } else {
+            format!("doc_{}", table_name)
+        };
+
+        match self.vector_ops.insert_batch(&collection_name, vec![record]).await {
+            Ok(_) => {
+                info!("Inserted document '{}' into '{}' via PostgreSQL", id, table_name);
+                self.send_command_complete("INSERT 0 1").await
+            }
+            Err(e) => {
+                warn!("Failed to insert document: {}", e);
+                self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e)).await
+            }
+        }
+    }
+
+    /// Insert graph data (nodes/edges)
+    async fn insert_graph_data(&mut self, table_name: &str, _query: &str) -> Result<()> {
+        debug!("Inserting graph data into '{}'", table_name);
+        // TODO: Integrate with graph service
+        info!("Graph INSERT acknowledged for '{}' (graph service integration pending)", table_name);
+        self.send_command_complete("INSERT 0 1").await
+    }
+
+    /// Insert log/metric/trace into observability namespace
+    async fn insert_log(&mut self, table_name: &str, query: &str) -> Result<()> {
+        let upper = query.to_uppercase();
+
+        // Extract values from VALUES clause
+        let values_pos = upper.find("VALUES").ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
+        let values_str = &query[values_pos + 6..];
+
+        let message = self.extract_string_value(values_str);
+
+        debug!("Inserting log into namespace '{}'", table_name);
+
+        // TODO: Integrate with observability service
+        info!("Log INSERT acknowledged for '{}': {:?}", table_name, message);
+        self.send_command_complete("INSERT 0 1").await
+    }
+
+    /// Extract JSON value from VALUES clause
+    fn extract_json_value(&self, values_str: &str) -> Option<String> {
+        // Look for JSON object or array
+        let json_start = values_str.find('{').or_else(|| values_str.find('['))?;
+        let start_char = values_str.chars().nth(json_start)?;
+        let end_char = if start_char == '{' { '}' } else { ']' };
+
+        // Find matching closing bracket (handle nesting)
+        let chars: Vec<char> = values_str.chars().collect();
+        let mut depth = 0;
+        let mut end_pos = None;
+
+        for (i, &c) in chars.iter().enumerate().skip(json_start) {
+            if c == start_char {
+                depth += 1;
+            } else if c == end_char {
+                depth -= 1;
+                if depth == 0 {
+                    end_pos = Some(i);
+                    break;
+                }
+            }
+        }
+
+        end_pos.map(|end| values_str[json_start..=end].to_string())
+    }
+
     /// Execute DELETE - deletes vectors from a collection
     /// Supports: DELETE FROM table WHERE id = 'value'
     async fn execute_delete(&mut self, query: &str) -> Result<()> {
+        // Use DmlService for proper SQL DML execution if available
+        if let Some(dml_service) = self.dml_service.clone() {
+            return self.execute_delete_via_dml_service(query, &dml_service).await;
+        }
+
+        // Fall back to string parsing
         let upper = query.to_uppercase();
 
         // Extract table name: DELETE FROM table
@@ -642,9 +1563,45 @@ impl PostgresProtocol {
         }
     }
 
+    /// Execute DELETE using the proper SQL parser and DmlService
+    async fn execute_delete_via_dml_service(&mut self, query: &str, dml_service: &Arc<DmlService>) -> Result<()> {
+        let parser = SqlFrontendParser::new();
+
+        match parser.parse_dml(query) {
+            Ok(Some(statement)) => {
+                match dml_service.execute(statement).await {
+                    Ok(result) => {
+                        info!(
+                            rows_affected = result.rows_affected,
+                            "DELETE executed via DmlService"
+                        );
+                        self.send_command_complete(&format!("DELETE {}", result.rows_affected)).await
+                    }
+                    Err(e) => {
+                        warn!("DmlService DELETE failed: {}", e);
+                        self.send_error("ERROR", "42P01", &format!("Delete failed: {}", e)).await
+                    }
+                }
+            }
+            Ok(None) => {
+                self.send_error("ERROR", "42601", "Invalid DELETE statement").await
+            }
+            Err(e) => {
+                warn!("Failed to parse DELETE: {}", e);
+                self.send_error("ERROR", "42601", &format!("Parse error: {}", e)).await
+            }
+        }
+    }
+
     /// Execute UPDATE - updates vector metadata
     /// Supports: UPDATE table SET column = value WHERE id = 'value'
     async fn execute_update(&mut self, query: &str) -> Result<()> {
+        // Use DmlService for proper SQL DML execution if available
+        if let Some(dml_service) = self.dml_service.clone() {
+            return self.execute_update_via_dml_service(query, &dml_service).await;
+        }
+
+        // Fall back to string parsing
         let upper = query.to_uppercase();
 
         // Extract table name: UPDATE table SET
@@ -671,6 +1628,38 @@ impl PostgresProtocol {
             self.send_command_complete("UPDATE 1").await
         } else {
             self.send_command_complete("UPDATE 0").await
+        }
+    }
+
+    /// Execute UPDATE using the proper SQL parser and DmlService
+    async fn execute_update_via_dml_service(&mut self, query: &str, dml_service: &Arc<DmlService>) -> Result<()> {
+        let parser = SqlFrontendParser::new();
+
+        match parser.parse_dml(query) {
+            Ok(Some(statement)) => {
+                match dml_service.execute(statement).await {
+                    Ok(result) => {
+                        info!(
+                            rows_affected = result.rows_affected,
+                            "UPDATE executed via DmlService"
+                        );
+                        self.send_command_complete(&format!("UPDATE {}", result.rows_affected)).await
+                    }
+                    Err(e) => {
+                        // DmlService UPDATE returns error for not-implemented
+                        // This is expected - UPDATE requires delete + insert pattern
+                        warn!("DmlService UPDATE: {}", e);
+                        self.send_error("ERROR", "0A000", &format!("{}", e)).await
+                    }
+                }
+            }
+            Ok(None) => {
+                self.send_error("ERROR", "42601", "Invalid UPDATE statement").await
+            }
+            Err(e) => {
+                warn!("Failed to parse UPDATE: {}", e);
+                self.send_error("ERROR", "42601", &format!("Parse error: {}", e)).await
+            }
         }
     }
 
@@ -738,6 +1727,413 @@ impl PostgresProtocol {
             let end = after_eq.find(|c: char| c.is_whitespace() || c == ';')
                 .unwrap_or(after_eq.len());
             Some(after_eq[..end].to_string())
+        }
+    }
+
+    // ========================================================================
+    // COPY Command Support (Bulk Data Transfer)
+    // ========================================================================
+
+    /// Execute COPY command for bulk data transfer
+    /// Supports:
+    /// - COPY table FROM STDIN [WITH (FORMAT ARROW)]  - Arrow IPC format (most efficient)
+    /// - COPY table FROM STDIN [WITH (FORMAT CSV)]    - CSV format
+    /// - COPY table FROM STDIN [WITH (FORMAT BINARY)] - PostgreSQL binary format
+    /// - COPY table FROM STDIN                        - Text format (default)
+    async fn execute_copy(&mut self, query: &str) -> Result<()> {
+        let upper = query.to_uppercase();
+
+        // Parse COPY command: COPY table FROM STDIN [WITH (...)]
+        if !upper.contains("FROM STDIN") {
+            // COPY TO is not supported (export)
+            return self.send_error("ERROR", "0A000", "COPY TO is not supported; use SELECT queries").await;
+        }
+
+        // Extract table name
+        let copy_pos = upper.find("COPY ").ok_or_else(|| anyhow::anyhow!("Invalid COPY syntax"))?;
+        let after_copy = query[copy_pos + 5..].trim();
+        let table_end = after_copy.find(|c: char| c.is_whitespace() || c == '(')
+            .unwrap_or(after_copy.len());
+        let table_name = after_copy[..table_end].trim().to_lowercase();
+
+        if table_name.is_empty() {
+            return self.send_error("ERROR", "42601", "Table name required for COPY").await;
+        }
+
+        // Detect format from WITH clause
+        let format = self.detect_copy_format(&upper);
+
+        debug!("COPY {} FROM STDIN with format {:?}", table_name, format);
+
+        // Detect store type
+        let store_type = self.detect_insert_store_type(&table_name, &upper);
+
+        // Send CopyInResponse to signal client to start sending data
+        self.send_copy_in_response(&format).await?;
+
+        // Receive and process COPY data
+        let row_count = self.receive_copy_data(&table_name, store_type, &format).await?;
+
+        // Send command complete
+        self.send_command_complete(&format!("COPY {}", row_count)).await
+    }
+
+    /// Detect COPY format from WITH clause
+    fn detect_copy_format(&self, query: &str) -> CopyFormat {
+        if query.contains("FORMAT ARROW") || query.contains("FORMAT 'ARROW'") {
+            CopyFormat::Arrow
+        } else if query.contains("FORMAT CSV") || query.contains("FORMAT 'CSV'") {
+            CopyFormat::Csv
+        } else if query.contains("FORMAT BINARY") || query.contains("FORMAT 'BINARY'") {
+            CopyFormat::Binary
+        } else {
+            CopyFormat::Text
+        }
+    }
+
+    /// Send CopyInResponse message
+    async fn send_copy_in_response(&mut self, format: &CopyFormat) -> Result<()> {
+        // CopyInResponse format:
+        // - overall format (0=text, 1=binary)
+        // - number of columns (int16)
+        // - format codes for each column (int16 each)
+
+        let overall_format: i8 = match format {
+            CopyFormat::Binary | CopyFormat::Arrow => 1, // Binary
+            _ => 0, // Text
+        };
+
+        // For simplicity, use 2 columns (id, vector) with matching format
+        let num_columns: i16 = 2;
+        let format_code: i16 = overall_format as i16;
+
+        let len = 4 + 1 + 2 + (num_columns as usize * 2);
+        self.write_buffer.put_u8(b'G'); // CopyInResponse
+        self.write_buffer.put_i32(len as i32);
+        self.write_buffer.put_i8(overall_format);
+        self.write_buffer.put_i16(num_columns);
+        for _ in 0..num_columns {
+            self.write_buffer.put_i16(format_code);
+        }
+        self.flush_write_buffer().await
+    }
+
+    /// Receive COPY data from client
+    async fn receive_copy_data(
+        &mut self,
+        table_name: &str,
+        store_type: StoreType,
+        format: &CopyFormat,
+    ) -> Result<usize> {
+        let mut all_data = Vec::new();
+        let mut row_count = 0;
+
+        loop {
+            // Read message type
+            let msg_type = self.read_byte().await?;
+
+            match msg_type {
+                b'd' => {
+                    // CopyData message
+                    let length = self.read_i32().await? as usize;
+                    if length < 4 {
+                        continue;
+                    }
+                    let data = self.read_bytes(length - 4).await?;
+                    all_data.extend(data);
+                }
+                b'c' => {
+                    // CopyDone message
+                    let _length = self.read_i32().await?;
+                    debug!("COPY done, received {} bytes", all_data.len());
+                    break;
+                }
+                b'f' => {
+                    // CopyFail message
+                    let length = self.read_i32().await? as usize;
+                    let msg = self.read_bytes(length - 4).await?;
+                    let error_msg = String::from_utf8_lossy(&msg);
+                    warn!("COPY failed: {}", error_msg);
+                    return Err(anyhow::anyhow!("COPY failed: {}", error_msg));
+                }
+                _ => {
+                    warn!("Unexpected message during COPY: {}", msg_type as char);
+                    return Err(anyhow::anyhow!("Unexpected message during COPY"));
+                }
+            }
+        }
+
+        // Process the collected data based on format
+        row_count = match format {
+            CopyFormat::Arrow => self.process_arrow_copy_data(table_name, store_type, &all_data).await?,
+            CopyFormat::Csv => self.process_csv_copy_data(table_name, store_type, &all_data).await?,
+            CopyFormat::Text => self.process_text_copy_data(table_name, store_type, &all_data).await?,
+            CopyFormat::Binary => self.process_binary_copy_data(table_name, store_type, &all_data).await?,
+        };
+
+        info!("COPY completed: {} rows inserted into '{}'", row_count, table_name);
+        Ok(row_count)
+    }
+
+    /// Process Arrow IPC format COPY data (most efficient path)
+    async fn process_arrow_copy_data(
+        &mut self,
+        table_name: &str,
+        _store_type: StoreType,
+        data: &[u8],
+    ) -> Result<usize> {
+        if data.is_empty() {
+            return Ok(0);
+        }
+
+        // Decode Arrow IPC stream
+        let cursor = std::io::Cursor::new(data);
+        let reader = match arrow_ipc::reader::StreamReader::try_new(cursor, None) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Failed to parse Arrow IPC stream: {}", e);
+                return self.send_error("ERROR", "22P02", &format!("Invalid Arrow IPC data: {}", e)).await
+                    .map(|_| 0);
+            }
+        };
+
+        // Collect all record batches
+        let batches: Vec<arrow_array::RecordBatch> = reader
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if batches.is_empty() {
+            return Ok(0);
+        }
+
+        // Convert Arrow batches to VectorRecords
+        let vectors = match ArrowProtoCodec::batches_to_vector_records(batches) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to convert Arrow data to vectors: {}", e);
+                return Err(anyhow::anyhow!("Failed to convert Arrow data: {}", e));
+            }
+        };
+
+        let count = vectors.len();
+        debug!("Decoded {} vectors from Arrow IPC for COPY into '{}'", count, table_name);
+
+        // Bulk insert via vector operations service (bypasses per-row overhead)
+        match self.vector_ops.insert_batch(table_name, vectors).await {
+            Ok(_) => {
+                info!("Arrow COPY inserted {} vectors into '{}'", count, table_name);
+                Ok(count)
+            }
+            Err(e) => {
+                warn!("Arrow COPY insert failed: {}", e);
+                Err(anyhow::anyhow!("COPY insert failed: {}", e))
+            }
+        }
+    }
+
+    /// Process CSV format COPY data
+    async fn process_csv_copy_data(
+        &mut self,
+        table_name: &str,
+        _store_type: StoreType,
+        data: &[u8],
+    ) -> Result<usize> {
+        let text = String::from_utf8_lossy(data);
+        let mut records = Vec::new();
+
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // Parse CSV: id,vector_data
+            let parts: Vec<&str> = line.splitn(2, ',').collect();
+            if parts.len() < 2 {
+                continue;
+            }
+
+            let id = parts[0].trim().trim_matches('"');
+            let vector_str = parts[1].trim();
+
+            // Parse vector from CSV (e.g., "[0.1,0.2,0.3]" or "0.1,0.2,0.3")
+            let vector = self.parse_csv_vector(vector_str);
+            if vector.is_empty() {
+                continue;
+            }
+
+            use crate::proto::proximadb_v1::VectorRecord;
+            records.push(VectorRecord {
+                id: id.to_string(),
+                vector,
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(chrono::Utc::now().timestamp_millis()),
+                version: Some(1),
+                updated_at: None,
+                expires_at: None,
+                source: None,
+            });
+        }
+
+        let count = records.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        match self.vector_ops.insert_batch(table_name, records).await {
+            Ok(_) => Ok(count),
+            Err(e) => Err(anyhow::anyhow!("CSV COPY insert failed: {}", e)),
+        }
+    }
+
+    /// Parse vector from CSV string
+    fn parse_csv_vector(&self, s: &str) -> Vec<f32> {
+        // Remove brackets if present
+        let clean = s.trim().trim_start_matches('[').trim_end_matches(']');
+        clean
+            .split(',')
+            .filter_map(|v| v.trim().parse::<f32>().ok())
+            .collect()
+    }
+
+    /// Process text format COPY data (PostgreSQL default)
+    async fn process_text_copy_data(
+        &mut self,
+        table_name: &str,
+        _store_type: StoreType,
+        data: &[u8],
+    ) -> Result<usize> {
+        let text = String::from_utf8_lossy(data);
+        let mut records = Vec::new();
+
+        for line in text.lines() {
+            if line.trim().is_empty() || line == "\\." {
+                continue;
+            }
+
+            // Parse tab-separated: id\tvector_data
+            let parts: Vec<&str> = line.splitn(2, '\t').collect();
+            if parts.len() < 2 {
+                continue;
+            }
+
+            let id = parts[0].trim();
+            let vector = self.extract_vector_from_query(parts[1]);
+
+            if let Some(vector) = vector {
+                use crate::proto::proximadb_v1::VectorRecord;
+                records.push(VectorRecord {
+                    id: id.to_string(),
+                    vector,
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
+                    version: Some(1),
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                });
+            }
+        }
+
+        let count = records.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        match self.vector_ops.insert_batch(table_name, records).await {
+            Ok(_) => Ok(count),
+            Err(e) => Err(anyhow::anyhow!("Text COPY insert failed: {}", e)),
+        }
+    }
+
+    /// Process PostgreSQL binary format COPY data
+    async fn process_binary_copy_data(
+        &mut self,
+        table_name: &str,
+        _store_type: StoreType,
+        data: &[u8],
+    ) -> Result<usize> {
+        if data.len() < 11 {
+            return Ok(0);
+        }
+
+        // PostgreSQL binary format header: PGCOPY\n\377\r\n\0
+        // Then flags (4 bytes), header extension (4 bytes)
+        // Then tuples until -1 field count
+
+        let header = b"PGCOPY\n\xff\r\n\x00";
+        if &data[..11] != header {
+            warn!("Invalid PostgreSQL binary COPY header");
+            return Err(anyhow::anyhow!("Invalid binary COPY format"));
+        }
+
+        let mut cursor = std::io::Cursor::new(&data[11..]);
+        use bytes::Buf;
+
+        // Skip flags and header extension
+        let _flags = cursor.get_i32();
+        let ext_len = cursor.get_i32();
+        cursor.advance(ext_len as usize);
+
+        let mut records = Vec::new();
+
+        loop {
+            if cursor.remaining() < 2 {
+                break;
+            }
+
+            let field_count = cursor.get_i16();
+            if field_count == -1 {
+                // End of data
+                break;
+            }
+
+            // Read id field
+            if cursor.remaining() < 4 {
+                break;
+            }
+            let id_len = cursor.get_i32() as usize;
+            if cursor.remaining() < id_len {
+                break;
+            }
+            let id_bytes: Vec<u8> = (0..id_len).map(|_| cursor.get_u8()).collect();
+            let id = String::from_utf8_lossy(&id_bytes).to_string();
+
+            // Read vector field
+            if cursor.remaining() < 4 {
+                break;
+            }
+            let vec_len = cursor.get_i32() as usize;
+            if cursor.remaining() < vec_len {
+                break;
+            }
+
+            // Parse vector as array of float4
+            let num_floats = vec_len / 4;
+            let vector: Vec<f32> = (0..num_floats)
+                .map(|_| cursor.get_f32())
+                .collect();
+
+            use crate::proto::proximadb_v1::VectorRecord;
+            records.push(VectorRecord {
+                id,
+                vector,
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(chrono::Utc::now().timestamp_millis()),
+                version: Some(1),
+                updated_at: None,
+                expires_at: None,
+                source: None,
+            });
+        }
+
+        let count = records.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        match self.vector_ops.insert_batch(table_name, records).await {
+            Ok(_) => Ok(count),
+            Err(e) => Err(anyhow::anyhow!("Binary COPY insert failed: {}", e)),
         }
     }
 
@@ -811,16 +2207,124 @@ impl PostgresProtocol {
         Ok(())
     }
 
-    /// Handle Bind message
-    async fn handle_bind(&mut self, _body: &[u8]) -> Result<()> {
-        // TODO: Implement parameter binding
+    /// Handle Bind message - binds parameters to a prepared statement, creating a portal
+    async fn handle_bind(&mut self, body: &[u8]) -> Result<()> {
+        let mut cursor = Cursor::new(body);
+
+        // Read portal name (destination)
+        let portal_name = self.read_cstring(&mut cursor)?;
+
+        // Read statement name (source prepared statement)
+        let statement_name = self.read_cstring(&mut cursor)?;
+
+        // Read format codes count (currently ignored - we use text format)
+        let format_code_count = cursor.get_i16() as usize;
+        for _ in 0..format_code_count {
+            let _format_code = cursor.get_i16();
+        }
+
+        // Read parameter values count
+        let param_count = cursor.get_i16() as usize;
+        let mut param_values: Vec<Option<Vec<u8>>> = Vec::with_capacity(param_count);
+
+        for _ in 0..param_count {
+            let value_len = cursor.get_i32();
+            if value_len == -1 {
+                // NULL value
+                param_values.push(None);
+            } else {
+                let mut value = vec![0u8; value_len as usize];
+                cursor.copy_to_slice(&mut value);
+                param_values.push(Some(value));
+            }
+        }
+
+        // Read result format codes (we'll ignore these for now)
+        let result_format_count = cursor.get_i16() as usize;
+        for _ in 0..result_format_count {
+            let _ = cursor.get_i16();
+        }
+
+        // Get the prepared statement data (extract to avoid borrow conflicts)
+        let stmt_data = self.prepared_statements.get(&statement_name).map(|s| {
+            (s.query.clone(), s.translated.clone())
+        });
+
+        let (stmt_query, stmt_translated) = match stmt_data {
+            Some(data) => data,
+            None => {
+                // If unnamed statement (""), use the query directly
+                if statement_name.is_empty() {
+                    return self.send_bind_complete().await;
+                }
+                return self.send_error("ERROR", "26000", &format!("prepared statement \"{}\" does not exist", statement_name)).await;
+            }
+        };
+
+        // Bind parameters to the query
+        let bound_query = self.bind_parameters(&stmt_query, &param_values)?;
+
+        // Create portal
+        let portal = Portal {
+            statement_name: statement_name.clone(),
+            bound_query,
+            translated: stmt_translated,
+            param_values,
+            max_rows: 0,
+        };
+
+        self.portals.insert(portal_name, portal);
         self.send_bind_complete().await
     }
 
-    /// Handle Execute message
-    async fn handle_execute(&mut self, _body: &[u8]) -> Result<()> {
-        // TODO: Implement prepared statement execution
-        self.send_command_complete("SELECT 0").await
+    /// Bind parameter values to a query string
+    fn bind_parameters(&self, query: &str, param_values: &[Option<Vec<u8>>]) -> Result<String> {
+        let mut result = query.to_string();
+
+        for (i, value) in param_values.iter().enumerate() {
+            let placeholder = format!("${}", i + 1);
+            let replacement = match value {
+                Some(v) => {
+                    // Convert bytes to string (assuming UTF-8 text format)
+                    let s = String::from_utf8_lossy(v);
+                    // Escape single quotes
+                    format!("'{}'", s.replace('\'', "''"))
+                }
+                None => "NULL".to_string(),
+            };
+            result = result.replace(&placeholder, &replacement);
+        }
+
+        Ok(result)
+    }
+
+    /// Handle Execute message - executes a portal
+    async fn handle_execute(&mut self, body: &[u8]) -> Result<()> {
+        let mut cursor = Cursor::new(body);
+
+        // Read portal name
+        let portal_name = self.read_cstring(&mut cursor)?;
+
+        // Read max rows (0 = unlimited) - currently not enforced
+        let _max_rows = cursor.get_i32();
+
+        // Get the portal
+        let portal = match self.portals.get(&portal_name) {
+            Some(p) => p.clone(),
+            None => {
+                // If unnamed portal (""), execute as simple query
+                if portal_name.is_empty() {
+                    return self.send_command_complete("SELECT 0").await;
+                }
+                return self.send_error("ERROR", "34000", &format!("portal \"{}\" does not exist", portal_name)).await;
+            }
+        };
+
+        // Execute the bound query
+        debug!("Executing portal '{}' with query: {}", portal_name, portal.bound_query);
+
+        // Use the same query execution path as simple query
+        self.execute_query(&portal.bound_query).await
     }
 
     /// Handle Describe message

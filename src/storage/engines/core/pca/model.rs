@@ -7,7 +7,6 @@
 use anyhow::Result;
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::VectorRecord;
 

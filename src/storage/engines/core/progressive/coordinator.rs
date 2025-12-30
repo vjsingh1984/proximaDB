@@ -9,7 +9,7 @@ use tracing::{debug, info, trace};
 
 use crate::compute::distance_computation::DistanceMetric;
 
-use super::stage::{ProgressiveSearchStage, ScoredCandidate, StageResult};
+use super::stage::{ProgressiveSearchStage, ScoredCandidate};
 
 /// Configuration for the progressive search coordinator
 #[derive(Debug, Clone)]

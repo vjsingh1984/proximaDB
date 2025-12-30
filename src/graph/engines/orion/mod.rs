@@ -14,17 +14,39 @@
  * limitations under the License.
  */
 
-//! # ORION Graph Engine - In-Memory CSR Format
+//! # ORION Graph Engine - PRODUCTION READY
 //!
-//! ORION (Named Entity Operations) is ProximaDB's high-performance in-memory graph engine
-//! optimized for real-time traversal operations using Compressed Sparse Row (CSR) format.
+//! ORION is ProximaDB's production-grade in-memory graph engine featuring:
+//! - CSR (Compressed Sparse Row) format for fast traversal
+//! - Arc-based zero-copy memory sharing
+//! - WAL persistence for durability
+//! - DashMap concurrent access
+//!
+//! ## Production Status
+//!
+//! **ORION is the default and recommended graph engine for all workloads.**
+//!
+//! Use ORION for:
+//! - Real-time knowledge graph queries
+//! - Low-latency recommendation systems
+//! - Social network analysis
+//! - Entity relationship management
 //!
 //! ## Performance Characteristics
 //!
 //! - **Traversal Speed**: 1M+ edges/second
-//! - **Node Lookup**: < 1μs (O(1) DashMap access)
+//! - **Node Lookup**: < 1us (O(1) DashMap access)
 //! - **Edge Traversal**: O(degree) with cache-friendly sequential access
 //! - **Memory Overhead**: < 100 bytes/node
+//!
+//! ## Key Features
+//!
+//! - **CSR Format**: Compressed Sparse Row for memory-efficient edge storage
+//! - **Zero-Copy Memory**: Arc-based sharing eliminates data duplication
+//! - **WAL Persistence**: Write-ahead logging ensures durability across restarts
+//! - **Concurrent Access**: DashMap provides lock-free concurrent reads
+//! - **Graph Algorithms**: PageRank, community detection, centrality metrics
+//! - **Label Indexes**: O(1) lookup for nodes by label
 //!
 //! ## CSR Format Benefits
 //!
@@ -36,23 +58,46 @@
 //! ## Architecture
 //!
 //! ```text
-//! ┌──────────────────────────────────────────┐
-//! │              ORION Engine                  │
-//! ├──────────────────────────────────────────┤
-//! │  Nodes: DashMap<NodeId, Arc<Node>>       │
-//! ├──────────────────────────────────────────┤
-//! │  CSR Outgoing Edges:                     │
-//! │  ┌─────────────┬─────────────┐           │
-//! │  │   Offsets   │   Targets   │           │
-//! │  │ [0,2,5,8..] │ [1,3,2,4..] │           │
-//! │  └─────────────┴─────────────┘           │
-//! ├──────────────────────────────────────────┤
-//! │  CSR Incoming Edges:                     │
-//! │  ┌─────────────┬─────────────┐           │
-//! │  │   Offsets   │   Sources   │           │
-//! │  │ [0,1,3,6..] │ [0,2,1,3..] │           │
-//! │  └─────────────┴─────────────┘           │
-//! └──────────────────────────────────────────┘
+//! +------------------------------------------+
+//! |              ORION Engine                |
+//! +------------------------------------------+
+//! |  Nodes: DashMap<NodeId, Arc<Node>>       |
+//! +------------------------------------------+
+//! |  CSR Outgoing Edges:                     |
+//! |  +-------------+-------------+           |
+//! |  |   Offsets   |   Targets   |           |
+//! |  | [0,2,5,8..] | [1,3,2,4..] |           |
+//! |  +-------------+-------------+           |
+//! +------------------------------------------+
+//! |  CSR Incoming Edges:                     |
+//! |  +-------------+-------------+           |
+//! |  |   Offsets   |   Sources   |           |
+//! |  | [0,1,3,6..] | [0,2,1,3..] |           |
+//! |  +-------------+-------------+           |
+//! +------------------------------------------+
+//! |  WAL Persistence (Optional)              |
+//! |  - Synchronous writes for durability     |
+//! |  - Automatic recovery on startup         |
+//! +------------------------------------------+
+//! ```
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use proximadb::graph::engines::orion::OrionGraphEngine;
+//!
+//! // Create a new ORION engine (in-memory only)
+//! let engine = OrionGraphEngine::new();
+//!
+//! // Create with WAL persistence for durability
+//! let engine = OrionGraphEngine::with_persistence("/path/to/data", true).await?;
+//!
+//! // Insert nodes and edges
+//! engine.insert_node(node).await?;
+//! engine.insert_edge(edge).await?;
+//!
+//! // Traverse graph
+//! let neighbors = engine.get_neighbors(&node_id, Some("KNOWS"))?;
 //! ```
 
 pub mod algorithms;
@@ -71,7 +116,8 @@ use std::sync::{Arc, RwLock};
 use tracing;
 
 /// ORION Graph Engine with CSR format for high-performance traversal
-#[derive(Debug)]
+/// Implements Clone via Arc pointer copies (cheap, O(1))
+#[derive(Debug, Clone)]
 pub struct OrionGraphEngine {
     /// Shared memory pool for Arc-based zero-copy architecture
     memory_pool: Arc<GraphMemoryPool>,
@@ -79,17 +125,21 @@ pub struct OrionGraphEngine {
     /// CSR storage for outgoing edges (node -> targets)
     /// Using std::sync::RwLock for sync trait compatibility and better performance
     /// (CSR reads are fast array operations that don't need async overhead)
-    csr_outgoing: Arc<RwLock<storage::CsrStorage>>,
+    /// Public for algorithm access (centrality, community detection, etc.)
+    pub csr_outgoing: Arc<RwLock<storage::CsrStorage>>,
 
     /// CSR storage for incoming edges (node <- sources)
-    csr_incoming: Arc<RwLock<storage::CsrStorage>>,
+    /// Public for algorithm access (centrality, community detection, etc.)
+    pub csr_incoming: Arc<RwLock<storage::CsrStorage>>,
 
     /// Edge metadata storage (edge_id -> edge_data)
     edge_metadata: Arc<DashMap<EdgeId, Arc<Edge>>>,
 
     /// Node ID to CSR index mapping (for fast CSR access)
     node_to_index: Arc<DashMap<NodeId, usize>>,
-    index_to_node: Arc<RwLock<Vec<NodeId>>>,
+    /// Index to node ID mapping for reverse lookups
+    /// Public for algorithm access (centrality, community detection, etc.)
+    pub index_to_node: Arc<RwLock<Vec<NodeId>>>,
 
     /// Engine statistics
     stats: Arc<RwLock<EngineStats>>,

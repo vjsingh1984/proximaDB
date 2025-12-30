@@ -119,7 +119,7 @@ pub mod zone_maps;
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::core::search::{BlockPruneConfig, SearchMode};
+use crate::core::search::SearchMode;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::EventLog;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;

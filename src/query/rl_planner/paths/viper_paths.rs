@@ -5,7 +5,7 @@
 
 use super::{OptimizationPath, PathExpectation};
 use crate::query::rl_planner::action::{
-    BlockPruneConfig, ExecutionAction, IndexStrategy, QuantizationStage, SearchModeAction,
+    BlockPruneConfig, ExecutionAction, IndexStrategy, QuantizationStage,
 };
 
 /// Get all VIPER optimization paths

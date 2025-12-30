@@ -155,7 +155,7 @@ pub struct CacheMetrics {
     pub memory_pressure_events: u64,
 }
 
-use crate::storage::engines::impls::sst::{SstableIndex, MetadataStats};
+use crate::storage::engines::impls::sst::SstableIndex;
 
 /// Enhanced bloom filter supporting metadata columns
 
@@ -4317,6 +4317,7 @@ impl UnifiedSstableReader {
 
     /// Search-optimized strategy using modular approach with smart caching
     /// Uses Z-order spatial codes and centroid distances for intelligent block selection
+    /// Also applies zone map pruning when metadata filters are present
     async fn search_optimized_strategy_modular(
         &self,
         context: &CollectionContext,
@@ -4336,8 +4337,21 @@ impl UnifiedSstableReader {
             // Smart block selection based on search parameters (sqrt-based pruning)
             let selected_blocks = self.select_blocks_for_search(&index_blocks, search_params);
 
+            // Apply zone map pruning if filter expression is present
+            let filter_expr = search_params.filter_expression.as_ref();
+            let mut blocks_after_zone_map = 0usize;
+            let blocks_before_zone_map = selected_blocks.len();
+
             for block_idx in &selected_blocks {
                 if let Some(index_entry) = index_blocks.get(*block_idx) {
+                    // Zone map pruning: skip blocks that can't contain matching values
+                    if let Some(filter) = filter_expr {
+                        if !self.should_read_block_for_filter(index_entry, filter) {
+                            continue; // Skip this block - zone map says no matches possible
+                        }
+                    }
+
+                    blocks_after_zone_map += 1;
                     match block_reader
                         .read_data_block_at_offset(index_entry.offset, index_entry.size as usize)
                         .await
@@ -4349,6 +4363,19 @@ impl UnifiedSstableReader {
                             return Err(e);
                         }
                     }
+                }
+            }
+
+            // Log zone map pruning effectiveness
+            if filter_expr.is_some() && blocks_before_zone_map > 0 {
+                let pruned = blocks_before_zone_map - blocks_after_zone_map;
+                if pruned > 0 {
+                    tracing::debug!(
+                        "📊 Zone map pruning: {} → {} blocks ({} pruned, {:.1}% reduction) for {}",
+                        blocks_before_zone_map, blocks_after_zone_map, pruned,
+                        (pruned as f64 / blocks_before_zone_map as f64) * 100.0,
+                        file_path
+                    );
                 }
             }
         }
@@ -4369,11 +4396,65 @@ impl UnifiedSstableReader {
 
     fn should_read_block_for_filter(
         &self,
-        _index_entry: &IndexEntry,
-        _filter: &FilterExpression,
+        index_entry: &IndexEntry,
+        filter: &FilterExpression,
     ) -> bool {
-        // TODO: Implement block filtering based on index metadata
-        true // For now, read all blocks
+        // Zone map pruning: Check if block's metadata min/max range can contain matching values
+        // Extract equality conditions from filter expression
+        let metadata_conditions = self.extract_filter_conditions(filter);
+
+        if metadata_conditions.is_empty() {
+            // No equality conditions to check against zone maps
+            return true;
+        }
+
+        // Check each condition against block's min/max values
+        for (column, filter_value) in &metadata_conditions {
+            if let Some(min_val) = index_entry.metadata_min_values.get(column) {
+                if let Some(max_val) = index_entry.metadata_max_values.get(column) {
+                    // Use centralized comparison: if value is outside [min, max], skip block
+                    if Self::compare_metadata_values(filter_value, min_val) == std::cmp::Ordering::Less
+                        || Self::compare_metadata_values(filter_value, max_val) == std::cmp::Ordering::Greater
+                    {
+                        tracing::debug!(
+                            "🔍 Zone map pruning: block {} rejected - {} not in [{:?}, {:?}]",
+                            index_entry.block_id, filter_value, min_val, max_val
+                        );
+                        return false;
+                    }
+                }
+            }
+            // If column not tracked in block stats, be conservative and include block
+        }
+
+        true // Block might contain matching values
+    }
+
+    /// Extract simple equality conditions from a filter expression for zone map pruning
+    fn extract_filter_conditions(&self, filter: &FilterExpression) -> Vec<(String, serde_json::Value)> {
+        let mut conditions = Vec::new();
+        Self::collect_equality_conditions(filter, &mut conditions);
+        conditions
+    }
+
+    fn collect_equality_conditions(filter: &FilterExpression, conditions: &mut Vec<(String, serde_json::Value)>) {
+        use crate::core::search::ComparisonOperator;
+
+        match filter {
+            FilterExpression::Comparison { field, operator, value } => {
+                if matches!(operator, ComparisonOperator::Equals) {
+                    conditions.push((field.clone(), value.clone()));
+                }
+            }
+            FilterExpression::And(exprs) => {
+                for expr in exprs {
+                    Self::collect_equality_conditions(expr, conditions);
+                }
+            }
+            FilterExpression::Or(_) | FilterExpression::Not(_) => {
+                // OR and NOT are too complex for simple zone map pruning
+            }
+        }
     }
 
     fn vector_records_to_data_blocks(
@@ -5596,14 +5677,33 @@ mod centroid_tests {
                 vector_format: VectorFormat::Variable,
                 zorder_code: Some(SpatialCode::Code64(10000)),
             },
+            // Block without Z-Order code (backward compatibility - always included)
+            IndexEntry {
+                key: "d".into(),
+                offset: 0,
+                size: 0,
+                block_id: 3,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.5, 0.5],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None, // No Z-Order code - always included
+            },
         ];
 
         let filtered = filter_blocks_by_zorder(&query, &entries, "test_zorder_filter_pca");
         assert!(filtered.is_some(), "Should return filtered indices with cached PCA model");
 
         let indices = filtered.unwrap();
-        // Should include some blocks (the filtering logic may not prune depending on epsilon)
-        assert!(!indices.is_empty(), "Should have at least some blocks selected");
+        // Should include the block without Z-Order code for backward compatibility
+        assert!(!indices.is_empty(), "Should have at least some blocks selected (backward compat block)");
+        assert!(indices.contains(&3), "Block without Z-Order code should be included");
     }
 
     #[test]

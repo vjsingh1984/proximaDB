@@ -35,12 +35,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use super::manifest::{GlobalCheckpoint, GlobalManifestEntry, GlobalManifestService, WalEntryStatus};
+use super::manifest::{GlobalManifestEntry, GlobalManifestService};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Unique identifier for a backup

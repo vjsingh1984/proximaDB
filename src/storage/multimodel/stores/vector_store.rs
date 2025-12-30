@@ -119,6 +119,14 @@ impl VectorStore {
         self
     }
 
+    /// Create a VectorStore with a single engine (used for federated query integration)
+    ///
+    /// This is a convenience constructor that sets the given engine as the SST engine,
+    /// making it available as the primary engine for vector operations in federated queries.
+    pub fn with_engine(engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+        Self::new(VectorStoreConfig::default()).with_sst_engine(engine)
+    }
+
     /// Set the quantization engine
     pub fn with_quantizer(mut self, quantizer: Arc<UnifiedQuantizationEngine>) -> Self {
         self.quantizer = Some(quantizer);

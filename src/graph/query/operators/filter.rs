@@ -2,9 +2,8 @@
 //!
 //! Filters tuples based on predicates (WHERE clause).
 
-use super::{ColumnSpec, PhysicalOperator, QueryValue, ResultTuple, ValueType};
+use super::{ColumnSpec, PhysicalOperator, ResultTuple};
 use anyhow::Result;
-use std::sync::Arc;
 
 /// Filter expression for WHERE clause
 #[derive(Debug, Clone)]

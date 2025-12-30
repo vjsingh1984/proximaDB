@@ -1,17 +1,20 @@
-//! # RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
+//! # RAPTOR Engine - EXPERIMENTAL
 //!
-//! ## 🏆 PRODUCTION-READY ADAPTIVE ENGINE - COMPREHENSIVE IMPLEMENTATION
+//! **WARNING**: This engine is experimental and NOT production-ready.
+//! It has 35+ TODO items and incomplete implementations.
+//! Use SST, VIPER, or HELIX for production workloads.
 //!
-//! RAPTOR is ProximaDB's **sophisticated adaptive storage engine** featuring the innovative Matrix Trinity architecture for intelligent workload optimization.
+//! ## RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
 //!
-//! ### ✅ **ENTERPRISE ADAPTIVE CAPABILITIES:**
-//! 1. **Matrix Trinity Architecture**: Revolutionary P²+K²+P×K matrix system for optimal search navigation
-//! 2. **Workload Adaptation**: Real-time optimization based on query patterns and data distribution
+//! RAPTOR is ProximaDB's adaptive storage engine featuring the Matrix Trinity architecture for intelligent workload optimization.
+//!
+//! ### Adaptive Capabilities (experimental):
+//! 1. **Matrix Trinity Architecture**: P²+K²+P×K matrix system for search navigation
+//! 2. **Workload Adaptation**: Optimization based on query patterns and data distribution
 //! 3. **Smart Resource Management**: Adaptive row group sizing and memory-efficient operations
-//! 4. **Intelligent Compaction**: Advanced consolidation with pattern-aware optimization
-//! 5. **Production Validation**: 17+ comprehensive implementation modules with battle-tested algorithms
+//! 4. **Intelligent Compaction**: Consolidation with pattern-aware optimization
 //!
-//! **STATUS**: ✅ **PRODUCTION-READY** - Advanced adaptive engine optimized for dynamic workloads
+//! **STATUS**: EXPERIMENTAL - Not recommended for production use
 //!
 //! ## 🎯 OPTIMAL USE CASES
 //!

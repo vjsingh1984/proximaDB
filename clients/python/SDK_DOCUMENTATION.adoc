@@ -1,632 +1,81 @@
-= ProximaDB Python SDK Documentation
+= ProximaDB Python SDK
 :toc:
-:toclevels: 3
+:toclevels: 2
 
-== Overview
+[.lead]
+Developer-first SDK for vector search with optional document, graph, and observability helpers.
 
-The ProximaDB Python SDK provides a comprehensive interface for interacting with ProximaDB's vector database, offering both REST and gRPC protocols with automatic protocol selection and advanced features.
-
-== Installation
+== Install
 
 [source,bash]
 ----
 pip install proximadb-client
 ----
 
-== Quick Start
+== Quick Start (Vectors)
 
 [source,python]
 ----
 from proximadb import ProximaDBClient
 
-# Connect to ProximaDB
 client = ProximaDBClient("http://localhost:5678")
 
-# Create a collection
-collection = client.create_collection(
-    name="my_vectors",
-    dimension=1536,
-    storage_engine="sst",  # or "viper"
-    distance_metric="cosine"
+client.create_collection(
+    name="docs",
+    dimension=768,
+    storage_engine="sst",
+    distance_metric="cosine",
 )
 
-# Insert vectors
-vectors = [
-    {"id": "vec1", "vector": [0.1, 0.2, ...], "metadata": {"category": "A"}},
-    {"id": "vec2", "vector": [0.3, 0.4, ...], "metadata": {"category": "B"}}
-]
-client.insert_vectors("my_vectors", vectors)
+client.insert_vectors("docs", [
+    {"id": "doc_1", "vector": [0.1, 0.2], "metadata": {"category": "tech"}}
+])
 
-# Search
 results = client.search_vectors(
-    collection_id="my_vectors",
-    query_vector=[0.1, 0.2, ...],
-    top_k=10
+    collection_id="docs",
+    query_vector=[0.1, 0.2],
+    top_k=5,
 )
+print(results)
 ----
 
-== Core Features
+== Document Operations (Beta)
 
-=== Protocol Support
+[source,python]
+----
+client.create_document_collection("events")
+client.insert_document("events", {"service": "api", "status": "warn"})
+----
 
-The SDK supports both REST and gRPC protocols with automatic selection:
+== Graph Operations (Beta)
+
+[source,python]
+----
+client.create_graph("topology")
+client.create_node("topology", {"id": "service-api", "labels": ["Service"]})
+----
+
+== Observability (Beta)
+
+[source,python]
+----
+client.create_observability_namespace("prod")
+client.ingest_logs("prod", [{"message": "error", "severity": "error"}])
+----
+
+== Protocols
+
+The SDK supports REST and gRPC. REST is the default for local development.
 
 [source,python]
 ----
 from proximadb import ProximaDBClient, Protocol
-
-# Automatic protocol selection (default)
-client = ProximaDBClient("http://localhost:5678")
-
-# Force specific protocol
-rest_client = ProximaDBClient("http://localhost:5678", protocol=Protocol.REST)
-grpc_client = ProximaDBClient("localhost:5679", protocol=Protocol.GRPC)
-
-# Intelligent protocol selection
-smart_client = ProximaDBClient(
-    "http://localhost:5678",
-    protocol_selector=IntelligentProtocolSelector()
-)
+client = ProximaDBClient("http://localhost:5678", protocol=Protocol.REST)
 ----
 
-=== Compression Configuration
+== Notes
 
-SDK-driven compression without server defaults:
+* Vector operations are the most mature API surface.
+* Document, graph, and observability helpers are evolving.
+* For production, prefer explicit configuration and retries.
 
-[source,python]
-----
-from proximadb.models import (
-    CompressionConfig,
-    CompressionAlgorithm,
-    StorageEngine
-)
-
-# Configure compression
-compression = CompressionConfig(
-    # SST compression settings
-    sst_compression_algorithm=CompressionAlgorithm.ZSTD,
-    sst_compression_level=6,
-    sst_block_size=32768,
-    
-    # VIPER compression settings
-    viper_compression_algorithm=CompressionAlgorithm.SNAPPY,
-    viper_enable_dual_columns=True,
-    
-    # Adaptive settings
-    adaptive_compression=True,
-    compression_threshold_kb=100
-)
-
-# Create collection with compression
-collection = client.create_collection(
-    name="compressed_vectors",
-    dimension=768,
-    storage_engine=StorageEngine.SST,
-    compression_config=compression
-)
-----
-
-=== Search Optimization
-
-Advanced search with optimization hints:
-
-[source,python]
-----
-from proximadb.models import SearchOptimization
-
-# Configure search optimization
-optimization = SearchOptimization(
-    # Compression hints
-    prefer_compressed_search=True,
-    decompression_budget_ms=100,
-    use_decompression_cache=True,
-    compression_aware_routing=True,
-    
-    # Two-stage search for quantized data
-    enable_two_stage=True,
-    coarse_quantization_k=100,
-    rerank_multiplier=2.0,
-    
-    # Performance hints
-    parallel_decompression=True,
-    prefetch_count=10,
-    adaptive_k=True
-)
-
-# Search with optimization
-results = client.search_vectors(
-    collection_id="my_vectors",
-    query_vector=query_vector,
-    top_k=10,
-    search_optimization=optimization
-)
-----
-
-== Advanced Features
-
-=== Chunking and Embedding
-
-Built-in text chunking with embedding support:
-
-[source,python]
-----
-from proximadb.chunking import TextChunker, ChunkingStrategy
-from proximadb.embedding_providers import OpenAIProvider
-
-# Configure chunker
-chunker = TextChunker(
-    strategy=ChunkingStrategy.SEMANTIC,
-    chunk_size=512,
-    chunk_overlap=50,
-    embedding_provider=OpenAIProvider(api_key="...")
-)
-
-# Process text
-text = "Large document content..."
-chunks = chunker.chunk_text(text)
-
-# Insert chunks as vectors
-for chunk in chunks:
-    client.insert_vector(
-        collection_id="documents",
-        vector_id=chunk.id,
-        vector=chunk.embedding,
-        metadata={"text": chunk.text, "position": chunk.position}
-    )
-----
-
-=== Batching and Streaming
-
-Efficient batch operations:
-
-[source,python]
-----
-from proximadb.batching import RequestBatcher
-
-# Configure batcher
-batcher = RequestBatcher(
-    batch_size=1000,
-    batch_timeout_ms=100,
-    max_concurrent_batches=5
-)
-
-# Batch insertion
-async with batcher.batch_context() as batch:
-    for vector in large_dataset:
-        await batch.add_vector(vector)
-    # Automatically flushes when batch is full or timeout
-
-# Streaming search
-async for result in client.stream_search(
-    collection_id="my_vectors",
-    query_vector=query_vector,
-    batch_size=100
-):
-    process_result(result)
-----
-
-=== Connection Pooling
-
-Optimized connection management:
-
-[source,python]
-----
-from proximadb.protocols.connection_pools import (
-    GrpcConnectionPool,
-    RestConnectionPool
-)
-
-# gRPC connection pool
-grpc_pool = GrpcConnectionPool(
-    endpoint="localhost:5679",
-    pool_size=10,
-    max_message_size=100 * 1024 * 1024  # 100MB
-)
-
-# REST connection pool with separate pools
-rest_pool = RestConnectionPool(
-    base_url="http://localhost:5678",
-    read_pool_size=5,
-    write_pool_size=3,
-    search_pool_size=10
-)
-----
-
-=== Response Caching
-
-Client-side caching for improved performance:
-
-[source,python]
-----
-from proximadb.cache import ResponseCache
-
-# Configure cache
-cache = ResponseCache(
-    max_size=1000,
-    ttl_seconds=300,
-    cache_searches=True,
-    cache_metadata=True
-)
-
-# Client with caching
-cached_client = ProximaDBClient(
-    "http://localhost:5678",
-    cache=cache
-)
-
-# Cached operations
-results = cached_client.search_vectors(...)  # First call
-results = cached_client.search_vectors(...)  # Cached response
-----
-
-== SQL Integration
-
-Execute SQL queries with vector operations:
-
-[source,python]
-----
-# SQL with vector similarity
-sql = """
-    SELECT id, metadata->>'name' as name,
-           VECTOR_SIMILARITY(vector, %s, 'cosine') as similarity
-    FROM products
-    WHERE metadata->>'category' = 'electronics'
-      AND metadata->>'price'::float < 1000
-    ORDER BY similarity DESC
-    LIMIT 10
-"""
-
-results = client.execute_sql(sql, [query_vector])
-----
-
-== Models and Types
-
-=== Core Models
-
-[source,python]
-----
-from proximadb.models import (
-    # Collections
-    Collection,
-    CollectionConfig,
-    CollectionStats,
-    
-    # Vectors
-    VectorRecord,
-    VectorMetadata,
-    
-    # Search
-    SearchResult,
-    SearchQuery,
-    
-    # Storage
-    StorageEngine,
-    DistanceMetric,
-    IndexAlgorithm,
-    
-    # Compression
-    CompressionConfig,
-    CompressionAlgorithm,
-    
-    # Optimization
-    SearchOptimization,
-    OptimizationHints
-)
-----
-
-=== Configuration Options
-
-[source,python]
-----
-# Distance metrics
-class DistanceMetric(str, Enum):
-    COSINE = "cosine"
-    EUCLIDEAN = "euclidean"
-    DOT_PRODUCT = "dot_product"
-    MANHATTAN = "manhattan"
-    HAMMING = "hamming"
-    JACCARD = "jaccard"
-    # ... 13 total metrics
-
-# Storage engines
-class StorageEngine(str, Enum):
-    SST = "sst"      # Row-based, SST1 format
-    VIPER = "viper"  # Columnar, Parquet format
-
-# Index algorithms
-class IndexAlgorithm(str, Enum):
-    HNSW = "hnsw"
-    IVF = "ivf"
-    PQ = "pq"
-    FLAT = "flat"
-    ANNOY = "annoy"
-    LSH = "lsh"
-----
-
-== Error Handling
-
-Comprehensive error handling:
-
-[source,python]
-----
-from proximadb.exceptions import (
-    ProximaDBError,
-    CollectionNotFoundError,
-    VectorDimensionError,
-    CompressionError,
-    NetworkError
-)
-
-try:
-    results = client.search_vectors(...)
-except CollectionNotFoundError:
-    # Handle missing collection
-    client.create_collection(...)
-except VectorDimensionError as e:
-    # Handle dimension mismatch
-    print(f"Expected {e.expected}, got {e.actual}")
-except NetworkError:
-    # Handle network issues with retry
-    retry_with_backoff()
-----
-
-== Performance Best Practices
-
-=== 1. Use gRPC for Bulk Operations
-
-[source,python]
-----
-# gRPC is 3x faster for bulk inserts
-grpc_client = ProximaDBClient("localhost:5679", protocol=Protocol.GRPC)
-grpc_client.insert_vectors(collection_id, large_batch)
-----
-
-=== 2. Enable Compression for Large Datasets
-
-[source,python]
-----
-# Reduce storage by 50-80%
-compression = CompressionConfig(
-    sst_compression_algorithm=CompressionAlgorithm.ZSTD,
-    adaptive_compression=True
-)
-----
-
-=== 3. Use Connection Pooling
-
-[source,python]
-----
-# Reuse connections for better performance
-client = ProximaDBClient(
-    "http://localhost:5678",
-    connection_pool_size=10
-)
-----
-
-=== 4. Batch Operations
-
-[source,python]
-----
-# Batch for efficiency
-with client.batch_context(size=1000) as batch:
-    for vector in vectors:
-        batch.add(vector)
-----
-
-=== 5. Cache Repeated Queries
-
-[source,python]
-----
-# Cache for repeated queries
-client = ProximaDBClient(
-    "http://localhost:5678",
-    enable_cache=True,
-    cache_ttl=300
-)
-----
-
-== Migration Guide
-
-=== From v0.x to v1.0
-
-[source,python]
-----
-# Old API (v0.x)
-client.insert(collection, vector_data)
-
-# New API (v1.0)
-client.insert_vectors(
-    collection_id=collection,
-    records=[VectorRecord(
-        id=v["id"],
-        vector=v["vector"],
-        metadata=v.get("metadata")
-    ) for v in vector_data]
-)
-----
-
-=== Protocol Migration
-
-[source,python]
-----
-# Migrate from REST to gRPC
-old_client = ProximaDBClient("http://localhost:5678")  # REST
-new_client = ProximaDBClient("localhost:5679", protocol=Protocol.GRPC)
-
-# Export and import
-data = old_client.export_collection("my_collection")
-new_client.import_collection("my_collection", data)
-----
-
-== Testing
-
-=== Unit Testing
-
-[source,python]
-----
-import pytest
-from proximadb.testing import ProximaDBTestClient
-
-@pytest.fixture
-def client():
-    return ProximaDBTestClient()
-
-def test_vector_operations(client):
-    collection = client.create_collection("test", dimension=128)
-    
-    # Insert
-    client.insert_vector(
-        collection_id="test",
-        vector_id="v1",
-        vector=[0.1] * 128
-    )
-    
-    # Search
-    results = client.search_vectors(
-        collection_id="test",
-        query_vector=[0.1] * 128,
-        top_k=5
-    )
-    
-    assert len(results) > 0
-----
-
-=== Integration Testing
-
-[source,python]
-----
-from proximadb.testing import ProximaDBContainer
-
-def test_with_real_server():
-    with ProximaDBContainer() as container:
-        client = ProximaDBClient(container.get_url())
-        
-        # Test against real server
-        collection = client.create_collection(...)
-        # ... test operations
-----
-
-== Monitoring
-
-=== Metrics Collection
-
-[source,python]
-----
-from proximadb.metrics import MetricsCollector
-
-metrics = MetricsCollector()
-client = ProximaDBClient(
-    "http://localhost:5678",
-    metrics_collector=metrics
-)
-
-# Access metrics
-print(f"Total requests: {metrics.total_requests}")
-print(f"Average latency: {metrics.avg_latency_ms}ms")
-print(f"Cache hit rate: {metrics.cache_hit_rate}%")
-----
-
-=== Logging
-
-[source,python]
-----
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("proximadb")
-
-client = ProximaDBClient(
-    "http://localhost:5678",
-    logger=logger
-)
-----
-
-== API Reference
-
-=== Client Methods
-
-[cols="2,3", options="header"]
-|===
-| Method | Description
-
-| `create_collection()`
-| Create a new collection with configuration
-
-| `list_collections()`
-| List all collections
-
-| `get_collection()`
-| Get collection details
-
-| `delete_collection()`
-| Delete a collection
-
-| `insert_vectors()`
-| Insert multiple vectors
-
-| `insert_vector()`
-| Insert single vector
-
-| `update_vector()`
-| Update existing vector
-
-| `delete_vector()`
-| Delete a vector
-
-| `get_vector()`
-| Retrieve vector by ID
-
-| `search_vectors()`
-| Search for similar vectors
-
-| `execute_sql()`
-| Execute SQL query
-
-| `get_stats()`
-| Get database statistics
-|===
-
-== Troubleshooting
-
-=== Common Issues
-
-**Connection Refused**
-[source,python]
-----
-# Check server is running
-# Verify correct port (5678 for REST, 5679 for gRPC)
-----
-
-**Dimension Mismatch**
-[source,python]
-----
-# Ensure all vectors have same dimension as collection
-# Check collection.config.dimension
-----
-
-**Compression Not Working**
-[source,python]
-----
-# Compression is SDK-driven, must be configured on collection creation
-# Cannot change compression after creation
-----
-
-**Slow Performance**
-[source,python]
-----
-# Use gRPC instead of REST
-# Enable connection pooling
-# Use batch operations
-# Enable caching for repeated queries
-----
-
-== Support
-
-* **Documentation**: link:../../docs/index.adoc[ProximaDB Documentation]
-* **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
-* **GitHub Discussions**: https://github.com/vjsingh1984/proximadb/discussions
-* **Contributing**: link:../../CONTRIBUTING.adoc[Contributing Guide]
-
----
-*SDK Version: 1.0.0*
-*Last Updated: 2025-08-07*

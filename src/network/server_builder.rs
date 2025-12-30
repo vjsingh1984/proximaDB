@@ -601,6 +601,8 @@ pub struct MultiServerBuilder {
     grpc_builder: GrpcHttpServerBuilder,
     arrow_ipc_builder: ArrowIpcServerBuilder,
     api_config: Option<crate::core::config::ApiConfig>,
+    /// Data directory from server config (server.data_dir from TOML)
+    data_dir: PathBuf,
 }
 
 impl Default for MultiServerBuilder {
@@ -610,6 +612,7 @@ impl Default for MultiServerBuilder {
             grpc_builder: GrpcHttpServerBuilder::default(),
             arrow_ipc_builder: ArrowIpcServerBuilder::default(),
             api_config: None,
+            data_dir: PathBuf::from("/tmp/proximadb/data"),
         }
     }
 }
@@ -679,6 +682,12 @@ impl MultiServerBuilder {
         self
     }
 
+    /// Set data directory from server config (server.data_dir from TOML)
+    pub fn with_data_dir<P: Into<PathBuf>>(mut self, data_dir: P) -> Self {
+        self.data_dir = data_dir.into();
+        self
+    }
+
     /// Build the complete multi-server configuration
     pub fn build(mut self) -> Result<MultiServerConfig> {
         // Apply API config compression settings to builders if available
@@ -708,8 +717,14 @@ impl MultiServerBuilder {
             http_config,
             grpc_config,
             arrow_ipc_config,
+            postgres_config: crate::network::multi_server::PostgresServerConfig::default(),
             tls_config: crate::network::multi_server::TLSConfig::default(),
-            api_config: self.api_config,
+            api_config: self.api_config.clone(),
+            data_dir: self.data_dir.clone(),
+            // Unified port mode defaults (Phase 14)
+            unified_mode: self.api_config.as_ref().map(|c| c.unified_mode).unwrap_or(false),
+            unified_port: self.api_config.as_ref().map(|c| c.unified_port).unwrap_or(5678),
+            unified_bind_address: "0.0.0.0".to_string(),
         })
     }
 

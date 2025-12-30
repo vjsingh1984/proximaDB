@@ -452,6 +452,69 @@ pub trait SerializableIndex: Send + Sync {
     fn serialize_internal(&self) -> Result<Vec<u8>>;
 }
 
+/// Serializable HNSW configuration (mirrors AxisHnswConfig)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableHnswConfig {
+    pub m: usize,
+    pub ef_construction: usize,
+    pub ef: usize,
+    pub max_layers: usize,
+    pub distance_metric: u8, // 0=L2, 1=Cosine, 2=DotProduct
+}
+
+/// Serializable ID mapping data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableIdMapping {
+    /// External ID -> Internal ID pairs
+    pub external_to_internal: Vec<(String, usize)>,
+    /// Next available internal ID
+    pub next_id: usize,
+}
+
+/// Serializable vector data (ID + raw bytes)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableVector {
+    pub id: String,
+    pub data: Vec<u8>,
+}
+
+/// Serializable collection configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableCollectionConfig {
+    pub dimension: usize,
+    pub is_quantized: bool,
+    pub quantization_method: Option<u8>, // 0=INT8, 1=PQ8, 2=PQ4, 3=Binary
+}
+
+/// Complete serializable HNSW state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableHnswState {
+    /// Version for forward compatibility
+    pub version: u32,
+    /// HNSW configuration
+    pub config: SerializableHnswConfig,
+    /// Collection configuration for vector interpretation
+    pub collection_config: SerializableCollectionConfig,
+    /// ID mappings
+    pub id_mapping: SerializableIdMapping,
+    /// Graph layers: (layer, node_id) -> connections
+    pub layers: Vec<((usize, usize), Vec<usize>)>,
+    /// Maximum layer in use
+    pub max_layer: usize,
+    /// Entry point node ID (if any)
+    pub entry_point: Option<usize>,
+    /// Vector data
+    pub vectors: Vec<SerializableVector>,
+    /// Quantized vectors (ID -> quantized bytes)
+    pub quantized_vectors: Vec<(String, Vec<u8>)>,
+    /// Dimension (for validation)
+    pub dimension: usize,
+}
+
+impl SerializableHnswState {
+    pub const CURRENT_VERSION: u32 = 1;
+}
+
 /// Extension trait for HNSW serialization
 impl SerializableIndex for AxisHnswIndex {
     fn index_type(&self) -> Index {
@@ -463,48 +526,124 @@ impl SerializableIndex for AxisHnswIndex {
     }
 
     fn len(&self) -> usize {
-        // This would call the actual HNSW index method
-        0 // Placeholder
+        // Access the actual vector count via id_mapping
+        self.id_mapping_len()
     }
 
     fn dimension(&self) -> usize {
-        // This would call the actual HNSW index method
-        0 // Placeholder
+        // Access dimension from vectors collection config
+        self.get_dimension()
     }
 
     fn serialize_internal(&self) -> Result<Vec<u8>> {
-        // Serialize HNSW-specific data structures
-        // This would include:
-        // - Graph layers
-        // - Node connections
-        // - Entry points
-        // - Vector data
+        info!("Starting HNSW serialize_internal");
 
-        // For now, return placeholder
-        Ok(vec![])
+        // 1. Serialize config
+        let config = SerializableHnswConfig {
+            m: self.get_config_m(),
+            ef_construction: self.get_config_ef_construction(),
+            ef: self.get_config_ef(),
+            max_layers: self.get_config_max_layers(),
+            distance_metric: self.get_config_distance_metric_code(),
+        };
+
+        // 2. Get collection config
+        let (dimension, is_quantized, quant_method) = self.get_collection_config_details();
+        let collection_config = SerializableCollectionConfig {
+            dimension,
+            is_quantized,
+            quantization_method: quant_method,
+        };
+
+        // 3. Serialize ID mapping
+        let id_mapping = self.serialize_id_mapping();
+
+        // 4. Serialize graph layers
+        let layers = self.serialize_layers();
+
+        // 5. Get max layer and entry point
+        let max_layer = self.get_max_layer();
+        let entry_point = self.get_entry_point();
+
+        // 6. Serialize vectors
+        let vectors = self.serialize_vectors();
+
+        // 7. Serialize quantized vectors
+        let quantized_vectors = self.serialize_quantized_vectors();
+
+        // Create complete state
+        let state = SerializableHnswState {
+            version: SerializableHnswState::CURRENT_VERSION,
+            config,
+            collection_config,
+            id_mapping,
+            layers,
+            max_layer,
+            entry_point,
+            vectors,
+            quantized_vectors,
+            dimension,
+        };
+
+        // Serialize with bincode
+        let bytes = bincode::serialize(&state)
+            .map_err(|e| SerializationError::Bincode(e))?;
+
+        info!("HNSW serialize_internal complete: {} bytes, {} vectors, {} layers",
+              bytes.len(), state.vectors.len(), state.layers.len());
+
+        Ok(bytes)
     }
 }
 
 /// Extension trait for HNSW deserialization
 impl AxisHnswIndex {
-    fn deserialize_internal(_data: &[u8], config: &AxisHnswConfig) -> Result<Self> {
-        // Deserialize HNSW-specific data structures
-        // This would reconstruct:
-        // - Graph layers
-        // - Node connections
-        // - Entry points
-        // - Vector data
+    /// Deserialize HNSW index from bytes
+    pub fn deserialize_internal(data: &[u8], config: &AxisHnswConfig) -> Result<Self> {
+        info!("Starting HNSW deserialize_internal: {} bytes", data.len());
 
-        // For now, return placeholder with default dimension
-        // In real implementation, dimension would be in the serialized data
-        let dimension = 128; // Default dimension
-        match AxisHnswIndex::new(config.clone(), dimension) {
-            Ok(index) => Ok(index),
-            Err(e) => Err(SerializationError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))),
+        // Deserialize the state
+        let state: SerializableHnswState = bincode::deserialize(data)
+            .map_err(|e| SerializationError::Bincode(e))?;
+
+        // Validate version
+        if state.version > SerializableHnswState::CURRENT_VERSION {
+            return Err(SerializationError::UnsupportedVersion(state.version as u16));
         }
+
+        // Create new index with deserialized config
+        let index = match AxisHnswIndex::new(config.clone(), state.dimension) {
+            Ok(idx) => idx,
+            Err(e) => {
+                return Err(SerializationError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                )));
+            }
+        };
+
+        // Capture counts before moving
+        let vector_count = state.id_mapping.external_to_internal.len();
+
+        // Restore the index state using public reconstruction method
+        if let Err(e) = index.restore_from_state(
+            state.id_mapping,
+            state.layers,
+            state.max_layer,
+            state.entry_point,
+            state.vectors,
+            state.quantized_vectors,
+            state.collection_config,
+        ) {
+            return Err(SerializationError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to restore HNSW state: {}", e),
+            )));
+        }
+
+        info!("HNSW deserialize_internal complete: {} vectors restored", vector_count);
+
+        Ok(index)
     }
 }
 

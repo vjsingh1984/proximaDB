@@ -29,8 +29,10 @@
 //! - **Variable-Length Paths**: `-[*1..5]->`
 
 use super::ast::{
-    CompiledPattern, EdgeDirection, EdgePattern, NodePattern, PropertyConstraint,
-    PropertyProjection, ReturnSpec, WhereClause,
+    CompiledPattern, CreateClause, CreateEdgeSpec, CreateNodeSpec, CypherQuery, DeleteClause,
+    EdgeDirection, EdgePattern, MatchPattern, MergeClause, NodePattern, PropertyConstraint,
+    PropertyProjection, ReadingClause, RemoveClause, RemoveItem, ReturnSpec, SetClause, SetItem,
+    UpdatingClause, WhereClause, WithClause,
 };
 use crate::core::error::ProximaDBError;
 use nom::{
@@ -636,6 +638,443 @@ fn parse_return_clause(input: &str) -> IResult<&str, ReturnSpec> {
     )(input)
 }
 
+// ==================== Mutation Clause Parsers ====================
+
+// Parse a property value map for CREATE/SET operations
+fn parse_property_value_map(input: &str) -> IResult<&str, HashMap<String, serde_json::Value>> {
+    map(
+        delimited(
+            char('{'),
+            separated_list0(
+                delimited(multispace0, char(','), multispace0),
+                separated_pair(
+                    identifier,
+                    delimited(multispace0, char(':'), multispace0),
+                    property_value,
+                ),
+            ),
+            char('}'),
+        ),
+        |pairs| pairs.into_iter().collect(),
+    )(input)
+}
+
+// Parse a CREATE node specification (n:Label {props})
+fn parse_create_node_spec(input: &str) -> IResult<&str, CreateNodeSpec> {
+    map(
+        delimited(
+            char('('),
+            tuple((
+                opt(identifier),                               // Optional variable
+                opt(preceded(char(':'), identifier)),          // Optional label
+                opt(preceded(multispace0, parse_property_value_map)), // Optional properties
+            )),
+            char(')'),
+        ),
+        |(variable, label_opt, properties_opt)| CreateNodeSpec {
+            variable,
+            labels: label_opt.map(|l| vec![l]).unwrap_or_default(),
+            properties: properties_opt.unwrap_or_default(),
+        },
+    )(input)
+}
+
+// Parse a CREATE edge specification (a)-[r:TYPE {props}]->(b)
+fn parse_create_edge_pattern(
+    input: &str,
+) -> IResult<&str, (CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
+    map(
+        tuple((
+            parse_create_node_spec,
+            preceded(multispace0, parse_create_edge_spec),
+            preceded(multispace0, parse_create_node_spec),
+        )),
+        |(from_node, (edge_var, edge_type, edge_props, _direction), to_node)| {
+            let from_var = from_node.variable.clone().unwrap_or_else(|| "_from".to_string());
+            let to_var = to_node.variable.clone().unwrap_or_else(|| "_to".to_string());
+
+            let edge = CreateEdgeSpec {
+                variable: edge_var,
+                from_variable: from_var,
+                to_variable: to_var,
+                edge_type: edge_type.unwrap_or_default(),
+                properties: edge_props,
+            };
+
+            (from_node, edge, to_node)
+        },
+    )(input)
+}
+
+// Parse edge spec for CREATE: -[r:TYPE {props}]->
+fn parse_create_edge_spec(
+    input: &str,
+) -> IResult<&str, (Option<String>, Option<String>, HashMap<String, serde_json::Value>, EdgeDirection)> {
+    map(
+        tuple((
+            parse_edge_direction_left,
+            delimited(
+                char('['),
+                tuple((
+                    opt(identifier),                                    // Variable
+                    opt(preceded(char(':'), identifier)),               // Edge type
+                    opt(preceded(multispace0, parse_property_value_map)), // Properties
+                )),
+                char(']'),
+            ),
+            parse_edge_direction_right,
+        )),
+        |(left_arrow, (variable, edge_type, properties_opt), right_arrow)| {
+            let direction = match (left_arrow, right_arrow) {
+                (false, true) => EdgeDirection::Outgoing,
+                (true, false) => EdgeDirection::Incoming,
+                _ => EdgeDirection::Bidirectional,
+            };
+            (variable, edge_type, properties_opt.unwrap_or_default(), direction)
+        },
+    )(input)
+}
+
+// Parse CREATE clause
+fn parse_create_clause(input: &str) -> IResult<&str, CreateClause> {
+    preceded(
+        tag("CREATE"),
+        preceded(
+            multispace1,
+            map(
+                separated_list1(
+                    delimited(multispace0, char(','), multispace0),
+                    alt((
+                        // Edge pattern: (a)-[r:TYPE]->(b)
+                        map(parse_create_edge_pattern, |(from, edge, to)| {
+                            (vec![from, to], vec![edge])
+                        }),
+                        // Simple node: (n:Label {props})
+                        map(parse_create_node_spec, |node| (vec![node], vec![])),
+                    )),
+                ),
+                |patterns| {
+                    let mut nodes = Vec::new();
+                    let mut edges = Vec::new();
+                    for (mut ns, mut es) in patterns {
+                        nodes.append(&mut ns);
+                        edges.append(&mut es);
+                    }
+                    CreateClause { nodes, edges }
+                },
+            ),
+        ),
+    )(input)
+}
+
+// Parse DELETE clause
+fn parse_delete_clause(input: &str) -> IResult<&str, DeleteClause> {
+    map(
+        tuple((
+            opt(preceded(tag("DETACH"), multispace1)),
+            preceded(
+                tag("DELETE"),
+                preceded(
+                    multispace1,
+                    separated_list1(
+                        delimited(multispace0, char(','), multispace0),
+                        identifier,
+                    ),
+                ),
+            ),
+        )),
+        |(detach_opt, variables)| DeleteClause {
+            variables,
+            detach: detach_opt.is_some(),
+        },
+    )(input)
+}
+
+// Parse SET item: n.prop = value OR n:Label OR n = {props} OR n += {props}
+fn parse_set_item(input: &str) -> IResult<&str, SetItem> {
+    alt((
+        // Property assignment: n.prop = value
+        map(
+            tuple((
+                identifier,
+                char('.'),
+                identifier,
+                delimited(multispace0, char('='), multispace0),
+                property_value,
+            )),
+            |(variable, _, property, _, value)| SetItem::Property {
+                variable,
+                property,
+                value,
+            },
+        ),
+        // Add label: n:Label
+        map(
+            tuple((
+                identifier,
+                char(':'),
+                identifier,
+            )),
+            |(variable, _, label)| SetItem::AddLabel { variable, label },
+        ),
+        // Merge properties: n += {props}
+        map(
+            tuple((
+                identifier,
+                delimited(multispace0, tag("+="), multispace0),
+                parse_property_value_map,
+            )),
+            |(variable, _, properties)| SetItem::MergeProperties { variable, properties },
+        ),
+        // Replace all properties: n = {props}
+        map(
+            tuple((
+                identifier,
+                delimited(multispace0, char('='), multispace0),
+                parse_property_value_map,
+            )),
+            |(variable, _, properties)| SetItem::AllProperties { variable, properties },
+        ),
+    ))(input)
+}
+
+// Parse SET clause
+fn parse_set_clause(input: &str) -> IResult<&str, SetClause> {
+    preceded(
+        tag("SET"),
+        preceded(
+            multispace1,
+            map(
+                separated_list1(
+                    delimited(multispace0, char(','), multispace0),
+                    parse_set_item,
+                ),
+                |items| SetClause { items },
+            ),
+        ),
+    )(input)
+}
+
+// Parse REMOVE item: n.prop OR n:Label
+fn parse_remove_item(input: &str) -> IResult<&str, RemoveItem> {
+    alt((
+        // Remove property: n.prop
+        map(
+            tuple((
+                identifier,
+                char('.'),
+                identifier,
+            )),
+            |(variable, _, property)| RemoveItem::Property { variable, property },
+        ),
+        // Remove label: n:Label
+        map(
+            tuple((
+                identifier,
+                char(':'),
+                identifier,
+            )),
+            |(variable, _, label)| RemoveItem::Label { variable, label },
+        ),
+    ))(input)
+}
+
+// Parse REMOVE clause
+fn parse_remove_clause(input: &str) -> IResult<&str, RemoveClause> {
+    preceded(
+        tag("REMOVE"),
+        preceded(
+            multispace1,
+            map(
+                separated_list1(
+                    delimited(multispace0, char(','), multispace0),
+                    parse_remove_item,
+                ),
+                |items| RemoveClause { items },
+            ),
+        ),
+    )(input)
+}
+
+// Parse MERGE clause
+fn parse_merge_clause(input: &str) -> IResult<&str, MergeClause> {
+    map(
+        tuple((
+            preceded(
+                tag("MERGE"),
+                preceded(
+                    multispace1,
+                    map(
+                        separated_list1(
+                            delimited(multispace0, char(','), multispace0),
+                            alt((
+                                map(parse_path_segment, |(from, edge, to)| (vec![from, to], vec![edge])),
+                                map(parse_node_pattern, |node| (vec![node], vec![])),
+                            )),
+                        ),
+                        |patterns| {
+                            let mut nodes = Vec::new();
+                            let mut edges = Vec::new();
+                            for (mut ns, mut es) in patterns {
+                                nodes.append(&mut ns);
+                                edges.append(&mut es);
+                            }
+                            MatchPattern {
+                                nodes,
+                                edges,
+                                paths: Vec::new(),
+                                where_clause: None,
+                            }
+                        },
+                    ),
+                ),
+            ),
+            opt(preceded(
+                delimited(multispace1, tag("ON CREATE"), multispace1),
+                parse_set_clause,
+            )),
+            opt(preceded(
+                delimited(multispace1, tag("ON MATCH"), multispace1),
+                parse_set_clause,
+            )),
+        )),
+        |(pattern, on_create, on_match)| MergeClause {
+            pattern,
+            on_create,
+            on_match,
+        },
+    )(input)
+}
+
+// Parse OPTIONAL MATCH clause
+fn parse_optional_match_clause(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgePattern>)> {
+    map(
+        preceded(
+            tag("OPTIONAL"),
+            preceded(
+                multispace1,
+                parse_match_clause,
+            ),
+        ),
+        |(nodes, edges)| {
+            // Mark all nodes and edges as optional
+            let optional_nodes = nodes
+                .into_iter()
+                .map(|mut n| {
+                    n.optional = true;
+                    n
+                })
+                .collect();
+            let optional_edges = edges
+                .into_iter()
+                .map(|mut e| {
+                    e.optional = true;
+                    e
+                })
+                .collect();
+            (optional_nodes, optional_edges)
+        },
+    )(input)
+}
+
+// Parse WITH clause
+fn parse_with_clause(input: &str) -> IResult<&str, WithClause> {
+    preceded(
+        tag("WITH"),
+        map(
+            tuple((
+                parse_distinct,
+                preceded(
+                    multispace1,
+                    separated_list1(
+                        delimited(multispace0, char(','), multispace0),
+                        parse_return_item,
+                    ),
+                ),
+                opt(parse_order_by),
+                opt(parse_skip),
+                opt(parse_limit),
+                opt(preceded(multispace1, parse_where_clause)),
+            )),
+            |(distinct, items, order_by_opt, skip_opt, limit_opt, where_opt)| {
+                WithClause {
+                    projections: items,
+                    distinct,
+                    order_by: order_by_opt.unwrap_or_default(),
+                    limit: limit_opt,
+                    skip: skip_opt,
+                    where_clause: where_opt,
+                }
+            },
+        ),
+    )(input)
+}
+
+// Parse a full Cypher query with all clause types
+fn parse_cypher_query(input: &str) -> IResult<&str, CypherQuery> {
+    map(
+        tuple((
+            // Reading clauses (MATCH, OPTIONAL MATCH)
+            many0(preceded(
+                multispace0,
+                alt((
+                    // OPTIONAL MATCH
+                    map(parse_optional_match_clause, |(nodes, edges)| {
+                        ReadingClause::Match {
+                            pattern: MatchPattern {
+                                nodes,
+                                edges,
+                                paths: Vec::new(),
+                                where_clause: None,
+                            },
+                            optional: true,
+                        }
+                    }),
+                    // Regular MATCH with optional WHERE
+                    map(
+                        tuple((
+                            parse_match_clause,
+                            opt(preceded(multispace1, parse_where_clause)),
+                        )),
+                        |((nodes, edges), where_opt)| {
+                            ReadingClause::Match {
+                                pattern: MatchPattern {
+                                    nodes,
+                                    edges,
+                                    paths: Vec::new(),
+                                    where_clause: where_opt,
+                                },
+                                optional: false,
+                            }
+                        },
+                    ),
+                )),
+            )),
+            // WITH clauses
+            many0(preceded(multispace0, parse_with_clause)),
+            // Updating clauses (CREATE, DELETE, SET, REMOVE, MERGE)
+            many0(preceded(
+                multispace0,
+                alt((
+                    map(parse_create_clause, UpdatingClause::Create),
+                    map(parse_delete_clause, UpdatingClause::Delete),
+                    map(parse_set_clause, UpdatingClause::Set),
+                    map(parse_remove_clause, UpdatingClause::Remove),
+                    map(parse_merge_clause, UpdatingClause::Merge),
+                )),
+            )),
+            // Optional RETURN clause
+            opt(preceded(multispace0, parse_return_clause)),
+        )),
+        |(reading_clauses, with_clauses, updating_clauses, return_spec)| CypherQuery {
+            reading_clauses,
+            updating_clauses,
+            with_clauses,
+            return_spec,
+        },
+    )(input)
+}
+
 // Main query parser
 fn parse_query(input: &str) -> IResult<&str, CompiledPattern> {
     map(
@@ -946,5 +1385,243 @@ mod tests {
         assert_eq!(compiled.return_spec.projections.len(), 3);
         assert_eq!(compiled.return_spec.order_by.len(), 1);
         assert_eq!(compiled.return_spec.limit, Some(20));
+    }
+
+    // ==================== Cypher Mutation Parsing Tests ====================
+
+    #[test]
+    fn test_parse_create_node() {
+        let input = "CREATE (n:Person {name: \"Alice\", age: 30})";
+        let result = parse_create_clause(input);
+        assert!(result.is_ok());
+        let (remaining, clause) = result.unwrap();
+        assert!(remaining.trim().is_empty());
+        assert_eq!(clause.nodes.len(), 1);
+        assert_eq!(clause.nodes[0].variable, Some("n".to_string()));
+        assert_eq!(clause.nodes[0].labels, vec!["Person"]);
+        assert_eq!(clause.nodes[0].properties.len(), 2);
+        assert_eq!(
+            clause.nodes[0].properties.get("name"),
+            Some(&serde_json::Value::String("Alice".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_create_node_no_properties() {
+        let input = "CREATE (n:Employee)";
+        let result = parse_create_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.nodes.len(), 1);
+        assert_eq!(clause.nodes[0].labels, vec!["Employee"]);
+        assert!(clause.nodes[0].properties.is_empty());
+    }
+
+    #[test]
+    fn test_parse_create_relationship() {
+        let input = "CREATE (a:Person)-[r:KNOWS {since: 2020}]->(b:Person)";
+        let result = parse_create_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        // Should have 2 nodes and 1 edge
+        assert_eq!(clause.nodes.len(), 2);
+        assert_eq!(clause.edges.len(), 1);
+        assert_eq!(clause.edges[0].edge_type, "KNOWS");
+        assert_eq!(clause.edges[0].from_variable, "a");
+        assert_eq!(clause.edges[0].to_variable, "b");
+    }
+
+    #[test]
+    fn test_parse_delete_clause() {
+        let input = "DELETE n";
+        let result = parse_delete_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.variables, vec!["n"]);
+        assert!(!clause.detach);
+    }
+
+    #[test]
+    fn test_parse_detach_delete_clause() {
+        let input = "DETACH DELETE n, m";
+        let result = parse_delete_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.variables, vec!["n", "m"]);
+        assert!(clause.detach);
+    }
+
+    #[test]
+    fn test_parse_set_property() {
+        let input = "SET n.name = \"Bob\"";
+        let result = parse_set_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.items.len(), 1);
+        match &clause.items[0] {
+            SetItem::Property { variable, property, value } => {
+                assert_eq!(variable, "n");
+                assert_eq!(property, "name");
+                assert_eq!(value, &serde_json::Value::String("Bob".to_string()));
+            }
+            _ => panic!("Expected SetItem::Property"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_multiple_properties() {
+        let input = "SET n.name = \"Bob\", n.age = 25";
+        let result = parse_set_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.items.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_set_add_label() {
+        let input = "SET n:Manager";
+        let result = parse_set_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.items.len(), 1);
+        match &clause.items[0] {
+            SetItem::AddLabel { variable, label } => {
+                assert_eq!(variable, "n");
+                assert_eq!(label, "Manager");
+            }
+            _ => panic!("Expected SetItem::AddLabel"),
+        }
+    }
+
+    #[test]
+    fn test_parse_remove_property() {
+        let input = "REMOVE n.tempProperty";
+        let result = parse_remove_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.items.len(), 1);
+        match &clause.items[0] {
+            RemoveItem::Property { variable, property } => {
+                assert_eq!(variable, "n");
+                assert_eq!(property, "tempProperty");
+            }
+            _ => panic!("Expected RemoveItem::Property"),
+        }
+    }
+
+    #[test]
+    fn test_parse_remove_label() {
+        let input = "REMOVE n:Temporary";
+        let result = parse_remove_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.items.len(), 1);
+        match &clause.items[0] {
+            RemoveItem::Label { variable, label } => {
+                assert_eq!(variable, "n");
+                assert_eq!(label, "Temporary");
+            }
+            _ => panic!("Expected RemoveItem::Label"),
+        }
+    }
+
+    #[test]
+    fn test_parse_merge_clause() {
+        let input = "MERGE (n:Person {name: \"Alice\"})";
+        let result = parse_merge_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.pattern.nodes.len(), 1);
+        assert!(clause.on_create.is_none());
+        assert!(clause.on_match.is_none());
+    }
+
+    #[test]
+    fn test_parse_optional_match() {
+        let input = "OPTIONAL MATCH (n:Person)-[r:KNOWS]->(m)";
+        let result = parse_optional_match_clause(input);
+        assert!(result.is_ok());
+        let (_, (nodes, edges)) = result.unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+        assert!(nodes[0].optional);
+        assert!(edges[0].optional);
+    }
+
+    #[test]
+    fn test_parse_with_clause() {
+        let input = "WITH n, COUNT(*) AS cnt";
+        let result = parse_with_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert_eq!(clause.projections.len(), 2);
+        assert_eq!(clause.projections[0].0, "n");
+        assert_eq!(clause.projections[1].0, "cnt");
+    }
+
+    #[test]
+    fn test_parse_with_distinct() {
+        let input = "WITH DISTINCT n.name AS name";
+        let result = parse_with_clause(input);
+        assert!(result.is_ok());
+        let (_, clause) = result.unwrap();
+        assert!(clause.distinct);
+    }
+
+    #[test]
+    fn test_parse_cypher_query_create() {
+        let input = "CREATE (n:Person {name: \"Alice\"}) RETURN n";
+        let result = parse_cypher_query(input);
+        assert!(result.is_ok());
+        let (_, query) = result.unwrap();
+        assert!(query.reading_clauses.is_empty());
+        assert_eq!(query.updating_clauses.len(), 1);
+        assert!(query.return_spec.is_some());
+    }
+
+    #[test]
+    fn test_parse_cypher_query_match_set() {
+        let input = "MATCH (n:Person {name: \"Alice\"}) SET n.age = 31 RETURN n";
+        let result = parse_cypher_query(input);
+        assert!(result.is_ok());
+        let (_, query) = result.unwrap();
+        assert_eq!(query.reading_clauses.len(), 1);
+        assert_eq!(query.updating_clauses.len(), 1);
+        assert!(query.return_spec.is_some());
+        assert!(!query.is_read_only());
+    }
+
+    #[test]
+    fn test_parse_cypher_query_match_delete() {
+        let input = "MATCH (n:Person) WHERE n.age > 100 DELETE n";
+        let result = parse_cypher_query(input);
+        assert!(result.is_ok());
+        let (_, query) = result.unwrap();
+        assert_eq!(query.reading_clauses.len(), 1);
+        assert!(query.has_delete());
+        assert!(!query.is_read_only());
+    }
+
+    #[test]
+    fn test_parse_cypher_query_read_only() {
+        let input = "MATCH (n:Person) RETURN n";
+        let result = parse_cypher_query(input);
+        assert!(result.is_ok());
+        let (_, query) = result.unwrap();
+        assert!(query.is_read_only());
+        assert!(query.has_match());
+        assert!(!query.has_create());
+    }
+
+    #[test]
+    fn test_parse_property_value_map() {
+        let input = "{name: \"Bob\", age: 25, active: true}";
+        let result = parse_property_value_map(input);
+        assert!(result.is_ok());
+        let (_, props) = result.unwrap();
+        assert_eq!(props.len(), 3);
+        assert_eq!(props.get("name"), Some(&serde_json::Value::String("Bob".to_string())));
+        assert_eq!(props.get("age"), Some(&serde_json::json!(25)));
+        assert_eq!(props.get("active"), Some(&serde_json::Value::Bool(true)));
     }
 }

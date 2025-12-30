@@ -180,9 +180,12 @@ pub mod grpc;
 pub mod metrics_service;
 pub mod middleware;
 pub mod multi_server;
+pub mod multiplex;
+pub mod postgres;
 pub mod rest;
 pub mod server_builder;
 pub mod tls;
+pub mod unified_handler;
 
 // Unit tests
 #[cfg(test)]
@@ -197,6 +200,10 @@ pub use multi_server::{
 use serde::{Deserialize, Serialize};
 pub use server_builder::{
     ArrowIpcServerBuilder, GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder,
+};
+pub use unified_handler::{
+    UnifiedQueryHandler, UnifiedQueryRequest, UnifiedQueryResponse,
+    RequestProtocol, ResponseData, ResponseMetadata,
 };
 
 /// Network server configuration

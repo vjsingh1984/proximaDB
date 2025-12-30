@@ -1,18 +1,21 @@
-//! # SWIFT Engine: Storage With Indexed Fast Traversal
+//! # SWIFT Engine - INCOMPLETE
 //!
-//! ## 🏗️ PRODUCTION-READY HIERARCHICAL STORAGE ENGINE - COMPREHENSIVE IMPLEMENTATION
+//! **WARNING**: This engine has incomplete implementations.
+//! Several critical features are not yet implemented.
+//! Use SST, VIPER, or HELIX for production workloads.
 //!
-//! SWIFT is ProximaDB's **sophisticated hierarchical storage engine** featuring a unique three-tier architecture optimized for large-scale organized data management.
+//! ## SWIFT Engine: Storage With Indexed Fast Traversal
 //!
-//! ### ✅ **ENTERPRISE HIERARCHICAL CAPABILITIES:**
-//! 1. **Three-Tier Architecture**: Revolutionary SuperBlock → DataBlock → Records hierarchy
+//! SWIFT is ProximaDB's hierarchical storage engine featuring a three-tier architecture for organized data management.
+//!
+//! ### Hierarchical Capabilities (incomplete):
+//! 1. **Three-Tier Architecture**: SuperBlock, DataBlock, Records hierarchy
 //! 2. **Hierarchical Indexing**: Multi-level navigation with O(log n) access patterns
-//! 3. **Large-Scale Support**: Optimized for datasets from millions to billions of vectors
-//! 4. **Proxima Integration**: SIMD-optimized encoding with intelligent compression
+//! 3. **Large-Scale Support**: Designed for datasets from millions to billions of vectors
+//! 4. **Proxima Integration**: SIMD-optimized encoding with compression
 //! 5. **Incremental Operations**: Non-disruptive updates and expansions
-//! 6. **Production Validation**: Battle-tested hierarchical storage with enterprise features
 //!
-//! **STATUS**: ✅ **PRODUCTION-READY** - Mature hierarchical engine for organized large-scale data
+//! **STATUS**: INCOMPLETE - Not recommended for production use
 //!
 //! ## 🎯 OPTIMAL USE CASES
 //!

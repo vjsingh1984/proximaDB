@@ -167,6 +167,21 @@ impl GraphOperationsService {
         s
     }
 
+    /// Create a new GraphOperationsService with auto-recovery of graph collection metadata
+    ///
+    /// This is the recommended constructor for production use. It automatically
+    /// loads persisted graph collection metadata from disk, ensuring data
+    /// survives restarts.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let service = GraphOperationsService::new_with_recovery().await?;
+    /// ```
+    pub async fn new_with_recovery() -> anyhow::Result<Self> {
+        let collection_service = crate::services::graph_collection::GraphCollectionService::new_with_recovery().await?;
+        Ok(Self::new_with_collection_service(Arc::new(collection_service)))
+    }
+
     /// Create GraphOperationsService with existing collection service (for dependency injection)
     pub fn new_with_collection_service(
         collection_service: Arc<crate::services::graph_collection::GraphCollectionService>,
@@ -220,7 +235,8 @@ impl GraphOperationsService {
             .map(|loc| loc.url.clone())
             .unwrap_or_else(|| "file:///tmp/proximadb".to_string());
 
-        // TODO: Wire PULSAR/QUASAR engines when implemented
+        // Engine selection: PULSAR requires 'distributed-graph' feature, QUASAR requires 'tiered-graph'
+        // Engine is determined per-graph from collection metadata during recovery
         tracing::info!(
             "GraphOperationsService engine selection: {}, storage: {}",
             engine_name,
@@ -321,22 +337,88 @@ impl GraphOperationsService {
     }
 
     /// Recover a single graph from persistent storage
+    ///
+    /// This method detects the engine type from the stored collection metadata
+    /// and creates the appropriate engine (ORION, PULSAR, or QUASAR).
     async fn recover_graph(&self, graph_id: &str) -> Result<()> {
-        // Create Orion engine with persistence enabled
-        let engine = OrionGraphEngine::with_persistence_for_graph(
-            graph_id.to_string(),
-            self.base_storage_url.clone(),
-            true, // Enable WAL
-        )
-        .await?;
+        // Get collection metadata to determine engine type
+        let collection = self.collection_service.get_graph(graph_id).await?;
+        let engine_type = collection
+            .as_ref()
+            .and_then(|c| c.storage_config.as_ref())
+            .map(|sc| sc.engine_type.to_uppercase())
+            .unwrap_or_else(|| "ORION".to_string());
 
-        // Trigger recovery (WAL replay)
-        engine.recover().await?;
+        tracing::debug!("Recovering graph {} with engine type: {}", graph_id, engine_type);
+
+        let engine_impl = match engine_type.as_str() {
+            "PULSAR" => {
+                #[cfg(feature = "distributed-graph")]
+                {
+                    use crate::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
+                    let config = PulsarConfig::default();
+                    // Create with persistence enabled for WAL recovery
+                    let engine = PulsarGraphEngine::with_persistence(
+                        config,
+                        graph_id.to_string(),
+                        self.base_storage_url.clone(),
+                    ).await?;
+                    engine.recover().await?;
+                    crate::graph::engines::GraphEngineImpl::Pulsar(engine)
+                }
+                #[cfg(not(feature = "distributed-graph"))]
+                {
+                    return Err(ProximaDBError::NotImplemented(
+                        "PULSAR engine requires 'distributed-graph' feature".to_string()
+                    ));
+                }
+            }
+            "QUASAR" => {
+                #[cfg(feature = "tiered-graph")]
+                {
+                    use crate::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine};
+                    let cold_tier_path = std::path::PathBuf::from(format!(
+                        "{}/graphs/{}/cold",
+                        self.base_storage_url.trim_start_matches("file://"),
+                        graph_id
+                    ));
+                    let config = QuasarConfig {
+                        cold_tier_path,
+                        ..QuasarConfig::default()
+                    };
+                    // Create with persistence enabled for WAL recovery
+                    let engine = QuasarGraphEngine::with_persistence(
+                        config,
+                        graph_id.to_string(),
+                        self.base_storage_url.clone(),
+                    ).await?;
+                    engine.recover().await?;
+                    crate::graph::engines::GraphEngineImpl::Quasar(engine)
+                }
+                #[cfg(not(feature = "tiered-graph"))]
+                {
+                    return Err(ProximaDBError::NotImplemented(
+                        "QUASAR engine requires 'tiered-graph' feature".to_string()
+                    ));
+                }
+            }
+            _ => {
+                // Default to ORION (includes "ORION" and any unknown types)
+                let engine = OrionGraphEngine::with_persistence_for_graph(
+                    graph_id.to_string(),
+                    self.base_storage_url.clone(),
+                    true, // Enable WAL
+                )
+                .await?;
+                engine.recover().await?;
+                crate::graph::engines::GraphEngineImpl::Orion(engine)
+            }
+        };
 
         // Store in graphs map
         self.graphs.insert(
             graph_id.to_string(),
-            Arc::new(crate::graph::engines::GraphEngineImpl::Orion(engine)),
+            Arc::new(engine_impl),
         );
 
         Ok(())
@@ -498,6 +580,24 @@ impl GraphOperationsService {
         )
     }
 
+    /// Get the first available graph engine for federated query execution.
+    ///
+    /// This method is used by the federated query system to access graph data
+    /// when executing cross-model queries with GRAPH_QUERY extensions.
+    ///
+    /// Returns `None` if no graphs have been created yet.
+    pub fn get_default_engine(&self) -> Option<Arc<dyn crate::graph::engines::GraphEngine>> {
+        // Return the first available graph engine
+        self.graphs
+            .iter()
+            .next()
+            .map(|entry| {
+                let engine_impl: Arc<crate::graph::engines::GraphEngineImpl> = entry.value().clone();
+                // GraphEngineImpl implements GraphEngine, so we can upcast
+                engine_impl as Arc<dyn crate::graph::engines::GraphEngine>
+            })
+    }
+
     /// Flush WAL buffer to disk for a specific graph
     ///
     /// This ensures all pending write operations are persisted to disk.
@@ -516,9 +616,18 @@ impl GraphOperationsService {
                 crate::graph::engines::GraphEngineImpl::Orion(orion) => {
                     orion.flush_wal().await?;
                 }
+                #[cfg(feature = "distributed-graph")]
+                crate::graph::engines::GraphEngineImpl::Pulsar(pulsar) => {
+                    pulsar.flush_wal().await?;
+                }
+                #[cfg(feature = "tiered-graph")]
+                crate::graph::engines::GraphEngineImpl::Quasar(quasar) => {
+                    quasar.flush_wal().await?;
+                }
+                #[allow(unreachable_patterns)]
                 _ => {
-                    // Other engines don't support WAL yet
-                    tracing::debug!("WAL flush not supported for this engine type");
+                    // Stub engines (feature-disabled) don't support WAL
+                    tracing::debug!("WAL flush not supported for this engine type (feature disabled)");
                 }
             }
         }

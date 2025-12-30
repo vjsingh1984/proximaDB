@@ -212,6 +212,35 @@ impl ConcurrentIdMapping {
     pub fn is_empty(&self) -> bool {
         self.external_to_internal.is_empty()
     }
+
+    // ============================================================================
+    // SERIALIZATION HELPER METHODS
+    // ============================================================================
+
+    /// Iterate over external->internal mappings (for serialization)
+    pub fn iter_external_to_internal(&self) -> impl Iterator<Item = (String, usize)> + '_ {
+        self.external_to_internal
+            .iter()
+            .map(|entry| (entry.key().clone(), *entry.value()))
+    }
+
+    /// Get next available ID value (for serialization)
+    pub fn next_id(&self) -> usize {
+        self.next_id.load(Ordering::Relaxed)
+    }
+
+    /// Restore a mapping directly (for deserialization)
+    /// This bypasses the auto-increment logic of register()
+    pub fn restore_mapping(&self, external_id: String, internal_id: usize) -> Result<()> {
+        self.external_to_internal.insert(external_id.clone(), internal_id);
+        self.internal_to_external.insert(internal_id, external_id);
+        Ok(())
+    }
+
+    /// Set the next_id counter (for deserialization)
+    pub fn set_next_id(&self, next_id: usize) {
+        self.next_id.store(next_id, Ordering::Relaxed);
+    }
 }
 
 /// Atomic statistics tracker for index performance monitoring

@@ -34,6 +34,9 @@ pub mod iceberg;
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
 
+// Catalog federation (unified view across internal and external catalogs)
+pub mod federation;
+
 // Feature-gated implementations
 #[cfg(feature = "aws")]
 pub mod glue;
@@ -41,6 +44,18 @@ pub mod glue;
 pub mod unity;
 #[cfg(feature = "polaris-catalog")]
 pub mod polaris;
+#[cfg(feature = "delta-lake")]
+pub mod delta;
+
+// Re-exports for feature-gated catalogs
+#[cfg(feature = "aws")]
+pub use glue::GlueCatalog;
+#[cfg(feature = "unity-catalog")]
+pub use unity::UnityCatalog;
+#[cfg(feature = "polaris-catalog")]
+pub use polaris::PolarisCatalog;
+#[cfg(feature = "delta-lake")]
+pub use delta::{DeltaCatalog, DeltaCatalogConfig};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -162,6 +177,223 @@ impl CatalogManager {
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
         Ok(catalog)
+    }
+
+    /// Create and register an AWS Glue catalog
+    ///
+    /// Requires the `aws` feature flag to be enabled.
+    ///
+    /// # Arguments
+    /// * `name` - Catalog name
+    /// * `region` - AWS region (e.g., "us-east-1")
+    /// * `catalog_id` - AWS account ID (optional, uses default account if empty)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let catalog = manager.create_glue_catalog("glue", "us-east-1", "123456789012").await?;
+    /// ```
+    #[cfg(feature = "aws")]
+    pub async fn create_glue_catalog(
+        &self,
+        name: &str,
+        region: &str,
+        catalog_id: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        use crate::proto::proximadb_v1::GlueCatalogConfig;
+
+        let config = GlueCatalogConfig {
+            region: region.to_string(),
+            catalog_id: catalog_id.to_string(),
+            ..Default::default()
+        };
+
+        let catalog =
+            glue::GlueCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+
+        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
+        self.register(catalog.clone()).await?;
+        Ok(catalog)
+    }
+
+    /// Create and register an AWS Glue catalog (stub for non-AWS builds)
+    #[cfg(not(feature = "aws"))]
+    pub async fn create_glue_catalog(
+        &self,
+        _name: &str,
+        _region: &str,
+        _catalog_id: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        Err(anyhow!(
+            "AWS Glue catalog requires the 'aws' feature flag. \
+             Build with: cargo build --features aws"
+        ))
+    }
+
+    /// Create and register a Databricks Unity catalog
+    ///
+    /// Requires the `unity-catalog` feature flag to be enabled.
+    ///
+    /// # Arguments
+    /// * `name` - Catalog name
+    /// * `workspace_url` - Databricks workspace URL (e.g., "https://xxx.cloud.databricks.com")
+    /// * `token` - Personal access token or OAuth token
+    /// * `catalog_name` - Unity catalog name within the workspace
+    ///
+    /// # Example
+    /// ```ignore
+    /// let catalog = manager.create_unity_catalog(
+    ///     "unity",
+    ///     "https://my-workspace.cloud.databricks.com",
+    ///     "dapi123...",
+    ///     "main"
+    /// ).await?;
+    /// ```
+    #[cfg(feature = "unity-catalog")]
+    pub async fn create_unity_catalog(
+        &self,
+        name: &str,
+        workspace_url: &str,
+        token: &str,
+        catalog_name: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        use crate::proto::proximadb_v1::UnityCatalogConfig;
+
+        let config = UnityCatalogConfig {
+            workspace_url: workspace_url.to_string(),
+            token: token.to_string(),
+            catalog_name: catalog_name.to_string(),
+            ..Default::default()
+        };
+
+        let catalog =
+            unity::UnityCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+
+        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
+        self.register(catalog.clone()).await?;
+        Ok(catalog)
+    }
+
+    /// Create and register a Unity catalog (stub for non-Unity builds)
+    #[cfg(not(feature = "unity-catalog"))]
+    pub async fn create_unity_catalog(
+        &self,
+        _name: &str,
+        _workspace_url: &str,
+        _token: &str,
+        _catalog_name: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        Err(anyhow!(
+            "Databricks Unity catalog requires the 'unity-catalog' feature flag. \
+             Build with: cargo build --features unity-catalog"
+        ))
+    }
+
+    /// Create and register an Apache Polaris catalog (Iceberg REST)
+    ///
+    /// Requires the `polaris-catalog` feature flag to be enabled.
+    ///
+    /// # Arguments
+    /// * `name` - Catalog name
+    /// * `uri` - Polaris server URI
+    /// * `warehouse` - Warehouse name
+    /// * `credential` - OAuth credential (client_id:client_secret format)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let catalog = manager.create_polaris_catalog(
+    ///     "polaris",
+    ///     "https://polaris.example.com",
+    ///     "my_warehouse",
+    ///     "client_id:client_secret"
+    /// ).await?;
+    /// ```
+    #[cfg(feature = "polaris-catalog")]
+    pub async fn create_polaris_catalog(
+        &self,
+        name: &str,
+        uri: &str,
+        warehouse: &str,
+        credential: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        use crate::proto::proximadb_v1::PolarisCatalogConfig;
+
+        let config = PolarisCatalogConfig {
+            uri: uri.to_string(),
+            warehouse: warehouse.to_string(),
+            credential: credential.to_string(),
+            ..Default::default()
+        };
+
+        let catalog =
+            polaris::PolarisCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+
+        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
+        self.register(catalog.clone()).await?;
+        Ok(catalog)
+    }
+
+    /// Create and register a Polaris catalog (stub for non-Polaris builds)
+    #[cfg(not(feature = "polaris-catalog"))]
+    pub async fn create_polaris_catalog(
+        &self,
+        _name: &str,
+        _uri: &str,
+        _warehouse: &str,
+        _credential: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        Err(anyhow!(
+            "Apache Polaris catalog requires the 'polaris-catalog' feature flag. \
+             Build with: cargo build --features polaris-catalog"
+        ))
+    }
+
+    /// Create and register a Delta Lake catalog
+    ///
+    /// Requires the `delta-lake` feature flag to be enabled.
+    ///
+    /// # Arguments
+    /// * `name` - Catalog name
+    /// * `storage_url` - Storage URL (s3://bucket/path, file:///path, etc.)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let catalog = manager.create_delta_catalog(
+    ///     "delta",
+    ///     "s3://my-bucket/delta-tables"
+    /// ).await?;
+    /// ```
+    #[cfg(feature = "delta-lake")]
+    pub async fn create_delta_catalog(
+        &self,
+        name: &str,
+        storage_url: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        use delta::DeltaCatalogConfig;
+
+        let config = DeltaCatalogConfig {
+            storage_url: storage_url.to_string(),
+            ..Default::default()
+        };
+
+        let catalog =
+            delta::DeltaCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+
+        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
+        self.register(catalog.clone()).await?;
+        Ok(catalog)
+    }
+
+    /// Create and register a Delta Lake catalog (stub for non-Delta builds)
+    #[cfg(not(feature = "delta-lake"))]
+    pub async fn create_delta_catalog(
+        &self,
+        _name: &str,
+        _storage_url: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        Err(anyhow!(
+            "Delta Lake catalog requires the 'delta-lake' feature flag. \
+             Build with: cargo build --features delta-lake"
+        ))
     }
 
     /// Get a catalog by name
@@ -317,6 +549,10 @@ impl std::fmt::Display for TableIdentifier {
 mod tests {
     use super::*;
 
+    // ========================
+    // TableIdentifier Tests
+    // ========================
+
     #[test]
     fn test_table_identifier_parse() {
         let id = TableIdentifier::parse("db.schema.users");
@@ -340,9 +576,467 @@ mod tests {
         assert_eq!(id.to_fqn(), "db.schema.users");
     }
 
+    #[test]
+    fn test_table_identifier_single_namespace() {
+        let id = TableIdentifier::parse("mydb.users");
+        assert_eq!(id.namespace, vec!["mydb"]);
+        assert_eq!(id.name, "users");
+    }
+
+    #[test]
+    fn test_table_identifier_display() {
+        let id = TableIdentifier::new(
+            vec!["catalog".to_string(), "schema".to_string()],
+            "table".to_string(),
+        );
+        assert_eq!(format!("{}", id), "catalog.schema.table");
+    }
+
+    #[test]
+    fn test_table_identifier_empty_namespace_fqn() {
+        let id = TableIdentifier::new(vec![], "users".to_string());
+        assert_eq!(id.to_fqn(), "users");
+    }
+
+    #[test]
+    fn test_table_identifier_equality() {
+        let id1 = TableIdentifier::new(vec!["db".to_string()], "table".to_string());
+        let id2 = TableIdentifier::new(vec!["db".to_string()], "table".to_string());
+        let id3 = TableIdentifier::new(vec!["other".to_string()], "table".to_string());
+
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
+    }
+
+    // ========================
+    // CatalogManager Tests
+    // ========================
+
     #[tokio::test]
     async fn test_catalog_manager_new() {
         let manager = CatalogManager::new();
         assert!(manager.list_catalogs().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_catalog_manager_with_cache() {
+        let manager = CatalogManager::with_cache(5000, 600);
+        assert!(manager.list_catalogs().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_catalog_manager_default() {
+        let manager = CatalogManager::default();
+        assert!(manager.list_catalogs().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_catalog_manager_no_default_catalog() {
+        let manager = CatalogManager::new();
+        let result = manager.default_catalog().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No default catalog"));
+    }
+
+    #[tokio::test]
+    async fn test_catalog_manager_get_nonexistent() {
+        let manager = CatalogManager::new();
+        let result = manager.get_catalog("nonexistent").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_catalog_manager_set_default_nonexistent() {
+        let manager = CatalogManager::new();
+        let result = manager.set_default_catalog("nonexistent").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_catalog_manager_unregister_nonexistent() {
+        let manager = CatalogManager::new();
+        let result = manager.unregister_catalog("nonexistent").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Returns false for nonexistent
+    }
+
+    #[tokio::test]
+    async fn test_catalog_manager_cache_access() {
+        let manager = CatalogManager::new();
+        let cache = manager.cache();
+        // Cache should be valid
+        assert!(Arc::strong_count(&cache) >= 1);
+    }
+
+    // ========================
+    // Factory Methods Tests (Feature Stubs)
+    // ========================
+
+    #[tokio::test]
+    #[cfg(not(feature = "aws"))]
+    async fn test_create_glue_catalog_without_feature() {
+        let manager = CatalogManager::new();
+        let result = manager.create_glue_catalog("glue", "us-east-1", "123456789012").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("aws"));
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "unity-catalog"))]
+    async fn test_create_unity_catalog_without_feature() {
+        let manager = CatalogManager::new();
+        let result = manager
+            .create_unity_catalog(
+                "unity",
+                "https://example.cloud.databricks.com",
+                "token",
+                "main",
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unity-catalog"));
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "polaris-catalog"))]
+    async fn test_create_polaris_catalog_without_feature() {
+        let manager = CatalogManager::new();
+        let result = manager
+            .create_polaris_catalog(
+                "polaris",
+                "https://polaris.example.com",
+                "warehouse",
+                "cred",
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("polaris-catalog"));
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "delta-lake"))]
+    async fn test_create_delta_catalog_without_feature() {
+        let manager = CatalogManager::new();
+        let result = manager
+            .create_delta_catalog("delta", "file:///tmp/delta")
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("delta-lake"));
+    }
+
+    // ========================
+    // Iceberg Catalog Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_create_iceberg_catalog() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_iceberg_catalog");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let result = manager
+            .create_iceberg_catalog(
+                "iceberg",
+                "memory://",
+                &format!("file://{}", temp_dir.display()),
+            )
+            .await;
+
+        assert!(result.is_ok());
+        let catalogs = manager.list_catalogs().await;
+        assert_eq!(catalogs.len(), 1);
+        assert!(catalogs.contains(&"iceberg".to_string()));
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_catalog_operations() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_iceberg_ops");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let catalog = manager
+            .create_iceberg_catalog(
+                "test_iceberg",
+                "memory://",
+                &format!("file://{}", temp_dir.display()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(catalog.name(), "test_iceberg");
+        assert_eq!(catalog.catalog_type(), "iceberg");
+
+        // Health check
+        let health = catalog.health_check().await.unwrap();
+        assert!(health.is_healthy);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ========================
+    // Native Catalog Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_create_native_catalog() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_native_catalog");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let result = manager
+            .create_native_catalog("native", &format!("file://{}", temp_dir.display()))
+            .await;
+
+        assert!(result.is_ok());
+        let catalogs = manager.list_catalogs().await;
+        assert!(catalogs.contains(&"native".to_string()));
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_native_catalog_first_is_default() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_native_default");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        manager
+            .create_native_catalog("first", &format!("file://{}", temp_dir.display()))
+            .await
+            .unwrap();
+
+        let default = manager.default_catalog().await.unwrap();
+        assert_eq!(default.name(), "first");
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ========================
+    // Hive Catalog Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_create_hive_catalog() {
+        let manager = CatalogManager::new();
+
+        // Hive catalog creation should work (even without a real Thrift server)
+        let result = manager
+            .create_hive_catalog("hive", "thrift://localhost:9083")
+            .await;
+
+        assert!(result.is_ok());
+        assert!(manager.list_catalogs().await.contains(&"hive".to_string()));
+    }
+
+    // ========================
+    // Multi-catalog Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_multiple_catalogs() {
+        let manager = CatalogManager::new();
+        let temp_dir1 = std::env::temp_dir().join("proximadb_test_multi1");
+        let temp_dir2 = std::env::temp_dir().join("proximadb_test_multi2");
+        let _ = tokio::fs::remove_dir_all(&temp_dir1).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir2).await;
+
+        manager
+            .create_native_catalog("catalog1", &format!("file://{}", temp_dir1.display()))
+            .await
+            .unwrap();
+        manager
+            .create_iceberg_catalog(
+                "catalog2",
+                "memory://",
+                &format!("file://{}", temp_dir2.display()),
+            )
+            .await
+            .unwrap();
+
+        let catalogs = manager.list_catalogs().await;
+        assert_eq!(catalogs.len(), 2);
+        assert!(catalogs.contains(&"catalog1".to_string()));
+        assert!(catalogs.contains(&"catalog2".to_string()));
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir1).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir2).await;
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_default_catalog() {
+        let manager = CatalogManager::new();
+        let temp_dir1 = std::env::temp_dir().join("proximadb_test_default1");
+        let temp_dir2 = std::env::temp_dir().join("proximadb_test_default2");
+        let _ = tokio::fs::remove_dir_all(&temp_dir1).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir2).await;
+
+        manager
+            .create_native_catalog("cat1", &format!("file://{}", temp_dir1.display()))
+            .await
+            .unwrap();
+        manager
+            .create_native_catalog("cat2", &format!("file://{}", temp_dir2.display()))
+            .await
+            .unwrap();
+
+        // First catalog should be default
+        let default = manager.default_catalog().await.unwrap();
+        assert_eq!(default.name(), "cat1");
+
+        // Change default
+        manager.set_default_catalog("cat2").await.unwrap();
+        let new_default = manager.default_catalog().await.unwrap();
+        assert_eq!(new_default.name(), "cat2");
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir1).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir2).await;
+    }
+
+    #[tokio::test]
+    async fn test_unregister_catalog() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_unregister");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        manager
+            .create_native_catalog("to_remove", &format!("file://{}", temp_dir.display()))
+            .await
+            .unwrap();
+
+        assert_eq!(manager.list_catalogs().await.len(), 1);
+
+        let removed = manager.unregister_catalog("to_remove").await.unwrap();
+        assert!(removed);
+        assert!(manager.list_catalogs().await.is_empty());
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_unregister_default_catalog() {
+        let manager = CatalogManager::new();
+        let temp_dir1 = std::env::temp_dir().join("proximadb_test_unreg_def1");
+        let temp_dir2 = std::env::temp_dir().join("proximadb_test_unreg_def2");
+        let _ = tokio::fs::remove_dir_all(&temp_dir1).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir2).await;
+
+        manager
+            .create_native_catalog("cat1", &format!("file://{}", temp_dir1.display()))
+            .await
+            .unwrap();
+        manager
+            .create_native_catalog("cat2", &format!("file://{}", temp_dir2.display()))
+            .await
+            .unwrap();
+
+        // Remove default catalog
+        manager.unregister_catalog("cat1").await.unwrap();
+
+        // cat2 should become the new default
+        let default = manager.default_catalog().await.unwrap();
+        assert_eq!(default.name(), "cat2");
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir1).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir2).await;
+    }
+
+    // ========================
+    // Resolve Table Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_resolve_table_simple() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_resolve");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        manager
+            .create_native_catalog("default", &format!("file://{}", temp_dir.display()))
+            .await
+            .unwrap();
+
+        // Simple table name
+        let (catalog, id) = manager.resolve_table("users").await.unwrap();
+        assert_eq!(catalog.name(), "default");
+        assert_eq!(id.name, "users");
+        assert_eq!(id.namespace, vec!["default"]);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_table_with_namespace() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_resolve_ns");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        manager
+            .create_native_catalog("default", &format!("file://{}", temp_dir.display()))
+            .await
+            .unwrap();
+
+        // namespace.table
+        let (catalog, id) = manager.resolve_table("mydb.users").await.unwrap();
+        assert_eq!(catalog.name(), "default");
+        assert_eq!(id.name, "users");
+        assert_eq!(id.namespace, vec!["mydb"]);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_table_fully_qualified() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_resolve_fqn");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        manager
+            .create_native_catalog("mycat", &format!("file://{}", temp_dir.display()))
+            .await
+            .unwrap();
+
+        // catalog.namespace.table
+        let (catalog, id) = manager.resolve_table("mycat.mydb.users").await.unwrap();
+        assert_eq!(catalog.name(), "mycat");
+        assert_eq!(id.name, "users");
+        assert_eq!(id.namespace, vec!["mydb"]);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_resolve_table_multi_level_namespace() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_resolve_multi");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        manager
+            .create_native_catalog("catalog", &format!("file://{}", temp_dir.display()))
+            .await
+            .unwrap();
+
+        // catalog.ns1.ns2.table
+        let (catalog, id) = manager.resolve_table("catalog.db.schema.users").await.unwrap();
+        assert_eq!(catalog.name(), "catalog");
+        assert_eq!(id.name, "users");
+        assert_eq!(id.namespace, vec!["db", "schema"]);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }

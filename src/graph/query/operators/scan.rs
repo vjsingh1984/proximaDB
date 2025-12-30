@@ -3,7 +3,7 @@
 //! Scans nodes from the graph engine by label and/or property filters.
 //! Reuses GraphEngine trait for data access.
 
-use super::{evaluate_property_filter, ColumnSpec, PhysicalOperator, QueryValue, ResultTuple, ValueType};
+use super::{evaluate_property_filter, ColumnSpec, PhysicalOperator, QueryValue, ResultTuple};
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Node, PropertyFilter};
 use anyhow::Result;

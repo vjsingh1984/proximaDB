@@ -35,8 +35,8 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
-use tokio::time::{interval, Interval};
-use tracing::{debug, error, info, warn};
+use tokio::time::interval;
+use tracing::{debug, info, warn};
 
 /// Type of scheduled operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

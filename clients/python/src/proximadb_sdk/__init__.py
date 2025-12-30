@@ -16,7 +16,7 @@ from .unified_client import ProximaDBClient
 from .unified_client_v2 import ProximaDBClient as ProximaDBClientV2
 from .unified_client_v2 import connect_embedded
 from .client_v1 import ProximaDBClientV1
-from .config import Protocol
+from .config import Protocol, PortMode
 from .config import (
     ClientConfig,
     LogLevel,
@@ -173,7 +173,10 @@ from .proto_conversion import (
 
 # Convenience factory functions
 def connect(url: str = None, **kwargs) -> ProximaDBClient:
-    """Create a ProximaDB client with automatic protocol detection"""
+    """Create a ProximaDB client with automatic protocol detection.
+
+    Uses unified port mode by default (single port for all protocols).
+    """
     if url:
         kwargs['url'] = url
     return ProximaDBClient(**kwargs)
@@ -190,6 +193,49 @@ def connect_grpc(url: str = None, **kwargs) -> ProximaDBClient:
     if url:
         kwargs['url'] = url
     kwargs['protocol'] = Protocol.GRPC
+    return ProximaDBClient(**kwargs)
+
+def connect_unified(url: str = None, **kwargs) -> ProximaDBClient:
+    """Create a ProximaDB client for unified port mode (recommended).
+
+    In unified mode, a single URL is used for all protocols (REST, gRPC,
+    Arrow Flight) and the server automatically detects and routes requests.
+
+    Example:
+        client = connect_unified("http://localhost:5678")
+    """
+    if url:
+        kwargs['url'] = url
+    kwargs['port_mode'] = PortMode.UNIFIED
+    return ProximaDBClient(**kwargs)
+
+def connect_legacy(url: str = None, **kwargs) -> ProximaDBClient:
+    """Create a ProximaDB client for legacy multi-port mode.
+
+    Use this for older deployments with separate ports for REST (5678)
+    and gRPC (5679).
+    """
+    if url:
+        kwargs['url'] = url
+    kwargs['port_mode'] = PortMode.MULTI
+    return ProximaDBClient(**kwargs)
+
+def connect_arrow_flight(url: str = None, **kwargs) -> ProximaDBClient:
+    """Create a ProximaDB client using Arrow Flight for bulk data transfer.
+
+    Arrow Flight is optimized for high-throughput operations:
+    - Large batch vector inserts (millions of vectors)
+    - Bulk data export/import
+    - Streaming large result sets
+
+    In unified mode (default), uses same port as REST/gRPC.
+    In multi-port mode, uses port 5680.
+
+    Requires: pip install pyarrow
+    """
+    if url:
+        kwargs['url'] = url
+    kwargs['protocol'] = Protocol.ARROW_FLIGHT
     return ProximaDBClient(**kwargs)
 
 # Text chunking utilities (if available)
@@ -265,6 +311,7 @@ __all__ = [
     "load_config",
     "load_config_file",
     "Protocol",
+    "PortMode",
     
     # Models
     "Collection",
@@ -348,6 +395,9 @@ __all__ = [
     "connect",
     "connect_rest",
     "connect_grpc",
+    "connect_unified",
+    "connect_legacy",
+    "connect_arrow_flight",
 
     # Proto type conversion
     "ProtoConverter",
@@ -496,6 +546,112 @@ __all__.extend([
     "Vector",
 ])
 
+# Graph Analytics
+try:
+    from .graph_analytics import (
+        GraphAnalytics,
+        AlgorithmConfig,
+        SemanticTraversalConfig,
+        GraphPattern,
+        PatternElement,
+        RelationshipPattern,
+        AlgorithmResult,
+        SemanticTraversalResult,
+        PatternMatchResult,
+        GraphAlgorithm,
+        TraversalDirection,
+        PatternMatchMode,
+        node,
+        relationship,
+    )
+    _graph_analytics_available = True
+except ImportError:
+    _graph_analytics_available = False
+
+if _graph_analytics_available:
+    __all__.extend([
+        "GraphAnalytics",
+        "AlgorithmConfig",
+        "SemanticTraversalConfig",
+        "GraphPattern",
+        "PatternElement",
+        "RelationshipPattern",
+        "AlgorithmResult",
+        "SemanticTraversalResult",
+        "PatternMatchResult",
+        "GraphAlgorithm",
+        "TraversalDirection",
+        "PatternMatchMode",
+        "node",
+        "relationship",
+    ])
+
+# Observability (OpenTelemetry, Prometheus, Tracing)
+try:
+    from .observability import (
+        Observability,
+        MetricsCollector,
+        Tracer,
+        StructuredLogger,
+        MetricDefinition,
+        SpanContext,
+        Span,
+        MetricType,
+        LogLevel as ObsLogLevel,
+        traced,
+        metered,
+    )
+    _observability_available = True
+except ImportError:
+    _observability_available = False
+
+if _observability_available:
+    __all__.extend([
+        "Observability",
+        "MetricsCollector",
+        "Tracer",
+        "StructuredLogger",
+        "MetricDefinition",
+        "SpanContext",
+        "Span",
+        "MetricType",
+        "ObsLogLevel",
+        "traced",
+        "metered",
+    ])
+
+# AutoML (Engine Selection, Workload Prediction, Optimization)
+try:
+    from .automl import (
+        AutoML,
+        WorkloadPredictor,
+        EngineSelector,
+        HyperparameterOptimizer,
+        WorkloadCharacteristics,
+        EngineRecommendation,
+        HyperparameterConfig,
+        OptimizationResult,
+        WorkloadType,
+        OptimizationGoal,
+    )
+    _automl_available = True
+except ImportError:
+    _automl_available = False
+
+if _automl_available:
+    __all__.extend([
+        "AutoML",
+        "WorkloadPredictor",
+        "EngineSelector",
+        "HyperparameterOptimizer",
+        "WorkloadCharacteristics",
+        "EngineRecommendation",
+        "HyperparameterConfig",
+        "OptimizationResult",
+        "WorkloadType",
+        "OptimizationGoal",
+    ])
+
 # Embedded mode and embedding models
 try:
     from .embedded import (
@@ -538,4 +694,156 @@ if _embedded_available:
         "EmbeddingFunction",
         "AsyncEmbeddingFunction",
         "BatchEmbeddingFunction",
+    ])
+
+# Multi-Modal Query API (Phase 13.4)
+try:
+    from .multimodal_query import (
+        # Core classes
+        MultiModalQueryBuilder,
+        MultiModalQuery,
+        MultiModalQueryResult,
+        MultiModalQueryExecutor,
+        # Query components
+        VectorQueryComponent,
+        GraphQueryComponent,
+        DocumentQueryComponent,
+        LogQueryComponent,
+        MetricQueryComponent,
+        SemanticJoin,
+        # Enums
+        QueryType,
+        FusionStrategy,
+        JoinType,
+        TimeDecayFunction,
+        # Cross-Modal Reranking
+        CrossModalReranker,
+        RerankConfig,
+        QueryContext,
+        QueryIntent,
+        TemporalPreference,
+        ScoreComponent,
+        RerankExplanation,
+        RerankedResult,
+        # Learned Fusion (ML-based)
+        LearnedFusion,
+        LearnedFusionConfig,
+        FusionModelType,
+        FusionFeatures,
+        FeedbackType,
+        FeedbackSignal,
+        TrainingSample,
+        TrainingMetrics,
+        FeatureExtractor,
+        # Convenience functions
+        semantic_search_with_graph,
+        knowledge_graph_search,
+        logs_with_context,
+    )
+    _multimodal_query_available = True
+except ImportError:
+    _multimodal_query_available = False
+
+if _multimodal_query_available:
+    __all__.extend([
+        # Core classes
+        "MultiModalQueryBuilder",
+        "MultiModalQuery",
+        "MultiModalQueryResult",
+        "MultiModalQueryExecutor",
+        # Query components
+        "VectorQueryComponent",
+        "GraphQueryComponent",
+        "DocumentQueryComponent",
+        "LogQueryComponent",
+        "MetricQueryComponent",
+        "SemanticJoin",
+        # Enums
+        "QueryType",
+        "FusionStrategy",
+        "JoinType",
+        "TimeDecayFunction",
+        # Cross-Modal Reranking
+        "CrossModalReranker",
+        "RerankConfig",
+        "QueryContext",
+        "QueryIntent",
+        "TemporalPreference",
+        "ScoreComponent",
+        "RerankExplanation",
+        "RerankedResult",
+        # Learned Fusion (ML-based)
+        "LearnedFusion",
+        "LearnedFusionConfig",
+        "FusionModelType",
+        "FusionFeatures",
+        "FeedbackType",
+        "FeedbackSignal",
+        "TrainingSample",
+        "TrainingMetrics",
+        "FeatureExtractor",
+        # Convenience functions
+        "semantic_search_with_graph",
+        "knowledge_graph_search",
+        "logs_with_context",
+    ])
+
+# Security Module (Phase 13.5)
+try:
+    from .security import (
+        # OAuth2
+        OAuth2TokenManager,
+        OAuth2Config,
+        OAuth2TokenResponse,
+        OAuth2GrantType,
+        OAuth2Provider,
+        OAuth2Error,
+        # RBAC
+        RBACManager,
+        RoleDefinition,
+        Role,
+        # Security Context
+        SecurityContext,
+        SecurityManager,
+        security_context,
+        get_current_security_context,
+        set_security_context,
+        clear_security_context,
+        # Audit
+        AuditLogger,
+        AuditEvent,
+        AuditEventType,
+        # mTLS
+        MTLSConfig,
+    )
+    _security_available = True
+except ImportError:
+    _security_available = False
+
+if _security_available:
+    __all__.extend([
+        # OAuth2
+        "OAuth2TokenManager",
+        "OAuth2Config",
+        "OAuth2TokenResponse",
+        "OAuth2GrantType",
+        "OAuth2Provider",
+        "OAuth2Error",
+        # RBAC
+        "RBACManager",
+        "RoleDefinition",
+        "Role",
+        # Security Context
+        "SecurityContext",
+        "SecurityManager",
+        "security_context",
+        "get_current_security_context",
+        "set_security_context",
+        "clear_security_context",
+        # Audit
+        "AuditLogger",
+        "AuditEvent",
+        "AuditEventType",
+        # mTLS
+        "MTLSConfig",
     ])

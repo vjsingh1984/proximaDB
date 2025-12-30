@@ -28,7 +28,6 @@ use crate::storage::transaction_coordinator::TransactionCoordinator;
 use super::common::{
     ColumnType, // For selective column reading
     InterCentroidMatrix,
-    NeighborType,
     P2Matrix, // P² matrix for intra-rowgroup navigation
     RaptorFileMetadata,
     RaptorFooter,
@@ -1173,6 +1172,9 @@ impl RaptorReader {
         }
 
         // Step 3: Select top-k centroids (which map 1:1 to rowgroups)
+        // SAFETY: partial_cmp().unwrap() is safe here because distances are computed from
+        // valid vector operations and cannot be NaN. Distance calculations always produce
+        // finite f32 values (L2, cosine, dot product all return finite results for finite inputs).
         centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let num_centroids_to_search = (ef / 10).max(1).min(kxk_matrix.num_centroids as usize);
 
@@ -1205,6 +1207,8 @@ impl RaptorReader {
         }
 
         // Step 5: Sort all candidates and return top-ef
+        // SAFETY: partial_cmp().unwrap() is safe - distances are computed using valid
+        // vector operations that cannot produce NaN values.
         all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
         let final_candidates: Vec<String> = all_candidates

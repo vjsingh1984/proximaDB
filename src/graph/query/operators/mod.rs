@@ -14,14 +14,10 @@
 //! - **Streaming**: Results produced incrementally, not materialized upfront
 //! - **Testability**: Each operator tested independently with mock engines
 
-use crate::core::error::ProximaDBError;
-use crate::graph::engines::GraphEngine;
 use crate::graph::query::execution_traits::{
     ColumnSpec, PhysicalOperator, QueryValue, ResultTuple, ValueType,
 };
-use crate::proto::proximadb_v1::{Edge, Node, PropertyFilter, PropertyFilterOperator};
-use anyhow::Result;
-use std::sync::Arc;
+use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator};
 
 pub mod scan;
 pub mod expand;

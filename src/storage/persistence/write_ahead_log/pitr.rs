@@ -27,16 +27,15 @@
 //! pitr.recover_to_timestamp(DateTime::parse_from_rfc3339("2025-01-15T12:00:00Z")?).await?;
 //! ```
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use super::manifest::{GlobalCheckpoint, GlobalManifestService, WalEntryStatus};
-use crate::core::error::ProximaDBError;
+use super::manifest::{GlobalManifestService, WalEntryStatus};
 
 /// Unique identifier for a recovery point
 pub type RecoveryPointId = u64;

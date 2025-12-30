@@ -4,12 +4,8 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{
-    BackupStrategy, CapacityEstimate, DeploymentRecommendation, DeploymentStrategy,
-    DetectedEnvironment, EncryptionRequirements, MonitoringConfig, OptimalConfig,
-    PerformanceProfile, PlatformType, ResourceAvailability, ScalingConfig, SecurityConstraints,
+    DetectedEnvironment, PlatformType,
 };
-use crate::server::NetworkConfig;
-use crate::storage::tenant::ComplianceFramework;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

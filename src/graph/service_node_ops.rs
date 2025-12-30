@@ -22,6 +22,65 @@ impl super::GraphOperationsService {
         engine.get_neighbors(node_id, None)
     }
 
+    /// Query nodes by a single label (convenience method)
+    ///
+    /// Returns all nodes that have the specified label in the graph.
+    pub async fn query_nodes_by_label(
+        &self,
+        graph_id: &str,
+        label: &str,
+    ) -> Result<Vec<Arc<Node>>> {
+        let query = NodeQuery {
+            graph_id: graph_id.to_string(),
+            labels: vec![label.to_string()],
+            filters: vec![],
+            offset: None,
+            limit: None,
+            continuation_token: None,
+        };
+        self.query_nodes(graph_id, query).await
+    }
+
+    /// Query nodes by properties with optional label filter (convenience method)
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to query
+    /// * `label` - Optional label to filter by
+    /// * `property_filters` - List of (property_name, value) pairs for equality matching
+    pub async fn query_nodes_by_properties(
+        &self,
+        graph_id: &str,
+        label: Option<&str>,
+        property_filters: &[(String, String)],
+    ) -> Result<Vec<Arc<Node>>> {
+        use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+
+        // Build property filters
+        let filters: Vec<PropertyFilter> = property_filters
+            .iter()
+            .map(|(key, value)| PropertyFilter {
+                key: key.clone(),
+                operator: PropertyFilterOperator::Equals.into(),
+                value: Some(PropertyValue {
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(
+                        value.clone(),
+                    )),
+                }),
+            })
+            .collect();
+
+        let query = NodeQuery {
+            graph_id: graph_id.to_string(),
+            labels: label.map(|l| vec![l.to_string()]).unwrap_or_default(),
+            filters,
+            offset: None,
+            limit: None,
+            continuation_token: None,
+        };
+
+        self.query_nodes(graph_id, query).await
+    }
+
     /// Query nodes by labels and properties
     pub async fn query_nodes(&self, graph_id: &str, query: NodeQuery) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {

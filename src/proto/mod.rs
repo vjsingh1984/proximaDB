@@ -221,6 +221,30 @@
 #[path = "proximadb.v1.rs"]
 pub mod proximadb_v1;
 
+// Compatibility alias: The streaming proto uses `super::super::v1::` to reference v1 types
+// This creates proto::v1 as an alias to proto::proximadb_v1
+pub mod v1 {
+    //! Alias module for proto v1 types (for streaming proto compatibility)
+    pub use super::proximadb_v1::*;
+}
+
+// Streaming proto definitions for real-time vector ingestion
+// The generated code uses super::super::v1:: which resolves to proto::v1
+// (super from streaming_v1 -> streaming -> super from streaming -> proto -> v1)
+pub mod streaming {
+    //! Streaming proto module hierarchy for generated code compatibility
+    pub mod v1 {
+        //! Generated streaming v1 proto types
+        include!("../proto/proximadb.streaming.v1.rs");
+    }
+}
+
+// Re-export streaming types at the expected location
+pub mod proximadb_streaming_v1 {
+    //! Re-export of streaming proto types
+    pub use super::streaming::v1::*;
+}
+
 // Custom serde implementations for oneof types
 pub mod serde_impls;
 

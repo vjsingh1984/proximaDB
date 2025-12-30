@@ -3,11 +3,11 @@
 //! This module implements the critical flush operations that move data from memory
 //! to persistent storage, ensuring durability while maintaining optimal performance.
 
-use crate::storage::operations::{FlushResult, OperationType};
-use anyhow::{anyhow, Result};
+use crate::storage::operations::FlushResult;
+use anyhow::Result;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Flush manager coordinating memtable → storage transitions
 /// 

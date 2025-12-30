@@ -1,19 +1,35 @@
-//! Internal Schema Registry for ProximaDB
+//! # Internal Schema Registry - CORE
 //!
-//! Provides unified schema management across all data models:
-//! - Vector Collections
-//! - Document Stores
-//! - Graph Databases
-//! - RDBMS Tables
-//! - Observability (Logs, Metrics, Traces)
+//! The Internal Schema Registry is ProximaDB's core catalog providing:
+//! - Multi-model object registration (Vector, Document, Graph, RDBMS, Observable)
+//! - Schema enforcement (Strict, Flexible, Hybrid modes)
+//! - PostgreSQL-compatible INFORMATION_SCHEMA views
+//! - Constraint management (PK, FK, UNIQUE, CHECK, NOT NULL)
 //!
-//! ## Features
+//! This is always available and does not require feature flags.
 //!
-//! - **Unified Object Model**: Single abstraction for all object types
-//! - **Schema Enforcement Modes**: Strict (RDBMS), Flexible (Document), Hybrid
+//! ## Supported Data Models
+//!
+//! - **Vector Collections**: Embeddings with dimension and distance metrics
+//! - **Document Stores**: JSON/BSON with optional JSON Schema validation
+//! - **Graph Databases**: Nodes, edges, and relationships
+//! - **RDBMS Tables**: Traditional relational tables
+//! - **Observability**: Logs, Metrics, Traces streams
+//!
+//! ## Key Features
+//!
+//! - **Unified Object Model**: Single abstraction (`CatalogObject`) for all types
+//! - **Schema Enforcement Modes**:
+//!   - `Strict`: All constraints validated at write time (RDBMS)
+//!   - `Flexible`: Schema-on-read (Document)
+//!   - `Hybrid`: Core schema enforced, extensions flexible
 //! - **Cross-Model References**: Foreign keys spanning data models
+//!   - Table-to-Table (traditional FK)
+//!   - Table-to-Graph (reference graph nodes)
+//!   - Table-to-Document (reference document IDs)
+//!   - Table-to-Vector (reference vector collection IDs)
 //! - **Schema Versioning**: Full history with evolution tracking
-//! - **INFORMATION_SCHEMA**: PostgreSQL-compatible introspection
+//! - **INFORMATION_SCHEMA**: PostgreSQL-compatible introspection views
 
 pub mod registry;
 pub mod enforcement;
@@ -21,6 +37,8 @@ pub mod information_schema;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use anyhow::Result;
+use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
 use serde::{Deserialize, Serialize};
 
 use super::types::{
@@ -208,6 +226,20 @@ impl ObjectSchema {
     /// Check if column exists
     pub fn has_column(&self, name: &str) -> bool {
         self.columns.iter().any(|c| c.name == name)
+    }
+
+    /// Convert to Arrow Schema
+    pub fn to_arrow_schema(&self) -> Result<ArrowSchema> {
+        let fields: Vec<ArrowField> = self.columns.iter()
+            .map(|col| {
+                ArrowField::new(
+                    &col.name,
+                    col.data_type.to_arrow_datatype(),
+                    col.nullable,
+                )
+            })
+            .collect();
+        Ok(ArrowSchema::new(fields))
     }
 }
 

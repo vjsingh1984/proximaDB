@@ -26,14 +26,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use super::config::{PCAConfig, PCAManagerConfig};
-use super::manager::{InMemoryPCAManager, PCAModelManager};
+use super::config::PCAManagerConfig;
+use super::manager::PCAModelManager;
 use super::model::EnhancedPCAModel;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
 use crate::storage::engines::core::formats::proximablocks::spatial_traits::{
-    CurveType, HilbertSpatialEncoder, SpatialCurveEncoder, SpatialEncoderFactory,
-    ZOrderSpatialEncoder,
+    CurveType, SpatialCurveEncoder, SpatialEncoderFactory,
 };
 use crate::storage::persistence::filesystem::FileSystem;
 
