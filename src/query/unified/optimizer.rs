@@ -1040,7 +1040,8 @@ fn compute_query_hash(query: &MultiModelQuery) -> u64 {
 mod tests {
     use super::*;
     use crate::query::unified::ast::{
-        DistanceMetric, FilterValue, StartNodeSpec, TraversalDirection, VectorSearchParams,
+        ComponentDependency, DistanceMetric, FilterValue, JoinType, StartNodeSpec,
+        TraversalDirection, VectorSearchParams,
     };
 
     fn make_vector_search_component(threshold: Option<f32>, top_k: u32) -> QueryComponent {

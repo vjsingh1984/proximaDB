@@ -444,6 +444,7 @@ pub struct ModelQuality {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn create_test_records(n: usize, dim: usize) -> Vec<VectorRecord> {
         (0..n)

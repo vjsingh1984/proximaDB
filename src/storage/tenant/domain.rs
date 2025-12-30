@@ -359,6 +359,7 @@ pub type OptimizationRule = String; // Will be enhanced in future phases
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::tenant::context::DataSensitivityLevel;
     use crate::storage::tenant::{Industry, PerformanceRequirements};
 
     #[tokio::test]

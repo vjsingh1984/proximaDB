@@ -110,6 +110,7 @@ mod tests {
     use crate::proto::proximadb_v1::Node;
     use async_trait::async_trait;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     struct MockEngine {
         nodes: Vec<Arc<Node>>,

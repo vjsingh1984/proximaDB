@@ -969,7 +969,7 @@ mod tests {
         ResourceAvailability, CapacityEstimate, NetworkConfig, SecurityConstraints,
         EncryptionRequirements, OptimalConfig, DeploymentRecommendation,
         DeploymentStrategy, ScalingConfig, BackupStrategy, PerformanceProfile,
-        ComplianceFramework
+        ComplianceFramework, MonitoringConfig,
     };
 
     #[tokio::test]

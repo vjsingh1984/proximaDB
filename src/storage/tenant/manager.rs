@@ -185,6 +185,7 @@ pub struct TenantResourceUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::tenant::context::ResourceLimits;
     use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies};
 
     #[tokio::test]

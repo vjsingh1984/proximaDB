@@ -387,6 +387,8 @@ fn property_value_to_sql_value(prop_value: &PropertyValue) -> Result<SqlValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::Modality;
+    use crate::proto::proximadb_v1::{typed_field, TypedField, TypedMetadata};
 
     #[test]
     fn test_entity_node_round_trip() {

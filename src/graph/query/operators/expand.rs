@@ -267,6 +267,7 @@ mod tests {
     use crate::proto::proximadb_v1::{property_value::Value, PropertyValue};
     use async_trait::async_trait;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     /// Mock graph engine for testing
     struct MockEngine {

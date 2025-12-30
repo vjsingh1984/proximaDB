@@ -635,7 +635,8 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.default_catalog().await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No default catalog"));
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("No default catalog"));
     }
 
     #[tokio::test]
@@ -643,7 +644,8 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.get_catalog("nonexistent").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not found"));
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
@@ -680,7 +682,8 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.create_glue_catalog("glue", "us-east-1", "123456789012").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("aws"));
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("aws"));
     }
 
     #[tokio::test]
@@ -696,7 +699,8 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unity-catalog"));
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("unity-catalog"));
     }
 
     #[tokio::test]
@@ -712,7 +716,8 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("polaris-catalog"));
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("polaris-catalog"));
     }
 
     #[tokio::test]
@@ -723,7 +728,8 @@ mod tests {
             .create_delta_catalog("delta", "file:///tmp/delta")
             .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("delta-lake"));
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("delta-lake"));
     }
 
     // ========================
