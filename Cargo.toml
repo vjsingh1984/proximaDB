@@ -68,7 +68,9 @@ tonic-prost = "0.14"  # Runtime codec for tonic-build 0.14+ generated code
 # tonic-reflection = "0.14"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
 prost = "0.14"
 prost-types = { version = "0.14" }
-hyper = "0.14"  # Used internally by axum and tonic
+hyper = "0.14"  # Used by axum 0.6
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }  # Utilities for hyper 1.x (tonic compatibility)
+http-body-util = "0.1"  # Body utilities for http 1.x (tonic compatibility)
 tower = { version = "0.4", features = ["limit"] }
 tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full", "timeout"] }
 url = "2.4"
