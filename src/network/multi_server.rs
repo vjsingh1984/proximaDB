@@ -1672,69 +1672,184 @@ impl MultiServer {
     /// Start unified server mode (Phase 14)
     ///
     /// All HTTP-based protocols (REST, gRPC, Arrow Flight) are served on a single port
-    /// with automatic protocol detection based on request characteristics.
+    /// using TCP-level protocol detection:
+    /// - HTTP/1.1 requests → REST server
+    /// - HTTP/2 requests → gRPC server
+    ///
+    /// This approach works around http crate version incompatibilities between
+    /// axum 0.6 (http 0.2) and tonic 0.14 (http 1.x) by routing at the TCP level.
     async fn start_unified(&mut self) -> Result<()> {
-        let bind_addr = self.config.unified_bind_address();
+        let unified_addr = self.config.unified_bind_address();
         info!(
-            "🚀 Starting ProximaDB Unified Server on {} (REST + gRPC + Arrow Flight)",
-            bind_addr
+            "🚀 Starting ProximaDB Unified Server on {} (REST + gRPC + Arrow Flight via TCP multiplexing)",
+            unified_addr
         );
 
-        // Build the multiplex service with protocol detectors and handlers
-        use crate::network::multiplex::{
-            builder::MultiplexServiceBuilder,
-            detectors::{ArrowFlightDetector, GrpcDetector, RestDetector},
-            handlers::{ArrowFlightHandler, GrpcHandler, RestHandler, RestHandlerConfig},
-            traits::DetectedProtocol,
-            unified_server::{UnifiedServer, UnifiedServerConfig},
-        };
-
-        // Create REST handler with configuration for unified mode
-        let services = self.shared_services.clone();
-        let rest_config = RestHandlerConfig {
-            unified_handlers: services.unified_handlers.clone(),
-            metrics_collector: services.metrics_collector.clone(),
-            security_coordinator: self.security_coordinator.clone(),
-            data_dir: self.config.data_dir.clone(),
-        };
-        let rest_handler = RestHandler::with_config(rest_config);
-
-        // Create detectors (ordered by priority)
-        let service = MultiplexServiceBuilder::new()
-            .add_detector(ArrowFlightDetector::new()) // Priority 110
-            .add_detector(GrpcDetector::new())        // Priority 100
-            .add_detector(RestDetector::new())        // Priority 10
-            .add_handler(ArrowFlightHandler::ready())
-            .add_handler(GrpcHandler::ready())
-            .add_handler(rest_handler)
-            .with_fallback(DetectedProtocol::Rest)
-            .build();
-
-        // Configure the unified server
-        let server_config = UnifiedServerConfig {
-            bind_address: bind_addr,
-            enable_http1: true,
-            enable_http2: true,
-            max_connections: 10000,
-            http2_max_concurrent_streams: 1000,
-            http2_initial_connection_window_size: 1024 * 1024,
-            http2_initial_stream_window_size: 1024 * 1024,
-            tcp_keepalive_secs: Some(60),
-            request_timeout_secs: 30,
-        };
-
-        let server = UnifiedServer::with_config(service, server_config);
-        let shutdown_handle = server.shutdown_handle();
-
-        // Spawn the unified server
-        let handle = tokio::spawn(async move {
-            if let Err(e) = server.serve().await {
-                tracing::error!("Unified server error: {}", e);
-            }
-        });
+        // Internal addresses for REST and gRPC servers
+        // These are only accessible via the TCP multiplexer
+        let internal_rest_addr: std::net::SocketAddr = "127.0.0.1:15678".parse().expect("valid address");
+        let internal_grpc_addr: std::net::SocketAddr = "127.0.0.1:15679".parse().expect("valid address");
 
         let mut handles = Vec::new();
-        handles.push(handle);
+
+        // 1. Start REST server on internal port (HTTP/1.1)
+        {
+            use crate::network::multiplex::{
+                builder::MultiplexServiceBuilder,
+                detectors::RestDetector,
+                handlers::{RestHandler, RestHandlerConfig},
+                traits::DetectedProtocol,
+                unified_server::{UnifiedServer, UnifiedServerConfig},
+            };
+
+            let services = self.shared_services.clone();
+            let rest_config = RestHandlerConfig {
+                unified_handlers: services.unified_handlers.clone(),
+                metrics_collector: services.metrics_collector.clone(),
+                security_coordinator: self.security_coordinator.clone(),
+                data_dir: self.config.data_dir.clone(),
+            };
+            let rest_handler = RestHandler::with_config(rest_config);
+
+            let service = MultiplexServiceBuilder::new()
+                .add_detector(RestDetector::new())
+                .add_handler(rest_handler)
+                .with_fallback(DetectedProtocol::Rest)
+                .build();
+
+            let server_config = UnifiedServerConfig {
+                bind_address: internal_rest_addr,
+                enable_http1: true,
+                enable_http2: false, // REST is HTTP/1.1 only
+                max_connections: 10000,
+                http2_max_concurrent_streams: 1000,
+                http2_initial_connection_window_size: 1024 * 1024,
+                http2_initial_stream_window_size: 1024 * 1024,
+                tcp_keepalive_secs: Some(60),
+                request_timeout_secs: 30,
+            };
+
+            let server = UnifiedServer::with_config(service, server_config);
+            info!("🌐 REST Server starting on {} (internal)", internal_rest_addr);
+
+            let handle = tokio::spawn(async move {
+                if let Err(e) = server.serve().await {
+                    tracing::error!("Internal REST server error: {}", e);
+                }
+            });
+            handles.push(handle);
+        }
+
+        // 2. Start gRPC server on internal port (HTTP/2)
+        if self.config.grpc_config.enable_grpc {
+            let services = self.shared_services.clone();
+            let compression = self.config.grpc_config.compression;
+
+            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
+                services.unified_handlers.clone(),
+            );
+            let mut vector_service =
+                crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
+                    vector_service_impl,
+                )
+                .max_decoding_message_size(64 * 1024 * 1024)
+                .max_encoding_message_size(64 * 1024 * 1024);
+            if compression {
+                use tonic::codec::CompressionEncoding;
+                vector_service = vector_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
+
+            let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
+                services.unified_handlers.clone(),
+            );
+            let mut sql_service =
+                crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
+                    sql_service_impl,
+                )
+                .max_decoding_message_size(64 * 1024 * 1024)
+                .max_encoding_message_size(64 * 1024 * 1024);
+            if compression {
+                use tonic::codec::CompressionEncoding;
+                sql_service = sql_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
+
+            let col_service_impl =
+                crate::network::grpc::collection_service::CollectionServiceImpl::new(
+                    services.unified_handlers.clone(),
+                );
+            let mut col_service =
+                crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
+                    col_service_impl,
+                );
+            if compression {
+                use tonic::codec::CompressionEncoding;
+                col_service = col_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
+
+            let graph_service_impl =
+                crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
+            let graph_service =
+                crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
+                    graph_service_impl,
+                );
+
+            // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
+            let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
+                services.unified_handlers.clone(),
+            );
+            let flight_server = arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
+                .max_encoding_message_size(512 * 1024 * 1024) // 512MB for large vector batches
+                .max_decoding_message_size(512 * 1024 * 1024);
+
+            let server = tonic::transport::Server::builder()
+                .add_service(vector_service)
+                .add_service(sql_service)
+                .add_service(col_service)
+                .add_service(graph_service)
+                .add_service(flight_server);
+
+            info!("🔗 gRPC + Arrow Flight Server starting on {} (internal)", internal_grpc_addr);
+
+            let grpc_handle = tokio::spawn(async move {
+                if let Err(e) = server.serve(internal_grpc_addr).await {
+                    tracing::error!("Internal gRPC server error: {}", e);
+                }
+            });
+            handles.push(grpc_handle);
+        }
+
+        // 3. Start TCP multiplexer on unified port (routes to internal servers)
+        {
+            use crate::network::multiplex::tcp_multiplexer::{TcpMultiplexConfig, TcpMultiplexer, TcpProtocol};
+
+            let multiplex_config = TcpMultiplexConfig {
+                bind_address: unified_addr,
+                rest_address: internal_rest_addr,
+                grpc_address: internal_grpc_addr,
+                max_connections: 10000,
+                fallback_protocol: TcpProtocol::Http1, // Default to REST for unknown protocols
+                proxy_buffer_size: 64 * 1024,
+            };
+
+            let multiplexer = TcpMultiplexer::with_config(multiplex_config);
+            info!(
+                "🎯 TCP Multiplexer starting on {} (routes HTTP/1.1 → REST, HTTP/2 → gRPC + Arrow Flight)",
+                unified_addr
+            );
+
+            let multiplex_handle = tokio::spawn(async move {
+                if let Err(e) = multiplexer.run().await {
+                    tracing::error!("TCP multiplexer error: {}", e);
+                }
+            });
+            handles.push(multiplex_handle);
+        }
 
         // PostgreSQL is still on its own port (wire protocol is fundamentally different)
         if self.config.postgres_config.enable_postgres {
@@ -1748,8 +1863,8 @@ impl MultiServer {
         *self.server_handles.lock().await = handles;
 
         info!(
-            "🎯 Unified Server started successfully on {} (REST + gRPC + Arrow Flight)",
-            bind_addr
+            "✅ Unified Server started successfully on {} (REST + gRPC + Arrow Flight on single port via TCP multiplexing)",
+            unified_addr
         );
         Ok(())
     }
