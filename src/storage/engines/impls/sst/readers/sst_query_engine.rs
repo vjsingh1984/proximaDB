@@ -6008,12 +6008,11 @@ impl IndexCache {
         match pressure_level {
             MemoryPressure::Low => {
                 // Reduce TTL to encourage natural eviction
-                // This would require rebuilding cache - for now just invalidate 10%
+                // This would require rebuilding cache - for now just invalidate all
+                // (simplified approach - in production would remove specific entries)
                 let current_size = self.indices.entry_count();
-                let to_remove = (current_size as f64 * 0.1) as usize;
-                for _ in 0..to_remove {
+                if current_size > 0 {
                     self.indices.invalidate_all();
-                    break; // Simplified - in production would remove specific entries
                 }
             }
             MemoryPressure::Medium => {

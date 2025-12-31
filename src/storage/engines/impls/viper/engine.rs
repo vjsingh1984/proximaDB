@@ -904,17 +904,15 @@ impl ViperEngine {
         let end_idx = ((row_group_idx + 1) * rows_per_group).min(10000); // Placeholder, since all_vectors no longer exists
 
         // Extract data from the record batches
-        let row_group_data = Vec::new();
-
-        for batch in record_batches {
-            // TODO: Properly extract vector data from the record batch columns
-            // This needs to read actual vector data from the batch columns
+        // TODO: Properly extract vector data from the record batch columns
+        // This needs to read actual vector data from the batch columns
+        if !record_batches.is_empty() {
             return Err(anyhow::anyhow!(
                 "Row group data extraction not yet implemented"
             ));
         }
 
-        Ok(row_group_data)
+        Ok(Vec::new())
     }
 
     /// Memory pool optimization for columnar operations (delegates to universal optimizer)
