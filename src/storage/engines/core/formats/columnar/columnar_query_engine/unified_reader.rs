@@ -306,7 +306,7 @@ impl UnifiedParquetReader {
     /// Query with metadata filters
     pub async fn query_with_metadata_filters(
         &self,
-        filters: &[MetadataFilter],
+        _filters: &[MetadataFilter],
     ) -> Result<Vec<VectorRecord>> {
         let filterable_columns = self
             .schema_mapping
@@ -407,7 +407,7 @@ impl UnifiedParquetReader {
     pub async fn search_vectors(
         &self,
         search_plan: &SearchPlan,
-        collection_context: &CollectionContext,
+        _collection_context: &CollectionContext,
     ) -> Result<SearchResponse> {
         let start_time = std::time::Instant::now();
 
@@ -911,9 +911,6 @@ impl UnifiedParquetReader {
         // Create projection mask
         let projection_mask = ProjectionMask::roots(reader_builder.parquet_schema(), projection);
 
-        // Capture length before moving
-        let num_selected_row_groups = selected_row_groups.len();
-
         // Create reader with projection and selected row groups
         let mut reader = reader_builder
             .with_projection(projection_mask)
@@ -958,7 +955,7 @@ impl UnifiedParquetReader {
     /// Apply bloom filter pruning for ID-based searches
     async fn apply_bloom_filter_pruning(
         &self,
-        file_path: &str,
+        _file_path: &str,
         selected_row_groups: &[usize],
         metadata_filters: &[crate::storage::engines::core::formats::columnar::MetadataFilter],
     ) -> Result<Vec<usize>> {
@@ -1110,7 +1107,8 @@ impl UnifiedParquetReader {
 
             // QUANTIZED PRE-FILTERING: Use quantized vectors for fast approximate distance computation
             // This provides 10-15x speedup by computing distances on compressed representations
-            let mut quantized_score = None;
+            #[allow(unused_assignments)]
+            let mut _quantized_score = None;
             if quantized_prefilter {
                 // Extract quantized representation for this row and compute approximate distance
                 // Priority: Binary (fastest) > INT8 (fast) > PQ8 (accurate)
@@ -1120,15 +1118,15 @@ impl UnifiedParquetReader {
                     let binary_data = binary.value(row_idx);
                     // Store for potential distance computation
                     // In production, we'd compute Hamming distance here with query vector
-                    quantized_score = Some((binary_data, "binary"));
+                    _quantized_score = Some((binary_data, "binary"));
                 } else if let Some(int8) = int8_vectors {
                     let int8_data = int8.value(row_idx);
                     // Store for potential INT8 distance computation
-                    quantized_score = Some((int8_data, "int8"));
+                    _quantized_score = Some((int8_data, "int8"));
                 } else if let Some(pq8) = pq8_vectors {
                     let pq8_data = pq8.value(row_idx);
                     // Store for potential PQ distance computation
-                    quantized_score = Some((pq8_data, "pq8"));
+                    _quantized_score = Some((pq8_data, "pq8"));
                 }
 
                 // TODO: Integration point for QuantizedDistanceCalculator

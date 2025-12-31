@@ -259,7 +259,7 @@ async fn phase1_binary_filtering(
     n_candidates: usize,
     filter: &Option<MetadataFilter>,
     threshold: f32,
-    quantization_engine: &StorageQuantizationEngine,
+    _quantization_engine: &StorageQuantizationEngine,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<Candidate>> {
     // Use binary quantization approach - create a simple binary representation
@@ -471,7 +471,7 @@ async fn phase3_pq_refinement(
 ) -> Result<Vec<Candidate>> {
     // Create distance computation engine for PQ operations
     // Note: Skip PQ distance table computation for now, use direct computation
-    let distance_table: Option<Vec<Vec<f32>>> =
+    let _distance_table: Option<Vec<Vec<f32>>> =
         if sst.header.quantization.pq_codebooks.unwrap_or(0) > 0 {
             // TODO: Implement proper PQ distance table computation
             None
@@ -487,7 +487,7 @@ async fn phase3_pq_refinement(
         .quantize_batch_with_level(&[query.to_vec()], UnifiedQuantizationLevel::int8())
         .await?;
 
-    let int8_query = if let Some(q) = quantized_query.first() {
+    let _int8_query = if let Some(q) = quantized_query.first() {
         if let Some(primary) = &q.primary {
             primary.data.iter().map(|&b| b as i8).collect::<Vec<_>>()
         } else {
@@ -672,9 +672,9 @@ fn bytes_to_bits(bytes: &[u8]) -> Vec<u64> {
     bits
 }
 
-fn block_matches_filter(block: &ProximaDataBlock, filter: &MetadataFilter) -> bool {
+fn block_matches_filter(block: &ProximaDataBlock, _filter: &MetadataFilter) -> bool {
     // Check block-level statistics against filter if available
-    if let Some(ref stats) = block.metadata_stats {
+    if let Some(ref _stats) = block.metadata_stats {
         // Convert BlockMetadataStats to expected format
         // For now, skip block-level filtering if stats format doesn't match
         // TODO: Properly convert BlockMetadataStats to HashMap<String, ColumnStats>
