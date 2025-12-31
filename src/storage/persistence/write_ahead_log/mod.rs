@@ -1783,7 +1783,7 @@ impl WriteAheadLogManager {
         // Just increment version if not already set
         // Proto-first: direct field access
         let current_version = record.version.unwrap_or(0);
-        let new_version = if current_version <= 0 {
+        let new_version = if current_version == 0 {
             1
         } else {
             current_version + 1

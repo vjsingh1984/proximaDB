@@ -1294,7 +1294,7 @@ impl CollectionService {
             ));
         }
 
-        if config.dimension <= 0 {
+        if config.dimension == 0 {
             return Err(anyhow::anyhow!("Dimension must be positive"));
         }
 
