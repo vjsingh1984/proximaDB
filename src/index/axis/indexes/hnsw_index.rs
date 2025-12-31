@@ -80,10 +80,16 @@ impl Default for AxisHnswConfig {
 }
 
 /// Wrapper for f32 to implement Ord for use in BinaryHeap
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct OrderedFloat(f32);
 
 impl Eq for OrderedFloat {}
+
+impl PartialOrd for OrderedFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl Ord for OrderedFloat {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -1339,7 +1345,7 @@ mod tests {
         let index = AxisHnswIndex::new(config.clone(), 4).unwrap();
 
         // Add test vectors
-        let test_vectors = vec![
+        let test_vectors = [
             ("v1", vec![1.0, 0.0, 0.0, 0.0]),
             ("v2", vec![0.0, 1.0, 0.0, 0.0]),
             ("v3", vec![0.0, 0.0, 1.0, 0.0]),

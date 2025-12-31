@@ -44,10 +44,16 @@ use crate::core::compression::{CompressionAlgorithm, CompressionContext};
 use std::collections::HashSet;
 
 /// Wrapper for f32 to make it orderable for priority queues
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct OrdFloat(f32);
 
 impl Eq for OrdFloat {}
+
+impl PartialOrd for OrdFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl Ord for OrdFloat {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {

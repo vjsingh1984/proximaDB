@@ -28,7 +28,7 @@ pub struct PathIndex {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct IndexValueKey(IndexValueOrd);
 
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 enum IndexValueOrd {
     Null,
     Bool(bool),
@@ -36,6 +36,20 @@ enum IndexValueOrd {
     Float(OrderedFloat),
     String(String),
     Bytes(Vec<u8>),
+}
+
+impl std::hash::Hash for IndexValueOrd {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Null => {}
+            Self::Bool(v) => v.hash(state),
+            Self::Int(v) => v.hash(state),
+            Self::Float(v) => v.hash(state),
+            Self::String(v) => v.hash(state),
+            Self::Bytes(v) => v.hash(state),
+        }
+    }
 }
 
 /// Ordered float wrapper
