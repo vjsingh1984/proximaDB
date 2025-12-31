@@ -13,5 +13,5 @@ mod grpc;
 mod rest;
 
 pub use arrow_flight::ArrowFlightHandler;
-pub use grpc::GrpcHandler;
+pub use grpc::{GrpcHandler, GrpcHandlerConfig};
 pub use rest::{RestHandler, RestHandlerConfig};

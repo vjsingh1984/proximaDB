@@ -3,10 +3,11 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! gRPC protocol handler wrapping Tonic services
+//! gRPC protocol handler for unified port mode
 //!
-//! This handler wraps gRPC services built with tonic to enable protocol
-//! multiplexing on a single port.
+//! Note: Due to http crate version incompatibilities between hyper 0.14 (http 0.2)
+//! and tonic 0.14 (http 1.x), gRPC multiplexing is not yet supported.
+//! gRPC clients should connect to the dedicated gRPC port (default 5679).
 
 use crate::network::multiplex::traits::{BoxResponseFuture, DetectedProtocol, ProtocolHandler};
 use axum::body::Body;
@@ -14,49 +15,63 @@ use hyper::http::{Request, Response, StatusCode};
 use std::sync::Arc;
 use tracing::{trace, warn};
 
+use crate::api_handlers::UnifiedHandlers;
+
+/// Configuration for the gRPC handler
+pub struct GrpcHandlerConfig {
+    pub unified_handlers: Arc<UnifiedHandlers>,
+    pub compression_enabled: bool,
+}
+
 /// gRPC protocol handler
 ///
-/// Wraps Tonic gRPC services to handle gRPC requests through the multiplexer.
-///
-/// # Usage
-///
-/// ```ignore
-/// use tonic::transport::Server;
-/// use crate::network::multiplex::handlers::GrpcHandler;
-///
-/// // Build your tonic services
-/// let grpc_router = Server::builder()
-///     .add_service(my_service)
-///     .into_service();
-///
-/// // Wrap in handler for multiplexing
-/// let handler = GrpcHandler::new(grpc_router);
-/// ```
+/// Currently returns a redirect message since gRPC multiplexing requires
+/// http crate version alignment between hyper and tonic.
 pub struct GrpcHandler {
     /// Flag indicating if the handler is ready
     ready: bool,
-    /// Optional wrapped router (placeholder for future implementation)
-    _router: Option<Arc<()>>,
+    /// The gRPC port to redirect to
+    grpc_port: u16,
 }
 
 impl GrpcHandler {
-    /// Create a new gRPC handler
-    ///
-    /// Note: In a full implementation, this would accept a tonic Routes or similar.
-    /// Currently returns a placeholder that returns 501 Not Implemented.
+    /// Create a new gRPC handler (not ready)
     pub fn new() -> Self {
         Self {
             ready: false,
-            _router: None,
+            grpc_port: 5679,
         }
     }
 
-    /// Create a gRPC handler marked as ready (for testing)
+    /// Create a gRPC handler marked as ready
     pub fn ready() -> Self {
         Self {
             ready: true,
-            _router: None,
+            grpc_port: 5679,
         }
+    }
+
+    /// Create a gRPC handler with configuration
+    ///
+    /// Note: The unified_handlers are not currently used because gRPC
+    /// multiplexing requires http crate version alignment.
+    pub fn with_config(config: GrpcHandlerConfig) -> Self {
+        // Log that we received the config but can't use it yet
+        tracing::debug!(
+            "GrpcHandler created with config (compression={}), but gRPC multiplexing not yet supported",
+            config.compression_enabled
+        );
+
+        Self {
+            ready: true,
+            grpc_port: 5679,
+        }
+    }
+
+    /// Set the gRPC port for redirect messages
+    pub fn with_grpc_port(mut self, port: u16) -> Self {
+        self.grpc_port = port;
+        self
     }
 }
 
@@ -70,6 +85,7 @@ impl std::fmt::Debug for GrpcHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GrpcHandler")
             .field("ready", &self.ready)
+            .field("grpc_port", &self.grpc_port)
             .finish()
     }
 }
@@ -78,7 +94,7 @@ impl Clone for GrpcHandler {
     fn clone(&self) -> Self {
         Self {
             ready: self.ready,
-            _router: self._router.clone(),
+            grpc_port: self.grpc_port,
         }
     }
 }
@@ -89,32 +105,33 @@ impl ProtocolHandler for GrpcHandler {
     }
 
     fn handle(&self, request: Request<Body>) -> BoxResponseFuture {
-        let ready = self.ready;
+        let grpc_port = self.grpc_port;
 
         Box::pin(async move {
             trace!(
                 method = %request.method(),
                 uri = %request.uri(),
-                "Handling gRPC request"
+                "gRPC request received on unified port"
             );
 
-            if !ready {
-                warn!("gRPC handler not configured - returning 501");
-                return Response::builder()
-                    .status(StatusCode::NOT_IMPLEMENTED)
-                    .header("content-type", "application/grpc")
-                    .header("grpc-status", "12") // UNIMPLEMENTED
-                    .header("grpc-message", "gRPC handler not configured for unified port mode")
-                    .body(Body::empty())
-                    .expect("response builder should not fail");
-            }
+            warn!(
+                "gRPC multiplexing not yet supported. Please connect to dedicated gRPC port {}",
+                grpc_port
+            );
 
-            // Placeholder - in a full implementation, this would route to tonic
+            // Return a proper gRPC error response
+            // grpc-status 12 = UNIMPLEMENTED
             Response::builder()
-                .status(StatusCode::NOT_IMPLEMENTED)
+                .status(StatusCode::OK) // gRPC uses 200 OK with grpc-status header
                 .header("content-type", "application/grpc")
                 .header("grpc-status", "12")
-                .header("grpc-message", "gRPC multiplexing not yet implemented")
+                .header(
+                    "grpc-message",
+                    format!(
+                        "gRPC multiplexing not yet supported on unified port. Please connect to port {}",
+                        grpc_port
+                    ),
+                )
                 .body(Body::empty())
                 .expect("response builder should not fail")
         })
@@ -132,12 +149,16 @@ impl ProtocolHandler for GrpcHandler {
 /// Builder for creating gRPC handlers
 pub struct GrpcHandlerBuilder {
     ready: bool,
+    grpc_port: u16,
 }
 
 impl GrpcHandlerBuilder {
     /// Create a new builder
     pub fn new() -> Self {
-        Self { ready: false }
+        Self {
+            ready: false,
+            grpc_port: 5679,
+        }
     }
 
     /// Mark the handler as ready
@@ -146,11 +167,17 @@ impl GrpcHandlerBuilder {
         self
     }
 
+    /// Set the gRPC port
+    pub fn grpc_port(mut self, port: u16) -> Self {
+        self.grpc_port = port;
+        self
+    }
+
     /// Build the gRPC handler
     pub fn build(self) -> GrpcHandler {
         GrpcHandler {
             ready: self.ready,
-            _router: None,
+            grpc_port: self.grpc_port,
         }
     }
 }
@@ -183,7 +210,9 @@ mod tests {
     fn test_grpc_handler_builder() {
         let handler = GrpcHandlerBuilder::new()
             .ready()
+            .grpc_port(5680)
             .build();
         assert!(handler.is_ready());
+        assert_eq!(handler.grpc_port, 5680);
     }
 }
