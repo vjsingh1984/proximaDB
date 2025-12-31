@@ -144,27 +144,26 @@ impl super::GraphOperationsService {
                     let Some(filter_val) = filter.value.as_ref() else {
                         continue; // Skip filter if value is missing
                     };
-                    if let Some(prefix) = super::extract_string_from_value(filter_val) {
-                        if let Some(map_lock) =
+                    if let Some(prefix) = super::extract_string_from_value(filter_val)
+                        && let Some(map_lock) =
                             self.memory_pool.node_property_str_ordered.get(&filter.key)
+                    {
+                        // Handle poisoned lock gracefully
+                        let Ok(map) = map_lock.read() else {
+                            tracing::warn!("Poisoned lock in node_property_str_ordered for key {}", filter.key);
+                            continue;
+                        };
+                        let mut matched = HashSet::new();
+                        for (k, ids) in map
+                            .range(prefix.to_string()..)
+                            .take_while(|(k, _)| k.starts_with(prefix))
                         {
-                            // Handle poisoned lock gracefully
-                            let Ok(map) = map_lock.read() else {
-                                tracing::warn!("Poisoned lock in node_property_str_ordered for key {}", filter.key);
-                                continue;
-                            };
-                            let mut matched = HashSet::new();
-                            for (k, ids) in map
-                                .range(prefix.to_string()..)
-                                .take_while(|(k, _)| k.starts_with(prefix))
-                            {
-                                matched.extend(ids.iter().cloned());
-                            }
-                            candidates = candidates
-                                .into_iter()
-                                .filter(|id| matched.contains(id))
-                                .collect();
+                            matched.extend(ids.iter().cloned());
                         }
+                        candidates = candidates
+                            .into_iter()
+                            .filter(|id| matched.contains(id))
+                            .collect();
                     }
                 }
                 Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
@@ -173,52 +172,51 @@ impl super::GraphOperationsService {
                         continue; // Skip filter if value is missing
                     };
                     // Prefer numeric range if value numeric, else fallback to string ordered
-                    if let Some(num) = super::extract_number_from_value(filter_val) {
-                        if let Some(map_lock) =
+                    if let Some(num) = super::extract_number_from_value(filter_val)
+                        && let Some(map_lock) =
                             self.memory_pool.node_property_num_indexes.get(&filter.key)
-                        {
-                            // Handle poisoned lock gracefully
-                            let Ok(map) = map_lock.read() else {
-                                tracing::warn!("Poisoned lock in node_property_num_indexes for key {}", filter.key);
-                                continue;
-                            };
-                            let mut matched = HashSet::new();
-                            match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
-                                Op::GreaterThan => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) > num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
+                    {
+                        // Handle poisoned lock gracefully
+                        let Ok(map) = map_lock.read() else {
+                            tracing::warn!("Poisoned lock in node_property_num_indexes for key {}", filter.key);
+                            continue;
+                        };
+                        let mut matched = HashSet::new();
+                        match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                            Op::GreaterThan => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) > num {
+                                        matched.extend(ids.iter().cloned());
                                     }
                                 }
-                                Op::GreaterEqual => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) >= num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
-                                    }
-                                }
-                                Op::LessThan => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) < num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
-                                    }
-                                }
-                                Op::LessEqual => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) <= num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
-                                    }
-                                }
-                                _ => {}
                             }
-                            candidates = candidates
-                                .into_iter()
-                                .filter(|id| matched.contains(id))
-                                .collect();
+                            Op::GreaterEqual => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) >= num {
+                                        matched.extend(ids.iter().cloned());
+                                    }
+                                }
+                            }
+                            Op::LessThan => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) < num {
+                                        matched.extend(ids.iter().cloned());
+                                    }
+                                }
+                            }
+                            Op::LessEqual => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) <= num {
+                                        matched.extend(ids.iter().cloned());
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
+                        candidates = candidates
+                            .into_iter()
+                            .filter(|id| matched.contains(id))
+                            .collect();
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {

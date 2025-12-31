@@ -189,23 +189,23 @@ pub async fn breadth_first_search(
     // BFS main loop
     while !frontier.is_empty() {
         // Timeout/budget check
-        if let Some(ms) = config.timeout_ms {
-            if start_time.elapsed() >= std::time::Duration::from_millis(ms) {
-                break;
-            }
+        if config
+            .timeout_ms
+            .is_some_and(|ms| start_time.elapsed() >= std::time::Duration::from_millis(ms))
+        {
+            break;
         }
         // Check depth limit
-        if let Some(max_depth) = config.max_depth {
-            if current_depth > max_depth {
-                break;
-            }
+        if config.max_depth.is_some_and(|max_depth| current_depth > max_depth) {
+            break;
         }
 
         // Check node limit
-        if let Some(max_nodes) = config.max_nodes {
-            if visited_nodes.len() >= max_nodes {
-                break;
-            }
+        if config
+            .max_nodes
+            .is_some_and(|max_nodes| visited_nodes.len() >= max_nodes)
+        {
+            break;
         }
 
         // Early termination check
@@ -221,10 +221,11 @@ pub async fn breadth_first_search(
         // Process current frontier
         while let Some(current_node_id) = frontier.pop_front() {
             // Timeout/budget check per-node
-            if let Some(ms) = config.timeout_ms {
-                if start_time.elapsed() >= std::time::Duration::from_millis(ms) {
-                    break;
-                }
+            if config
+                .timeout_ms
+                .is_some_and(|ms| start_time.elapsed() >= std::time::Duration::from_millis(ms))
+            {
+                break;
             }
             // Get current node
             let current_node = match engine.get_node(&current_node_id)? {
@@ -233,10 +234,8 @@ pub async fn breadth_first_search(
             };
 
             // Apply node filter
-            if let Some(ref filter) = config.node_filter {
-                if !filter(&current_node) {
-                    continue;
-                }
+            if config.node_filter.as_ref().is_some_and(|f| !f(&current_node)) {
+                continue;
             }
 
             result_nodes.push(current_node);
@@ -275,10 +274,12 @@ pub async fn breadth_first_search(
                         .track_access_async(edge_key, CacheType::GraphEdge);
                 }
                 // Filter by edge type if specified
-                if let Some(ref allowed_types) = config.edge_types {
-                    if !allowed_types.contains(&edge.edge_type) {
-                        continue;
-                    }
+                if config
+                    .edge_types
+                    .as_ref()
+                    .is_some_and(|allowed_types| !allowed_types.contains(&edge.edge_type))
+                {
+                    continue;
                 }
 
                 let neighbor_id = &edge.to_node_id;
@@ -298,21 +299,21 @@ pub async fn breadth_first_search(
                     traversed_edges.push(edge.clone()); // NEW
 
                     // Track path if enabled
-                    if config.track_paths {
-                        if let Some(current_path) = paths.get(&current_node_id) {
-                            let mut new_path = current_path.clone();
-                            new_path.push(neighbor_id.clone());
-                            paths.insert(neighbor_id.clone(), new_path);
-                        }
+                    if config.track_paths && paths.get(&current_node_id).is_some() {
+                        let mut new_path = paths.get(&current_node_id).unwrap().clone();
+                        new_path.push(neighbor_id.clone());
+                        paths.insert(neighbor_id.clone(), new_path);
                     }
 
                     // Hint orchestrator to prefetch adjacency for next frontier (bounded)
-                    if prefetch_budget > 0 && config.enable_prefetch {
-                        if let Some(orch) = CrossCacheOrchestrator::global() {
-                            let key = format!("adj::{}", neighbor_id);
-                            orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                            prefetch_budget -= 1;
-                        }
+                    if prefetch_budget > 0
+                        && config.enable_prefetch
+                        && CrossCacheOrchestrator::global().is_some()
+                    {
+                        let orch = CrossCacheOrchestrator::global().unwrap();
+                        let key = format!("adj::{}", neighbor_id);
+                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                        prefetch_budget -= 1;
                     }
                 }
             }
@@ -385,10 +386,11 @@ pub async fn depth_first_search(
     // DFS main loop (iterative to avoid stack overflow)
     while let Some((current_node_id, depth)) = stack.pop() {
         // Timeout/budget check per-node
-        if let Some(ms) = config.timeout_ms {
-            if start_time.elapsed() >= std::time::Duration::from_millis(ms) {
-                break;
-            }
+        if config
+            .timeout_ms
+            .is_some_and(|ms| start_time.elapsed() >= std::time::Duration::from_millis(ms))
+        {
+            break;
         }
         // Check if already visited (can happen with cycles)
         if visited_nodes.contains(&current_node_id) {
@@ -396,17 +398,16 @@ pub async fn depth_first_search(
         }
 
         // Check depth limit
-        if let Some(max_depth) = config.max_depth {
-            if depth > max_depth {
-                continue;
-            }
+        if config.max_depth.is_some_and(|max_depth| depth > max_depth) {
+            continue;
         }
 
         // Check node limit
-        if let Some(max_nodes) = config.max_nodes {
-            if visited_nodes.len() >= max_nodes {
-                break;
-            }
+        if config
+            .max_nodes
+            .is_some_and(|max_nodes| visited_nodes.len() >= max_nodes)
+        {
+            break;
         }
 
         visited_nodes.insert(current_node_id.clone());
@@ -419,10 +420,8 @@ pub async fn depth_first_search(
         };
 
         // Apply node filter
-        if let Some(ref filter) = config.node_filter {
-            if !filter(&current_node) {
-                continue;
-            }
+        if config.node_filter.as_ref().is_some_and(|f| !f(&current_node)) {
+            continue;
         }
 
         result_nodes.push(current_node);
@@ -430,10 +429,12 @@ pub async fn depth_first_search(
         stats.nodes_visited += 1;
 
         // Early termination check
-        if let Some(ref early_stop) = config.early_stop {
-            if early_stop(&[current_node_id.clone()]) {
-                break;
-            }
+        if config
+            .early_stop
+            .as_ref()
+            .is_some_and(|early_stop| early_stop(&[current_node_id.clone()]))
+        {
+            break;
         }
 
         // Get neighbors and add to stack (reverse order for consistent DFS)
@@ -468,42 +469,40 @@ pub async fn depth_first_search(
                     .track_access_async(edge_key, CacheType::GraphEdge);
             }
             // Filter by edge type if specified
-            if let Some(ref allowed_types) = config.edge_types {
-                if !allowed_types.contains(&edge.edge_type) {
-                    continue;
-                }
+            if config
+                .edge_types
+                .as_ref()
+                .is_some_and(|allowed_types| !allowed_types.contains(&edge.edge_type))
+            {
+                continue;
             }
 
             let neighbor_id = &edge.to_node_id;
 
             if !visited_nodes.contains(neighbor_id) {
                 // Enforce frontier cap on stack size if configured
-                if let Some(cap) = config.max_frontier {
-                    if stack.len() < cap {
-                        stack.push((neighbor_id.clone(), depth + 1));
-                    }
-                } else {
+                if config.max_frontier.is_none_or(|cap| stack.len() < cap) {
                     stack.push((neighbor_id.clone(), depth + 1));
                 }
                 stats.edges_traversed += 1;
                 traversed_edges.push(edge.clone()); // NEW
 
                 // Track path if enabled
-                if config.track_paths {
-                    if let Some(current_path) = paths.get(&current_node_id) {
-                        let mut new_path = current_path.clone();
-                        new_path.push(neighbor_id.clone());
-                        paths.insert(neighbor_id.clone(), new_path);
-                    }
+                if config.track_paths && paths.get(&current_node_id).is_some() {
+                    let mut new_path = paths.get(&current_node_id).unwrap().clone();
+                    new_path.push(neighbor_id.clone());
+                    paths.insert(neighbor_id.clone(), new_path);
                 }
 
                 // Hint orchestrator to prefetch adjacency for next frontier (bounded)
-                if prefetch_budget > 0 && config.enable_prefetch {
-                    if let Some(orch) = CrossCacheOrchestrator::global() {
-                        let key = format!("adj::{}", neighbor_id);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                        prefetch_budget -= 1;
-                    }
+                if prefetch_budget > 0
+                    && config.enable_prefetch
+                    && CrossCacheOrchestrator::global().is_some()
+                {
+                    let orch = CrossCacheOrchestrator::global().unwrap();
+                    let key = format!("adj::{}", neighbor_id);
+                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    prefetch_budget -= 1;
                 }
             }
         }

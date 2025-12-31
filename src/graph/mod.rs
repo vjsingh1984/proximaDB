@@ -365,24 +365,23 @@ impl GraphMemoryPool {
         // Remove from property indexes
         for (key, value) in &node.properties {
             let value_str = property_value_to_string(value);
-            if let Some(prop_map) = self.node_property_indexes.get_mut(key) {
-                if let Some(mut ids) = prop_map.get_mut(&value_str) {
-                    ids.retain(|id| id != &node.id);
-                }
+            if let Some(prop_map) = self.node_property_indexes.get_mut(key)
+                && let Some(mut ids) = prop_map.get_mut(&value_str)
+            {
+                ids.retain(|id| id != &node.id);
             }
 
             // Remove from ordered string index
             if matches!(
                 value.value,
                 Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
-            ) {
-                if let Some(map_lock) = self.node_property_str_ordered.get(key) {
-                    let mut map = map_lock.write().unwrap();
-                    if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
-                        ids.retain(|id| id != &node.id);
-                        if ids.is_empty() {
-                            map.remove(&property_value_to_string(value));
-                        }
+            ) && let Some(map_lock) = self.node_property_str_ordered.get(key)
+            {
+                let mut map = map_lock.write().unwrap();
+                if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
+                    ids.retain(|id| id != &node.id);
+                    if ids.is_empty() {
+                        map.remove(&property_value_to_string(value));
                     }
                 }
             }
@@ -394,14 +393,13 @@ impl GraphMemoryPool {
                     Some(*d as i64)
                 }
                 _ => None,
-            } {
-                if let Some(map_lock) = self.node_property_num_indexes.get(key) {
-                    let mut map = map_lock.write().unwrap();
-                    if let Some(ids) = map.get_mut(&num) {
-                        ids.retain(|id| id != &node.id);
-                        if ids.is_empty() {
-                            map.remove(&num);
-                        }
+            } && let Some(map_lock) = self.node_property_num_indexes.get(key)
+            {
+                let mut map = map_lock.write().unwrap();
+                if let Some(ids) = map.get_mut(&num) {
+                    ids.retain(|id| id != &node.id);
+                    if ids.is_empty() {
+                        map.remove(&num);
                     }
                 }
             }
@@ -418,24 +416,23 @@ impl GraphMemoryPool {
         // Remove from property indexes
         for (key, value) in &edge.properties {
             let value_str = property_value_to_string(value);
-            if let Some(prop_map) = self.edge_property_indexes.get_mut(key) {
-                if let Some(mut ids) = prop_map.get_mut(&value_str) {
-                    ids.retain(|id| id != &edge.id);
-                }
+            if let Some(prop_map) = self.edge_property_indexes.get_mut(key)
+                && let Some(mut ids) = prop_map.get_mut(&value_str)
+            {
+                ids.retain(|id| id != &edge.id);
             }
 
             // Remove from ordered string index
             if matches!(
                 value.value,
                 Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
-            ) {
-                if let Some(map_lock) = self.edge_property_str_ordered.get(key) {
-                    let mut map = map_lock.write().unwrap();
-                    if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
-                        ids.retain(|id| id != &edge.id);
-                        if ids.is_empty() {
-                            map.remove(&property_value_to_string(value));
-                        }
+            ) && let Some(map_lock) = self.edge_property_str_ordered.get(key)
+            {
+                let mut map = map_lock.write().unwrap();
+                if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
+                    ids.retain(|id| id != &edge.id);
+                    if ids.is_empty() {
+                        map.remove(&property_value_to_string(value));
                     }
                 }
             }
@@ -447,14 +444,13 @@ impl GraphMemoryPool {
                     Some(*d as i64)
                 }
                 _ => None,
-            } {
-                if let Some(map_lock) = self.edge_property_num_indexes.get(key) {
-                    let mut map = map_lock.write().unwrap();
-                    if let Some(ids) = map.get_mut(&num) {
-                        ids.retain(|id| id != &edge.id);
-                        if ids.is_empty() {
-                            map.remove(&num);
-                        }
+            } && let Some(map_lock) = self.edge_property_num_indexes.get(key)
+            {
+                let mut map = map_lock.write().unwrap();
+                if let Some(ids) = map.get_mut(&num) {
+                    ids.retain(|id| id != &edge.id);
+                    if ids.is_empty() {
+                        map.remove(&num);
                     }
                 }
             }
