@@ -112,6 +112,7 @@ pub mod builder;
 pub mod detectors;
 pub mod handlers;
 pub mod service;
+pub mod tcp_multiplexer;
 pub mod traits;
 pub mod unified_server;
 
@@ -122,4 +123,5 @@ pub use traits::{
     BoxResponseFuture, DetectedProtocol, DetectionResult, HandlerResult, MultiplexError,
     ProtocolDetector, ProtocolHandler, SharedDetector, SharedHandler,
 };
+pub use tcp_multiplexer::{TcpMultiplexConfig, TcpMultiplexer, TcpProtocol};
 pub use unified_server::{UnifiedServer, UnifiedServerConfig};
