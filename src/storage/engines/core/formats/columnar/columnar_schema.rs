@@ -109,7 +109,7 @@ impl ColumnarSchema {
         if config.enable_binary.unwrap_or(false) {
             fields.push(Field::new(
                 "vector_binary",
-                DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+                DataType::FixedSizeBinary(dimension.div_ceil(8) as i32),
                 true,
             ));
             debug!("Added binary quantization column");
@@ -413,7 +413,7 @@ impl ColumnarSchema {
             {
                 fields.push(Arc::new(Field::new(
                     "vector_binary",
-                    DataType::FixedSizeBinary(((new_requirements.dimension + 7) / 8) as i32),
+                    DataType::FixedSizeBinary(new_requirements.dimension.div_ceil(8) as i32),
                     true,
                 )));
             }

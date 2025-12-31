@@ -667,7 +667,7 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
 
         // Dynamic filterable metadata columns
         for field in &self.filterable_fields {
-            fields.push(Field::new(&format!("meta_{}", field), DataType::Utf8, true));
+            fields.push(Field::new(format!("meta_{}", field), DataType::Utf8, true));
         }
 
         // Extra metadata as Map type

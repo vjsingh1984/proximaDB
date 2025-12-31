@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_geo_index_insert_search() {
-        let mut index = GeoIndex::new(GeoIndexConfig::default());
+        let index = GeoIndex::new(GeoIndexConfig::default());
 
         // Insert some points
         index.insert("sf".to_string(), GeoPoint::new(37.7749, -122.4194));
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_geo_index_bounding_box_search() {
-        let mut index = GeoIndex::new(GeoIndexConfig::default());
+        let index = GeoIndex::new(GeoIndexConfig::default());
 
         index.insert("sf".to_string(), GeoPoint::new(37.7749, -122.4194));
         index.insert("oakland".to_string(), GeoPoint::new(37.8044, -122.2712));
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_geo_index_delete() {
-        let mut index = GeoIndex::new(GeoIndexConfig::default());
+        let index = GeoIndex::new(GeoIndexConfig::default());
 
         index.insert("sf".to_string(), GeoPoint::new(37.7749, -122.4194));
         index.insert("la".to_string(), GeoPoint::new(34.0522, -118.2437));

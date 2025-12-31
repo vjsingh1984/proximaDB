@@ -111,7 +111,7 @@ impl HierarchicalBloomFilters {
         let num_hashes = file_config.optimal_hash_count(num_bits, all_keys.len());
 
         // Build bloom filter
-        let mut bloom_data = vec![0u8; (num_bits + 7) / 8];
+        let mut bloom_data = vec![0u8; num_bits.div_ceil(8)];
         for key in all_keys {
             let positions =
                 crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
@@ -143,7 +143,7 @@ impl HierarchicalBloomFilters {
         let num_hashes = config.optimal_hash_count(num_bits, superblock_keys.len());
 
         // Build bloom filter
-        let mut bloom_data = vec![0u8; (num_bits + 7) / 8];
+        let mut bloom_data = vec![0u8; num_bits.div_ceil(8)];
         for key in superblock_keys {
             let positions =
                 crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
@@ -175,7 +175,7 @@ impl HierarchicalBloomFilters {
         let num_hashes = config.optimal_hash_count(num_bits, block_keys.len());
 
         // Build bloom filter
-        let mut bloom_data = vec![0u8; (num_bits + 7) / 8];
+        let mut bloom_data = vec![0u8; num_bits.div_ceil(8)];
         for key in block_keys {
             let positions =
                 crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);

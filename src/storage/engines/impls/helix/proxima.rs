@@ -438,7 +438,7 @@ pub async fn write_helix_sstable(
     file_data.put_u32_le(2); // Version 2 for SIMD-enhanced format
 
     // Calculate block count
-    let num_blocks = (records.len() + block_size - 1) / block_size;
+    let num_blocks = records.len().div_ceil(block_size);
     file_data.put_u32_le(num_blocks as u32);
 
     let mut block_offsets = Vec::new();

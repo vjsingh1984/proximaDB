@@ -861,7 +861,7 @@ impl ProximaEntityStore {
         #[cfg(not(test))]
         let total_count = self.headers.read().unwrap().len();
 
-        let num_batches = (total_count + batch_size - 1) / batch_size;
+        let num_batches = total_count.div_ceil(batch_size);
 
         stream::iter(0..num_batches).then(move |batch_idx| async move {
             let start_idx = batch_idx * batch_size;

@@ -147,7 +147,7 @@ impl BloomConsolidator {
         }
 
         // Create new bloom filter sized for expected items
-        let mut consolidated = BloomFilterFactory::create(&self.config);
+        let consolidated = BloomFilterFactory::create(&self.config);
 
         let mut total_items = 0usize;
         let mut successful_merges = 0usize;

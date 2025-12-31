@@ -839,7 +839,7 @@ impl HardwareCapabilities {
 
         // L1 data cache
         if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l1dcachesize"])
+            .args(["-n", "hw.l1dcachesize"])
             .output()
         {
             if let Ok(size_str) = String::from_utf8(output.stdout) {
@@ -851,7 +851,7 @@ impl HardwareCapabilities {
 
         // L1 instruction cache
         if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l1icachesize"])
+            .args(["-n", "hw.l1icachesize"])
             .output()
         {
             if let Ok(size_str) = String::from_utf8(output.stdout) {
@@ -863,7 +863,7 @@ impl HardwareCapabilities {
 
         // L2 cache
         if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l2cachesize"])
+            .args(["-n", "hw.l2cachesize"])
             .output()
         {
             if let Ok(size_str) = String::from_utf8(output.stdout) {
@@ -875,7 +875,7 @@ impl HardwareCapabilities {
 
         // L3 cache
         if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l3cachesize"])
+            .args(["-n", "hw.l3cachesize"])
             .output()
         {
             if let Ok(size_str) = String::from_utf8(output.stdout) {

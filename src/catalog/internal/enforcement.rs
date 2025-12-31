@@ -359,7 +359,7 @@ impl ConstraintEnforcer {
         row: &RowValue,
         referencing_objects: &[&CatalogObject],
     ) -> EnforcementResult {
-        let mut result = EnforcementResult::pass(object.enforcement_mode);
+        let result = EnforcementResult::pass(object.enforcement_mode);
 
         // Check if any other objects have FK references to this row
         for referencing_obj in referencing_objects {

@@ -168,7 +168,7 @@ impl FluentAdapter {
         let events = Arc::new(AtomicU64::new(0));
 
         tokio::spawn(async move {
-            let mut batch: Vec<crate::proto::proximadb_v1::LogEntry> = Vec::with_capacity(batch_size);
+            let batch: Vec<crate::proto::proximadb_v1::LogEntry> = Vec::with_capacity(batch_size);
 
             while running.load(Ordering::Relaxed) {
                 match listener.accept().await {

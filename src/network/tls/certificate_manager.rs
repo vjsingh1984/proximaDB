@@ -301,13 +301,13 @@ impl CertificateManager {
         let mut dn = DistinguishedName::new();
         dn.push(
             DnType::CommonName,
-            &format!("{} CA", self.config.subject.common_name),
+            format!("{} CA", self.config.subject.common_name),
         );
         if let Some(ref org) = self.config.subject.organization {
             dn.push(DnType::OrganizationName, org);
         }
         if let Some(ref ou) = self.config.subject.organizational_unit {
-            dn.push(DnType::OrganizationalUnitName, &format!("{} CA", ou));
+            dn.push(DnType::OrganizationalUnitName, format!("{} CA", ou));
         }
         if let Some(ref country) = self.config.subject.country {
             dn.push(DnType::CountryName, country);

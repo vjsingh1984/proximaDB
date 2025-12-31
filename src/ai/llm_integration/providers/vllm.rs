@@ -100,7 +100,7 @@ impl LLMClient for VLLMClient {
 
         let mut request_builder = self
             .client
-            .post(&format!("{}/generate", self.config.base_url))
+            .post(format!("{}/generate", self.config.base_url))
             .header("Content-Type", "application/json");
 
         // Add API key if configured
@@ -187,7 +187,7 @@ impl LLMClient for VLLMClient {
         // Check if vLLM server is running
         match self
             .client
-            .get(&format!("{}/health", self.config.base_url))
+            .get(format!("{}/health", self.config.base_url))
             .send()
             .await
         {
@@ -204,7 +204,7 @@ impl LLMClient for VLLMClient {
         // Test by checking server health
         let response = self
             .client
-            .get(&format!("{}/health", self.config.base_url))
+            .get(format!("{}/health", self.config.base_url))
             .send()
             .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to connect to vLLM: {}", e)))?;

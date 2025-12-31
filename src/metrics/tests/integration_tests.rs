@@ -414,7 +414,7 @@ mod tests {
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
 
         let config = Arc::new(WALConfig::default());
-        let mut bg_manager = BackgroundMaintenanceManager::new(config);
+        let bg_manager = BackgroundMaintenanceManager::new(config);
 
         // Register metrics updater with BackgroundManager
         // TODO: Add set_metrics_updater to BackgroundMaintenanceManager
@@ -513,7 +513,7 @@ mod tests {
         flush_coordinator.set_metrics_updater(metrics_updater.clone());
 
         let config = Arc::new(WALConfig::default());
-        let mut bg_manager = BackgroundMaintenanceManager::new(config);
+        let bg_manager = BackgroundMaintenanceManager::new(config);
         // Note: bg_manager doesn't have set_metrics_updater method, which is fine for this test
 
         // Create mock storage engine

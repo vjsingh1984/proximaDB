@@ -180,7 +180,7 @@ impl CompositeBloomFilterBuilder {
     ) {
         self.metadata_values
             .entry(column)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(item);
     }
 

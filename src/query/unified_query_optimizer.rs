@@ -444,7 +444,7 @@ impl UnifiedQueryOptimizer {
             self.estimate_unified_performance(&context, &execution_steps, &resource_allocation)?;
 
         // Step 7: Configure parallelism (may be modified by RL action)
-        let mut parallelism = self.configure_parallelism(&context, &execution_steps);
+        let parallelism = self.configure_parallelism(&context, &execution_steps);
 
         // Step 8: Setup fallback strategies
         let fallback_strategies = self.configure_fallbacks(&context, &execution_steps);

@@ -413,10 +413,10 @@ impl BalancedMatrixTrinitySizing {
         let max_size = 4096.min(total_vectors); // Can't exceed total
 
         let optimal_p = (sqrt_n as usize).clamp(min_size, max_size);
-        let optimal_k = (total_vectors + optimal_p - 1) / optimal_p; // Ceiling division
+        let optimal_k = total_vectors.div_ceil(optimal_p); // Ceiling division
 
         // Recalculate actual p to ensure k * p >= N
-        let actual_p = (total_vectors + optimal_k - 1) / optimal_k;
+        let actual_p = total_vectors.div_ceil(optimal_k);
 
         // Calculate Matrix Trinity costs
         let n = total_vectors;

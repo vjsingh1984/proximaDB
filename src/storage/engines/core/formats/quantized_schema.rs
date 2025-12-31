@@ -500,7 +500,7 @@ impl QuantizedVectorSchemaBuilder {
         };
 
         let num_subquantizers =
-            ((self.dimension + target_dims_per_subq - 1) / target_dims_per_subq).max(1);
+            (self.dimension.div_ceil(target_dims_per_subq)).max(1);
         Ok(num_subquantizers)
     }
 

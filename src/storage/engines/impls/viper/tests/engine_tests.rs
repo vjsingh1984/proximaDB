@@ -1010,7 +1010,7 @@ async fn test_search_vectors_unified() {
                         Ok(builder) => {
                             debug!("Arrow reader schema: {:?}", builder.schema());
                             match builder.build() {
-                                Ok(mut reader) => {
+                                Ok(reader) => {
                                     let mut total_rows = 0;
                                     let mut batch_count = 0;
                                     for batch_result in reader {

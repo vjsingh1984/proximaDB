@@ -59,7 +59,7 @@ impl MvccResolver {
                 } else {
                     id_groups
                         .entry(id.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(record);
                 }
             } else {

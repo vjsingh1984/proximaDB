@@ -65,7 +65,7 @@ pub fn convert_expr_to_filter(
             let values: Result<Vec<_>, _> = in_list
                 .list
                 .iter()
-                .map(|e| scalar_to_json_value(e))
+                .map(scalar_to_json_value)
                 .collect();
 
             let filter = FilterExpression::In {

@@ -213,8 +213,8 @@ impl LLMClient for AnthropicClient {
         // Send request to Anthropic
         let response = self
             .client
-            .post(&format!("{}/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
+            .post(format!("{}/messages", self.base_url))
+            .header("x-api-key", self.api_key.as_str())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&anthropic_request)
@@ -300,8 +300,8 @@ impl LLMClient for AnthropicClient {
 
         let response = self
             .client
-            .post(&format!("{}/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
+            .post(format!("{}/messages", self.base_url))
+            .header("x-api-key", self.api_key.as_str())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&test_request)

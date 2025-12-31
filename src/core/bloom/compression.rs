@@ -177,7 +177,7 @@ impl CompressedBloom {
 
     /// Get memory savings in bytes
     pub fn memory_savings(&self) -> usize {
-        let uncompressed_bytes = (self.original_size + 7) / 8;
+        let uncompressed_bytes = self.original_size.div_ceil(8);
         uncompressed_bytes.saturating_sub(self.compressed_data.len())
     }
 
@@ -198,7 +198,7 @@ pub struct CompressedBloomBuilder {
 impl CompressedBloomBuilder {
     /// Create a new builder
     pub fn new(num_bits: usize, num_hashes: usize) -> Self {
-        let num_bytes = (num_bits + 7) / 8;
+        let num_bytes = num_bits.div_ceil(8);
         Self {
             bits: vec![0; num_bytes],
             num_bits,

@@ -12,7 +12,7 @@ async fn test_viper_predicate_pushdown() {
     use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let mut evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
+    let evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Simple equality filter
     let filter = FilterExpression::Comparison {
@@ -33,7 +33,7 @@ async fn test_parallel_column_evaluation() {
     use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let mut evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
+    let evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Complex AND/OR filter
     let filter = FilterExpression::And(vec![

@@ -1090,7 +1090,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_manager_direct_to_storage() {
-        let (disk_manager, flush_coordinator, mut recovery_manager, temp_dir) =
+        let (disk_manager, flush_coordinator, recovery_manager, temp_dir) =
             create_test_managers().await;
         let collection_id = "test_collection";
 

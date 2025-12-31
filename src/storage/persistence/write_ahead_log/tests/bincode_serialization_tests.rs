@@ -209,7 +209,7 @@ async fn test_bincode_similarity_search_accuracy() {
 
     // Create vectors with known distances
     // For cosine similarity, we need vectors with different directions, not just magnitudes
-    let mut exact_vec = create_test_vector("exact_match", 128, 1.0);
+    let exact_vec = create_test_vector("exact_match", 128, 1.0);
 
     let mut close_vec = create_test_vector("close_match", 128, 0.95);
     // Perturb slightly to create different direction

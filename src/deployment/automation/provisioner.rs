@@ -851,7 +851,7 @@ impl ValidationEngine {
         });
 
         match client
-            .post(&format!(
+            .post(format!(
                 "{}/api/v1/ai/natural-language/query",
                 endpoints.rest_api
             ))

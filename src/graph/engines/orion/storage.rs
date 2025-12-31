@@ -156,7 +156,7 @@ impl CsrStorage {
         // Add to temporary storage for batch processing (O(1) operation)
         self.temp_edges
             .entry(from_index)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((to_index, edge_id));
 
         // Mark that CSR needs rebuild and increment temp count

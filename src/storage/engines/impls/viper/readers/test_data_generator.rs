@@ -421,15 +421,15 @@ impl ParquetTestDataGenerator {
                     // Add metadata entries
                     keys_builder.append_value("category");
                     values_builder
-                        .append_value(&format!("cat_{}", i % config.metadata_cardinality));
+                        .append_value(format!("cat_{}", i % config.metadata_cardinality));
                     entry_count += 1;
 
                     keys_builder.append_value("year");
-                    values_builder.append_value(&(2020 + (i % 5)).to_string());
+                    values_builder.append_value((2020 + (i % 5)).to_string());
                     entry_count += 1;
 
                     keys_builder.append_value("score");
-                    values_builder.append_value(&format!("{:.2}", self.rng.gen_range(0.0..1.0)));
+                    values_builder.append_value(format!("{:.2}", self.rng.gen_range(0.0..1.0)));
                     entry_count += 1;
 
                     offsets.push(entry_count);
@@ -523,7 +523,7 @@ impl ParquetTestDataGenerator {
             for i in 0..config.num_rows {
                 // Add metadata entries
                 keys_builder.append_value("category");
-                values_builder.append_value(&format!("cat_{}", i % config.metadata_cardinality));
+                values_builder.append_value(format!("cat_{}", i % config.metadata_cardinality));
                 entry_count += 1;
 
                 keys_builder.append_value("quantized");
@@ -681,11 +681,11 @@ impl ParquetTestDataGenerator {
                 entry_count += 1;
 
                 keys_builder.append_value("row_index");
-                values_builder.append_value(&i.to_string());
+                values_builder.append_value(i.to_string());
                 entry_count += 1;
 
                 keys_builder.append_value("generated_at");
-                values_builder.append_value(&generated_at);
+                values_builder.append_value(generated_at.as_str());
                 entry_count += 1;
 
                 offsets.push(entry_count);

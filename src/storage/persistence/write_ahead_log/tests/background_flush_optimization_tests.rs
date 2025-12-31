@@ -256,7 +256,7 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // Create flush coordinator
-        let mut coordinator = WALFlushCoordinator::new();
+        let coordinator = WALFlushCoordinator::new();
 
         // Create mock storage engines
         let viper_engine = Arc::new(MockStorageEngine::new("viper"));
@@ -311,7 +311,7 @@ mod tests {
     async fn test_engine_selection_optimization() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let mut coordinator = WALFlushCoordinator::new();
+        let coordinator = WALFlushCoordinator::new();
 
         // Create mock engines
         let viper_engine = Arc::new(MockStorageEngine::new("viper"));
@@ -403,7 +403,7 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // This test verifies that when context is provided, no collection service calls are made
-        let mut coordinator = WALFlushCoordinator::new();
+        let coordinator = WALFlushCoordinator::new();
 
         // Note: We intentionally do NOT set a collection service
         // If the optimization works, this should not cause any failures
@@ -452,7 +452,7 @@ mod tests {
         let context = create_test_context("e2e_test", StorageEngineType::Viper);
 
         // Step 2: Set up coordinator with mock engines
-        let mut coordinator = WALFlushCoordinator::new();
+        let coordinator = WALFlushCoordinator::new();
         let viper_engine = Arc::new(MockStorageEngine::new("viper"));
         coordinator
             .register_storage_engine(

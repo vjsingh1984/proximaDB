@@ -124,7 +124,7 @@ impl PropertyIndex {
 
         self.btree_index
             .entry(value_str)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(entity_id);
 
         self.update_stats();
@@ -227,7 +227,7 @@ impl LabelIndex {
         for label in labels {
             self.label_to_nodes
                 .entry(label.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(node_id.clone());
         }
 
@@ -347,7 +347,7 @@ impl EdgeTypeIndex {
     pub fn add_edge(&mut self, edge_id: EdgeId, edge_type: &str) -> Result<()> {
         self.type_to_edges
             .entry(edge_type.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(edge_id);
 
         self.update_stats();

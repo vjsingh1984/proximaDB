@@ -101,7 +101,7 @@ impl LLMClient for OllamaClient {
 
         let response = self
             .client
-            .post(&format!("{}/api/generate", self.config.base_url))
+            .post(format!("{}/api/generate", self.config.base_url))
             .header("Content-Type", "application/json")
             .json(&ollama_request)
             .send()
@@ -167,7 +167,7 @@ impl LLMClient for OllamaClient {
         // Check if Ollama server is running
         match self
             .client
-            .get(&format!("{}/api/tags", self.config.base_url))
+            .get(format!("{}/api/tags", self.config.base_url))
             .send()
             .await
         {
@@ -185,7 +185,7 @@ impl LLMClient for OllamaClient {
         // Test by checking available models
         let response = self
             .client
-            .get(&format!("{}/api/tags", self.config.base_url))
+            .get(format!("{}/api/tags", self.config.base_url))
             .send()
             .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to connect to Ollama: {}", e)))?;

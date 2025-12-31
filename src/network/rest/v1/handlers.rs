@@ -920,7 +920,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("✅ Unified Query API endpoints enabled at /api/v1/unified (full cross-model + federated SQL support)");
 
     // Convert to Router<()> by providing state
-    let mut router = router.with_state(state);
+    let router = router.with_state(state);
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]

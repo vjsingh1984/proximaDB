@@ -1191,7 +1191,7 @@ impl Catalog for IcebergCatalog {
             Ok(_) => {
                 let latency = start.elapsed().as_millis() as u64;
                 Ok(CatalogHealth::healthy(latency)
-                    .with_detail("backend", &format!("{:?}", self.backend))
+                    .with_detail("backend", format!("{:?}", self.backend))
                     .with_detail("catalog_type", "iceberg"))
             }
             Err(e) => Ok(CatalogHealth::unhealthy(e.to_string())),

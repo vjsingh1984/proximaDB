@@ -525,7 +525,7 @@ impl AxisVectorIndex for AxisHnswIndex {
                 // Add internal_node_id to neighbor's connections
                 self.layers
                     .entry((layer, *neighbor))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(internal_node_id);
 
                 // Shrink neighbor's connections if exceeded max degree
@@ -534,7 +534,7 @@ impl AxisVectorIndex for AxisHnswIndex {
                 // Add neighbor to internal_node_id's connections
                 self.layers
                     .entry((layer, internal_node_id))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(*neighbor);
             }
 
@@ -1069,8 +1069,8 @@ impl AxisHnswIndex {
                     let quant_size = match collection_config.quantization_method {
                         Some(0) => collection_config.dimension, // INT8
                         Some(1) => collection_config.dimension, // PQ8
-                        Some(2) => (collection_config.dimension * 4 + 7) / 8, // PQ4
-                        Some(3) => (collection_config.dimension + 7) / 8, // Binary
+                        Some(2) => (collection_config.dimension * 4).div_ceil(8), // PQ4
+                        Some(3) => collection_config.dimension.div_ceil(8), // Binary
                         _ => collection_config.dimension,
                     };
                     let quant_data = zero_vec.as_quantized(quant_size);

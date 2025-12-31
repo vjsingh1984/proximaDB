@@ -645,8 +645,8 @@ impl AdaptivePcaConfig {
 /// Returns: (blocks, index_entries, zorder_codes) where zorder_codes[i]
 /// is the Z-Order code for index_entries[i] after clustering.
 pub fn cluster_blocks_pca_zorder<B, I, F>(
-    mut blocks: Vec<B>,
-    mut index_entries: Vec<I>,
+    blocks: Vec<B>,
+    index_entries: Vec<I>,
     get_centroid: F,
     target_dimensions: usize,
 ) -> (Vec<B>, Vec<I>, Vec<SpatialCode>)
@@ -982,8 +982,8 @@ fn optimize_traversal_order(control_points: &[Vec<f32>]) -> Vec<usize> {
 ///
 /// AdaCurves still return u64 codes (48-bit segment + 16-bit offset).
 pub fn cluster_blocks_pca_adacurves<B, I, F>(
-    mut blocks: Vec<B>,
-    mut index_entries: Vec<I>,
+    blocks: Vec<B>,
+    index_entries: Vec<I>,
     get_centroid: F,
     target_dimensions: usize,
 ) -> (Vec<B>, Vec<I>, Vec<u64>)

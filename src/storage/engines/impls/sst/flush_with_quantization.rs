@@ -324,7 +324,7 @@ impl SstEngine {
         }
 
         let dimension = vectors[0].len();
-        let num_groups = (dimension + group_size - 1) / group_size;
+        let num_groups = dimension.div_ceil(group_size);
         let mut grouped = Vec::with_capacity(num_groups * vectors.len());
 
         for group_idx in 0..num_groups {

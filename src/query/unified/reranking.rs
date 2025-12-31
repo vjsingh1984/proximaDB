@@ -406,7 +406,7 @@ impl CrossModalReranker {
     }
 
     /// Apply Maximum Marginal Relevance (MMR) for diversity
-    fn apply_mmr_diversity(&self, mut records: Vec<ScoredRecord>) -> Result<Vec<ScoredRecord>> {
+    fn apply_mmr_diversity(&self, records: Vec<ScoredRecord>) -> Result<Vec<ScoredRecord>> {
         if records.len() <= 1 {
             return Ok(records);
         }

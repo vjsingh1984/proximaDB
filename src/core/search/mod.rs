@@ -801,7 +801,7 @@ pub mod protocol_conversions {
                     if let Value::Array(cond_array) = conditions {
                         let logic = obj.get("logic").and_then(|v| v.as_str()).unwrap_or("and");
                         let expressions: Result<Vec<FilterExpression>, String> =
-                            cond_array.iter().map(|c| parse_rest_condition(c)).collect();
+                            cond_array.iter().map(parse_rest_condition).collect();
 
                         match expressions {
                             Ok(exprs) => {

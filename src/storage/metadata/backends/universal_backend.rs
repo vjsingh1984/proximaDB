@@ -774,12 +774,12 @@ impl UniversalMetadataBackend {
 
         // Create operation filename with sequence
         let filename = format!("op_{:016}.oplog", operation.sequence);
-        let op_path = ops_dir.join(&filename);
+        let op_path = ops_dir.join(filename.as_str());
 
         // Create staging directory if it doesn't exist for simple operations
         let staging_dir = self.base_path.join("staging");
         std::fs::create_dir_all(&staging_dir).ok();
-        let temp_path = staging_dir.join(&format!("temp_{}", filename));
+        let temp_path = staging_dir.join(format!("temp_{}", filename));
 
         // Serialize operation to Avro
         // Serialize operation log entry as JSON for simplicity

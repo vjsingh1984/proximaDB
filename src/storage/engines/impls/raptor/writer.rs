@@ -422,7 +422,7 @@ impl IvfClusteringBuilder {
             .max(p_min)
             .max(self.target_rowgroup_size);
 
-        let k = (n + p - 1) / p; // Number of clusters needed: k = ceil(n/p)
+        let k = n.div_ceil(p); // Number of clusters needed: k = ceil(n/p)
 
         let k_means_calcs = k * n; // AXIS k-means clustering
         let centroid_matrix_calcs = k * k; // K² matrix: Centroid-to-centroid distances
@@ -654,7 +654,7 @@ impl IvfClusteringBuilder {
             let p = self
                 .target_rowgroup_size
                 .max(constants::clustering::MIN_ROWGROUP_SIZE);
-            let k = (n + p - 1) / p;
+            let k = n.div_ceil(p);
             let mut clusters = vec![Vec::new(); k];
             for (idx, _node) in self.nodes.iter().enumerate() {
                 clusters[idx % k].push(idx as u32);

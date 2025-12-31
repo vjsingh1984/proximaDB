@@ -922,7 +922,7 @@ impl QuantizedDistanceCalculator {
             sorted[sorted.len() / 2]
         };
 
-        let mut binary = vec![0u8; ((query.len() + 7) / 8) as usize];
+        let mut binary = vec![0u8; query.len().div_ceil(8)];
         for (i, &value) in query.iter().enumerate() {
             if value > median {
                 let byte_idx = i / 8;

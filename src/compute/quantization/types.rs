@@ -214,7 +214,7 @@ impl UnifiedQuantizationLevel {
             }
             Some(QuantizationLevel::Scalar(sq)) => dimension * ((sq.bits + 7) / 8) as usize,
             Some(QuantizationLevel::Binary(_)) => {
-                (dimension + 7) / 8 // 1 bit per dimension
+                dimension.div_ceil(8) // 1 bit per dimension
             }
             Some(QuantizationLevel::Uniform(uq)) => dimension * ((uq.bits + 7) / 8) as usize,
             Some(QuantizationLevel::Custom(cq)) => {

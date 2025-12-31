@@ -209,7 +209,7 @@ impl BatchOptimizer {
         let batch_size = self.optimal_batch_size(data.len(), dimension);
         debug!(
             "🔀 Creating {} batches of size {} for {} vectors (backend: {:?})",
-            (data.len() + batch_size - 1) / batch_size,
+            data.len().div_ceil(batch_size),
             batch_size,
             data.len(),
             self.backend
@@ -544,7 +544,7 @@ mod tests {
         println!("   Row groups per batch: {}", batch_size / 1024);
         println!(
             "   Batches needed: {}",
-            (total_vectors + batch_size - 1) / batch_size
+            total_vectors.div_ceil(batch_size)
         );
 
         // Verify batch size is power of 2

@@ -532,7 +532,7 @@ fn convert_properties_to_json(
                     serde_json::Value::Array(
                         arr.values
                             .iter()
-                            .map(|v| convert_property_value_to_json(v))
+                            .map(convert_property_value_to_json)
                             .collect(),
                     )
                 }

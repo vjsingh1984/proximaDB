@@ -751,7 +751,7 @@ impl RoutingService {
         let tenant_hash = tenant_hasher.finish();
 
         // Number of tenant groups
-        let tenant_groups = (total_shards + shards_per_tenant - 1) / shards_per_tenant;
+        let tenant_groups = total_shards.div_ceil(shards_per_tenant);
         let tenant_group = (tenant_hash % tenant_groups as u64) as u32;
         let base_shard = tenant_group * shards_per_tenant;
 

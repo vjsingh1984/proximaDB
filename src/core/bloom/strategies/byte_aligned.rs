@@ -32,7 +32,7 @@ impl ByteAlignedBloomFilter {
         let bits_per_key = config.bits_per_key.max(1).min(32);
         let expected_elements = expected_elements.max(1); // Ensure at least 1 element
         let num_bits = ((expected_elements as u64 * bits_per_key as u64) as u32).max(8); // Minimum 8 bits
-        let num_bytes = ((num_bits + 7) / 8) as usize;
+        let num_bytes = (num_bits as usize).div_ceil(8);
         let num_hashes = ((bits_per_key as f64 * 0.69).round() as u32).max(1);
 
         Self {

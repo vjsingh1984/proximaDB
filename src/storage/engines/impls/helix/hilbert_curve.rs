@@ -310,7 +310,7 @@ impl HilbertCurve {
         } else {
             // Need to compress - use XOR folding
             let mut compressed = 0u32;
-            let chunks = (dims + target_bits - 1) / target_bits;
+            let chunks = dims.div_ceil(target_bits);
             for i in 0..chunks {
                 let chunk = (bits >> (i * target_bits)) & ((1u32 << target_bits) - 1);
                 compressed ^= chunk;

@@ -241,7 +241,7 @@ impl GraphMemoryPool {
         for label in &node.labels {
             self.label_indexes
                 .entry(label.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(node.id.clone());
         }
 
@@ -250,9 +250,9 @@ impl GraphMemoryPool {
             let value_str = property_value_to_string(value);
             self.node_property_indexes
                 .entry(key.clone())
-                .or_insert_with(DashMap::new)
+                .or_default()
                 .entry(value_str)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(node.id.clone());
 
             // Ordered string index
@@ -266,7 +266,7 @@ impl GraphMemoryPool {
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(property_value_to_string(value))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(node.id.clone());
             }
 
@@ -284,7 +284,7 @@ impl GraphMemoryPool {
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(num)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(node.id.clone());
             }
         }
@@ -295,7 +295,7 @@ impl GraphMemoryPool {
         // Update edge type indexes
         self.edge_type_indexes
             .entry(edge.edge_type.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(edge.id.clone());
 
         // Update property indexes
@@ -303,9 +303,9 @@ impl GraphMemoryPool {
             let value_str = property_value_to_string(value);
             self.edge_property_indexes
                 .entry(key.clone())
-                .or_insert_with(DashMap::new)
+                .or_default()
                 .entry(value_str)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(edge.id.clone());
 
             // Ordered string index (for string values)
@@ -319,7 +319,7 @@ impl GraphMemoryPool {
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(property_value_to_string(value))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(edge.id.clone());
             }
 
@@ -337,7 +337,7 @@ impl GraphMemoryPool {
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(num)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(edge.id.clone());
             }
         }

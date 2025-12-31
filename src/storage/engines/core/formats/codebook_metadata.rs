@@ -391,7 +391,7 @@ impl CodebookSerializer {
             let key = format!("pq{}_{}", bits, subvectors);
 
             // Create empty PQ codebook structure
-            let subvector_dim = (dimension + subvectors as usize - 1) / subvectors as usize;
+            let subvector_dim = dimension.div_ceil(subvectors as usize);
             let num_centroids = 1 << bits;
 
             metadata.pq_codebooks.insert(
