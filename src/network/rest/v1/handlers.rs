@@ -36,14 +36,114 @@ pub struct AppState {
     pub data_dir: std::path::PathBuf,
 }
 
+/// Parse search request from JSON, supporting both proto and simple formats
+/// Proto format: { "collection_id": "...", "queries": [{"vector": [...]}], "top_k": 10 }
+/// Simple format: { "collection": "...", "vector": [...], "top_k": 10 } (MVP-friendly)
+fn parse_search_request(value: serde_json::Value) -> Result<VectorSearchRequest, String> {
+    // Check if this is the simple format (has "collection" or "vector" at root level)
+    if let Some(obj) = value.as_object() {
+        let has_simple_collection = obj.contains_key("collection");
+        let has_simple_vector = obj.contains_key("vector");
+        let is_simple_format = has_simple_collection || has_simple_vector;
+
+        if is_simple_format {
+            // Parse as simple format and convert to proto format
+            let collection_id = obj
+                .get("collection")
+                .or_else(|| obj.get("collection_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let vector: Vec<f32> = obj
+                .get("vector")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let top_k = obj
+                .get("top_k")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(10) as u32;
+
+            // Parse optional filters from simple format
+            let filters = obj
+                .get("filters")
+                .and_then(|v| {
+                    serde_json::from_value::<std::collections::HashMap<String, proximadb_v1::SqlValue>>(v.clone()).ok()
+                })
+                .unwrap_or_default();
+
+            // Create a single SearchQuery from the simple format
+            let query = proximadb_v1::SearchQuery {
+                vector,
+                filters,
+                advanced_filter: None,
+            };
+
+            return Ok(VectorSearchRequest {
+                collection_id,
+                queries: vec![query],
+                top_k,
+                include_fields: None,
+                search_params: None,
+                distance_metric_override: None,
+                search_optimization: None,
+            });
+        }
+    }
+
+    // Fall back to proto format
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
+/// Parse batch request from JSON, supporting both proto and simple formats
+fn parse_batch_request(value: serde_json::Value) -> Result<VectorBatchRequest, String> {
+    // Check if this is the simple format (has "collection" at root level)
+    if let Some(obj) = value.as_object() {
+        let has_simple_collection = obj.contains_key("collection");
+
+        if has_simple_collection {
+            // Parse as simple format and convert to proto format
+            let collection_id = obj
+                .get("collection")
+                .or_else(|| obj.get("collection_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Parse vectors array - already in proto-compatible format
+            let vectors: Vec<proximadb_v1::VectorRecord> = obj
+                .get("vectors")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+
+            return Ok(VectorBatchRequest {
+                collection_id,
+                vectors,
+            });
+        }
+    }
+
+    // Fall back to proto format
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
 /// Aligned vector search handler
+/// Accepts BOTH:
+/// 1. Proto format: { "collection_id": "...", "queries": [{"vector": [...]}], "top_k": 10 }
+/// 2. Simple format: { "collection": "...", "vector": [...], "top_k": 10 } (MVP-friendly)
 pub async fn vector_search(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorSearchRequest
-    let request: VectorSearchRequest = serde_json::from_value(value)
+    // Try to parse as simple format first, then fall back to proto format
+    let request: VectorSearchRequest = parse_search_request(value)
         .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     if request.collection_id.is_empty() {
@@ -91,13 +191,16 @@ pub async fn vector_search(
 }
 
 /// Aligned vector batch operation handler
+/// Accepts BOTH:
+/// 1. Proto format: { "collection_id": "...", "vectors": [...] }
+/// 2. Simple format: { "collection": "...", "vectors": [...] } (MVP-friendly)
 pub async fn vector_batch(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorBatchRequest
-    let request: VectorBatchRequest = serde_json::from_value(value)
+    // Parse the JSON value into VectorBatchRequest (supports both formats)
+    let request: VectorBatchRequest = parse_batch_request(value)
         .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     info!(
@@ -432,8 +535,8 @@ pub async fn vector_search_with_metadata(
     Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorSearchRequest
-    let request: VectorSearchRequest = serde_json::from_value(value)
+    // Parse the JSON value into VectorSearchRequest (supports both formats)
+    let request: VectorSearchRequest = parse_search_request(value)
         .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     let start_time = std::time::Instant::now();

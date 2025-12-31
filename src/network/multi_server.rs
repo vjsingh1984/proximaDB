@@ -1684,10 +1684,20 @@ impl MultiServer {
         use crate::network::multiplex::{
             builder::MultiplexServiceBuilder,
             detectors::{ArrowFlightDetector, GrpcDetector, RestDetector},
-            handlers::{ArrowFlightHandler, GrpcHandler, RestHandler},
+            handlers::{ArrowFlightHandler, GrpcHandler, RestHandler, RestHandlerConfig},
             traits::DetectedProtocol,
             unified_server::{UnifiedServer, UnifiedServerConfig},
         };
+
+        // Create REST handler with configuration for unified mode
+        let services = self.shared_services.clone();
+        let rest_config = RestHandlerConfig {
+            unified_handlers: services.unified_handlers.clone(),
+            metrics_collector: services.metrics_collector.clone(),
+            security_coordinator: self.security_coordinator.clone(),
+            data_dir: self.config.data_dir.clone(),
+        };
+        let rest_handler = RestHandler::with_config(rest_config);
 
         // Create detectors (ordered by priority)
         let service = MultiplexServiceBuilder::new()
@@ -1696,7 +1706,7 @@ impl MultiServer {
             .add_detector(RestDetector::new())        // Priority 10
             .add_handler(ArrowFlightHandler::ready())
             .add_handler(GrpcHandler::ready())
-            .add_handler(RestHandler::ready())
+            .add_handler(rest_handler)
             .with_fallback(DetectedProtocol::Rest)
             .build();
 

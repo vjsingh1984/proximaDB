@@ -204,43 +204,143 @@ impl<'de> Deserialize<'de> for SqlValue {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct SqlValueHelper {
-            string_value: Option<String>,
-            number_value: Option<f64>,
-            bool_value: Option<bool>,
-            int64_value: Option<i64>,
-            bytes_value: Option<String>, // base64 encoded
-            null_value: Option<serde_json::Value>,
-            array_value: Option<crate::proto::proximadb_v1::SqlArray>,
-            object_value: Option<crate::proto::proximadb_v1::SqlObject>,
-        }
+        // First, deserialize as a raw JSON value to handle both formats
+        let json_value = serde_json::Value::deserialize(deserializer)?;
 
-        let helper = SqlValueHelper::deserialize(deserializer)?;
+        // Convert JSON value to SqlValue
+        // Supports BOTH:
+        // 1. Proto format: {"string_value": "test"}, {"number_value": 42}
+        // 2. Simple format: "test", 42, true, null (MVP-friendly)
+        let value = match &json_value {
+            // Handle simple primitive types directly (MVP-friendly format)
+            serde_json::Value::String(s) => Some(SqlValueVariant::StringValue(s.clone())),
+            serde_json::Value::Bool(b) => Some(SqlValueVariant::BoolValue(*b)),
+            serde_json::Value::Null => Some(SqlValueVariant::NullValue(0)),
+            serde_json::Value::Number(n) => {
+                // Prefer integer if it fits, otherwise use float
+                if let Some(i) = n.as_i64() {
+                    Some(SqlValueVariant::Int64Value(i))
+                } else if let Some(f) = n.as_f64() {
+                    Some(SqlValueVariant::NumberValue(f))
+                } else {
+                    None
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                // Convert JSON array to SqlArray
+                let values: Vec<SqlValue> = arr
+                    .iter()
+                    .filter_map(|v| json_to_sql_value(v))
+                    .collect();
+                Some(SqlValueVariant::ArrayValue(
+                    crate::proto::proximadb_v1::SqlArray { values },
+                ))
+            }
+            serde_json::Value::Object(obj) => {
+                // Check for proto-style wrapped values first
+                if let Some(v) = obj.get("string_value") {
+                    if let Some(s) = v.as_str() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::StringValue(s.to_string())),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("number_value") {
+                    if let Some(f) = v.as_f64() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::NumberValue(f)),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("bool_value") {
+                    if let Some(b) = v.as_bool() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::BoolValue(b)),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("int64_value") {
+                    if let Some(i) = v.as_i64() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::Int64Value(i)),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("bytes_value") {
+                    if let Some(s) = v.as_str() {
+                        let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::BytesValue(bytes)),
+                        });
+                    }
+                }
+                if obj.contains_key("null_value") {
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::NullValue(0)),
+                    });
+                }
+                if let Some(v) = obj.get("array_value") {
+                    let arr: crate::proto::proximadb_v1::SqlArray =
+                        serde_json::from_value(v.clone()).map_err(serde::de::Error::custom)?;
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::ArrayValue(arr)),
+                    });
+                }
+                if let Some(v) = obj.get("object_value") {
+                    let object: crate::proto::proximadb_v1::SqlObject =
+                        serde_json::from_value(v.clone()).map_err(serde::de::Error::custom)?;
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::ObjectValue(object)),
+                    });
+                }
 
-        let value = if let Some(v) = helper.string_value {
-            Some(SqlValueVariant::StringValue(v))
-        } else if let Some(v) = helper.number_value {
-            Some(SqlValueVariant::NumberValue(v))
-        } else if let Some(v) = helper.bool_value {
-            Some(SqlValueVariant::BoolValue(v))
-        } else if let Some(v) = helper.int64_value {
-            Some(SqlValueVariant::Int64Value(v))
-        } else if let Some(v) = helper.bytes_value {
-            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
-            Some(SqlValueVariant::BytesValue(bytes))
-        } else if helper.null_value.is_some() {
-            Some(SqlValueVariant::NullValue(0)) // prost_types::NullValue
-        } else if let Some(v) = helper.array_value {
-            Some(SqlValueVariant::ArrayValue(v))
-        } else if let Some(v) = helper.object_value {
-            Some(SqlValueVariant::ObjectValue(v))
-        } else {
-            None
+                // Treat as a generic object (MVP-friendly nested object)
+                let fields: std::collections::HashMap<String, SqlValue> = obj
+                    .iter()
+                    .filter_map(|(k, v)| json_to_sql_value(v).map(|sv| (k.clone(), sv)))
+                    .collect();
+                Some(SqlValueVariant::ObjectValue(
+                    crate::proto::proximadb_v1::SqlObject { fields },
+                ))
+            }
         };
 
         Ok(SqlValue { value })
     }
+}
+
+/// Helper function to convert serde_json::Value to SqlValue
+fn json_to_sql_value(json: &serde_json::Value) -> Option<SqlValue> {
+    let value = match json {
+        serde_json::Value::String(s) => Some(SqlValueVariant::StringValue(s.clone())),
+        serde_json::Value::Bool(b) => Some(SqlValueVariant::BoolValue(*b)),
+        serde_json::Value::Null => Some(SqlValueVariant::NullValue(0)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(SqlValueVariant::Int64Value(i))
+            } else if let Some(f) = n.as_f64() {
+                Some(SqlValueVariant::NumberValue(f))
+            } else {
+                None
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            let values: Vec<SqlValue> = arr.iter().filter_map(json_to_sql_value).collect();
+            Some(SqlValueVariant::ArrayValue(
+                crate::proto::proximadb_v1::SqlArray { values },
+            ))
+        }
+        serde_json::Value::Object(obj) => {
+            let fields: std::collections::HashMap<String, SqlValue> = obj
+                .iter()
+                .filter_map(|(k, v)| json_to_sql_value(v).map(|sv| (k.clone(), sv)))
+                .collect();
+            Some(SqlValueVariant::ObjectValue(
+                crate::proto::proximadb_v1::SqlObject { fields },
+            ))
+        }
+    };
+    value.map(|v| SqlValue { value: Some(v) })
 }
 impl Serialize for PropertyValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

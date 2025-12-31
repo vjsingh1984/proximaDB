@@ -492,6 +492,56 @@ impl RestServer {
         Self { router, bind_addr, tls_config }
     }
 
+    /// Build a REST router for unified mode without starting a server.
+    ///
+    /// This is used by the unified server to get the configured REST router
+    /// that can be passed to the protocol multiplexer.
+    pub fn build_router_for_unified(
+        unified_handlers: Arc<UnifiedHandlers>,
+        metrics_collector: Option<Arc<MetricsCollector>>,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+        data_dir: std::path::PathBuf,
+    ) -> Router {
+        let state = AppState {
+            unified_handlers,
+            security_coordinator: security_coordinator.clone(),
+            data_dir,
+        };
+
+        // Create metrics router if metrics collector is available
+        let metrics_router = if let Some(collector) = metrics_collector {
+            use crate::network::metrics_service::{MetricsService, MetricsServiceConfig};
+            let metrics_config = MetricsServiceConfig::default();
+            let metrics_service = MetricsService::new(metrics_config, collector);
+            Some(metrics_service.create_router())
+        } else {
+            None
+        };
+
+        // Build base router with all endpoints
+        let mut base_router = create_router(state);
+
+        // Nest metrics router if available
+        if let Some(metrics) = metrics_router {
+            base_router = base_router.nest("/metrics", metrics);
+            tracing::info!("✅ Metrics endpoints enabled at /metrics (unified mode)");
+        }
+
+        // Add dashboard route
+        base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
+
+        // Add WebSocket streaming routes
+        let ws_state = super::websocket::WebSocketState::new();
+        let ws_routes = super::websocket::websocket_routes(ws_state);
+        base_router = base_router.nest("/ws", ws_routes);
+        tracing::info!("✅ WebSocket streaming enabled at /ws (unified mode)");
+
+        // Apply minimal layers for unified mode
+        // (Full middleware stack is handled by the unified server)
+        use tower_http::trace::TraceLayer;
+        base_router.layer(TraceLayer::new_for_http())
+    }
+
     /// Start the REST server
     pub async fn start(self) -> anyhow::Result<()> {
         if self.tls_config.is_some() {
