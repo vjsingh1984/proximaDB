@@ -24,6 +24,9 @@
 //! 3. Service recovery handles all engine types
 //! 4. flush_wal works for all engine types
 
+// Feature-gate entire file since PULSAR/QUASAR require distributed-graph feature
+#![cfg(feature = "distributed-graph")]
+
 #[cfg(feature = "distributed-graph")]
 mod pulsar_wal_tests {
     use proximadb::graph::{Edge, Node, engines::GraphEngine};

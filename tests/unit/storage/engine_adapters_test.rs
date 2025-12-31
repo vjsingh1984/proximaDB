@@ -10,6 +10,8 @@
 //! - Schema generation and projection
 //! - Split reader interface compliance
 
+#![cfg(feature = "datafusion-integration")]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

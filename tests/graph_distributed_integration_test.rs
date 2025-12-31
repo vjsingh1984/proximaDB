@@ -22,6 +22,10 @@
 //! - Multi-region coordination
 //! - Cross-shard query execution
 
+// Feature-gated: requires distributed-graph feature which enables PULSAR/QUASAR
+// consensus, regions, and transaction modules
+#![cfg(feature = "distributed-graph")]
+
 use proximadb::cluster::consensus::ConsensusConfig;
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::engines::pulsar::consensus::{GraphCommand, GraphRaftNode};

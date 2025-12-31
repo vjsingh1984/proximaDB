@@ -29,8 +29,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use arrow_array::{
     Array, ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, StructArray,
-    BooleanArray, Float64Array,
-    builder::{Float32Builder, StringBuilder, Int64Builder, BooleanBuilder, Float64Builder},
+    BooleanArray, Float64Array, FixedSizeListArray,
+    builder::{Float32Builder, StringBuilder, Int64Builder, BooleanBuilder, Float64Builder, FixedSizeListBuilder},
 };
 use arrow_schema::{DataType, Field, Schema as ArrowSchema};
 use serde::{Deserialize, Serialize};
@@ -177,8 +177,9 @@ impl DefaultVectorRecordBridge {
             return Err(anyhow!("Schema has no vector column"));
         }
 
-        let num_records = records.len();
-        let mut builder = Float32Builder::with_capacity(num_records * dimension);
+        // Use FixedSizeListArray so each row has exactly one vector
+        let values_builder = Float32Builder::with_capacity(records.len() * dimension);
+        let mut builder = FixedSizeListBuilder::new(values_builder, dimension as i32);
 
         for record in records {
             if record.vector.len() != dimension {
@@ -188,10 +189,13 @@ impl DefaultVectorRecordBridge {
                     record.vector.len()
                 ));
             }
-            builder.append_slice(&record.vector);
+            let values = builder.values();
+            for &v in &record.vector {
+                values.append_value(v);
+            }
+            builder.append(true);
         }
 
-        // Return as a flat array - the schema will interpret it correctly
         Ok(Arc::new(builder.finish()))
     }
 
@@ -406,7 +410,15 @@ impl DefaultVectorRecordBridge {
             .column_by_name("vector")
             .ok_or_else(|| anyhow!("Missing 'vector' column"))?;
 
-        // Handle flat Float32Array (stored as contiguous memory)
+        // Handle FixedSizeListArray (preferred format)
+        if let Some(list_array) = vector_col.as_any().downcast_ref::<FixedSizeListArray>() {
+            let values = list_array.value(row);
+            if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
+                return Ok(float_array.values().to_vec());
+            }
+        }
+
+        // Handle flat Float32Array (legacy format - stored as contiguous memory)
         if let Some(float_array) = vector_col.as_any().downcast_ref::<Float32Array>() {
             let start = row * dimension;
             let end = start + dimension;
@@ -574,29 +586,18 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
 
         // Add vector column if present in schema and requested
         if self.include_vectors && self.vector_dimension().is_some() {
-            let dimension = self.vector_dimension().unwrap() as usize;
-            let num_records = records.len();
+            let dimension = self.vector_dimension().unwrap() as i32;
 
-            // Store as flat Float32Array for efficiency
-            // The dimension is encoded in the field metadata
+            // Store as FixedSizeListArray - each row contains one vector
             let vector_array = self.build_vector_array(records)?;
-            let mut field_metadata = HashMap::new();
-            field_metadata.insert("dimension".to_string(), dimension.to_string());
 
-            fields.push(
-                Field::new("vector", DataType::Float32, false)
-                    .with_metadata(field_metadata.clone()),
-            );
+            // Use the array's actual data type to ensure schema matches
+            fields.push(Field::new(
+                "vector",
+                vector_array.data_type().clone(),
+                false,
+            ));
             columns.push(vector_array);
-
-            // Validate vector array length
-            if columns.last().unwrap().len() != num_records * dimension {
-                return Err(anyhow!(
-                    "Vector array length mismatch: expected {}, got {}",
-                    num_records * dimension,
-                    columns.last().unwrap().len()
-                ));
-            }
         }
 
         // Add metadata column
@@ -616,20 +617,15 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         fields.push(Field::new("version", DataType::Int64, true));
         columns.push(version_array);
 
-        // Validate all columns have same length (accounting for vector being dimension * num_records)
+        // Validate all columns have same length
         let num_records = records.len();
         for (i, (field, col)) in fields.iter().zip(columns.iter()).enumerate() {
-            let expected_len = if field.name() == "vector" && self.vector_dimension().is_some() {
-                num_records * self.vector_dimension().unwrap() as usize
-            } else {
-                num_records
-            };
-            if col.len() != expected_len {
+            if col.len() != num_records {
                 return Err(anyhow!(
                     "Column {} ({}) has wrong length: expected {}, got {}",
                     i,
                     field.name(),
-                    expected_len,
+                    num_records,
                     col.len()
                 ));
             }

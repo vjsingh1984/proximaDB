@@ -11,6 +11,8 @@
 //! - ProximaScanExec partitioning
 //! - ProximaDataFusionTable schema and scanning
 
+#![cfg(feature = "datafusion-integration")]
+
 use std::sync::Arc;
 
 use arrow_schema::{DataType, Field, Schema, SchemaRef};

@@ -2123,6 +2123,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "distributed-graph")]
     async fn test_pulsar_traversal_path() {
         let service = GraphOperationsService::new();
         // Create graph with PULSAR engine
