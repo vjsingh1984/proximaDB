@@ -746,12 +746,12 @@ impl LocalDiskCache {
         // Update tracking
         self.cached_row_groups
             .entry(file_path.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(rg_idx);
 
         self.cached_columns
             .entry(file_path.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(rg_idx, column_data.keys().cloned().collect());
 
         Ok(())

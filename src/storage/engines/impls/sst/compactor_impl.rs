@@ -369,7 +369,7 @@ impl SstCompactor {
             // Collect all versions of each ID
             id_versions
                 .entry(record_id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entry.record);
         }
 
@@ -559,7 +559,7 @@ impl SstCompactor {
             // Collect all versions of each ID
             id_versions
                 .entry(record_id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entry.record);
 
             // Get next record from the same file

@@ -1294,7 +1294,7 @@ mod tests {
     #[test]
     fn test_selected_format_options() {
         // Test that all format options are available
-        let formats = vec![
+        let formats = [
             SelectedFormat::FP32,
             SelectedFormat::Binary,
             SelectedFormat::INT8,

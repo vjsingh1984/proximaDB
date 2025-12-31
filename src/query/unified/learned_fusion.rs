@@ -1207,7 +1207,7 @@ mod tests {
             make_record("c", 0.75, DataModel::Document),
         ]);
 
-        let features = extractor.extract(&vec![result1, result2]);
+        let features = extractor.extract(&[result1, result2]);
 
         assert_eq!(features.query_features.len(), 32);
         assert!(features.model_features.contains_key(&DataModel::Vector));

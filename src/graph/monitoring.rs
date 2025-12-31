@@ -657,7 +657,7 @@ impl GraphMonitor {
 
                     let histogram = histograms
                         .entry(operation)
-                        .or_insert_with(|| LatencyHistogram::new());
+                        .or_insert_with(LatencyHistogram::new);
 
                     histogram.record(duration.as_millis() as f64);
                 }

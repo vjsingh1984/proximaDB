@@ -263,7 +263,7 @@ impl ContextualBanditPlanner {
         // Update Beta distribution
         self.action_stats
             .entry(action_id)
-            .or_insert_with(BetaDistribution::default)
+            .or_default()
             .update(reward);
 
         // Update context weights
@@ -276,7 +276,7 @@ impl ContextualBanditPlanner {
 
         self.context_weights
             .entry(action_id)
-            .or_insert_with(ContextWeights::default)
+            .or_default()
             .update(&features, error);
 
         self.total_updates += 1;

@@ -71,7 +71,7 @@ impl MetricsAggregationEngine {
     pub fn add_data_point(&mut self, collection_id: String, metrics: CollectionMetrics) {
         self.time_series
             .entry(collection_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(metrics);
     }
 

@@ -360,7 +360,7 @@ impl CompactionCoordinator {
         let mut collection_ops = self
             .active_operations
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         // Check collection limit
         if collection_ops.len() >= self.config.max_concurrent_per_collection {
@@ -771,7 +771,7 @@ impl TieredFileRegistry {
 
                 files_by_level
                     .entry(level)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(metadata);
             } else {
                 debug!("❌ Skipping non-tiered file: {}", entry.name);

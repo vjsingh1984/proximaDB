@@ -182,7 +182,7 @@ impl RaptorCompactor {
             let cluster_id_u16 = cluster_id as u16;
             vectors_by_cluster
                 .entry(cluster_id_u16)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(vector);
         }
 

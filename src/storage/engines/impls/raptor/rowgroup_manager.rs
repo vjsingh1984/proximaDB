@@ -318,7 +318,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .string_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(Some(s));
                         }
                         serde_json::Value::Number(n) => {
@@ -326,7 +326,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .numeric_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(n.as_f64());
                         }
                         serde_json::Value::Bool(b) => {
@@ -334,7 +334,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .boolean_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(Some(b));
                         }
                         _ => {
@@ -343,7 +343,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .string_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(None);
                         }
                     }
@@ -435,21 +435,21 @@ impl RowGroups {
                     metadata_columns
                         .string_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(Some(s));
                 }
                 serde_json::Value::Number(n) => {
                     metadata_columns
                         .numeric_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(n.as_f64());
                 }
                 serde_json::Value::Bool(b) => {
                     metadata_columns
                         .boolean_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(Some(b));
                 }
                 _ => {
@@ -457,7 +457,7 @@ impl RowGroups {
                     metadata_columns
                         .string_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(Some(value.to_string()));
                 }
             }

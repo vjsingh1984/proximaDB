@@ -1312,12 +1312,12 @@ impl UnifiedIvfIndex {
                 // Update correlation score
                 self.access_correlations
                     .entry(cluster_i)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((cluster_j, 0.9)); // Decay over time
 
                 self.access_correlations
                     .entry(cluster_j)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((cluster_i, 0.9));
             }
         }

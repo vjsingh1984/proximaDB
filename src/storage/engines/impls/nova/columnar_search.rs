@@ -699,7 +699,7 @@ impl NovaColumnarSearch {
         for candidate in candidates {
             grouped
                 .entry(candidate.row_group_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(candidate);
         }
 
@@ -773,7 +773,7 @@ impl NovaColumnarSearch {
         for candidate in candidates {
             grouped
                 .entry(candidate.row_group_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(candidate);
         }
 
@@ -840,7 +840,7 @@ impl NovaColumnarSearch {
         for candidate in candidates {
             grouped
                 .entry(candidate.row_group_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(candidate);
         }
 

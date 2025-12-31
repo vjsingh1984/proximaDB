@@ -245,7 +245,7 @@ mod tests {
         // With RLE, each run costs 3 bytes [len:2][val:1], so we need longer runs
         let mut sparse_data = vec![0u8; 100]; // 100 zeros
         sparse_data.extend_from_slice(&[255, 255, 255]); // 3 times 255
-        sparse_data.extend_from_slice(&vec![0u8; 100]); // 100 more zeros
+        sparse_data.extend_from_slice(&[0u8; 100]); // 100 more zeros
         // Total: 203 bytes original
         // RLE: [100:2][0:1] + [3:2][255:1] + [100:2][0:1] = 9 bytes
         // Ratio: 9/203 = 0.044 << 1.0

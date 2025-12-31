@@ -601,7 +601,7 @@ impl ParquetTestDataGenerator {
         arrays.push(Arc::new(vectors));
 
         // Filterable columns
-        let categories = vec!["technology", "science", "art", "music", "sports"];
+        let categories = ["technology", "science", "art", "music", "sports"];
         let category_values: Vec<Option<String>> = (0..config.num_rows)
             .map(|i| {
                 if self.rng.gen_range(0.0..1.0) < config.null_percentage {
@@ -647,7 +647,7 @@ impl ParquetTestDataGenerator {
         arrays.push(Arc::new(BooleanArray::from(active_values)));
 
         // Tags column (list of strings)
-        let all_tags = vec!["AI", "ML", "NLP", "CV", "robotics", "data", "analysis"];
+        let all_tags = ["AI", "ML", "NLP", "CV", "robotics", "data", "analysis"];
         let mut tags_builder =
             arrow_array::builder::ListBuilder::new(arrow_array::builder::StringBuilder::new());
 

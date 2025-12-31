@@ -203,7 +203,7 @@ pub fn geohashes_in_bbox(bbox: &GeoBoundingBox, precision: usize) -> Vec<String>
     let mut visited = std::collections::HashSet::new();
 
     // Start from corners and center
-    let start_points = vec![
+    let start_points = [
         bbox.sw,
         bbox.ne,
         GeoPoint::new(bbox.sw.latitude, bbox.ne.longitude),

@@ -772,7 +772,7 @@ impl HelixEngine {
         // Model will be loaded on first flush/search when we have the actual collection_id
         if false {
             // Placeholder - will be loaded at runtime
-            if let Ok(_model) = bincode::deserialize::<PCAModel>(&vec![]) {
+            if let Ok(_model) = bincode::deserialize::<PCAModel>(&[]) {
                 // Model loading happens at runtime
                 info!("Loaded existing PCA model for HELIX engine");
             }
