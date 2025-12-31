@@ -66,7 +66,10 @@ pub mod pulsar {
     /// PULSAR configuration (stub)
     #[derive(Debug, Clone, Default)]
     pub struct PulsarConfig {
+        /// Number of shards for data distribution
         pub shard_count: usize,
+        /// Replication factor (stub field for API compatibility)
+        pub replication_factor: u8,
     }
 
     /// PULSAR engine (stub - requires distributed-graph feature)
@@ -161,7 +164,8 @@ pub mod quasar {
     /// QUASAR configuration (stub)
     #[derive(Debug, Clone, Default)]
     pub struct QuasarConfig {
-        pub hot_tier_capacity: usize,
+        /// Maximum size of hot tier (in number of nodes) - stub field for API compatibility
+        pub hot_tier_max_nodes: usize,
         /// Cold tier storage path (stub field for API compatibility)
         pub cold_tier_path: std::path::PathBuf,
     }

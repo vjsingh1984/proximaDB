@@ -646,7 +646,6 @@ impl UnifiedParquetReader {
         filter_expression: Option<&crate::core::search::FilterExpression>,
         quantization_enabled: bool,
     ) -> Result<(Vec<VectorRecord>, usize)> {
-        
         use bytes::Bytes;
         use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -707,37 +706,40 @@ impl UnifiedParquetReader {
                                 // For range/equality filters, check if the value could be in this row group
                                 match condition {
                                     crate::storage::engines::core::formats::columnar::FilterCondition::Equals(_, value) => {
-                                        // Check if the value falls within the min/max range
-                                        if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
-                                            // Convert bytes to string for comparison
-                                            let min_str = String::from_utf8_lossy(min_bytes);
-                                            let max_str = String::from_utf8_lossy(max_bytes);
-                                            let value_str = value.as_str().unwrap_or(&value.to_string()).to_string();
+                                        // Only prune for string-type values where statistics are meaningful
+                                        // Skip pruning for booleans and numbers as their statistics are binary-encoded
+                                        if value.is_string() {
+                                            // Check if the value falls within the min/max range
+                                            if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                                                // Convert bytes to string for comparison
+                                                let min_str = String::from_utf8_lossy(min_bytes);
+                                                let max_str = String::from_utf8_lossy(max_bytes);
+                                                let value_str = value.as_str().unwrap_or(&value.to_string()).to_string();
 
-                                            // Skip row group if value is clearly outside range
-                                            if value_str.as_str() < min_str.as_ref() || value_str.as_str() > max_str.as_ref() {
-                                                keep_row_group = false;
-                                                debug!("  Row group {} pruned: {} not in [{}, {}]",
-                                                    rg_idx, value_str, min_str, max_str);
-                                                break;
+                                                // Skip if statistics are empty or invalid
+                                                if min_str.is_empty() || max_str.is_empty() {
+                                                    // Skip pruning for empty stats
+                                                } else {
+                                                    // Skip row group if value is clearly outside range
+                                                    if value_str.as_str() < min_str.as_ref() || value_str.as_str() > max_str.as_ref() {
+                                                        keep_row_group = false;
+                                                        debug!("  Row group {} pruned: {} not in [{}, {}]",
+                                                            rg_idx, value_str, min_str, max_str);
+                                                        break;
+                                                    }
+                                                }
                                             }
+                                        } else {
+                                            // For non-string values (boolean, number), skip statistics-based pruning
                                         }
                                     }
-                                    crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, min_val, max_val) => {
-                                        if let (Some(stats_min_bytes), Some(stats_max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
-                                            let stats_min_str = String::from_utf8_lossy(stats_min_bytes);
-                                            let stats_max_str = String::from_utf8_lossy(stats_max_bytes);
-                                            let filter_min = min_val.as_str().unwrap_or(&min_val.to_string()).to_string();
-                                            let filter_max = max_val.as_str().unwrap_or(&max_val.to_string()).to_string();
-
-                                            // Prune if ranges don't overlap
-                                            if filter_max.as_str() < stats_min_str.as_ref() || filter_min.as_str() > stats_max_str.as_ref() {
-                                                keep_row_group = false;
-                                                debug!("  Row group {} pruned: range [{}, {}] doesn't overlap [{}, {}]",
-                                                    rg_idx, filter_min, filter_max, stats_min_str, stats_max_str);
-                                                break;
-                                            }
-                                        }
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, _min_val, _max_val) => {
+                                        // Range pruning is complex - only prune for string columns
+                                        // For numeric columns, the statistics are stored as binary floats,
+                                        // not strings, so string comparison would be incorrect.
+                                        // Skip range-based pruning for now as it's causing false negatives.
+                                        // TODO: Implement proper numeric statistics comparison using parquet's typed statistics API
+                                        // Don't prune - let the row-level filter handle it
                                     }
                                     _ => {
                                         // For other filter types (In, IsNull, IsNotNull),
@@ -908,6 +910,9 @@ impl UnifiedParquetReader {
 
         // Create projection mask
         let projection_mask = ProjectionMask::roots(reader_builder.parquet_schema(), projection);
+
+        // Capture length before moving
+        let num_selected_row_groups = selected_row_groups.len();
 
         // Create reader with projection and selected row groups
         let mut reader = reader_builder

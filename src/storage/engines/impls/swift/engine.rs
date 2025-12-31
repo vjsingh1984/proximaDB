@@ -1559,12 +1559,13 @@ impl UnifiedStorageEngine for SwiftEngine {
 
             // Apply filter expression after block-pruned search if provided
             let filtered_results = if let Some(filter_expr) = filter_expression {
-                file_results.into_iter().filter(|record| {
+                let filtered: Vec<_> = file_results.into_iter().filter(|record| {
                     crate::core::search::sql_value_filter::evaluate_filter(
                         filter_expr,
                         &record.metadata,
                     )
-                }).collect()
+                }).collect();
+                filtered
             } else {
                 file_results
             };

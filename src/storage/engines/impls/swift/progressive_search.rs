@@ -5,7 +5,6 @@ use anyhow::{Result, anyhow};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 use super::{MetadataFilter, SwiftFile};
@@ -292,6 +291,7 @@ async fn phase1_binary_filtering(
     // Iterate only over filtered superblocks
     for sb_idx in superblock_indices {
         let superblock = &sst.superblocks[sb_idx];
+
         // Quick check with superblock signature
         let sb_binary = BinarySketch {
             bits: superblock.quantized_signature.clone(),
@@ -316,8 +316,9 @@ async fn phase1_binary_filtering(
                 }
             }
 
-            // Check each vector in block using binary sketches
+            // Check each vector in block using binary sketches or fallback to direct comparison
             if let Some(ref sketches) = block.quantized_vectors {
+                // Use binary sketches for fast filtering
                 for (v_idx, sketch) in sketches.iter().enumerate() {
                     let sketch_binary = BinarySketch {
                         bits: sketch.clone(),
@@ -337,6 +338,23 @@ async fn phase1_binary_filtering(
                         if candidates.len() > n_candidates {
                             candidates.pop();
                         }
+                    }
+                }
+            } else {
+                // Fallback: No quantized vectors, add all vectors as candidates
+                // This ensures search works even without quantization enabled
+                for v_idx in 0..block.records.len() {
+                    // When no quantization, use a low similarity score so all pass to next phase
+                    candidates.push(Candidate {
+                        superblock_idx: sb_idx as u32,
+                        block_idx: b_idx as u32,
+                        vector_idx: v_idx as u32,
+                        similarity: 0.0, // Will be refined in later phases
+                    });
+
+                    // Keep only top candidates
+                    if candidates.len() > n_candidates {
+                        candidates.pop();
                     }
                 }
             }
@@ -415,6 +433,19 @@ async fn phase2_int8_filtering(
                             candidates.pop();
                         }
                     }
+                }
+            } else {
+                // Fallback: No quantized vectors, pass all candidates through to Phase 3
+                // Use 0.0 similarity since we can't compute INT8 distance
+                candidates.push(Candidate {
+                    superblock_idx: sb_idx,
+                    block_idx: b_idx,
+                    vector_idx: v_idx as u32,
+                    similarity: 0.0,
+                });
+
+                if candidates.len() > n_candidates {
+                    candidates.pop();
                 }
             }
         }
@@ -509,6 +540,19 @@ async fn phase3_pq_refinement(
                         }
                     }
                 }
+            } else {
+                // Fallback: No quantized vectors, pass all candidates through to Phase 4
+                // Use 0.0 similarity since we can't compute PQ distance
+                candidates.push(Candidate {
+                    superblock_idx: sb_idx,
+                    block_idx: b_idx,
+                    vector_idx: v_idx as u32,
+                    similarity: 0.0,
+                });
+
+                if candidates.len() > n_candidates {
+                    candidates.pop();
+                }
             }
         }
     }
@@ -530,10 +574,10 @@ async fn phase4_full_precision(
     pq_candidates: Vec<Candidate>,
     top_k: usize,
     filter: Option<MetadataFilter>,
-    max_concurrent: usize,
+    _max_concurrent: usize,
 ) -> Result<Vec<VectorRecord>> {
-    let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let mut handles = Vec::new();
+    let metric = parse_distance_metric(&sst.header.distance_metric);
+    let mut all_results = Vec::new();
 
     // Group by block for efficient loading
     let mut blocks_to_load = std::collections::HashMap::new();
@@ -544,45 +588,17 @@ async fn phase4_full_precision(
             .push(candidate.vector_idx);
     }
 
-    // Load blocks in parallel and compute full precision distances
+    // Process blocks synchronously (data is already in memory)
     for ((sb_idx, b_idx), vector_indices) in blocks_to_load {
-        let sem = semaphore.clone();
-        let query = query.to_vec();
-        let filter = filter.clone();
-        let distance_metric = sst.header.distance_metric.clone();
+        let block = &sst.superblocks[sb_idx as usize].blocks[b_idx as usize];
 
-        let handle = tokio::spawn(async move {
-            // SAFETY: acquire().unwrap() is safe because the semaphore is never closed
-            // during the search operation. The semaphore remains valid for the lifetime
-            // of the search and is only used for concurrency limiting.
-            let _permit = sem.acquire().await.unwrap();
-
-            // In real implementation, would load block from disk
-            // For now, we'll simulate with the in-memory block
-            let results = Vec::new();
-
-            // This would actually load the block
-            // let block = sst.load_block(sb_idx, b_idx).await?;
-
-            // Compute distances for vectors in this block
-            for v_idx in vector_indices {
-                // let record = &block.records[v_idx as usize];
-                // let compute = UnifiedDistanceCompute::new(distance_metric);
-                // let result = compute.calculate_distance(&query, &record.vector, &distance_metric);
-                // results.push((record.clone(), result.similarity));
+        for v_idx in vector_indices {
+            if let Some(record) = block.records.get(v_idx as usize) {
+                // Compute full precision distance
+                let distance = compute_distance(query, &record.vector, &metric);
+                all_results.push((record.clone(), distance));
             }
-
-            Ok::<Vec<(VectorRecord, f32)>, anyhow::Error>(results)
-        });
-
-        handles.push(handle);
-    }
-
-    // Collect all results
-    let mut all_results = Vec::new();
-    for handle in handles {
-        let block_results = handle.await??;
-        all_results.extend(block_results);
+        }
     }
 
     // Apply final metadata filter if needed
@@ -756,6 +772,59 @@ fn parse_distance_metric(name: &str) -> crate::compute::distance_computation::Di
         "manhattan" | "l1" => DistanceMetric::Manhattan,
         "hamming" => DistanceMetric::Hamming,
         _ => DistanceMetric::Euclidean,
+    }
+}
+
+/// Compute distance between two vectors using the specified metric
+fn compute_distance(
+    a: &[f32],
+    b: &[f32],
+    metric: &crate::compute::distance_computation::DistanceMetric,
+) -> f32 {
+    use crate::compute::distance_computation::DistanceMetric;
+
+    match metric {
+        DistanceMetric::Euclidean => {
+            a.iter()
+                .zip(b.iter())
+                .map(|(x, y)| {
+                    let diff = x - y;
+                    diff * diff
+                })
+                .sum::<f32>()
+                .sqrt()
+        }
+        DistanceMetric::Cosine => {
+            let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+            let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm_a > 0.0 && norm_b > 0.0 {
+                1.0 - (dot / (norm_a * norm_b))
+            } else {
+                1.0
+            }
+        }
+        DistanceMetric::DotProduct => {
+            -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>()
+        }
+        DistanceMetric::Manhattan => {
+            a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
+        }
+        DistanceMetric::Hamming => {
+            // Hamming distance for float vectors (count non-equal elements)
+            a.iter().zip(b.iter()).filter(|(x, y)| x != y).count() as f32
+        }
+        // Default to Euclidean for unspecified or other metrics
+        _ => {
+            a.iter()
+                .zip(b.iter())
+                .map(|(x, y)| {
+                    let diff = x - y;
+                    diff * diff
+                })
+                .sum::<f32>()
+                .sqrt()
+        }
     }
 }
 
