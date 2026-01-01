@@ -921,9 +921,18 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     use tracing::{debug, error, info};
+    use std::sync::Mutex;
+    use once_cell::sync::Lazy;
+
+    /// Mutex to serialize tests that change the current working directory
+    /// This prevents race conditions when tests run in parallel
+    static CWD_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     #[tokio::test]
     async fn test_relative_path_url_handling() {
+        // Serialize tests that change the current working directory
+        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+
         // Save current directory to restore later
         let original_dir = std::env::current_dir().unwrap();
 
@@ -1105,6 +1114,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_filesystem_without_root_dir() {
+        // Serialize tests that change the current working directory
+        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+
         // Test that filesystem without root_dir handles URLs correctly
         let temp_dir = TempDir::new().unwrap();
         let original_dir = std::env::current_dir().unwrap();
@@ -1182,6 +1194,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_prevent_double_relative_path_resolution() {
+        // Serialize tests that change the current working directory
+        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+
         // This test verifies that paths are used as-is without root_dir resolution
         // Previously there was a bug where paths were being resolved against root_dir
 
@@ -1262,96 +1277,103 @@ mod tests {
 
     #[tokio::test]
     async fn test_exists_method_comprehensive() {
-        debug!("🧪 Starting exists method comprehensive test");
+        debug!("Starting exists method comprehensive test");
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
-        debug!("📁 Created temp directory: {}", temp_path.display());
+        debug!("Created temp directory: {}", temp_path.display());
 
-        // Test with root_dir configuration
+        // Test with root_dir configuration - note: root_dir is validated/created but
+        // path resolution uses the provided paths as-is, so we use absolute paths
         let config = LocalConfig {
             root_dir: Some(temp_path.to_path_buf()),
             follow_symlinks: true,
             default_permissions: None,
             sync_enabled: false,
         };
-        debug!("⚙️ Created config: {:?}", config);
+        debug!("Created config: {:?}", config);
 
-        debug!("🔧 Creating LocalFileSystem...");
+        debug!("Creating LocalFileSystem...");
         let fs = match LocalFileSystem::new(config).await {
             Ok(fs) => {
-                info!("✅ LocalFileSystem created successfully");
+                info!("LocalFileSystem created successfully");
                 fs
             }
             Err(e) => {
-                error!("❌ Failed to create LocalFileSystem: {:?}", e);
+                error!("Failed to create LocalFileSystem: {:?}", e);
                 panic!("Failed to create filesystem: {:?}", e);
             }
         };
 
+        // Use absolute paths based on temp_path for isolation
+        let base_url = format!("file://{}", temp_path.display());
+
         // Test 1: Non-existent file should return false
-        let non_existent_url = "file://./non_existent_file.txt";
-        debug!("🔍 Testing non-existent file: {}", non_existent_url);
-        let exists_result = fs.exists(non_existent_url).await.unwrap();
+        let non_existent_url = format!("{}/non_existent_file.txt", base_url);
+        debug!("Testing non-existent file: {}", non_existent_url);
+        let exists_result = fs.exists(&non_existent_url).await.unwrap();
         assert!(!exists_result, "Non-existent file should return false");
-        info!("✅ Non-existent file test passed");
+        info!("Non-existent file test passed");
 
         // Test 2: Create a file and test it exists
-        let test_file_url = "file://./test_exists_file.txt";
-        debug!("🔍 Testing file creation: {}", test_file_url);
+        let test_file_url = format!("{}/test_exists_file.txt", base_url);
+        debug!("Testing file creation: {}", test_file_url);
 
         // Clean up any existing file first
-        if fs.exists(test_file_url).await.unwrap_or(false) {
-            debug!("🧹 Cleaning up existing file: {}", test_file_url);
-            let _ = fs.delete(test_file_url).await;
+        if fs.exists(&test_file_url).await.unwrap_or(false) {
+            debug!("Cleaning up existing file: {}", test_file_url);
+            let _ = fs.delete(&test_file_url).await;
         }
 
-        debug!("📝 Writing test file: {}", test_file_url);
-        match fs.write(test_file_url, b"test content", None).await {
-            Ok(_) => info!("✅ File written successfully"),
+        debug!("Writing test file: {}", test_file_url);
+        match fs.write(&test_file_url, b"test content", None).await {
+            Ok(_) => info!("File written successfully"),
             Err(e) => {
-                error!("❌ Failed to write file: {:?}", e);
+                error!("Failed to write file: {:?}", e);
                 panic!("Failed to write test file: {:?}", e);
             }
         }
-        let exists_result = fs.exists(test_file_url).await.unwrap();
+        let exists_result = fs.exists(&test_file_url).await.unwrap();
         assert!(exists_result, "Created file should exist");
 
         // Test 3: Non-existent directory should return false
-        let non_existent_dir_url = "file://./non_existent_dir";
-        let exists_result = fs.exists(non_existent_dir_url).await.unwrap();
+        let non_existent_dir_url = format!("{}/non_existent_dir", base_url);
+        let exists_result = fs.exists(&non_existent_dir_url).await.unwrap();
         assert!(!exists_result, "Non-existent directory should return false");
 
         // Test 4: Create a directory and test it exists
-        let test_dir_url = "file://./test_exists_dir";
+        let test_dir_url = format!("{}/test_exists_dir", base_url);
 
         // Clean up any existing directory first
-        if fs.exists(test_dir_url).await.unwrap_or(false) {
-            debug!("🧹 Cleaning up existing directory: {}", test_dir_url);
-            let _ = fs.delete(test_dir_url).await;
+        if fs.exists(&test_dir_url).await.unwrap_or(false) {
+            debug!("Cleaning up existing directory: {}", test_dir_url);
+            let _ = fs.delete(&test_dir_url).await;
         }
 
-        fs.create_dir(test_dir_url).await.unwrap();
-        let exists_result = fs.exists(test_dir_url).await.unwrap();
+        fs.create_dir(&test_dir_url).await.unwrap();
+        let exists_result = fs.exists(&test_dir_url).await.unwrap();
         assert!(exists_result, "Created directory should exist");
 
         // Test 5: Test with nested path
-        let nested_file_url = "file://./test_exists_dir/nested_file.txt";
-        fs.write(nested_file_url, b"nested content", None)
+        let nested_file_url = format!("{}/test_exists_dir/nested_file.txt", base_url);
+        fs.write(&nested_file_url, b"nested content", None)
             .await
             .unwrap();
-        let exists_result = fs.exists(nested_file_url).await.unwrap();
+        let exists_result = fs.exists(&nested_file_url).await.unwrap();
         assert!(exists_result, "Nested file should exist");
 
         // Test 6: Test after deletion
-        fs.delete(test_file_url).await.unwrap();
-        let exists_result = fs.exists(test_file_url).await.unwrap();
+        fs.delete(&test_file_url).await.unwrap();
+        let exists_result = fs.exists(&test_file_url).await.unwrap();
         assert!(!exists_result, "Deleted file should not exist");
 
-        info!("✅ All exists() method tests passed!");
+        info!("All exists() method tests passed!");
     }
 
     #[tokio::test]
     async fn test_exists_method_without_root_dir() {
+        // Serialize tests that change the current working directory
+        let _cwd_guard = CWD_MUTEX.lock().unwrap();
+
         // Save current directory to restore later
         let original_dir = std::env::current_dir().unwrap();
 
