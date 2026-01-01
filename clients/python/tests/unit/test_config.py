@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 from proximadb_sdk import (
     Protocol,
+    PortMode,
     LogLevel,
     RetryConfig,
     ConnectionConfig,
@@ -351,9 +352,13 @@ class TestConfigFunctions:
         config.protocol = Protocol.AUTO
         assert config.should_use_grpc() is True  # Default to gRPC
         
-        # Test get_protocol_url
+        # Test get_protocol_url (unified mode is default - all protocols use same port)
         assert config.get_protocol_url(Protocol.REST) == "https://api.proximadb.com:5678"
-        assert config.get_protocol_url(Protocol.GRPC) == "api.proximadb.com:5679"
+        assert config.get_protocol_url(Protocol.GRPC) == "api.proximadb.com:5678"
+
+        # Test multi-port mode (legacy behavior with different ports)
+        config_multi = ClientConfig(url="https://api.proximadb.com", port_mode=PortMode.MULTI)
+        assert config_multi.get_protocol_url(Protocol.GRPC) == "api.proximadb.com:5679"
     
     def test_client_config_headers(self):
         """Test ClientConfig header methods"""
