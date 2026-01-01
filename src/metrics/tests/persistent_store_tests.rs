@@ -11,16 +11,31 @@ mod tests {
     use anyhow::Result;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::fs;
     use tracing::{debug, error, info};
+
+    /// Counter for generating unique test paths
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Generate a unique test path for test isolation
+    fn generate_unique_test_path() -> String {
+        let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("/tmp/proximadb_metrics_test_{}_{}",counter, timestamp)
+    }
 
     async fn create_test_store() -> Result<MetricsPersistenceLayer> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
+        let unique_path = generate_unique_test_path();
         let config = MetricsConfig {
             enabled: true,
             collection_partitions: 4,
-            storage_path: "file:///tmp/proximadb_metrics_test".to_string(),
+            storage_path: format!("file://{}", unique_path),
             flush_interval_seconds: 30,
             retention_days: 7,
             parallel_scan_threshold: 10,
@@ -30,8 +45,8 @@ mod tests {
             max_memory_mb: 512,
         };
 
-        // Clean up test directory
-        let _ = fs::remove_dir_all("/tmp/proximadb_metrics_test").await;
+        // Clean up test directory (unique per test, no conflicts)
+        let _ = fs::remove_dir_all(&unique_path).await;
 
         let filesystem_config = Default::default();
         let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await?);
