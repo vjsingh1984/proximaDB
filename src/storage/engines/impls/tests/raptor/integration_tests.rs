@@ -39,6 +39,15 @@ async fn test_engine_basic_info() -> Result<()> {
 async fn test_insert_and_retrieve() -> Result<()> {
     let engine = create_test_engine().await?;
 
+    // Create isolated collection with unique path
+    let collection = create_test_collection();
+    let collection_id = collection.id.clone();
+    let base_path = collection
+        .storage_assignment
+        .as_ref()
+        .map(|s| s.base_location.clone())
+        .unwrap_or_else(|| "/tmp".to_string());
+
     // Create test vector
     let vector = VectorRecord {
         id: "test_vec_1".to_string(),
@@ -68,28 +77,10 @@ async fn test_insert_and_retrieve() -> Result<()> {
         source: None,
     };
 
-    // Create collection config with dimension and storage assignment
-    let collection = crate::proto::proximadb_v1::Collection {
-        id: "test_collection".to_string(),
-        config: Some(crate::proto::proximadb_v1::CollectionConfig {
-            dimension: 4,
-            ..Default::default()
-        }),
-        storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/tmp".to_string(),
-            backup_paths: vec![],
-            engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
-            engine_config: std::collections::HashMap::new(),
-            base_location: "/tmp".to_string(),
-            assigned_at: chrono::Utc::now().timestamp(),
-        }),
-        ..Default::default()
-    };
-
     // Insert vector (using internal method)
     // Use flush instead of insert_batch
     let flush_params = crate::storage::traits::FlushParameters {
-        collection_id: Some("test_collection".to_string()),
+        collection_id: Some(collection_id.clone()),
         vector_records: vec![vector.clone()],
         force: true,
         synchronous: true,
@@ -100,10 +91,11 @@ async fn test_insert_and_retrieve() -> Result<()> {
 
     // Retrieve vector - provide base_path for storage location
     println!(
-        "TEST: About to call vector_by_id with collection='test_collection', base_path='file:///tmp', id='test_vec_1'"
+        "TEST: About to call vector_by_id with collection='{}', base_path='file://{}', id='test_vec_1'",
+        collection_id, base_path
     );
     let retrieved = engine
-        .vector_by_id("test_collection", "file:///tmp", "test_vec_1")
+        .vector_by_id(&collection_id, &format!("file://{}", base_path), "test_vec_1")
         .await?;
 
     println!("TEST: vector_by_id returned: {:?}", retrieved.is_some());
@@ -111,8 +103,8 @@ async fn test_insert_and_retrieve() -> Result<()> {
         println!("TEST: Vector not found! Checking what files exist...");
 
         // Debug: Check what files were created using standard fs
-        let data_dir = "/tmp/test_collection/data";
-        if let Ok(entries) = std::fs::read_dir(data_dir) {
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        if let Ok(entries) = std::fs::read_dir(&data_dir) {
             println!("TEST: Found files in {}", data_dir);
             for entry in entries {
                 if let Ok(entry) = entry {
@@ -155,6 +147,15 @@ async fn test_search_vectors() -> Result<()> {
     let engine = create_test_engine().await?;
     println!("Engine created successfully");
 
+    // Create isolated collection with unique path
+    let collection = create_test_collection();
+    let collection_id = collection.id.clone();
+    let base_path = collection
+        .storage_assignment
+        .as_ref()
+        .map(|s| s.base_location.clone())
+        .unwrap_or_else(|| "/tmp".to_string());
+
     // Insert test vectors
     let vectors = vec![
         VectorRecord {
@@ -183,28 +184,10 @@ async fn test_search_vectors() -> Result<()> {
         },
     ];
 
-    // Create collection config with dimension and storage assignment
-    let collection = crate::proto::proximadb_v1::Collection {
-        id: "test_collection".to_string(),
-        config: Some(crate::proto::proximadb_v1::CollectionConfig {
-            dimension: 4,
-            ..Default::default()
-        }),
-        storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/tmp".to_string(),
-            backup_paths: vec![],
-            engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
-            engine_config: std::collections::HashMap::new(),
-            base_location: "/tmp".to_string(),
-            assigned_at: chrono::Utc::now().timestamp(),
-        }),
-        ..Default::default()
-    };
-
     // Use flush instead of insert_batch
     println!("Creating flush parameters with {} vectors", vectors.len());
     let flush_params = crate::storage::traits::FlushParameters {
-        collection_id: Some("test_collection".to_string()),
+        collection_id: Some(collection_id.clone()),
         vector_records: vectors.clone(),
         force: true,
         synchronous: true,
@@ -232,32 +215,17 @@ async fn test_search_vectors() -> Result<()> {
         top_k: Some(2),
         ..Default::default()
     });
-    let collection = std::sync::Arc::new(crate::proto::proximadb_v1::Collection {
-        id: "test_collection".to_string(),
-        config: Some(crate::proto::proximadb_v1::CollectionConfig {
-            dimension: 4,
-            ..Default::default()
-        }),
-        storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/tmp".to_string(),
-            backup_paths: vec![],
-            engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
-            engine_config: std::collections::HashMap::new(),
-            base_location: "/tmp".to_string(),
-            assigned_at: chrono::Utc::now().timestamp(),
-        }),
-        ..Default::default()
-    });
+    let collection_arc = std::sync::Arc::new(collection.clone());
     // Create metadata matching production behavior: storage_path is base_location
     let metadata = crate::storage::traits::StorageQueryMetadata {
-        collection_id: "test_collection".to_string(),
-        storage_path: "/tmp".to_string(), // Production: base_location, engine adds /{collection_id}/data
+        collection_id: collection_id.clone(),
+        storage_path: base_path.clone(), // Production: base_location, engine adds /{collection_id}/data
         dimension: 4,
         ..Default::default()
     };
     let query_context = crate::storage::traits::StorageQueryContext {
         search_params,
-        collection,
+        collection: collection_arc,
         metadata,
     };
     println!("Calling search_vectors_unified...");
@@ -292,6 +260,10 @@ async fn test_search_vectors() -> Result<()> {
 async fn test_flush_operation() -> Result<()> {
     let engine = create_test_engine().await?;
 
+    // Create isolated collection with unique path
+    let collection = create_test_collection();
+    let collection_id = collection.id.clone();
+
     // Insert some vectors
     let vectors = (0..10)
         .map(|i| VectorRecord {
@@ -304,27 +276,9 @@ async fn test_flush_operation() -> Result<()> {
         })
         .collect();
 
-    // Create collection config with dimension and storage assignment
-    let collection = crate::proto::proximadb_v1::Collection {
-        id: "test_collection".to_string(),
-        config: Some(crate::proto::proximadb_v1::CollectionConfig {
-            dimension: 4,
-            ..Default::default()
-        }),
-        storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-            primary_path: "/tmp".to_string(),
-            backup_paths: vec![],
-            engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
-            engine_config: std::collections::HashMap::new(),
-            base_location: "/tmp".to_string(),
-            assigned_at: chrono::Utc::now().timestamp(),
-        }),
-        ..Default::default()
-    };
-
     // Use flush instead of insert_batch
     let flush_params = crate::storage::traits::FlushParameters {
-        collection_id: Some("test_collection".to_string()),
+        collection_id: Some(collection_id.clone()),
         vector_records: vectors,
         force: true,
         synchronous: true,
@@ -335,7 +289,7 @@ async fn test_flush_operation() -> Result<()> {
 
     // Perform flush
     let flush_params = crate::storage::traits::FlushParameters {
-        collection_id: Some("test_collection".to_string()),
+        collection_id: Some(collection_id.clone()),
         force: false,
         synchronous: true,
         collection_config: Some(collection.clone()),
@@ -345,7 +299,7 @@ async fn test_flush_operation() -> Result<()> {
     let result = engine.do_flush(&flush_params).await?;
 
     assert!(result.success);
-    assert_eq!(result.collections_affected, vec!["test_collection"]);
+    assert_eq!(result.collections_affected, vec![collection_id]);
 
     Ok(())
 }
