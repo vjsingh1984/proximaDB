@@ -350,7 +350,7 @@ impl IcebergCatalog {
             timestamp_ms: now,
             summary: HashMap::from([
                 ("operation".to_string(), "schema-update".to_string()),
-                ("proximadb-version".to_string(), "0.1.5".to_string()),
+                ("proximadb-version".to_string(), "0.2.0".to_string()),
             ]),
             manifest_list: format!("{}/metadata/snap-{}.avro", table.location, snapshot_id),
         };

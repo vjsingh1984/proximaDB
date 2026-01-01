@@ -218,7 +218,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 |===
 
 [[category-index]]
-== 📂 Features by Category (status reflects v0.1.5 code)
+== 📂 Features by Category (status reflects v0.2.0 code)
 
 [[completed-features]]
 === ✅ COMPLETED (representative set)

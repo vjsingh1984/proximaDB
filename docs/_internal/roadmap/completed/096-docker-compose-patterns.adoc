@@ -171,7 +171,7 @@ version: '3.8'
 
 services:
   proximadb:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb-prod
     ports:
       - "5678:5678"
@@ -310,7 +310,7 @@ services:
 
   # Node 1
   proximadb-1:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb-1
     hostname: proximadb-1
     volumes:
@@ -335,7 +335,7 @@ services:
 
   # Node 2
   proximadb-2:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb-2
     hostname: proximadb-2
     volumes:
@@ -360,7 +360,7 @@ services:
 
   # Node 3
   proximadb-3:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb-3
     hostname: proximadb-3
     volumes:
@@ -453,7 +453,7 @@ version: '3.8'
 
 services:
   proximadb:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb
     ports:
       - "5678:5678"
@@ -638,7 +638,7 @@ version: '3.8'
 
 services:
   proximadb:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb-s3
     ports:
       - "5678:5678"
@@ -721,7 +721,7 @@ version: '3.8'
 services:
   # Tenant A
   proximadb-tenant-a:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb-tenant-a
     ports:
       - "5678:5678"
@@ -741,7 +741,7 @@ services:
 
   # Tenant B
   proximadb-tenant-b:
-    image: proximadb/proximadb:0.1.5
+    image: proximadb/proximadb:0.2.0
     container_name: proximadb-tenant-b
     ports:
       - "5680:5678"
@@ -830,7 +830,7 @@ version: '3.8'
 
 services:
   proximadb:
-    image: proximadb/proximadb:0.1.5-cuda
+    image: proximadb/proximadb:0.2.0-cuda
     container_name: proximadb-gpu
     ports:
       - "5678:5678"

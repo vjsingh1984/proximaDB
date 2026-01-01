@@ -510,7 +510,7 @@ replicaCount: 3
 
 image:
   repository: proximadb/proximadb
-  tag: "0.1.5"
+  tag: "0.2.0"
 
 resources:
   requests:

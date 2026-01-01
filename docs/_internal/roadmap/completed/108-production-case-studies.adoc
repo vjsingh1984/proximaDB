@@ -304,7 +304,7 @@ Site A (Primary)                    Site B (DR)
 # config.toml - Security hardened configuration
 
 [server]
-bind_address = "10.0.1.50"
+bind_address = "10.0.2.00"
 port = 5678
 tls_enabled = true
 tls_cert_path = "/etc/proximadb/certs/server.crt"

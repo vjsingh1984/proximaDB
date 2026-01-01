@@ -234,7 +234,7 @@ spec:
         spec:
           containers:
             - name: backup
-              image: proximadb/proximadb:0.1.5
+              image: proximadb/proximadb:0.2.0
               command:
                 - proximadb-cli
                 - backup
@@ -591,7 +591,7 @@ spec:
         spec:
           containers:
             - name: restore-test
-              image: proximadb/proximadb:0.1.5
+              image: proximadb/proximadb:0.2.0
               command:
                 - /bin/sh
                 - -c

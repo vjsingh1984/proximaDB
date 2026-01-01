@@ -484,7 +484,7 @@ max_files = 10
   "action": "search",
   "user_id": "user_123",
   "api_key_id": "key_abc",
-  "client_ip": "10.0.1.50",
+  "client_ip": "10.0.2.00",
   "collection": "embeddings",
   "request_id": "req_xyz",
   "duration_ms": 45,

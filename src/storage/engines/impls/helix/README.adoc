@@ -1188,4 +1188,4 @@ pca_retrain_interval_hours = 48     # Less frequent training
 * Locality-Sensitive Hashing (LSH): Alternative locality-preserving technique
 
 ---
-_Last updated: January 2025 (v0.1.5)_
+_Last updated: December 2025 (v0.2.0)_

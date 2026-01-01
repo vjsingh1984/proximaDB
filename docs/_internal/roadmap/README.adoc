@@ -140,4 +140,4 @@ Phase 3 features are post-MVP enhancements.
 ---
 
 _Last Updated_: December 30, 2025 +
-_Version_: 0.1.5
+_Version_: 0.2.0

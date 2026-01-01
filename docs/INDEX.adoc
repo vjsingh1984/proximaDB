@@ -90,4 +90,4 @@ For detailed strategy, see link:concepts/vision.adoc[Vision Document].
 * Internal roadmap and archived docs live under `docs/_internal/` and are not part of the public API.
 * MVP (Phase 1 + Phase 2) is 96% complete; Phase 3 ecosystem features are in progress.
 
-_Version 0.1.5_ | _December 2025_
+_Version 0.2.0_ | _December 2025_

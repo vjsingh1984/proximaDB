@@ -906,7 +906,7 @@ GET /health
   "status": "healthy",
   "timestamp": 1703980800,
   "uptime_seconds": 86400,
-  "version": "0.1.5",
+  "version": "0.2.0",
   "components": {
     "storage": {"status": "healthy", "latency_ms": 2},
     "index": {"status": "healthy", "latency_ms": 1},

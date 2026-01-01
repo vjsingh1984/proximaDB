@@ -900,7 +900,7 @@ This allows complex Graphviz diagrams while maintaining documentation integratio
 
 ---
 
-*Storage Engine Comprehensive Reference - ProximaDB v0.1.5* +
+*Storage Engine Comprehensive Reference - ProximaDB v0.2.0* +
 *Last Updated: September 2025* +
 *7 Production-Ready Storage Engines* +
 *Optimized for GitHub integration and visual clarity*

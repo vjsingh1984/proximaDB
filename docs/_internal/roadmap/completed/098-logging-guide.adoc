@@ -207,8 +207,8 @@ RUST_LOG=trace cargo run
     "method": "POST",
     "path": "/api/v1/collections/embeddings/search",
     "request_id": "req_abc123",
-    "client_ip": "10.0.1.50",
-    "user_agent": "proximadb-python/0.1.5"
+    "client_ip": "10.0.2.00",
+    "user_agent": "proximadb-python/0.2.0"
   }
 }
 
@@ -354,7 +354,7 @@ RUST_LOG=trace cargo run
   "target": "proximadb::network",
   "message": "Client connection error",
   "fields": {
-    "client_ip": "10.0.1.50",
+    "client_ip": "10.0.2.00",
     "error": "Connection reset by peer",
     "active_requests": 5
   }
@@ -640,7 +640,7 @@ include_request_body = false
   "user": {
     "id": "user_123",
     "api_key_id": "key_abc",
-    "ip_address": "10.0.1.50"
+    "ip_address": "10.0.2.00"
   },
   "resource": {
     "type": "collection",

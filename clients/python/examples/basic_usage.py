@@ -4,7 +4,7 @@ Basic Usage Example for ProximaDB Python SDK v1.0
 
 STATUS: ✅ Production Ready (Tested 2025-01-23)
 SDK Version: v1.0+
-Server Version: v0.1.5+
+Server Version: v0.2.0+
 Test Result: 100% PASS
 
 This example demonstrates the fundamental operations with real BERT embeddings:

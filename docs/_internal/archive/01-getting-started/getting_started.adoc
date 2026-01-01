@@ -219,4 +219,4 @@ graph LR
 ---
 
 [.text-center]
-**ProximaDB v0.1.5** • Apache 2.0 License • link:https://github.com/vjsingh1984/proximaDB[GitHub Repository]
+**ProximaDB v0.2.0** • Apache 2.0 License • link:https://github.com/vjsingh1984/proximaDB[GitHub Repository]

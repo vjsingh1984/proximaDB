@@ -35,7 +35,7 @@ Comprehensive health check.
 {
   "status": "healthy",
   "timestamp": "2025-01-15T10:30:00Z",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "services": {
     "rest_api": "operational",
     "storage": "operational",

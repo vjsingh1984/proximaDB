@@ -11,7 +11,7 @@ cd "$REPO_ROOT"
 
 echo "====================================================================="
 echo "  ProximaDB Documentation Validation"
-echo "  Version: 0.1.5"
+echo "  Version: 0.2.0"
 echo "  Date: $(date +%Y-%m-%d)"
 echo "====================================================================="
 echo ""

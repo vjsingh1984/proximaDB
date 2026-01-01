@@ -320,12 +320,13 @@ class ClientConfig(BaseModel):
                 return f"{scheme}://{host}:{port}"
 
         # Multi-port mode (legacy): different ports for each protocol
+        # Note: In unified mode (default), all protocols share port 5678
         if target_protocol == Protocol.REST:
             port = 5678  # REST API port
         elif target_protocol == Protocol.GRPC:
-            port = 5679  # gRPC API port
+            port = 5679  # Legacy gRPC API port (use unified mode for single port)
         elif target_protocol == Protocol.ARROW_FLIGHT:
-            port = 5680  # Arrow Flight API port
+            port = 5680  # Legacy Arrow Flight port (use unified mode for single port)
         else:
             # Keep original port for AUTO or unknown protocols
             port = parsed.port or (443 if scheme == "https" else 80)

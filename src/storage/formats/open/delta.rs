@@ -935,7 +935,7 @@ impl OpenTableFormat for DeltaLakeFormat {
                 m
             }),
             user_metadata: None,
-            engine_info: Some("ProximaDB/0.1.5".to_string()),
+            engine_info: Some("ProximaDB/0.2.0".to_string()),
         };
         actions.push(serde_json::json!({"commitInfo": commit_info}));
 
@@ -1037,7 +1037,7 @@ impl OpenTableFormat for DeltaLakeFormat {
             is_blind_append: Some(false),
             operation_metrics: None,
             user_metadata: None,
-            engine_info: Some("ProximaDB/0.1.5".to_string()),
+            engine_info: Some("ProximaDB/0.2.0".to_string()),
         };
         actions.push(serde_json::json!({"commitInfo": commit_info}));
 
@@ -1156,7 +1156,7 @@ impl OpenTableFormat for DeltaLakeFormat {
             is_blind_append: Some(true),
             operation_metrics: None,
             user_metadata: None,
-            engine_info: Some("ProximaDB/0.1.5".to_string()),
+            engine_info: Some("ProximaDB/0.2.0".to_string()),
         };
         actions.push(serde_json::json!({"commitInfo": commit_info}));
 

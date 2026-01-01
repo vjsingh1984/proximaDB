@@ -463,4 +463,4 @@ See `ALL_DEMOS_FIXED_FINAL_REPORT.md` for complete fix details.
 
 **Last Updated**: 2025-10-23
 **SDK Version**: 1.0
-**Server Version**: 0.1.5
+**Server Version**: 0.2.0

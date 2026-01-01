@@ -14,7 +14,7 @@ Use this guide if you're running ProximaDB v0.1.x with the legacy Semantic Knowl
 
 == Prerequisites
 
-* ProximaDB v0.1.5 or later currently running
+* ProximaDB v0.2.0 or later currently running
 * Existing SKS data to migrate
 * System requirements:
   - Rust 1.88 or later
@@ -55,8 +55,8 @@ Use this guide if you're running ProximaDB v0.1.x with the legacy Semantic Knowl
 # Check your ProximaDB version
 grep 'version = ' Cargo.toml
 
-# Should show 0.1.5 or later
-# version = "0.1.5"
+# Should show 0.2.0 or later
+# version = "0.2.0"
 ----
 
 === Step 2: Backup Your Data

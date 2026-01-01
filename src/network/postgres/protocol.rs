@@ -351,7 +351,7 @@ impl PostgresProtocol {
 
         // Handle SHOW commands converted to SELECT
         if upper.contains("AS SERVER_VERSION") {
-            return self.send_single_value_result("server_version", "ProximaDB 0.1.5 (PostgreSQL 16.0 compatible)").await;
+            return self.send_single_value_result("server_version", "ProximaDB 0.2.0 (PostgreSQL 16.0 compatible)").await;
         }
         if upper.contains("AS SERVER_ENCODING") || upper.contains("AS CLIENT_ENCODING") {
             return self.send_single_value_result("encoding", "UTF8").await;

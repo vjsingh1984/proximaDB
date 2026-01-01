@@ -2,7 +2,7 @@
 """
 STATUS: 🚧 Requires Demo Server - Embedding Service Not Available
 SDK Version: v1.0
-Server Version: v0.1.5+
+Server Version: v0.2.0+
 Test Result: SKIP - Requires demo server with embedding/LLM services
 
 AI Knowledge Base Demo for ProximaDB
