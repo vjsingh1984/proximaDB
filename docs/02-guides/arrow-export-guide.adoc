@@ -1,0 +1,469 @@
+= Arrow Export Guide
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+
+== Overview
+
+ProximaDB provides native Arrow Flight support for exporting data to analytics tools. This enables zero-copy data transfer to PyArrow, Polars, DuckDB, and pandas.
+
+=== Supported Formats
+
+[cols="1,2,2"]
+|===
+|Format |Extension |Engines
+
+|ArrowBlock
+|`.arrow`
+|SST (when configured)
+
+|ProximaBlocks
+|`.sst`
+|SST (default)
+
+|Parquet
+|`.parquet`
+|Nova, VIPER
+|===
+
+All formats are accessible via Arrow Flight on port 5680.
+
+== Quick Start
+
+=== Python SDK
+
+[source,python]
+----
+from proximadb_sdk import connect_arrow
+
+# Connect to Arrow Flight endpoint
+with connect_arrow(host="localhost", port=5680) as client:
+    # List available files
+    files = client.list_files("my_collection")
+    for f in files:
+        print(f"{f.filename}: {f.total_records} records ({f.format.value})")
+
+    # Read into PyArrow Table
+    table = client.read_file("my_collection/data/block_0.arrow")
+    print(f"Schema: {table.schema}")
+
+    # Read into Polars DataFrame
+    df = client.to_polars("my_collection/data/block_0.arrow")
+    print(df.head())
+
+    # Load into DuckDB for SQL analytics
+    conn = client.to_duckdb("my_collection/data/block_0.arrow")
+    result = conn.execute("SELECT * FROM vectors LIMIT 10").fetchdf()
+----
+
+=== Direct PyArrow Usage
+
+[source,python]
+----
+import pyarrow.flight as flight
+
+# Connect to Arrow Flight
+client = flight.connect("grpc://localhost:5680")
+
+# List files in a collection
+for info in client.list_flights(b"my_collection"):
+    print(f"Found: {info.descriptor.path}")
+
+# Read file data
+descriptor = flight.FlightDescriptor.for_path("my_collection", "data", "block_0.arrow")
+info = client.get_flight_info(descriptor)
+reader = client.do_get(info.endpoints[0].ticket)
+table = reader.read_all()
+----
+
+=== DuckDB Direct Query
+
+[source,sql]
+----
+-- Install Arrow extension
+INSTALL arrow;
+LOAD arrow;
+
+-- Query ProximaDB files directly
+SELECT * FROM arrow_scan('grpc://localhost:5680', 'my_collection/data/block_0.arrow');
+
+-- Analytics on vectors
+SELECT
+    id,
+    metadata->>'category' as category,
+    array_length(vector) as dimension
+FROM arrow_scan('grpc://localhost:5680', 'my_collection/data/block_0.arrow')
+WHERE metadata->>'category' = 'tech';
+----
+
+=== Polars Direct Usage
+
+[source,python]
+----
+import polars as pl
+from pyarrow import flight
+
+# Connect and read
+client = flight.connect("grpc://localhost:5680")
+flights = list(client.list_flights(b'my_collection'))
+reader = client.do_get(flights[0].endpoints[0].ticket)
+df = pl.from_arrow(reader.read_all())
+
+# Analytics
+result = df.filter(
+    pl.col("metadata").struct.field("category") == "tech"
+).select(["id", "vector"])
+----
+
+== ArrowExportClient API
+
+=== Connection
+
+[source,python]
+----
+from proximadb_sdk import ArrowExportClient, connect_arrow
+
+# Using class directly
+client = ArrowExportClient(
+    host="localhost",
+    port=5680,
+    tls=False,
+    auth_token="optional_token"
+)
+
+# Using convenience function
+client = connect_arrow(host="localhost", port=5680)
+
+# Context manager
+with connect_arrow() as client:
+    # Operations here
+    pass
+----
+
+=== Listing Files
+
+[source,python]
+----
+from proximadb_sdk import FileFormat
+
+# List all files
+files = client.list_files("my_collection")
+
+# Filter by format
+arrow_files = client.list_files("my_collection", format_filter=FileFormat.ARROW)
+parquet_files = client.list_files("my_collection", format_filter=FileFormat.PARQUET)
+sst_files = client.list_files("my_collection", format_filter=FileFormat.SST)
+
+# Filter by pattern
+block_files = client.list_files("my_collection", pattern="block_*.arrow")
+----
+
+=== Reading Data
+
+[source,python]
+----
+# Read single file to PyArrow Table
+table = client.read_file("my_collection/data/block_0.arrow")
+
+# Read entire collection
+full_table = client.read_collection("my_collection")
+
+# Stream as batches (memory efficient)
+for batch in client.read_batches("my_collection/data/large_file.arrow"):
+    process(batch)
+
+# Get schema only
+schema = client.get_schema("my_collection/data/block_0.arrow")
+----
+
+=== Format Conversions
+
+[source,python]
+----
+# To Polars DataFrame
+df = client.to_polars("my_collection/data/block_0.arrow")
+
+# To DuckDB (creates in-memory connection)
+conn = client.to_duckdb("my_collection/data/block_0.arrow")
+result = conn.execute("SELECT * FROM vectors").fetchdf()
+
+# To pandas DataFrame
+pdf = client.to_pandas("my_collection/data/block_0.arrow")
+
+# Extract vectors as NumPy array
+vectors = client.to_numpy("my_collection/data/block_0.arrow")
+print(vectors.shape)  # (num_vectors, dimension)
+----
+
+=== Collection Statistics
+
+[source,python]
+----
+stats = client.collection_stats("my_collection")
+print(f"""
+Collection: {stats['collection_id']}
+Files: {stats['num_files']}
+Total records: {stats['total_records']}
+Size: {stats['total_size_mb']:.2f} MB
+Dimension: {stats['dimension']}
+Formats: {stats['formats']}
+""")
+----
+
+== FileInfo Object
+
+The `FileInfo` dataclass contains metadata about exportable files:
+
+[source,python]
+----
+@dataclass
+class FileInfo:
+    path: str           # Full path
+    filename: str       # File name only
+    size_bytes: int     # File size
+    num_batches: int    # Number of record batches
+    total_records: int  # Total vector count
+    dimension: int      # Vector dimension
+    modified_at: int    # Unix timestamp
+    format: FileFormat  # ARROW, PARQUET, or SST
+----
+
+== Performance Tips
+
+=== Streaming Large Files
+
+For large files, use batch streaming to avoid loading everything into memory:
+
+[source,python]
+----
+# Memory-efficient processing
+total_processed = 0
+for batch in client.read_batches("large_collection/data/huge_file.arrow"):
+    # Process batch
+    total_processed += batch.num_rows
+
+print(f"Processed {total_processed} vectors")
+----
+
+=== Parallel Processing with Polars
+
+[source,python]
+----
+import polars as pl
+
+# Polars automatically parallelizes operations
+df = client.to_polars("my_collection/data/block_0.arrow")
+
+# Fast parallel aggregations
+stats = df.select([
+    pl.col("vector").list.len().alias("dimension"),
+    pl.len().alias("count"),
+])
+----
+
+=== SQL Analytics with DuckDB
+
+[source,python]
+----
+# Load multiple files
+conn = duckdb.connect(":memory:")
+
+for file in client.list_files("my_collection"):
+    table = client.read_file(file.path)
+    conn.register(f"file_{file.filename.replace('.', '_')}", table)
+
+# Run analytics across all files
+result = conn.execute("""
+    SELECT COUNT(*) as total, AVG(array_length(vector)) as avg_dim
+    FROM file_block_0_arrow
+""").fetchdf()
+----
+
+== Troubleshooting
+
+=== Connection Issues
+
+[source,python]
+----
+# Check connectivity
+try:
+    with connect_arrow(host="localhost", port=5680) as client:
+        files = client.list_files("test")
+        print(f"Connected! Found {len(files)} files")
+except Exception as e:
+    print(f"Connection failed: {e}")
+----
+
+=== Format Not Supported
+
+If you see "Format not supported" errors:
+
+1. Check that the file exists and has a valid extension
+2. Ensure the ProximaDB server is running with Arrow Flight enabled
+3. Verify the collection uses a supported engine (SST, Nova, VIPER)
+
+=== Large File Timeouts
+
+For very large files, increase the timeout:
+
+[source,python]
+----
+import pyarrow.flight as flight
+
+# Increase read timeout
+options = flight.FlightCallOptions(timeout=300)  # 5 minutes
+----
+
+== Configuration
+
+=== Server Configuration
+
+Enable Arrow Flight in `config.toml`:
+
+[source,toml]
+----
+[api]
+rest_port = 5678
+grpc_port = 5679
+arrow_flight_port = 5680  # Arrow Flight endpoint
+
+[storage.sst_config]
+block_format = "ArrowBlock"  # Use Arrow format for new flushes
+----
+
+=== Block Format Selection
+
+Choose the block format based on your use case:
+
+[cols="1,2,2"]
+|===
+|Format |Best For |Trade-offs
+
+|ProximaBlocks (default)
+|Vector search workloads
+|Optimal for search, accessible via Arrow Flight
+
+|ArrowBlock
+|Analytics/export workloads
+|Native Arrow, fastest scans
+
+|Parquet (Nova/VIPER)
+|Columnar analytics
+|Best compression, excellent for batch processing
+|===
+
+== Performance Benchmarks
+
+Benchmark results for 1000 vectors with 128 dimensions:
+
+=== Write and Storage Performance
+
+[cols="2,1,1,1,1,1"]
+|===
+|Engine/Format |Write (ms) |Size (KB) |Scan (ms) |Filter (ms) |PyArrow
+
+|SST/ProximaBlocks
+|331.8
+|573.9
+|21.4
+|16.6
+|via Flight
+
+|SST/ArrowBlock
+|240.8
+|609.5
+|*8.8*
+|8.3
+|Direct
+
+|Nova/Parquet
+|127.9
+|1646.9
+|10.6
+|10.8
+|Direct
+
+|Viper/Parquet
+|*22.5*
+|*260.9*
+|12.4
+|*4.9*
+|Direct
+|===
+
+_* indicates best performance for that metric_
+
+=== Performance Winners
+
+[cols="1,2,1"]
+|===
+|Metric |Winner |Value
+
+|Fastest Write
+|Viper/Parquet
+|22.5 ms
+
+|Smallest Size
+|Viper/Parquet
+|260.9 KB
+
+|Fastest Scan
+|SST/ArrowBlock
+|8.8 ms
+
+|Fastest Filter
+|Viper/Parquet
+|4.9 ms
+|===
+
+=== External Tool Compatibility
+
+All formats are now accessible via Arrow Flight:
+
+[cols="2,1,1,1"]
+|===
+|Format |PyArrow |DuckDB |Polars
+
+|SST/ArrowBlock (.arrow)
+|Direct
+|Direct
+|Direct
+
+|SST/ProximaBlocks (.sst)
+|via Flight
+|via Flight
+|via Flight
+
+|Nova/Parquet (.parquet)
+|Direct
+|Direct
+|Direct
+
+|Viper/Parquet (.parquet)
+|Direct
+|Direct
+|Direct
+|===
+
+=== Use Case Recommendations
+
+**Real-time OLTP workloads:**
+
+* SST/ProximaBlocks: Optimized for low-latency writes and point queries
+* Three-stage filtering pipeline reduces unnecessary I/O
+
+**Analytics with external tools (PyArrow, DuckDB, Polars):**
+
+* SST/ArrowBlock: Native Arrow IPC format, zero-copy reads
+* Direct integration without format conversion
+
+**Production batch workloads:**
+
+* Viper/Parquet: Best compression, optimized for large batch processing
+* Cloud-optimized with footer caching and range reads
+
+**Advanced analytics with progressive search:**
+
+* Nova/Parquet: Hierarchical statistics for 70-90% I/O reduction
+* SuperBlock metadata enables intelligent query pruning
