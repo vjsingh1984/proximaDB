@@ -1671,6 +1671,7 @@ impl MultiServer {
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
             let data_dir = self.config.data_dir.clone();
+            let query_adapter = Some(services.query_adapter());
 
             let api_config = self.config.api_config.clone();
             // Compression disabled by default (field doesn't exist in config)
@@ -1693,6 +1694,7 @@ impl MultiServer {
                     security_coordinator,
                     rest_security,
                     data_dir,
+                    query_adapter,
                 )
                 .start()
                 .await

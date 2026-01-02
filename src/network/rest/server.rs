@@ -299,6 +299,7 @@ impl RestServer {
             security_coordinator,
             security_config,
             std::path::PathBuf::from("/tmp/proximadb/data"), // Default fallback
+            None, // No query adapter for legacy constructor
         )
     }
 
@@ -312,12 +313,13 @@ impl RestServer {
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         security_config: RestServerSecurityConfig,
         data_dir: std::path::PathBuf,
+        query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
     ) -> Self {
         let state = AppState {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
             data_dir,
-            query_adapter: None, // TODO: Wire from SharedServices.query_facade
+            query_adapter,
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -502,12 +504,13 @@ impl RestServer {
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         data_dir: std::path::PathBuf,
+        query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
     ) -> Router {
         let state = AppState {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
             data_dir,
-            query_adapter: None, // TODO: Wire from SharedServices.query_facade
+            query_adapter,
         };
 
         // Create metrics router if metrics collector is available
