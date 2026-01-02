@@ -57,7 +57,7 @@ use tracing::{debug, info, warn};
 use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
-use crate::query::facade::{UnifiedQueryFacade, VectorSearchStrategy, GraphStrategy, SqlStrategy, FacadeConfig, QueryStrategy, QueryFacadeAdapter};
+use crate::query::facade::{UnifiedQueryFacade, VectorSearchStrategy, GraphStrategy, SqlStrategy, ColumnarStrategy, FacadeConfig, QueryStrategy, QueryFacadeAdapter};
 use crate::query::federated::FederatedQueryContext;
 use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::services::VectorOperationsService;
@@ -1132,14 +1132,23 @@ impl SharedServices {
             SqlStrategy::new(federated_context)
         );
 
+        // Create ColumnarStrategy for analytical queries (M2 Dual Columnar Execution)
+        // This strategy handles SQL queries with aggregations, GROUP BY, DISTINCT
+        // by routing them through Arrow/Parquet columnar providers
+        let columnar_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
+            ColumnarStrategy::new()
+        );
+        debug!("✅ SharedServices::new - ColumnarStrategy created for analytical queries");
+
         // Build the unified facade with all strategies
-        let strategies = vec![vector_strategy, graph_strategy, sql_strategy];
+        // Priority order: vector (100) > graph (75) > columnar (50) > sql (25)
+        let strategies = vec![vector_strategy, graph_strategy, columnar_strategy, sql_strategy];
         let query_facade = Arc::new(
             UnifiedQueryFacade::new(strategies, FacadeConfig::default())
         );
 
         info!(
-            "✅ SharedServices: UnifiedQueryFacade created with 3 strategies (vector, graph, sql)"
+            "✅ SharedServices: UnifiedQueryFacade created with 4 strategies (vector, graph, columnar, sql)"
         );
 
         info!(
