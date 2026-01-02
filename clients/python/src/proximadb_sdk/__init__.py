@@ -847,3 +847,27 @@ if _security_available:
         # mTLS
         "MTLSConfig",
     ])
+
+# Arrow Export (PyArrow, Polars, DuckDB interop)
+try:
+    from .arrow_export import (
+        ArrowExportClient,
+        FileFormat,
+        FileInfo,
+        connect_arrow,
+        read_proximadb_file,
+        read_proximadb_collection,
+    )
+    _arrow_export_available = True
+except ImportError:
+    _arrow_export_available = False
+
+if _arrow_export_available:
+    __all__.extend([
+        "ArrowExportClient",
+        "FileFormat",
+        "FileInfo",
+        "connect_arrow",
+        "read_proximadb_file",
+        "read_proximadb_collection",
+    ])
