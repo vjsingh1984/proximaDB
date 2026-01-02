@@ -816,10 +816,16 @@ impl GraphService for GraphServiceImpl {
                 }))
             }
             Ok(None) => {
-                Err(canonical_code_to_grpc_status(
-                    CanonicalErrorCode::NotFound,
-                    format!("No path found between '{}' and '{}'", req.start_node_id, req.target_node_id),
-                ))
+                // Return success with empty path - aligns with REST API semantics
+                // where no path found is a successful query with empty result
+                debug!(
+                    "No path found between '{}' and '{}' - returning empty response",
+                    req.start_node_id, req.target_node_id
+                );
+                Ok(Response::new(ShortestPathResponse {
+                    node_ids: vec![],
+                    total_weight: None,
+                }))
             }
             Err(e) => Err(create_grpc_error("compute shortest path", e)),
         }
