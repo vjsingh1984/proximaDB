@@ -146,6 +146,9 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
         mmap_enabled: false,
         prefetch_enabled: false,
         prefetch_size_kb: 0,
+
+        // Block format
+        block_format: "ProximaBlocks".to_string(),
     }
 }
 
