@@ -569,6 +569,9 @@ impl UnifiedTestEnvironment {
 
             // Vector encoding strategy
             vector_encoding_strategy: "FullVector".to_string(),
+
+            // Block format
+            block_format: "ProximaBlocks".to_string(),
         }
     }
 
