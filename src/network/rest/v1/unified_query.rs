@@ -86,6 +86,7 @@ use crate::query::unified::ast::{
     PathFilter, StartNodeSpec, TraversalDirection, VectorSearchExpr, VectorSearchParams,
 };
 use crate::query::unified::executor::ParallelExecutor;
+use crate::query::QueryFacadeAdapter;
 use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
 use crate::storage::multimodel::MultiModelStorageFacade;
@@ -116,6 +117,8 @@ pub struct UnifiedQueryApiState {
     pub federated_context: Option<Arc<FederatedQueryContext>>,
     /// Federated parser for detecting multi-model query patterns
     federated_parser: Arc<FederatedParser>,
+    /// Query facade adapter for unified query execution (optional for feature-gated routing)
+    pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
 impl UnifiedQueryApiState {
@@ -137,6 +140,7 @@ impl UnifiedQueryApiState {
             config,
             federated_context: None,
             federated_parser: Arc::new(FederatedParser::new()),
+            query_adapter: None,
         }
     }
 
@@ -161,6 +165,7 @@ impl UnifiedQueryApiState {
             config,
             federated_context: None,
             federated_parser: Arc::new(FederatedParser::new()),
+            query_adapter: None,
         }
     }
 
@@ -195,6 +200,7 @@ impl UnifiedQueryApiState {
             config,
             federated_context: Some(federated_context),
             federated_parser: Arc::new(FederatedParser::new()),
+            query_adapter: None,
         }
     }
 

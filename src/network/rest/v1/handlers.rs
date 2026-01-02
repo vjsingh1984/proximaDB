@@ -24,6 +24,7 @@ use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
 use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
+use crate::query::QueryFacadeAdapter;
 use crate::utils::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,9 @@ pub struct AppState {
     pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
     /// Data directory from config (e.g., server.data_dir from TOML)
     pub data_dir: std::path::PathBuf,
+    /// Query facade adapter for unified query execution
+    /// Optional for backward compatibility during feature flag transition
+    pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
 /// Parse search request from JSON, supporting both proto and simple formats
@@ -158,6 +162,23 @@ pub async fn vector_search(
         request.collection_id, tenant.tenant_id, tenant.source
     );
 
+    // Route through unified facade when feature is enabled and adapter is available
+    #[cfg(feature = "unified-facade-routing")]
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Using unified facade routing for vector search");
+        return match adapter.vector_search(request.clone()).await {
+            Ok(response) => Ok(JsonResponse(response)),
+            Err(e) => {
+                error!(
+                    "❌ Vector search (facade) failed for collection '{}': {:?}",
+                    request.collection_id, e
+                );
+                Err(ApiError::Internal(format!("Search failed: {}", e)))
+            }
+        };
+    }
+
+    // Legacy path: route through unified_handlers directly
     match state
         .unified_handlers
         .handle_vector_search_v1(request.clone())
@@ -627,7 +648,44 @@ pub async fn execute_sql(
         ));
     }
 
-    // Execute through v1 path (typed params and rows)
+    // Route through unified facade when feature is enabled and adapter is available
+    #[cfg(feature = "unified-facade-routing")]
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Using unified facade routing for SQL query");
+        return match adapter.sql_query(&request.query).await {
+            Ok(result) => {
+                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
+                // Convert QueryResult to JSON response
+                let rows = match result.data {
+                    crate::query::QueryResultData::Rows(rows) => rows,
+                    crate::query::QueryResultData::Empty => vec![],
+                    _ => vec![], // Other types return empty for SQL endpoint
+                };
+
+                let json_data = serde_json::json!({
+                    "rows": rows,
+                    "execution_time_ms": execution_time_ms,
+                    "rows_returned": rows.len(),
+                    "row_count": rows.len(),
+                    "request_id": request_id
+                });
+
+                info!(
+                    "SQL query {} (facade) completed in {}ms",
+                    request_id, execution_time_ms
+                );
+
+                Ok(JsonResponse(json_data))
+            }
+            Err(e) => {
+                error!("SQL query {} (facade) failed: {}", request_id, e);
+                Err(ApiError::Internal(e.to_string()))
+            }
+        };
+    }
+
+    // Legacy path: Execute through v1 path (typed params and rows)
     // Optional: read seeding strategy from HTTP header (X-Seeding-Strategy) or from request.parameters via a special key
     let _seeding_strategy = crate::query::execution::SeedingStrategy::Average; // default
 

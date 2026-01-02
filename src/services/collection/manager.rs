@@ -149,6 +149,14 @@ impl CollectionService {
         self
     }
 
+    /// Get storage configuration
+    ///
+    /// Returns the storage configuration for accessing storage locations.
+    /// Used by Arrow Flight service to find .arrow files.
+    pub fn storage_config(&self) -> &StorageConfig {
+        &self.storage_config
+    }
+
     /// Create collection - single method for all handlers (REST, gRPC, etc)
     /// Takes native types directly, no proto/avro conversions needed
     /// NOW WITH MULTI-TENANT SUPPORT

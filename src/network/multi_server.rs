@@ -57,6 +57,9 @@ use tracing::{debug, info, warn};
 use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
+use crate::query::facade::{UnifiedQueryFacade, VectorSearchStrategy, GraphStrategy, SqlStrategy, FacadeConfig, QueryStrategy, QueryFacadeAdapter};
+use crate::query::federated::FederatedQueryContext;
+use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
 use crate::security::SecurityCoordinator;
@@ -637,7 +640,9 @@ pub struct SharedServices {
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     pub metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
-    // Removed circular dependency: storage field removed
+    /// Unified query facade - single entry point for all query types
+    /// Consolidates vector search, SQL, and graph query paths
+    pub query_facade: Arc<UnifiedQueryFacade>,
 }
 
 impl SharedServices {
@@ -1092,6 +1097,51 @@ impl SharedServices {
         let unified_handlers = Arc::new(unified_handlers_instance);
         debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
 
+        // ==================================================================================
+        // Create UnifiedQueryFacade - single entry point for all query types
+        // This consolidates the 5 parallel query paths into a single unified interface
+        // ==================================================================================
+        debug!("🔧 SharedServices::new - Creating UnifiedQueryFacade with real strategies...");
+
+        // Create VectorSearchStrategy wrapping VectorOperationsService
+        let vector_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
+            VectorSearchStrategy::new(
+                vector_operations_service.clone(),
+                collection_service.clone(),
+            )
+        );
+
+        // Create GraphStrategy wrapping GraphOperationsService
+        let graph_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
+            GraphStrategy::new(graph_service.clone())
+        );
+
+        // Create MultiModelStorageFacade for federated queries
+        // This provides unified access to vector/graph/document stores for SQL execution
+        debug!("🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries...");
+        let multimodel_storage = Arc::new(MultiModelStorageFacade::new());
+        debug!("✅ SharedServices::new - MultiModelStorageFacade created");
+
+        // Create FederatedQueryContext for SQL with multi-model extensions
+        debug!("🔧 SharedServices::new - Creating FederatedQueryContext...");
+        let federated_context = Arc::new(FederatedQueryContext::new(multimodel_storage));
+        debug!("✅ SharedServices::new - FederatedQueryContext created");
+
+        // Create SqlStrategy wrapping FederatedQueryContext
+        let sql_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
+            SqlStrategy::new(federated_context)
+        );
+
+        // Build the unified facade with all strategies
+        let strategies = vec![vector_strategy, graph_strategy, sql_strategy];
+        let query_facade = Arc::new(
+            UnifiedQueryFacade::new(strategies, FacadeConfig::default())
+        );
+
+        info!(
+            "✅ SharedServices: UnifiedQueryFacade created with 3 strategies (vector, graph, sql)"
+        );
+
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
         );
@@ -1104,6 +1154,7 @@ impl SharedServices {
                 unified_handlers,
                 metrics_collector,
                 metrics_updater: Some(metrics_updater.clone()),
+                query_facade,
             },
             collection_service,
         ))
@@ -1115,6 +1166,22 @@ impl SharedServices {
         &self,
     ) -> Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> {
         self.metrics_updater.clone()
+    }
+
+    /// Get the unified query facade - single entry point for all query types
+    ///
+    /// The facade consolidates vector search, SQL, and graph queries into a unified
+    /// interface with automatic strategy selection and routing.
+    pub fn query_facade(&self) -> Arc<UnifiedQueryFacade> {
+        self.query_facade.clone()
+    }
+
+    /// Create a QueryFacadeAdapter for protocol handlers
+    ///
+    /// The adapter provides protocol-agnostic methods that convert proto types
+    /// to/from QueryRequest/QueryResult, enabling unified query routing.
+    pub fn query_adapter(&self) -> Arc<QueryFacadeAdapter> {
+        Arc::new(QueryFacadeAdapter::new(self.query_facade.clone()))
     }
 
     /// Recover vectors from write buffer after StorageEngine has started
@@ -1398,6 +1465,12 @@ impl MultiServer {
             };
 
             // Add versioned VectorService (v1)
+            #[cfg(feature = "unified-facade-routing")]
+            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
+                services.unified_handlers.clone(),
+                Some(services.query_adapter()),
+            );
+            #[cfg(not(feature = "unified-facade-routing"))]
             let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
                 services.unified_handlers.clone(),
             );
@@ -1745,6 +1818,12 @@ impl MultiServer {
             let services = self.shared_services.clone();
             let compression = self.config.grpc_config.compression;
 
+            #[cfg(feature = "unified-facade-routing")]
+            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
+                services.unified_handlers.clone(),
+                Some(services.query_adapter()),
+            );
+            #[cfg(not(feature = "unified-facade-routing"))]
             let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
                 services.unified_handlers.clone(),
             );

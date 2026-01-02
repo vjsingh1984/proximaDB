@@ -317,6 +317,7 @@ impl RestServer {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
             data_dir,
+            query_adapter: None, // TODO: Wire from SharedServices.query_facade
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -506,6 +507,7 @@ impl RestServer {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
             data_dir,
+            query_adapter: None, // TODO: Wire from SharedServices.query_facade
         };
 
         // Create metrics router if metrics collector is available

@@ -2,13 +2,18 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
+use tracing::debug;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::vector_service_server::{VectorService, VectorServiceServer};
+#[cfg(feature = "unified-facade-routing")]
+use crate::query::facade::QueryFacadeAdapter;
 
 pub struct VectorServiceImpl {
     unified_handlers: Arc<UnifiedHandlers>,
+    #[cfg(feature = "unified-facade-routing")]
+    query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
 /// Streaming response type for VectorSearchStream
@@ -17,7 +22,23 @@ pub type VectorSearchStreamStream =
 
 impl VectorServiceImpl {
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { unified_handlers }
+        Self {
+            unified_handlers,
+            #[cfg(feature = "unified-facade-routing")]
+            query_adapter: None,
+        }
+    }
+
+    /// Create a new VectorServiceImpl with optional facade adapter for unified routing
+    #[cfg(feature = "unified-facade-routing")]
+    pub fn with_adapter(
+        unified_handlers: Arc<UnifiedHandlers>,
+        query_adapter: Option<Arc<QueryFacadeAdapter>>,
+    ) -> Self {
+        Self {
+            unified_handlers,
+            query_adapter,
+        }
     }
 
     pub fn into_server(self) -> VectorServiceServer<Self> {
@@ -44,6 +65,19 @@ impl VectorService for VectorServiceImpl {
         request: Request<proximadb_v1::VectorSearchRequest>,
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
         let req_v1 = request.into_inner();
+
+        // Route through unified facade when feature is enabled and adapter is available
+        #[cfg(feature = "unified-facade-routing")]
+        if let Some(ref adapter) = self.query_adapter {
+            debug!("gRPC: Using unified facade routing for vector search");
+            return adapter
+                .vector_search(req_v1)
+                .await
+                .map(Response::new)
+                .map_err(|e| Status::internal(format!("Vector search (facade) failed: {}", e)));
+        }
+
+        // Legacy path: route through unified_handlers directly
         self.unified_handlers
             .handle_vector_search_v1(req_v1)
             .await
@@ -85,7 +119,22 @@ impl VectorService for VectorServiceImpl {
     ) -> Result<Response<Self::VectorSearchStreamStream>, Status> {
         let req_v1 = request.into_inner();
 
-        // Perform the search using the same handler as unary search
+        // Perform the search - route through facade when feature is enabled
+        #[cfg(feature = "unified-facade-routing")]
+        let response = if let Some(ref adapter) = self.query_adapter {
+            debug!("gRPC: Using unified facade routing for vector search stream");
+            adapter
+                .vector_search(req_v1)
+                .await
+                .map_err(|e| Status::internal(format!("Vector search stream (facade) failed: {}", e)))?
+        } else {
+            self.unified_handlers
+                .handle_vector_search_v1(req_v1)
+                .await
+                .map_err(|e| Status::internal(format!("Vector search stream failed: {}", e)))?
+        };
+
+        #[cfg(not(feature = "unified-facade-routing"))]
         let response = self
             .unified_handlers
             .handle_vector_search_v1(req_v1)

@@ -294,6 +294,14 @@ impl UnifiedHandlers {
         }
     }
 
+    /// Get storage configuration from collection service
+    ///
+    /// Returns the storage configuration containing storage locations.
+    /// Used by Arrow Flight service to locate .arrow files.
+    pub fn storage_config(&self) -> Option<&crate::core::config::StorageConfig> {
+        Some(self.collection_service.storage_config())
+    }
+
     /// Resolve collection identifier to canonical ID with caching
     ///
     /// Uses TTL-based cache to reduce metadata backend lookups from ~5ms to ~0.1ms on cache hits.

@@ -1809,54 +1809,74 @@ impl VectorOperationsService {
         // This ensures HELIX collections use HELIX, VIPER uses VIPER, etc.
         let engine = self.get_engine_for_collection(collection_id).await?;
 
-        // Launch both searches in parallel using tokio::join!
-        let (wal_results, storage_results) = tokio::join!(
-            // Stage 1: WAL/memtable search
-            async {
-                debug!(
-                    "🔍 Stage 1: Searching WAL/memtable for collection {} with filters",
-                    collection_id
-                );
-                let results = self
-                    .wal_manager
-                    .search_unflushed_vectors(
-                        collection_id,
-                        &query_vector,
-                        candidates, // Same as storage - we'll merge and re-rank both
-                        distance_metric,
-                        filter.as_ref(), // Pass the FilterExpression directly
-                        true,            // include_vectors
-                        true,            // include_metadata
-                    )
-                    .await?;
-                debug!(
-                    "Stage 1 complete: {} WAL results",
-                    results.len()
-                );
-                Ok::<_, anyhow::Error>(results)
-            },
-            // Stage 2: Storage engine search (using collection-specific engine)
-            async {
-                debug!(
-                    "Stage 2: Searching storage engine ({}) for {}",
-                    engine.engine_name(),
-                    collection_id
-                );
-                let results = engine
-                    .search_vectors_unified(&search_context)
-                    .await?;
-                debug!(
-                    "Stage 2 complete: {} storage results from {}",
-                    results.len(),
-                    engine.engine_name()
-                );
-                Ok::<_, anyhow::Error>(results)
-            }
-        );
+        // OPTIMIZED: Sequential search with early termination
+        // Stage 1: WAL/memtable (unflushed vectors) - always run
+        // Stage 2: AXIS HNSW index (O(log N)) - PRIMARY search for flushed vectors
+        // Stage 3: Storage engine - ONLY if AXIS returns insufficient results
 
-        // Unwrap results (propagate errors)
-        let wal_optimized_results = wal_results?;
-        let storage_results = storage_results?;
+        // Stage 1: WAL/memtable search (unflushed vectors)
+        debug!("🔍 Stage 1: Searching WAL/memtable for collection {}", collection_id);
+        let wal_optimized_results = self
+            .wal_manager
+            .search_unflushed_vectors(
+                collection_id,
+                &query_vector,
+                candidates,
+                distance_metric,
+                filter.as_ref(),
+                true,
+                true,
+            )
+            .await?;
+        debug!("Stage 1 complete: {} WAL results", wal_optimized_results.len());
+
+        // Stage 2: AXIS HNSW index search (O(log N) - fast for flushed vectors)
+        debug!("🔍 Stage 2: Searching AXIS HNSW index for {}", collection_id);
+        let hybrid_query = crate::index::axis::management::manager::HybridQuery {
+            collection_id: collection_id.to_string(),
+            vector_query: Some(crate::index::axis::management::manager::VectorQuery::Dense {
+                vector: query_vector.clone(),
+                similarity_threshold: 0.0,
+            }),
+            metadata_filters: Vec::new(),
+            id_filters: Vec::new(),
+            top_k: candidates,
+            include_expired: false,
+        };
+        let axis_optimized_results = match self.axis_index_manager.query(hybrid_query).await {
+            Ok(result) => {
+                let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
+                    .results
+                    .into_iter()
+                    .map(|r| crate::core::search::results::OptimizedSearchRecord::new(
+                        r.vector_id,
+                        r.similarity,
+                    ))
+                    .collect();
+                debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
+                records
+            }
+            Err(e) => {
+                debug!("Stage 2 AXIS search failed: {}", e);
+                Vec::new()
+            }
+        };
+
+        // Stage 3: Storage engine search - ONLY if we need more results
+        // Skip if WAL + AXIS already have enough high-quality results
+        let total_indexed_results = wal_optimized_results.len() + axis_optimized_results.len();
+        let storage_results = if total_indexed_results >= candidates {
+            debug!("Stage 3: Skipping storage search (have {} results from WAL+AXIS)", total_indexed_results);
+            Vec::new()
+        } else {
+            debug!(
+                "Stage 3: Searching storage engine ({}) for {} (need {} more results)",
+                engine.engine_name(),
+                collection_id,
+                candidates - total_indexed_results
+            );
+            engine.search_vectors_unified(&search_context).await?
+        };
 
         // MVCC Deduplication: WAL results override storage results for same ID
         // This is critical for delete/update operations where WAL contains tombstones
@@ -1868,15 +1888,21 @@ impl VectorOperationsService {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        // Build map from WAL results (highest priority - fresher data)
+        // Build map from results with priority: WAL > AXIS > Storage
         let mut id_to_result: HashMap<String, crate::core::search::results::OptimizedSearchRecord> =
             HashMap::new();
 
+        // WAL results have highest priority (fresher data)
         for result in wal_optimized_results {
             id_to_result.insert(result.id.clone(), result);
         }
 
-        // Add storage results only if not already present in WAL
+        // AXIS HNSW results second priority (fast indexed search)
+        for result in axis_optimized_results {
+            id_to_result.entry(result.id.clone()).or_insert(result);
+        }
+
+        // Storage results as fallback
         for result in storage_results {
             id_to_result.entry(result.id.clone()).or_insert(result);
         }
@@ -2359,6 +2385,28 @@ impl VectorOperationsService {
             .write_vector_batch_native_arc(collection_id, vectors.clone())
             .await?;
 
+        // Index vectors in AXIS for fast in-memory search (HNSW/IVF)
+        // This is critical for competitive search latency - without it, search falls back to linear scan
+        let axis_start = std::time::Instant::now();
+        for vector in vectors.iter() {
+            if let Err(e) = self.axis_index_manager.insert(collection_id, vector).await {
+                // Log but don't fail - WAL already written, index can be rebuilt
+                tracing::warn!(
+                    "Failed to index vector {} in AXIS: {} (search will use linear scan)",
+                    vector.id,
+                    e
+                );
+            }
+        }
+        let axis_duration = axis_start.elapsed();
+        if axis_duration.as_millis() > 10 {
+            tracing::debug!(
+                "AXIS indexing for {} vectors took {:?}",
+                vectors.len(),
+                axis_duration
+            );
+        }
+
         let duration_micros = start.elapsed().as_micros() as i64;
         let bytes_written = vectors
             .iter()
@@ -2366,10 +2414,11 @@ impl VectorOperationsService {
             .sum::<usize>() as i64;
 
         debug!(
-            "✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs",
+            "✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs (AXIS: {:?})",
             vectors.len(),
             collection_id,
-            duration_micros
+            duration_micros,
+            axis_duration
         );
 
         Ok(crate::storage::engines::InsertResult {
