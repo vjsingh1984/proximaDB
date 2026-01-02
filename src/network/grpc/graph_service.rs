@@ -52,11 +52,15 @@
 //! - BatchCreateNodes / BatchCreateEdges
 
 use std::sync::Arc;
+use std::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 
 use crate::api_handlers::UnifiedHandlers;
+use crate::graph::canonical::{
+    ErrorCode as CanonicalErrorCode, TraversalStats as CanonicalTraversalStats,
+};
 use crate::proto::proximadb_v1::{
     BatchEdgeRequest,
     BatchNodeRequest,
@@ -96,15 +100,198 @@ use crate::proto::proximadb_v1::{
     graph_service_server::GraphService,
 };
 
+use crate::query::QueryFacadeAdapter;
+
+// ================================================================================
+// HELPER FUNCTIONS FOR CANONICAL TYPE ALIGNMENT
+// ================================================================================
+
+/// Map an error message to a canonical ErrorCode based on the error content.
+/// This provides consistent error categorization across gRPC responses.
+fn map_error_to_canonical_code(error_message: &str) -> CanonicalErrorCode {
+    let error_lower = error_message.to_lowercase();
+
+    if error_lower.contains("not found") || error_lower.contains("does not exist") {
+        CanonicalErrorCode::NotFound
+    } else if error_lower.contains("already exists") || error_lower.contains("duplicate") {
+        CanonicalErrorCode::AlreadyExists
+    } else if error_lower.contains("invalid") || error_lower.contains("required") || error_lower.contains("missing") {
+        CanonicalErrorCode::InvalidArgument
+    } else if error_lower.contains("constraint") || error_lower.contains("unique") {
+        CanonicalErrorCode::ConstraintViolation
+    } else if error_lower.contains("timeout") || error_lower.contains("timed out") {
+        CanonicalErrorCode::Timeout
+    } else if error_lower.contains("permission") || error_lower.contains("denied") || error_lower.contains("unauthorized") {
+        CanonicalErrorCode::PermissionDenied
+    } else {
+        CanonicalErrorCode::InternalError
+    }
+}
+
+/// Convert a canonical ErrorCode to a gRPC Status code.
+fn canonical_code_to_grpc_status(code: CanonicalErrorCode, message: impl Into<String>) -> Status {
+    let msg = message.into();
+    match code {
+        CanonicalErrorCode::NotFound => Status::not_found(msg),
+        CanonicalErrorCode::AlreadyExists => Status::already_exists(msg),
+        CanonicalErrorCode::InvalidArgument => Status::invalid_argument(msg),
+        CanonicalErrorCode::ConstraintViolation => Status::failed_precondition(msg),
+        CanonicalErrorCode::InternalError => Status::internal(msg),
+        CanonicalErrorCode::Timeout => Status::deadline_exceeded(msg),
+        CanonicalErrorCode::PermissionDenied => Status::permission_denied(msg),
+    }
+}
+
+/// Create a gRPC Status from an error, using canonical error code mapping.
+fn create_grpc_error(operation: &str, error: impl std::fmt::Display) -> Status {
+    let error_message = error.to_string();
+    let canonical_code = map_error_to_canonical_code(&error_message);
+    let full_message = format!("Failed to {}: {}", operation, error_message);
+    canonical_code_to_grpc_status(canonical_code, full_message)
+}
+
+/// Convert proto TraversalStats to canonical format for consistent field naming.
+/// The canonical format uses:
+/// - `max_depth_reached` (same as proto)
+/// - `execution_time_ms` (converted from microseconds)
+#[allow(dead_code)]
+fn convert_traversal_stats_to_canonical(stats: &crate::proto::proximadb_v1::TraversalStats) -> CanonicalTraversalStats {
+    CanonicalTraversalStats::from_proto(stats)
+}
+
+/// Create a populated BatchResponse with all canonical fields properly initialized.
+/// This ensures consistent structure for batch operations.
+fn create_batch_response_for_nodes(
+    nodes: Vec<crate::proto::proximadb_v1::Node>,
+    success: bool,
+    error_message: Option<String>,
+) -> BatchResponse {
+    let created_count = if success { Some(nodes.len() as u32) } else { Some(0) };
+    let failed_count = if success { Some(0) } else { Some(nodes.len() as u32) };
+
+    BatchResponse {
+        success,
+        nodes,
+        edges: vec![],
+        error_message,
+        next_token: None,
+        created_count,
+        updated_count: Some(0),
+        failed_count,
+        failed_ids: vec![],
+        error_messages: vec![],
+    }
+}
+
+/// Create a populated BatchResponse for edges with all canonical fields properly initialized.
+fn create_batch_response_for_edges(
+    edges: Vec<crate::proto::proximadb_v1::Edge>,
+    success: bool,
+    error_message: Option<String>,
+) -> BatchResponse {
+    let created_count = if success { Some(edges.len() as u32) } else { Some(0) };
+    let failed_count = if success { Some(0) } else { Some(edges.len() as u32) };
+
+    BatchResponse {
+        success,
+        nodes: vec![],
+        edges,
+        error_message,
+        next_token: None,
+        created_count,
+        updated_count: Some(0),
+        failed_count,
+        failed_ids: vec![],
+        error_messages: vec![],
+    }
+}
+
+/// Create a query response with pagination support.
+fn create_query_response_for_nodes(
+    nodes: Vec<crate::proto::proximadb_v1::Node>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> BatchResponse {
+    let has_more = limit.map(|l| nodes.len() as u32 == l).unwrap_or(false);
+    let next_token = if has_more {
+        let next_offset = offset.unwrap_or(0).saturating_add(limit.unwrap_or(0));
+        Some(format!("offset:{}", next_offset))
+    } else {
+        None
+    };
+
+    BatchResponse {
+        success: true,
+        nodes,
+        edges: vec![],
+        error_message: None,
+        next_token,
+        created_count: None,
+        updated_count: None,
+        failed_count: None,
+        failed_ids: vec![],
+        error_messages: vec![],
+    }
+}
+
+/// Create a query response for edges with pagination support.
+fn create_query_response_for_edges(
+    edges: Vec<crate::proto::proximadb_v1::Edge>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> BatchResponse {
+    let has_more = limit.map(|l| edges.len() as u32 == l).unwrap_or(false);
+    let next_token = if has_more {
+        let next_offset = offset.unwrap_or(0).saturating_add(limit.unwrap_or(0));
+        Some(format!("offset:{}", next_offset))
+    } else {
+        None
+    };
+
+    BatchResponse {
+        success: true,
+        nodes: vec![],
+        edges,
+        error_message: None,
+        next_token,
+        created_count: None,
+        updated_count: None,
+        failed_count: None,
+        failed_ids: vec![],
+        error_messages: vec![],
+    }
+}
+
+// ================================================================================
+// GRPC SERVICE IMPLEMENTATION
+// ================================================================================
+
 /// gRPC implementation of GraphService
 pub struct GraphServiceImpl {
     unified_handlers: Arc<UnifiedHandlers>,
+    /// Query facade adapter for unified query execution (optional for backward compatibility)
+    query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
 impl GraphServiceImpl {
     /// Create new GraphServiceImpl
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { unified_handlers }
+        Self {
+            unified_handlers,
+            query_adapter: None,
+        }
+    }
+
+    /// Create new GraphServiceImpl with query facade adapter
+    #[allow(dead_code)]
+    pub fn with_adapter(
+        unified_handlers: Arc<UnifiedHandlers>,
+        query_adapter: Arc<QueryFacadeAdapter>,
+    ) -> Self {
+        Self {
+            unified_handlers,
+            query_adapter: Some(query_adapter),
+        }
     }
 }
 
@@ -137,7 +324,7 @@ impl GraphService for GraphServiceImpl {
             }
             Err(err) => {
                 error!("Failed to create node via gRPC: {}", err);
-                Err(Status::internal(format!("Failed to create node: {}", err)))
+                Err(create_grpc_error("create node", err))
             }
         }
     }
@@ -162,14 +349,14 @@ impl GraphService for GraphServiceImpl {
             }
             Ok(None) => {
                 warn!("Node not found via gRPC: {}", req.node_id);
-                Err(Status::not_found(format!(
-                    "Node '{}' not found",
-                    req.node_id
-                )))
+                Err(canonical_code_to_grpc_status(
+                    CanonicalErrorCode::NotFound,
+                    format!("Node '{}' not found", req.node_id),
+                ))
             }
             Err(err) => {
                 error!("Failed to get node via gRPC {}: {}", req.node_id, err);
-                Err(Status::internal(format!("Failed to get node: {}", err)))
+                Err(create_grpc_error("get node", err))
             }
         }
     }
@@ -201,7 +388,7 @@ impl GraphService for GraphServiceImpl {
             }
             Err(err) => {
                 error!("Failed to update node via gRPC: {}", err);
-                Err(Status::internal(format!("Failed to update node: {}", err)))
+                Err(create_grpc_error("update node", err))
             }
         }
     }
@@ -229,14 +416,14 @@ impl GraphService for GraphServiceImpl {
             }
             Ok(None) => {
                 warn!("Node not found for deletion via gRPC: {}", req.node_id);
-                Err(Status::not_found(format!(
-                    "Node '{}' not found",
-                    req.node_id
-                )))
+                Err(canonical_code_to_grpc_status(
+                    CanonicalErrorCode::NotFound,
+                    format!("Node '{}' not found", req.node_id),
+                ))
             }
             Err(err) => {
                 error!("Failed to delete node via gRPC {}: {}", req.node_id, err);
-                Err(Status::internal(format!("Failed to delete node: {}", err)))
+                Err(create_grpc_error("delete node", err))
             }
         }
     }
@@ -268,7 +455,7 @@ impl GraphService for GraphServiceImpl {
             }
             Err(err) => {
                 error!("Failed to create edge via gRPC: {}", err);
-                Err(Status::internal(format!("Failed to create edge: {}", err)))
+                Err(create_grpc_error("create edge", err))
             }
         }
     }
@@ -293,14 +480,14 @@ impl GraphService for GraphServiceImpl {
             }
             Ok(None) => {
                 warn!("Edge not found via gRPC: {}", req.edge_id);
-                Err(Status::not_found(format!(
-                    "Edge '{}' not found",
-                    req.edge_id
-                )))
+                Err(canonical_code_to_grpc_status(
+                    CanonicalErrorCode::NotFound,
+                    format!("Edge '{}' not found", req.edge_id),
+                ))
             }
             Err(err) => {
                 error!("Failed to get edge via gRPC {}: {}", req.edge_id, err);
-                Err(Status::internal(format!("Failed to get edge: {}", err)))
+                Err(create_grpc_error("get edge", err))
             }
         }
     }
@@ -332,7 +519,7 @@ impl GraphService for GraphServiceImpl {
             }
             Err(err) => {
                 error!("Failed to update edge via gRPC: {}", err);
-                Err(Status::internal(format!("Failed to update edge: {}", err)))
+                Err(create_grpc_error("update edge", err))
             }
         }
     }
@@ -360,14 +547,14 @@ impl GraphService for GraphServiceImpl {
             }
             Ok(None) => {
                 warn!("Edge not found for deletion via gRPC: {}", req.edge_id);
-                Err(Status::not_found(format!(
-                    "Edge '{}' not found",
-                    req.edge_id
-                )))
+                Err(canonical_code_to_grpc_status(
+                    CanonicalErrorCode::NotFound,
+                    format!("Edge '{}' not found", req.edge_id),
+                ))
             }
             Err(err) => {
                 error!("Failed to delete edge via gRPC {}: {}", req.edge_id, err);
-                Err(Status::internal(format!("Failed to delete edge: {}", err)))
+                Err(create_grpc_error("delete edge", err))
             }
         }
     }
@@ -401,29 +588,13 @@ impl GraphService for GraphServiceImpl {
         {
             Ok(nodes) => {
                 info!("Successfully queried {} nodes via gRPC", nodes.len());
-                let mut response = BatchResponse {
-                    success: true,
-                    nodes: nodes.into_iter().map(|n| (*n).clone()).collect(),
-                    edges: vec![],
-                    error_message: None,
-                    next_token: None,
-                    created_count: None,
-                    updated_count: None,
-                    failed_count: None,
-                    failed_ids: vec![],
-                    error_messages: vec![],
-                };
-                if let Some(lim) = query.limit {
-                    if (response.nodes.len() as u32) == lim {
-                        let next_off = query.offset.unwrap_or(0).saturating_add(lim);
-                        response.next_token = Some(format!("offset:{}", next_off));
-                    }
-                }
+                let nodes_vec: Vec<Node> = nodes.into_iter().map(|n| (*n).clone()).collect();
+                let response = create_query_response_for_nodes(nodes_vec, query.limit, query.offset);
                 Ok(Response::new(response))
             }
             Err(err) => {
                 error!("Failed to query nodes via gRPC: {}", err);
-                Err(Status::internal(format!("Failed to query nodes: {}", err)))
+                Err(create_grpc_error("query nodes", err))
             }
         }
     }
@@ -453,29 +624,13 @@ impl GraphService for GraphServiceImpl {
         {
             Ok(edges) => {
                 info!("Successfully queried {} edges via gRPC", edges.len());
-                let mut response = BatchResponse {
-                    success: true,
-                    nodes: vec![],
-                    edges: edges.into_iter().map(|e| (*e).clone()).collect(),
-                    error_message: None,
-                    next_token: None,
-                    created_count: None,
-                    updated_count: None,
-                    failed_count: None,
-                    failed_ids: vec![],
-                    error_messages: vec![],
-                };
-                if let Some(lim) = query.limit {
-                    if (response.edges.len() as u32) == lim {
-                        let next_off = query.offset.unwrap_or(0).saturating_add(lim);
-                        response.next_token = Some(format!("offset:{}", next_off));
-                    }
-                }
+                let edges_vec: Vec<Edge> = edges.into_iter().map(|e| (*e).clone()).collect();
+                let response = create_query_response_for_edges(edges_vec, query.limit, query.offset);
                 Ok(Response::new(response))
             }
             Err(err) => {
                 error!("Failed to query edges via gRPC: {}", err);
-                Err(Status::internal(format!("Failed to query edges: {}", err)))
+                Err(create_grpc_error("query edges", err))
             }
         }
     }
@@ -503,18 +658,8 @@ impl GraphService for GraphServiceImpl {
                     neighbors.len(),
                     req.node_id
                 );
-                let response = BatchResponse {
-                    success: true,
-                    nodes: neighbors.into_iter().map(|n| (*n).clone()).collect(),
-                    edges: vec![],
-                    error_message: None,
-                    next_token: None,
-                    created_count: None,
-                    updated_count: None,
-                    failed_count: None,
-                    failed_ids: vec![],
-                    error_messages: vec![],
-                };
+                let nodes_vec: Vec<Node> = neighbors.into_iter().map(|n| (*n).clone()).collect();
+                let response = create_batch_response_for_nodes(nodes_vec, true, None);
                 Ok(Response::new(response))
             }
             Err(err) => {
@@ -522,10 +667,7 @@ impl GraphService for GraphServiceImpl {
                     "Failed to get neighbors via gRPC for node {}: {}",
                     req.node_id, err
                 );
-                Err(Status::internal(format!(
-                    "Failed to get neighbors: {}",
-                    err
-                )))
+                Err(create_grpc_error("get neighbors", err))
             }
         }
     }
@@ -536,6 +678,7 @@ impl GraphService for GraphServiceImpl {
         request: Request<TraversalRequest>,
     ) -> Result<Response<TraversalResponse>, Status> {
         let req = request.into_inner();
+        let start_time = Instant::now();
         debug!(
             "gRPC TraverseGraph request for graph: {} from node: {}",
             req.graph_id, req.start_node_id
@@ -547,16 +690,19 @@ impl GraphService for GraphServiceImpl {
             .traverse(&req.graph_id, req.clone())
             .await
         {
-            Ok(response) => {
+            Ok(mut response) => {
                 info!("Successfully completed graph traversal via gRPC");
+                // Ensure execution_time_microseconds is populated if stats exist
+                if let Some(ref mut stats) = response.stats {
+                    if stats.execution_time_microseconds == 0 {
+                        stats.execution_time_microseconds = start_time.elapsed().as_micros() as u64;
+                    }
+                }
                 Ok(Response::new(response))
             }
             Err(err) => {
                 error!("Failed to traverse graph via gRPC: {}", err);
-                Err(Status::internal(format!(
-                    "Failed to traverse graph: {}",
-                    err
-                )))
+                Err(create_grpc_error("traverse graph", err))
             }
         }
     }
@@ -662,12 +808,20 @@ impl GraphService for GraphServiceImpl {
             )
             .await
         {
-            Ok(Some((path, total_weight))) => Ok(Response::new(ShortestPathResponse {
-                node_ids: path,
-                total_weight: Some(total_weight),
-            })),
-            Ok(None) => Err(Status::not_found("No path found".to_string())),
-            Err(e) => Err(Status::internal(format!("ShortestPath failed: {}", e))),
+            Ok(Some((path, total_weight))) => {
+                // Response uses node_ids which represents the path
+                Ok(Response::new(ShortestPathResponse {
+                    node_ids: path,
+                    total_weight: Some(total_weight),
+                }))
+            }
+            Ok(None) => {
+                Err(canonical_code_to_grpc_status(
+                    CanonicalErrorCode::NotFound,
+                    format!("No path found between '{}' and '{}'", req.start_node_id, req.target_node_id),
+                ))
+            }
+            Err(e) => Err(create_grpc_error("compute shortest path", e)),
         }
     }
 
@@ -691,10 +845,7 @@ impl GraphService for GraphServiceImpl {
             }
             Err(err) => {
                 error!("Failed to get graph statistics via gRPC: {}", err);
-                Err(Status::internal(format!(
-                    "Failed to get graph statistics: {}",
-                    err
-                )))
+                Err(create_grpc_error("get graph statistics", err))
             }
         }
     }
@@ -719,26 +870,13 @@ impl GraphService for GraphServiceImpl {
         {
             Ok(nodes) => {
                 info!("Successfully batch created {} nodes via gRPC", nodes.len());
-                let response = BatchResponse {
-                    success: true,
-                    nodes: nodes.into_iter().map(|n| (*n).clone()).collect(),
-                    edges: vec![],
-                    error_message: None,
-                    next_token: None,
-                    created_count: None,
-                    updated_count: None,
-                    failed_count: None,
-                    failed_ids: vec![],
-                    error_messages: vec![],
-                };
+                let nodes_vec: Vec<Node> = nodes.into_iter().map(|n| (*n).clone()).collect();
+                let response = create_batch_response_for_nodes(nodes_vec, true, None);
                 Ok(Response::new(response))
             }
             Err(err) => {
                 error!("Failed to batch create nodes via gRPC: {}", err);
-                Err(Status::internal(format!(
-                    "Failed to batch create nodes: {}",
-                    err
-                )))
+                Err(create_grpc_error("batch create nodes", err))
             }
         }
     }
@@ -763,26 +901,13 @@ impl GraphService for GraphServiceImpl {
         {
             Ok(edges) => {
                 info!("Successfully batch created {} edges via gRPC", edges.len());
-                let response = BatchResponse {
-                    success: true,
-                    nodes: vec![],
-                    edges: edges.into_iter().map(|e| (*e).clone()).collect(),
-                    error_message: None,
-                    next_token: None,
-                    created_count: None,
-                    updated_count: None,
-                    failed_count: None,
-                    failed_ids: vec![],
-                    error_messages: vec![],
-                };
+                let edges_vec: Vec<Edge> = edges.into_iter().map(|e| (*e).clone()).collect();
+                let response = create_batch_response_for_edges(edges_vec, true, None);
                 Ok(Response::new(response))
             }
             Err(err) => {
                 error!("Failed to batch create edges via gRPC: {}", err);
-                Err(Status::internal(format!(
-                    "Failed to batch create edges: {}",
-                    err
-                )))
+                Err(create_grpc_error("batch create edges", err))
             }
         }
     }
@@ -806,10 +931,7 @@ impl GraphService for GraphServiceImpl {
                     .collect();
                 Ok(Response::new(ConnectedComponentsResponse { components }))
             }
-            Err(e) => Err(Status::internal(format!(
-                "GetConnectedComponents failed: {}",
-                e
-            ))),
+            Err(e) => Err(create_grpc_error("get connected components", e)),
         }
     }
 
@@ -826,7 +948,7 @@ impl GraphService for GraphServiceImpl {
             .await
         {
             Ok(has) => Ok(Response::new(CycleCheckResponse { has_cycle: has })),
-            Err(e) => Err(Status::internal(format!("HasCycle failed: {}", e))),
+            Err(e) => Err(create_grpc_error("check for cycles", e)),
         }
     }
 
@@ -894,10 +1016,7 @@ impl GraphService for GraphServiceImpl {
             }
             Err(err) => {
                 error!("Failed to execute hybrid query via gRPC: {}", err);
-                Err(Status::internal(format!(
-                    "Failed to execute hybrid query: {}",
-                    err
-                )))
+                Err(create_grpc_error("execute hybrid query", err))
             }
         }
     }
@@ -914,10 +1033,81 @@ impl GraphService for GraphServiceImpl {
             req.language()
         );
 
-        // TODO: Implement query parsing, planning, and execution
-        // This is a stub for Phase 1 Task 5 - full implementation in future phases
+        // Route through unified facade when feature is enabled and adapter is available
+        #[cfg(feature = "unified-facade-routing")]
+        if let Some(ref adapter) = self.query_adapter {
+            debug!("Using unified facade routing for graph query");
+            let graph_name = if req.graph_id.is_empty() {
+                None
+            } else {
+                Some(req.graph_id.as_str())
+            };
 
-        // For now, return unimplemented error
+            return match adapter.graph_query(&req.query, graph_name).await {
+                Ok(result) => {
+                    use crate::proto::proximadb_v1::{
+                        ResultRow, QueryValue, PropertyValue,
+                        query_value, property_value,
+                    };
+
+                    // Helper to create a string QueryValue
+                    let make_string_value = |s: String| -> QueryValue {
+                        QueryValue {
+                            value: Some(query_value::Value::Property(PropertyValue {
+                                value: Some(property_value::Value::StringValue(s)),
+                            })),
+                        }
+                    };
+
+                    // Convert QueryResult to GraphQueryResponse rows
+                    let rows: Vec<ResultRow> = match result.data {
+                        crate::query::QueryResultData::Graph(graph_result) => {
+                            // Convert graph nodes/edges to rows
+                            graph_result
+                                .nodes
+                                .into_iter()
+                                .map(|node| {
+                                    let mut columns = std::collections::HashMap::new();
+                                    columns.insert(
+                                        "data".to_string(),
+                                        make_string_value(node.to_string()),
+                                    );
+                                    ResultRow { columns }
+                                })
+                                .collect()
+                        }
+                        crate::query::QueryResultData::Rows(json_rows) => {
+                            // Convert JSON rows to ResultRow format
+                            json_rows
+                                .into_iter()
+                                .map(|row| {
+                                    let mut columns = std::collections::HashMap::new();
+                                    columns.insert(
+                                        "data".to_string(),
+                                        make_string_value(row.to_string()),
+                                    );
+                                    ResultRow { columns }
+                                })
+                                .collect()
+                        }
+                        _ => vec![],
+                    };
+
+                    Ok(Response::new(GraphQueryResponse {
+                        rows,
+                        stats: None,
+                        query_plan: None,
+                        error_message: None,
+                    }))
+                }
+                Err(e) => {
+                    error!("Graph query (facade) failed: {}", e);
+                    Err(Status::internal(format!("Graph query failed: {}", e)))
+                }
+            };
+        }
+
+        // Legacy path: Return unimplemented error
         Err(Status::unimplemented(
             "Declarative query execution not yet implemented. \
              Use QueryNodes/QueryEdges for property-based queries, \
