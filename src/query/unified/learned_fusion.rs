@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace};
 
 use super::ast::DataModel;
-use super::fusion::SubQueryResult;
+use super::fusion::{SubQueryResult, merge_record_data, aggregate_metrics, compute_rrf_scores};
 use super::{QueryResult, UnifiedRecord, QueryMetrics};
 
 /// Configuration for learned fusion
@@ -839,26 +839,8 @@ impl LearnedFusion {
 
     /// Fallback RRF scoring when model not trained
     fn fallback_rrf_scores(&self, sub_results: &[SubQueryResult], record_ids: &[String]) -> Vec<f64> {
-        let k = 60.0;
-        let mut rrf_scores: HashMap<String, f64> = HashMap::new();
-
-        for result in sub_results {
-            let mut ranked: Vec<&UnifiedRecord> = result.records.iter().collect();
-            ranked.sort_by(|a, b| {
-                b.score.unwrap_or(0.0)
-                    .partial_cmp(&a.score.unwrap_or(0.0))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-
-            for (rank, record) in ranked.iter().enumerate() {
-                let rrf_score = 1.0 / (k + rank as f64 + 1.0);
-                *rrf_scores.entry(record.id.clone()).or_insert(0.0) += rrf_score;
-            }
-        }
-
-        record_ids.iter()
-            .map(|id| *rrf_scores.get(id).unwrap_or(&0.0))
-            .collect()
+        // Delegate to canonical RRF implementation with k=60
+        compute_rrf_scores(sub_results, record_ids, 60)
     }
 
     fn convert_single_result(&self, result: SubQueryResult) -> QueryResult {
@@ -876,35 +858,13 @@ impl LearnedFusion {
     }
 
     fn merge_record_data(&self, target: &mut UnifiedRecord, source: &UnifiedRecord) {
-        if let (Some(target_obj), Some(source_obj)) = (
-            target.data.as_object_mut(),
-            source.data.as_object(),
-        ) {
-            for (key, value) in source_obj {
-                target_obj.insert(key.clone(), value.clone());
-            }
-        }
-
-        for (key, value) in &source.metadata {
-            target.metadata.entry(key.clone())
-                .or_insert_with(|| value.clone());
-        }
+        // Delegate to canonical merge implementation
+        merge_record_data(target, source);
     }
 
     fn aggregate_metrics(&self, sub_results: &[SubQueryResult]) -> QueryMetrics {
-        let mut metrics = QueryMetrics::default();
-
-        for result in sub_results {
-            metrics.sub_query_times.push((result.source_model.clone(), result.execution_time_us));
-            metrics.records_scanned += result.records_scanned;
-        }
-
-        metrics.total_time_us = sub_results.iter()
-            .map(|r| r.execution_time_us)
-            .max()
-            .unwrap_or(0);
-
-        metrics
+        // Delegate to canonical aggregate implementation
+        aggregate_metrics(sub_results)
     }
 }
 

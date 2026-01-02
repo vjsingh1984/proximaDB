@@ -9,13 +9,19 @@
 //! - `SqlStrategy`: Wraps `FederatedQueryContext` for SQL queries
 //! - `GraphStrategy`: Wraps `GraphOperationsService` for graph traversals
 //! - `ColumnarStrategy`: Uses `ColumnarReadProvider` for analytical queries
+//! - `DocumentStrategy`: Wraps `DocumentService` for JSON document queries
+//! - `ObservabilityStrategy`: Wraps `ObservabilityQueryEngine` for logs/metrics/traces
 
 pub mod columnar;
+pub mod document;
 pub mod graph;
+pub mod observability;
 pub mod sql;
 pub mod vector;
 
 pub use columnar::ColumnarStrategy;
+pub use document::DocumentStrategy;
 pub use graph::GraphStrategy;
+pub use observability::ObservabilityStrategy;
 pub use sql::SqlStrategy;
 pub use vector::VectorSearchStrategy;

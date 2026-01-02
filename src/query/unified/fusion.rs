@@ -328,21 +328,7 @@ impl ResultFuser {
 
     /// Merge data from one record into another
     fn merge_record_data(&self, target: &mut UnifiedRecord, source: &UnifiedRecord) {
-        // Merge JSON data (source values override if present)
-        if let (Some(target_obj), Some(source_obj)) = (
-            target.data.as_object_mut(),
-            source.data.as_object(),
-        ) {
-            for (key, value) in source_obj {
-                target_obj.insert(key.clone(), value.clone());
-            }
-        }
-
-        // Merge metadata
-        for (key, value) in &source.metadata {
-            target.metadata.entry(key.clone())
-                .or_insert_with(|| value.clone());
-        }
+        merge_record_data(target, source);
     }
 
     /// Convert a single sub-query result to a unified QueryResult
@@ -362,20 +348,7 @@ impl ResultFuser {
 
     /// Aggregate metrics from all sub-query results
     fn aggregate_metrics(&self, sub_results: &[SubQueryResult]) -> QueryMetrics {
-        let mut metrics = QueryMetrics::default();
-
-        for result in sub_results {
-            metrics.sub_query_times.push((result.source_model.clone(), result.execution_time_us));
-            metrics.records_scanned += result.records_scanned;
-        }
-
-        // Total time is max of parallel executions
-        metrics.total_time_us = sub_results.iter()
-            .map(|r| r.execution_time_us)
-            .max()
-            .unwrap_or(0);
-
-        metrics
+        aggregate_metrics(sub_results)
     }
 }
 
@@ -408,6 +381,91 @@ impl SubQueryResult {
             records_returned: 0,
         }
     }
+}
+
+// ============================================================================
+// Public Utility Functions
+// ============================================================================
+// These functions provide common fusion operations that can be reused across
+// different fusion implementations (e.g., ResultFuser, LearnedFusion).
+
+/// Merge data from one record into another.
+///
+/// Merges JSON data (source values override if present) and metadata
+/// (source values are inserted only if key doesn't exist in target).
+pub fn merge_record_data(target: &mut UnifiedRecord, source: &UnifiedRecord) {
+    // Merge JSON data (source values override if present)
+    if let (Some(target_obj), Some(source_obj)) = (
+        target.data.as_object_mut(),
+        source.data.as_object(),
+    ) {
+        for (key, value) in source_obj {
+            target_obj.insert(key.clone(), value.clone());
+        }
+    }
+
+    // Merge metadata
+    for (key, value) in &source.metadata {
+        target.metadata.entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
+}
+
+/// Aggregate metrics from all sub-query results.
+///
+/// Combines execution times (using max for parallel execution),
+/// accumulates records scanned, and collects per-model timing info.
+pub fn aggregate_metrics(sub_results: &[SubQueryResult]) -> QueryMetrics {
+    let mut metrics = QueryMetrics::default();
+
+    for result in sub_results {
+        metrics.sub_query_times.push((result.source_model.clone(), result.execution_time_us));
+        metrics.records_scanned += result.records_scanned;
+    }
+
+    // Total time is max of parallel executions
+    metrics.total_time_us = sub_results.iter()
+        .map(|r| r.execution_time_us)
+        .max()
+        .unwrap_or(0);
+
+    metrics
+}
+
+/// Compute RRF (Reciprocal Rank Fusion) scores for records across multiple result sets.
+///
+/// RRF is a robust rank aggregation method that works well regardless of
+/// the score scales used by different retrieval systems.
+///
+/// # Arguments
+/// * `sub_results` - The sub-query results to fuse
+/// * `record_ids` - The record IDs to compute scores for
+/// * `k` - The RRF constant (typically 60), which dampens the effect of high rankings
+///
+/// # Returns
+/// A vector of RRF scores corresponding to the input record_ids
+pub fn compute_rrf_scores(sub_results: &[SubQueryResult], record_ids: &[String], k: u32) -> Vec<f64> {
+    let mut rrf_scores: HashMap<String, f64> = HashMap::new();
+
+    for result in sub_results {
+        // Sort by score to get ranks
+        let mut ranked: Vec<&UnifiedRecord> = result.records.iter().collect();
+        ranked.sort_by(|a, b| {
+            b.score.unwrap_or(0.0)
+                .partial_cmp(&a.score.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        for (rank, record) in ranked.iter().enumerate() {
+            // RRF score: 1 / (k + rank + 1)
+            let rrf_score = 1.0 / (k as f64 + rank as f64 + 1.0);
+            *rrf_scores.entry(record.id.clone()).or_insert(0.0) += rrf_score;
+        }
+    }
+
+    record_ids.iter()
+        .map(|id| *rrf_scores.get(id).unwrap_or(&0.0))
+        .collect()
 }
 
 #[cfg(test)]

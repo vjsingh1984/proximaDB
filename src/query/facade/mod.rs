@@ -30,7 +30,10 @@ pub mod adapter;
 pub mod strategies;
 
 pub use adapter::QueryFacadeAdapter;
-pub use strategies::{ColumnarStrategy, VectorSearchStrategy, SqlStrategy, GraphStrategy};
+pub use strategies::{
+    ColumnarStrategy, DocumentStrategy, GraphStrategy, ObservabilityStrategy,
+    SqlStrategy, VectorSearchStrategy,
+};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
