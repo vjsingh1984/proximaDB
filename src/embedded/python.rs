@@ -1717,8 +1717,10 @@ impl PyProximaDB {
         name: &str,
         retention_days: Option<u32>,
     ) -> PyResult<()> {
+        // Convert retention_days to retention_hours for the inner API
+        let retention_hours = retention_days.map(|d| d as u64 * 24);
         self.inner
-            .create_observability_namespace(name, retention_days)
+            .create_observability_namespace(name, retention_hours)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create observability namespace: {}", e)))
     }
 
@@ -1755,19 +1757,19 @@ impl PyProximaDB {
             let message: String = dict.get_item("message")?
                 .ok_or_else(|| PyValueError::new_err("Log entry missing 'message'"))?
                 .extract()?;
-            let source: String = dict.get_item("source")?
-                .map(|v| v.extract().unwrap_or_default())
-                .unwrap_or_default();
-            let service: String = dict.get_item("service")?
-                .map(|v| v.extract().unwrap_or_default())
-                .unwrap_or_default();
+            let source: Option<String> = dict.get_item("source")?
+                .and_then(|v| v.extract::<String>().ok())
+                .filter(|s| !s.is_empty());
+            let service: Option<String> = dict.get_item("service")?
+                .and_then(|v| v.extract::<String>().ok())
+                .filter(|s| !s.is_empty());
 
-            let mut fields = HashMap::new();
+            let mut fields = std::collections::HashMap::new();
             if let Some(fields_dict) = dict.get_item("fields")? {
                 if let Ok(d) = fields_dict.downcast::<PyDict>() {
                     for (k, v) in d.iter() {
                         let key: String = k.extract()?;
-                        let value: String = v.extract().unwrap_or_else(|_| v.str().map(|s| s.to_string()).unwrap_or_default());
+                        let value = python_to_json(v)?;
                         fields.insert(key, value);
                     }
                 }
@@ -1775,10 +1777,10 @@ impl PyProximaDB {
 
             rust_logs.push(EmbeddedLogEntry {
                 timestamp_ns,
-                severity,
                 message,
-                source,
+                severity,
                 service,
+                source,
                 fields,
             });
         }
@@ -1826,12 +1828,24 @@ impl PyProximaDB {
                         dict.set_item("timestamp_ns", log.timestamp_ns).ok();
                         dict.set_item("severity", &log.severity).ok();
                         dict.set_item("message", &log.message).ok();
-                        dict.set_item("source", &log.source).ok();
-                        dict.set_item("service", &log.service).ok();
+                        // Handle Option<String> for source and service
+                        if let Some(ref source) = log.source {
+                            dict.set_item("source", source).ok();
+                        } else {
+                            dict.set_item("source", py.None()).ok();
+                        }
+                        if let Some(ref service) = log.service {
+                            dict.set_item("service", service).ok();
+                        } else {
+                            dict.set_item("service", py.None()).ok();
+                        }
 
                         let fields_dict = PyDict::new(py);
                         for (k, v) in &log.fields {
-                            fields_dict.set_item(k, v).ok();
+                            // Convert serde_json::Value to Python
+                            if let Ok(py_val) = json_to_python(py, v) {
+                                fields_dict.set_item(k, py_val).ok();
+                            }
                         }
                         dict.set_item("fields", fields_dict).ok();
 

@@ -1073,6 +1073,41 @@ pub struct SstConfig {
     /// See: docs/performance/encoding_strategies.adoc for detailed guide
     #[serde(default = "default_vector_encoding_strategy")]
     pub vector_encoding_strategy: String,
+
+    /// Block storage format: Controls how blocks are serialized to disk
+    ///
+    /// # Available Formats:
+    ///
+    /// * `"ProximaBlocks"` (DEFAULT) - ProximaDB's native block format
+    ///   - Optimized for vector workloads with cache-line alignment
+    ///   - B+ tree index for O(log n) ID lookups
+    ///   - Supports quantization and compression
+    ///   - Best for: Production vector databases
+    ///
+    /// * `"ArrowBlock"` - Arrow IPC based storage format
+    ///   - Standard Arrow IPC files (compatible with PyArrow, DuckDB, Polars)
+    ///   - Zero-copy reads via memory mapping
+    ///   - Sidecar B+ tree index file (.idx)
+    ///   - Best for: Interoperability with Arrow ecosystem
+    ///
+    /// # Configuration Example:
+    ///
+    /// ```toml
+    /// [storage.sst_config]
+    /// # Use Arrow IPC format for interoperability
+    /// block_format = "ArrowBlock"
+    ///
+    /// # Use ProximaBlocks for production (default)
+    /// block_format = "ProximaBlocks"
+    /// ```
+    ///
+    /// Default: ProximaBlocks
+    #[serde(default = "default_block_format")]
+    pub block_format: String,
+}
+
+fn default_block_format() -> String {
+    "ProximaBlocks".to_string()
 }
 
 /// VIPER (columnar storage) engine configuration
@@ -1148,6 +1183,7 @@ impl Default for SstConfig {
                 crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default(),
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
+            block_format: default_block_format(),
         }
     }
 }

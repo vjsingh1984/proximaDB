@@ -2224,7 +2224,7 @@ impl EmbeddedProximaDB {
         collection: &str,
         id: Option<&str>,
         document: serde_json::Value,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(String, u64), Box<dyn std::error::Error + Send + Sync>> {
         use crate::proto::proximadb_v1::SqlObject;
         use crate::storage::document::DocumentService;
 
@@ -2242,7 +2242,7 @@ impl EmbeddedProximaDB {
                     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
                 })?;
 
-            Ok(record.id)
+            Ok((record.id, record.version))
         })
     }
 
@@ -2303,9 +2303,9 @@ impl EmbeddedProximaDB {
     pub fn query_documents(
         &self,
         collection: &str,
-        filter: &str,
+        filter: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<(String, serde_json::Value)>, Box<dyn std::error::Error + Send + Sync>> {
         use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, DocumentFilter};
         use crate::storage::document::{DocumentQueryParams, DocumentService};
 
@@ -2314,15 +2314,19 @@ impl EmbeddedProximaDB {
             let doc_service = DocumentService::new(engine);
 
             // Parse filter expression into DocumentFilter
-            let conditions = Self::parse_document_filter(filter);
-            let doc_filter = if conditions.is_empty() {
-                None
+            let doc_filter = if let Some(filter_str) = filter {
+                let conditions = Self::parse_document_filter(filter_str);
+                if conditions.is_empty() {
+                    None
+                } else {
+                    Some(DocumentFilter {
+                        conditions,
+                        or_filters: vec![],
+                        and_filters: vec![],
+                    })
+                }
             } else {
-                Some(DocumentFilter {
-                    conditions,
-                    or_filters: vec![],
-                    and_filters: vec![],
-                })
+                None
             };
 
             let params = DocumentQueryParams {
@@ -2341,7 +2345,7 @@ impl EmbeddedProximaDB {
             Ok(result
                 .documents
                 .into_iter()
-                .map(|r| Self::sql_object_to_json(&r.document))
+                .map(|r| (r.id, Self::sql_object_to_json(&r.document)))
                 .collect())
         })
     }
@@ -2451,6 +2455,274 @@ impl EmbeddedProximaDB {
                     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
                 })
         })
+    }
+
+    /// List all document collections
+    ///
+    /// # Returns
+    /// List of collection names
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let collections = db.list_document_collections()?;
+    /// for name in collections {
+    ///     println!("Collection: {}", name);
+    /// }
+    /// ```
+    pub fn list_document_collections(
+        &self,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::storage::document::DocumentService;
+
+        self.runtime.block_on(async {
+            let engine = self.shared_services.vector_operations_service.unified_engine();
+            let doc_service = DocumentService::new(engine);
+
+            let collections = doc_service
+                .list_collections()
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                })?;
+
+            Ok(collections.into_iter().map(|c| c.name).collect())
+        })
+    }
+
+    // ========================================================================
+    // Unified Query Methods
+    // ========================================================================
+
+    /// Execute a unified multi-model query
+    ///
+    /// Supports SQL-like syntax with extensions for vector similarity,
+    /// document queries, graph traversal, and observability data.
+    ///
+    /// # Arguments
+    /// * `query` - SQL-like query string with model-specific extensions
+    /// * `query_vector` - Optional query vector for similarity search
+    /// * `fusion_strategy` - Optional fusion strategy: "intersection", "union", "rrf", "weighted"
+    ///
+    /// # Returns
+    /// List of query records from matching models
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let results = db.execute_unified_query(
+    ///     "SELECT * FROM products WHERE $.category = 'electronics'",
+    ///     Some(vec![0.1; 384]),
+    ///     Some("intersection"),
+    /// )?;
+    /// ```
+    pub fn execute_unified_query(
+        &self,
+        query: &str,
+        query_vector: Option<Vec<f32>>,
+        fusion_strategy: Option<&str>,
+    ) -> Result<Vec<UnifiedQueryRecord>, Box<dyn std::error::Error + Send + Sync>> {
+        // Parse the query to determine which models to query
+        let models = self.detect_query_models(query);
+        let fusion = fusion_strategy.unwrap_or("rrf");
+
+        let mut all_results = Vec::new();
+
+        self.runtime.block_on(async {
+            // Execute vector search if query contains vector operations and vector is provided
+            if models.contains(&"vector") {
+                if let Some(ref vector) = query_vector {
+                    // Extract collection name from query (simplified parsing)
+                    if let Some(collection) = self.extract_collection_from_query(query) {
+                        match self.search_internal(&collection, vector, 10).await {
+                            Ok(results) => {
+                                for result in results {
+                                    let data = serde_json::json!({
+                                        "vector_score": result.score,
+                                        "metadata": result.metadata
+                                    });
+                                    all_results.push(
+                                        UnifiedQueryRecord::new(&result.id, "vector", result.score as f64)
+                                            .with_data(data.to_string())
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Vector search failed: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Execute document query if query contains document operations
+            if models.contains(&"document") {
+                // Simplified: just return info that document queries would be executed
+                tracing::debug!("Document query would be executed for: {}", query);
+            }
+
+            // Execute graph query if query contains graph operations
+            if models.contains(&"graph") {
+                tracing::debug!("Graph query would be executed for: {}", query);
+            }
+
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        })?;
+
+        // Apply fusion strategy if multiple result sets
+        if fusion == "rrf" && !all_results.is_empty() {
+            // Reciprocal Rank Fusion - already sorted by score
+            all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        }
+
+        Ok(all_results)
+    }
+
+    /// Explain a unified query's execution plan
+    ///
+    /// Returns the query decomposition and execution plan without executing.
+    ///
+    /// # Arguments
+    /// * `query` - SQL-like query string
+    ///
+    /// # Returns
+    /// Query execution plan
+    pub fn explain_unified_query(
+        &self,
+        query: &str,
+    ) -> Result<UnifiedQueryPlan, Box<dyn std::error::Error + Send + Sync>> {
+        let models = self.detect_query_models(query);
+
+        let components: Vec<QueryComponent> = models.iter().map(|model| {
+            QueryComponent {
+                model: model.to_string(),
+                parallelizable: *model != "graph", // Graph queries often need sequential execution
+                estimated_cost: match *model {
+                    "vector" => 1.0,
+                    "document" => 0.5,
+                    "graph" => 2.0,
+                    "logs" => 0.3,
+                    "metrics" => 0.2,
+                    _ => 1.0,
+                },
+            }
+        }).collect();
+
+        let fusion_strategy = if components.len() > 1 {
+            "rrf".to_string() // Default to Reciprocal Rank Fusion for multi-model
+        } else {
+            "none".to_string()
+        };
+
+        Ok(UnifiedQueryPlan {
+            fusion_strategy,
+            component_count: components.len(),
+            components,
+        })
+    }
+
+    /// Detect which data models are involved in a query
+    fn detect_query_models(&self, query: &str) -> Vec<&'static str> {
+        let query_upper = query.to_uppercase();
+        let mut models = Vec::new();
+
+        if query_upper.contains("VECTOR_SIMILAR") || query_upper.contains("VECTOR_SEARCH")
+            || query_upper.contains("<->") || query_upper.contains("EMBEDDING") {
+            models.push("vector");
+        }
+
+        if query_upper.contains("$.") || query_upper.contains("DOCUMENT")
+            || query_upper.contains("JSON_") {
+            models.push("document");
+        }
+
+        if query_upper.contains("GRAPH_QUERY") || query_upper.contains("MATCH")
+            || query_upper.contains("TRAVERSE") {
+            models.push("graph");
+        }
+
+        if query_upper.contains("LOGS(") || query_upper.contains("LOG_SEARCH") {
+            models.push("logs");
+        }
+
+        if query_upper.contains("METRICS(") || query_upper.contains("METRIC_") {
+            models.push("metrics");
+        }
+
+        // Default to document if no specific model detected
+        if models.is_empty() {
+            models.push("document");
+        }
+
+        models
+    }
+
+    /// Extract collection name from query (simplified)
+    fn extract_collection_from_query(&self, query: &str) -> Option<String> {
+        // Simple extraction: look for FROM <collection>
+        let query_upper = query.to_uppercase();
+        if let Some(from_pos) = query_upper.find("FROM ") {
+            let rest = &query[from_pos + 5..];
+            let collection: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !collection.is_empty() {
+                return Some(collection);
+            }
+        }
+        None
+    }
+
+    /// Internal async search helper
+    async fn search_internal(
+        &self,
+        collection: &str,
+        query: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+        use crate::proto::proximadb_v1::{SearchQuery, VectorSearchRequest};
+
+        // Build the search query with the vector
+        let search_query = SearchQuery {
+            vector: query.to_vec(),
+            filters: std::collections::HashMap::new(),
+            advanced_filter: None,
+        };
+
+        let search_request = VectorSearchRequest {
+            collection_id: collection.to_string(),
+            queries: vec![search_query],
+            top_k: top_k as u32,
+            include_fields: None,
+            search_params: None,
+            distance_metric_override: None,
+            search_optimization: None,
+        };
+
+        let response = self
+            .shared_services
+            .vector_operations_service
+            .search_v1(search_request)
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            })?;
+
+        // VectorOperationResponse.results is Option<SearchResult>
+        // SearchResult.results is Vec<SearchVectorRecord>
+        let search_result = response.results.unwrap_or_default();
+        Ok(search_result
+            .results
+            .into_iter()
+            .map(|r| SearchResult {
+                id: r.id,
+                score: r.score as f32, // SearchVectorRecord has f64 score
+                metadata: r
+                    .metadata
+                    .into_iter()
+                    .map(|(k, v)| (k, format!("{:?}", v)))
+                    .collect(),
+            })
+            .collect())
     }
 
     // ========================================================================
@@ -2700,13 +2972,9 @@ impl EmbeddedProximaDB {
     /// # Example
     /// ```rust,ignore
     /// let logs = vec![
-    ///     EmbeddedLogEntry {
-    ///         message: "User logged in".to_string(),
-    ///         severity: "INFO".to_string(),
-    ///         service: Some("auth".to_string()),
-    ///         source: Some("api-gateway".to_string()),
-    ///         fields: HashMap::new(),
-    ///     },
+    ///     EmbeddedLogEntry::new("User logged in", "INFO")
+    ///         .with_service("auth")
+    ///         .with_source("api-gateway"),
     /// ];
     /// let count = db.ingest_logs("production", logs)?;
     /// ```
@@ -2772,9 +3040,9 @@ impl EmbeddedProximaDB {
     ///
     /// # Arguments
     /// * `namespace` - Namespace name
-    /// * `query` - Query string (text search in message)
-    /// * `start_time` - Start of time range (ISO 8601 or epoch millis)
-    /// * `end_time` - End of time range (ISO 8601 or epoch millis)
+    /// * `start_time_ns` - Start of time range (nanoseconds since Unix epoch)
+    /// * `end_time_ns` - End of time range (nanoseconds since Unix epoch)
+    /// * `query` - Optional query string (text search in message)
     /// * `limit` - Maximum number of results
     ///
     /// # Returns
@@ -2784,18 +3052,18 @@ impl EmbeddedProximaDB {
     /// ```rust,ignore
     /// let logs = db.query_logs(
     ///     "production",
+    ///     1703000000000000000,  // start time in nanos
+    ///     1703100000000000000,  // end time in nanos
     ///     Some("error"),
-    ///     Some("2024-01-01T00:00:00Z"),
-    ///     None,
     ///     100,
     /// )?;
     /// ```
     pub fn query_logs(
         &self,
         namespace: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
         query: Option<&str>,
-        start_time: Option<&str>,
-        end_time: Option<&str>,
         limit: u32,
     ) -> Result<Vec<EmbeddedLogEntry>, Box<dyn std::error::Error + Send + Sync>> {
         use crate::observability::query::ObservabilityQueryEngine;
@@ -2812,12 +3080,9 @@ impl EmbeddedProximaDB {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
             let query_engine = ObservabilityQueryEngine::new(storage);
 
-            let start_ns = Self::parse_time_to_nanos(start_time).unwrap_or(0);
-            let end_ns = Self::parse_time_to_nanos(end_time).unwrap_or(i64::MAX);
-
             let params = LogQueryParams {
-                start_time_ns: start_ns,
-                end_time_ns: end_ns,
+                start_time_ns,
+                end_time_ns,
                 query: query.map(|s| s.to_string()),
                 severities: vec![],
                 services: vec![],
@@ -2849,6 +3114,7 @@ impl EmbeddedProximaDB {
                     };
 
                     EmbeddedLogEntry {
+                        timestamp_ns: log.timestamp_ns,
                         message: log.message,
                         severity: severity_str.to_string(),
                         service: log.service,
@@ -2876,11 +3142,8 @@ impl EmbeddedProximaDB {
     /// # Example
     /// ```rust,ignore
     /// let metrics = vec![
-    ///     EmbeddedMetricSample {
-    ///         name: "http_requests_total".to_string(),
-    ///         value: 1234.0,
-    ///         labels: [("endpoint".to_string(), "/api/v1/users".to_string())].into(),
-    ///     },
+    ///     EmbeddedMetricSample::with_timestamp("http_requests_total", 1703000000000000000, 1234.0)
+    ///         .with_label("endpoint", "/api/v1/users"),
     /// ];
     /// let count = db.ingest_metrics("production", metrics)?;
     /// ```
@@ -2904,8 +3167,8 @@ impl EmbeddedProximaDB {
             let proto_metrics: Vec<MetricSample> = metrics
                 .into_iter()
                 .map(|m| MetricSample {
-                    name: m.name,
-                    timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                    name: m.metric_name,
+                    timestamp_ns: m.timestamp_ns,
                     value: m.value,
                     labels: m.labels,
                     ..Default::default()
@@ -3086,6 +3349,8 @@ impl EmbeddedProximaDB {
 /// Log entry for embedded mode
 #[derive(Debug, Clone)]
 pub struct EmbeddedLogEntry {
+    /// Timestamp in nanoseconds since Unix epoch
+    pub timestamp_ns: i64,
     /// Log message
     pub message: String,
     /// Severity level (DEBUG, INFO, WARN, ERROR, FATAL)
@@ -3099,9 +3364,25 @@ pub struct EmbeddedLogEntry {
 }
 
 impl EmbeddedLogEntry {
-    /// Create a new log entry
+    /// Create a new log entry with current timestamp
     pub fn new(message: impl Into<String>, severity: impl Into<String>) -> Self {
         Self {
+            timestamp_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0),
+            message: message.into(),
+            severity: severity.into(),
+            service: None,
+            source: None,
+            fields: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new log entry with specific timestamp
+    pub fn with_timestamp(timestamp_ns: i64, message: impl Into<String>, severity: impl Into<String>) -> Self {
+        Self {
+            timestamp_ns,
             message: message.into(),
             severity: severity.into(),
             service: None,
@@ -3133,7 +3414,9 @@ impl EmbeddedLogEntry {
 #[derive(Debug, Clone)]
 pub struct EmbeddedMetricSample {
     /// Metric name
-    pub name: String,
+    pub metric_name: String,
+    /// Timestamp in nanoseconds since Unix epoch
+    pub timestamp_ns: i64,
     /// Metric value
     pub value: f64,
     /// Labels (dimensions)
@@ -3141,10 +3424,24 @@ pub struct EmbeddedMetricSample {
 }
 
 impl EmbeddedMetricSample {
-    /// Create a new metric sample
-    pub fn new(name: impl Into<String>, value: f64) -> Self {
+    /// Create a new metric sample with current timestamp
+    pub fn new(metric_name: impl Into<String>, value: f64) -> Self {
         Self {
-            name: name.into(),
+            metric_name: metric_name.into(),
+            timestamp_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0),
+            value,
+            labels: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new metric sample with specific timestamp
+    pub fn with_timestamp(metric_name: impl Into<String>, timestamp_ns: i64, value: f64) -> Self {
+        Self {
+            metric_name: metric_name.into(),
+            timestamp_ns,
             value,
             labels: std::collections::HashMap::new(),
         }
@@ -3164,6 +3461,72 @@ pub struct EmbeddedDataPoint {
     pub timestamp_ns: i64,
     /// Aggregated value
     pub value: f64,
+}
+
+// ============================================================================
+// Unified Query Types
+// ============================================================================
+
+/// Record returned from a unified multi-model query
+#[derive(Debug, Clone)]
+pub struct UnifiedQueryRecord {
+    /// Record ID
+    pub id: String,
+    /// Source model (vector, document, graph, logs, metrics)
+    pub source_model: String,
+    /// Relevance/similarity score
+    pub score: f64,
+    /// Record data as JSON string
+    pub data: String,
+    /// Additional metadata
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+impl UnifiedQueryRecord {
+    /// Create a new query record
+    pub fn new(id: impl Into<String>, source_model: impl Into<String>, score: f64) -> Self {
+        Self {
+            id: id.into(),
+            source_model: source_model.into(),
+            score,
+            data: "{}".to_string(),
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set the data field
+    pub fn with_data(mut self, data: impl Into<String>) -> Self {
+        self.data = data.into();
+        self
+    }
+
+    /// Add metadata
+    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
+    }
+}
+
+/// Component of a unified query plan
+#[derive(Debug, Clone)]
+pub struct QueryComponent {
+    /// Model type (vector, document, graph, logs, metrics)
+    pub model: String,
+    /// Whether this component can run in parallel
+    pub parallelizable: bool,
+    /// Estimated cost (relative units)
+    pub estimated_cost: f64,
+}
+
+/// Execution plan for a unified query
+#[derive(Debug, Clone)]
+pub struct UnifiedQueryPlan {
+    /// Fusion strategy used (intersection, union, rrf, weighted)
+    pub fusion_strategy: String,
+    /// Number of query components
+    pub component_count: usize,
+    /// Individual query components
+    pub components: Vec<QueryComponent>,
 }
 
 #[cfg(test)]

@@ -230,7 +230,7 @@ env_logger = "0.10"
 tokio-postgres = "0.7"  # PostgreSQL client for integration testing
 
 [features]
-default = ["sql_frontend", "graph-first-sks"]
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
 sales_endpoints = []
@@ -254,6 +254,11 @@ cloud-full = ["aws", "azure", "gcp"]
 
 # SQL frontend feature flag (default on). When disabled, the server uses legacy sql_engine path.
 sql_frontend = []
+
+# Unified facade routing feature flag.
+# When enabled, routes all queries through UnifiedQueryFacade for consistent execution.
+# When disabled, uses legacy direct handler paths for backward compatibility.
+unified-facade-routing = []
 
 # SKS Graph-First Architecture (default on for production)
 # When enabled, uses OrionBackedEntityStore for 3-6x better performance

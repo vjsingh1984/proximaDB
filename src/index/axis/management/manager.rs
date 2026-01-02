@@ -94,7 +94,7 @@ use crate::index::axis::{
     clustering::AxisClusteringEngine,
     clustering::ClusteringConfig,
     management::adaptive_engine::AdaptiveIndexEngine,
-    types::{AxisConfig, Data, IndexSelectionStrategy},
+    types::{AxisConfig, Data, IndexAlgorithm, IndexSelectionStrategy},
 };
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
@@ -480,8 +480,21 @@ impl AxisManager {
                     self.metadata_index.insert(&processed_vector).await?;
                 }
                 Data::DenseVector { .. } => {
-                    // Insert into real IVF index (better for incremental indexing than HNSW)
-                    self.insert_into_ivf(collection_id, &processed_vector).await?;
+                    // Choose index based on algorithm type in strategy
+                    // HNSW: O(log N) search, O(log N) insert - search optimized
+                    // IVF: O(√N) search, O(1) insert after training - insert optimized
+                    match &index_spec.algorithm {
+                        IndexAlgorithm::HNSW { .. } => {
+                            self.insert_into_hnsw(collection_id, &processed_vector).await?;
+                        }
+                        IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. } => {
+                            self.insert_into_ivf(collection_id, &processed_vector).await?;
+                        }
+                        _ => {
+                            // Default to HNSW for other/unspecified algorithms
+                            self.insert_into_hnsw(collection_id, &processed_vector).await?;
+                        }
+                    }
                 }
                 Data::SparseVector { .. } => {
                     self.sparse_vector_index.insert(&processed_vector).await?;
@@ -546,8 +559,22 @@ impl AxisManager {
 
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
-        // Query the real IVF index (better for incremental workloads than HNSW)
-        let results = self.query_ivf(collection_id, &query).await?;
+        // Query using the appropriate index based on strategy algorithm
+        // HNSW: O(log N) search - best for search latency
+        // IVF: O(√N) search - acceptable if insert-optimized
+        let results = {
+            // Find the dense vector index spec to determine algorithm
+            let use_ivf = search_strategy.indexes.iter().any(|spec| {
+                matches!(spec.data_type, Data::DenseVector { .. })
+                    && matches!(spec.algorithm, IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. })
+            });
+
+            if use_ivf {
+                self.query_ivf(collection_id, &query).await?
+            } else {
+                self.query_hnsw(collection_id, &query).await?
+            }
+        };
 
         // Filter out expired results (MVCC)
         let active_results: Vec<_> = results
@@ -573,6 +600,7 @@ impl AxisManager {
     async fn insert_into_hnsw(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
         use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
         use crate::index::axis::index_factory::AxisVectorIndex;
+        use crate::compute::distance_computation::DistanceMetric;
 
         // Get or create HNSW index for this collection
         let dimension = vector.vector.len();
@@ -585,8 +613,22 @@ impl AxisManager {
             let indexes = self.hnsw_indexes.read().await;
             if !indexes.contains_key(collection_id) {
                 drop(indexes);
-                // Create new HNSW index for this collection
-                let config = AxisHnswConfig::default();
+
+                // Get collection's distance metric from its config
+                // This ensures HNSW uses the same metric as the collection
+                let distance_metric = self.get_collection_distance_metric(collection_id).await
+                    .unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
+
+                // Create HNSW config with collection's distance metric
+                let mut config = AxisHnswConfig::default();
+                config.distance_metric = distance_metric;
+
+                tracing::info!(
+                    "🔗 AXIS: Creating HNSW index for collection {} with metric {:?}",
+                    collection_id,
+                    distance_metric
+                );
+
                 let index = AxisHnswIndex::new_with_collection(
                     Some(collection_id.to_string()),
                     config,
@@ -595,9 +637,10 @@ impl AxisManager {
                 let mut indexes = self.hnsw_indexes.write().await;
                 indexes.insert(collection_id.to_string(), Arc::new(index));
                 tracing::debug!(
-                    "🔗 AXIS: Created new HNSW index for collection {} (dimension={})",
+                    "🔗 AXIS: Created new HNSW index for collection {} (dimension={}, metric={:?})",
                     collection_id,
-                    dimension
+                    dimension,
+                    distance_metric
                 );
             }
         }
@@ -983,6 +1026,37 @@ impl AxisManager {
         let mut strategies = self.collection_strategies.write().await;
         strategies.insert(collection_id.to_string(), search_strategy);
         Ok(())
+    }
+
+    /// Get the distance metric configured for a collection
+    /// This ensures indexes use the same metric as the collection's stored config
+    async fn get_collection_distance_metric(
+        &self,
+        collection_id: &str,
+    ) -> Option<crate::compute::distance_computation::DistanceMetric> {
+        use crate::compute::distance_computation::conversion::proto_distance_to_internal;
+
+        // Try to get from shared cache first
+        if let Some(cache) = &self.shared_collection_cache {
+            if let Some(collection) = cache.get(collection_id) {
+                if let Some(config) = &collection.config {
+                    let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+                    return Some(proto_distance_to_internal(metric_code));
+                }
+            }
+        }
+
+        // Fall back to collection service
+        if let Some(collection_service) = &self.collection_service {
+            if let Ok(Some(collection)) = collection_service.collection(collection_id).await {
+                if let Some(config) = &collection.config {
+                    let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+                    return Some(proto_distance_to_internal(metric_code));
+                }
+            }
+        }
+
+        None
     }
 
     /// Maybe evaluate if search_strategy should change
