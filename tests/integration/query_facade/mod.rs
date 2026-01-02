@@ -25,6 +25,7 @@
 //! - `test_sql_through_facade.rs`: SQL query routing tests
 //! - `test_graph_through_facade.rs`: Graph query routing tests
 //! - `test_rest_grpc_parity.rs`: REST/gRPC parity tests (feature: unified-facade-routing)
+//! - `test_explain_plan_consistency.rs`: Explain plan format consistency tests
 //!
 //! ## Feature Flag
 //!
@@ -58,3 +59,6 @@ pub mod test_graph_through_facade;
 /// This module requires the unified-facade-routing feature flag
 #[cfg(feature = "unified-facade-routing")]
 pub mod test_rest_grpc_parity;
+
+/// Explain plan consistency tests - validates explain plan format across query types
+pub mod test_explain_plan_consistency;
