@@ -16,9 +16,14 @@
 //! - Minimal new code, maximum leverage of proven patterns
 
 pub mod codec;
+pub mod file_export;
 pub mod server;
 pub mod service;
 
 pub use codec::ArrowProtoCodec;
+pub use file_export::{
+    ArrowFileExportHandler, ArrowFileInfo, ArrowFileRequest, ArrowFileTicket, ExportFileFormat,
+    FlightCompression, SstArrowCache, SstArrowCacheConfig, SstArrowCacheStats,
+};
 pub use server::ArrowFlightServer;
 pub use service::ProximaFlightService;
