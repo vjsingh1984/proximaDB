@@ -113,11 +113,13 @@
 //!
 
 pub mod ast;
+pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction
 pub mod compute_bridge; // Bridge to Hadoop-style storage-compute separation
 pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
 pub mod distributed; // Distributed query coordination across cluster nodes
 pub mod execution; // New unified execution engine
 pub mod explain;
+pub mod facade; // Unified query facade - single entry point for all queries (consolidates 5 parallel paths)
 pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
@@ -148,4 +150,22 @@ pub use federated::{
 pub use compute_bridge::{
     ComputeBridge, BridgeConfig, QueryContext as ComputeQueryContext,
     ExecutionResult as ComputeExecutionResult, BridgeStatistics,
+};
+
+// Re-export unified facade types - PREFERRED ENTRY POINT
+pub use facade::{
+    UnifiedQueryFacade, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy, QueryType, QueryContent, QueryParams, QueryContext,
+    ExecutionMetrics, FacadeConfig, VectorMatch, GraphQueryResult,
+    // Real strategy implementations
+    VectorSearchStrategy, SqlStrategy, GraphStrategy,
+    // Protocol adapter for REST/gRPC handlers
+    QueryFacadeAdapter,
+};
+
+// Re-export columnar types - M2 Dual Columnar Execution
+pub use columnar::{
+    ColumnarReadProvider, ColumnarAccessStats, ColumnarCapabilities,
+    ColumnarRange, PredicatePushdownConfig, ColumnarBatchStream,
+    ArrowInMemoryProvider, ParquetRangePrunedProvider,
 };
