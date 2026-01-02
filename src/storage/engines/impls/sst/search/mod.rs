@@ -41,6 +41,7 @@ use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::index::axis::management::manager::{FilterOperator, HybridQuery, MetadataFilter, VectorQuery};
+use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::impls::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
 
@@ -374,26 +375,40 @@ impl SstEngine {
         let block_prune = &ctx.search_params.block_prune;
         for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
             trace!(
-                "SST: Searching SSTable [{}/{}]: {} (force_exact={})",
+                "SST: Searching file [{}/{}]: {} (force_exact={})",
                 file_idx + 1,
                 sstable_files.len(),
                 sstable_path,
                 block_prune.force_exact
             );
 
-            match self
-                .sstable_reader()
-                .search_with_filter_and_pruning(
+            // Dispatch based on file format (Arrow vs ProximaBlocks)
+            let search_result = if sstable_path.ends_with(".arrow") {
+                // Use ArrowBlockReader for Arrow format files
+                self.search_arrow_file(
                     sstable_path,
                     query_vector,
                     filter_expression.cloned(),
-                    k * 2, // Get more candidates for better accuracy
+                    k * 2,
                     distance_metric,
-                    Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
-                    block_prune, // Pass block pruning config for Z-order/centroid pruning
                 )
                 .await
-            {
+            } else {
+                // Use SSTable reader for ProximaBlocks format
+                self.sstable_reader()
+                    .search_with_filter_and_pruning(
+                        sstable_path,
+                        query_vector,
+                        filter_expression.cloned(),
+                        k * 2, // Get more candidates for better accuracy
+                        distance_metric,
+                        Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                        block_prune, // Pass block pruning config for Z-order/centroid pruning
+                    )
+                    .await
+            };
+
+            match search_result {
                 Ok(results) => {
                     trace!(
                         "SST: Found {} candidates in file {}",
@@ -404,7 +419,7 @@ impl SstEngine {
                 }
                 Err(e) => {
                     warn!(
-                        "SST: Failed to search SSTable {}: {}",
+                        "SST: Failed to search file {}: {}",
                         sstable_path,
                         e
                     );
@@ -696,9 +711,11 @@ impl SstEngine {
                 entry.url,
                 entry.metadata.is_directory
             );
-            if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
+            if !entry.metadata.is_directory
+                && (entry.name.ends_with(".sst") || entry.name.ends_with(".arrow"))
+            {
                 files.push(entry.url);
-                tracing::debug!("[SST] Found .sst file: {}", entry.name);
+                tracing::debug!("[SST] Found data file: {}", entry.name);
             }
         }
 
@@ -753,7 +770,7 @@ impl SstEngine {
         if let Ok(mut entries) = tokio::fs::read_dir(data_dir).await {
             while let Some(entry) = entries.next_entry().await? {
                 if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".sst") {
+                    if name.ends_with(".sst") || name.ends_with(".arrow") {
                         sstable_files.push(format!("{}/{}", data_dir, name));
                     }
                 }
@@ -766,6 +783,80 @@ impl SstEngine {
             data_dir
         );
         Ok(sstable_files)
+    }
+
+    /// Search within an Arrow format file
+    ///
+    /// Uses ArrowBlockReader to read and search through Arrow IPC files,
+    /// providing the same interface as SSTable searches for seamless integration.
+    async fn search_arrow_file(
+        &self,
+        arrow_path: &str,
+        query_vector: &[f32],
+        _filter_expression: Option<FilterExpression>,
+        limit: usize,
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        use crate::compute::distance_computation::engine::{SimilarityResult, UnifiedDistanceCompute};
+        use std::sync::Arc;
+
+        debug!("🏹 Searching Arrow file: {}", arrow_path);
+
+        // Convert file:// URL to local path
+        let local_path = arrow_path
+            .strip_prefix("file://")
+            .unwrap_or(arrow_path);
+
+        // Open the Arrow file reader
+        let reader = ArrowBlockReader::open(local_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open Arrow file {}: {}", arrow_path, e))?;
+
+        // Read all records from the Arrow file
+        let records = reader.read_all()
+            .map_err(|e| anyhow::anyhow!("Failed to read Arrow file {}: {}", arrow_path, e))?;
+
+        trace!("🏹 Arrow file contains {} records", records.len());
+
+        // Create distance computer with the specified metric
+        let distance_computer = UnifiedDistanceCompute::new(distance_metric);
+
+        // Score all records
+        // Note: Metadata filtering for Arrow files is simplified - for full filter support,
+        // use ProximaBlocks format which has optimized filter evaluation
+        let mut candidates: Vec<OptimizedSearchRecord> = Vec::with_capacity(records.len().min(limit));
+
+        for record in records.iter() {
+            // Compute raw distance
+            let raw_distance = distance_computer.distance(
+                query_vector,
+                &record.vector,
+            );
+
+            // Use SimilarityResult to get normalized_score (higher = more similar)
+            // This ensures consistency with the rest of the codebase and BoundedPriorityQueue
+            let similarity_result = SimilarityResult::new(raw_distance, distance_metric);
+
+            // VectorRecord.metadata is already HashMap<String, SqlValue>
+            // Clone it directly for use in OptimizedSearchRecord
+            let metadata = record.metadata.clone();
+
+            candidates.push(OptimizedSearchRecord {
+                id: record.id.clone(),
+                vector_id: Some(record.id.clone()),
+                score: similarity_result.normalized_score, // Use normalized_score (higher = better)
+                similarity: Some(similarity_result.normalized_score),
+                vector: Some(Arc::new(record.vector.clone())),
+                metadata,
+                ..Default::default()
+            });
+        }
+
+        // Sort by score descending (higher normalized_score = more similar = better)
+        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(limit);
+
+        debug!("🏹 Arrow search found {} candidates", candidates.len());
+        Ok(candidates)
     }
 }
 

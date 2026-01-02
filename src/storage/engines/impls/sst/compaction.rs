@@ -20,12 +20,14 @@
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
+use super::block_format::BlockFormat;
 use super::compactor_impl::{SstCompactor, ZeroCopyCompactionStats};
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::core::{SstConfig, String}; // OPTIMIZED: VectorRecord imported above
 use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Added VectorRecord import
 use crate::storage::Result;
 // Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
+use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -1022,31 +1024,81 @@ impl Compaction {
             };
             let staging_file_path = PathBuf::from(format!("{}/{}", staging_path, staging_filename));
             debug!(
-                "Writing SSTable to staging path: {}",
+                "Writing to staging path: {}",
                 staging_file_path.display()
             );
-            debug!("🔍 REGULAR_COMPACTION: Creating SstableWriter with compression config");
-            let writer = if let Some(ref compression) = compression_config {
-                debug!(
-                    "   Using compression: algorithm={}, level={:?}",
-                    compression.algorithm, compression.level
-                );
-                SstableWriter::with_compression(
-                    &staging_file_path,
-                    block_size,
-                    filesystem_factory.clone(),
-                    Some(compression.clone()),
-                )
-            } else {
-                debug!("   No compression - using default writer");
-                SstableWriter::new(&staging_file_path, block_size, filesystem_factory.clone())
-            };
-            let record_count = btree_records.len();
-            let sorted_records_iter = btree_records.into_iter();
-            writer
-                .write_sorted_vector_records(sorted_records_iter, record_count)
-                .await
-                .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+
+            // Check block format and use appropriate writer
+            let block_format = BlockFormat::from_str(&self.config.block_format);
+            debug!(
+                "🔍 COMPACTION: Using block format: {:?}",
+                block_format
+            );
+
+            match block_format {
+                BlockFormat::ArrowBlock => {
+                    // Use ArrowBlockWriter for Arrow IPC format
+                    debug!("🔍 COMPACTION: Using ArrowBlockWriter for Arrow format");
+
+                    // Infer dimension from first record
+                    let dimension = btree_records
+                        .values()
+                        .next()
+                        .map(|r| r.vector.len() as u32)
+                        .unwrap_or(128);
+
+                    // Ensure parent directory exists
+                    if let Some(parent) = staging_file_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            crate::core::StorageError::DiskIO(e)
+                        })?;
+                    }
+
+                    let config = ArrowBlockConfig::new(dimension);
+                    let mut writer = ArrowBlockWriter::new(&staging_file_path, config)
+                        .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
+
+                    // Convert BTreeMap to Vec for ArrowBlockWriter
+                    let records: Vec<VectorRecord> = btree_records.into_values().collect();
+
+                    writer
+                        .write_block(&records)
+                        .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
+                    writer
+                        .finalize()
+                        .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
+
+                    info!(
+                        "✅ COMPACTION: Wrote {} records to Arrow block",
+                        records.len()
+                    );
+                }
+                BlockFormat::ProximaBlocks => {
+                    // Use SstableWriter for ProximaBlocks format
+                    debug!("🔍 COMPACTION: Creating SstableWriter with compression config");
+                    let writer = if let Some(ref compression) = compression_config {
+                        debug!(
+                            "   Using compression: algorithm={}, level={:?}",
+                            compression.algorithm, compression.level
+                        );
+                        SstableWriter::with_compression(
+                            &staging_file_path,
+                            block_size,
+                            filesystem_factory.clone(),
+                            Some(compression.clone()),
+                        )
+                    } else {
+                        debug!("   No compression - using default writer");
+                        SstableWriter::new(&staging_file_path, block_size, filesystem_factory.clone())
+                    };
+                    let record_count = btree_records.len();
+                    let sorted_records_iter = btree_records.into_iter();
+                    writer
+                        .write_sorted_vector_records(sorted_records_iter, record_count)
+                        .await
+                        .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+                }
+            }
 
             // Get file size for stats
             let metadata = fs
@@ -1081,33 +1133,81 @@ impl Compaction {
         } else {
             // Fallback to direct write (non-atomic)
             debug!(
-                "Writing SSTable directly to: {}",
+                "Writing directly to: {}",
                 task.output_file.display()
             );
+
+            // Check block format and use appropriate writer
+            let block_format = BlockFormat::from_str(&self.config.block_format);
             debug!(
-                "🔍 REGULAR_COMPACTION: Creating SstableWriter (non-atomic) with compression config"
+                "🔍 COMPACTION (non-atomic): Using block format: {:?}",
+                block_format
             );
-            let writer = if let Some(ref compression) = compression_config {
-                debug!(
-                    "   Using compression: algorithm={}, level={:?}",
-                    compression.algorithm, compression.level
-                );
-                SstableWriter::with_compression(
-                    &task.output_file,
-                    block_size,
-                    filesystem_factory,
-                    Some(compression.clone()),
-                )
-            } else {
-                debug!("   No compression - using default writer");
-                SstableWriter::new(&task.output_file, block_size, filesystem_factory)
-            };
-            let record_count = btree_records.len();
-            let sorted_records_iter = btree_records.into_iter();
-            writer
-                .write_sorted_vector_records(sorted_records_iter, record_count)
-                .await
-                .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+
+            match block_format {
+                BlockFormat::ArrowBlock => {
+                    // Use ArrowBlockWriter for Arrow IPC format
+                    debug!("🔍 COMPACTION (non-atomic): Using ArrowBlockWriter for Arrow format");
+
+                    // Infer dimension from first record
+                    let dimension = btree_records
+                        .values()
+                        .next()
+                        .map(|r| r.vector.len() as u32)
+                        .unwrap_or(128);
+
+                    // Ensure parent directory exists
+                    if let Some(parent) = task.output_file.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            crate::core::StorageError::DiskIO(e)
+                        })?;
+                    }
+
+                    let config = ArrowBlockConfig::new(dimension);
+                    let mut writer = ArrowBlockWriter::new(&task.output_file, config)
+                        .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
+
+                    // Convert BTreeMap to Vec for ArrowBlockWriter
+                    let records: Vec<VectorRecord> = btree_records.into_values().collect();
+
+                    writer
+                        .write_block(&records)
+                        .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
+                    writer
+                        .finalize()
+                        .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
+
+                    info!(
+                        "✅ COMPACTION (non-atomic): Wrote {} records to Arrow block",
+                        records.len()
+                    );
+                }
+                BlockFormat::ProximaBlocks => {
+                    // Use SstableWriter for ProximaBlocks format
+                    debug!("🔍 COMPACTION (non-atomic): Creating SstableWriter with compression config");
+                    let writer = if let Some(ref compression) = compression_config {
+                        debug!(
+                            "   Using compression: algorithm={}, level={:?}",
+                            compression.algorithm, compression.level
+                        );
+                        SstableWriter::with_compression(
+                            &task.output_file,
+                            block_size,
+                            filesystem_factory,
+                            Some(compression.clone()),
+                        )
+                    } else {
+                        debug!("   No compression - using default writer");
+                        SstableWriter::new(&task.output_file, block_size, filesystem_factory)
+                    };
+                    let record_count = btree_records.len();
+                    let sorted_records_iter = btree_records.into_iter();
+                    writer
+                        .write_sorted_vector_records(sorted_records_iter, record_count)
+                        .await
+                        .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
+                }
+            }
 
             let output_path = task.output_file.to_string_lossy();
             let metadata = fs.metadata(&output_path).await.map_err(|e| {
@@ -1528,8 +1628,9 @@ impl Compaction {
         Ok(records)
     }
 
-    /// Generate output file path for compacted SST
+    /// Generate output file path for compacted file
     /// Uses unified FilenameCodec for consistency with compaction framework
+    /// Respects the configured block_format setting for file extension
     fn generate_output_file_path(
         &self,
         _collection_id: &str,
@@ -1538,8 +1639,16 @@ impl Compaction {
     ) -> PathBuf {
         // Use unified FilenameCodec directly from compaction framework
         use crate::storage::common::compaction_orchestrator::FilenameCodec;
+        use super::block_format::BlockFormat;
+
         let codec = FilenameCodec::new();
-        let filename = codec.generate(level as u32, "sst");
+        // Check block_format from config and use appropriate extension
+        let block_format = BlockFormat::from_str(&self.config.block_format);
+        let extension = match block_format {
+            BlockFormat::ArrowBlock => "arrow",
+            BlockFormat::ProximaBlocks => "sst",
+        };
+        let filename = codec.generate(level as u32, extension);
         collection_dir.join(filename)
     }
 

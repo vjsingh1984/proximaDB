@@ -518,8 +518,12 @@ impl SstEngine {
     /// - HNSW-based approximate nearest neighbor search
     /// - IVF partition pruning
     /// - Hybrid vector + metadata queries
-    pub fn axis_manager(&self) -> Option<&Arc<AxisManager>> {
-        self.axis_manager.as_ref()
+    ///
+    /// Note: This method checks both the instance field and the global singleton
+    /// to handle cases where the SST engine is created before AXIS manager initialization.
+    pub fn axis_manager(&self) -> Option<Arc<AxisManager>> {
+        // First check instance field, then fall back to global singleton
+        self.axis_manager.clone().or_else(get_sst_axis_manager)
     }
 
     // =========================================================================

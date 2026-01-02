@@ -3017,6 +3017,10 @@ impl UnifiedSstableReader {
 
     /// Simple get operation for single vector retrieval
     /// This provides a lightweight interface for basic get operations
+    ///
+    /// OPTIMIZED: Uses B+ tree index for O(log n) block lookup instead of full scan.
+    /// This is critical for RAG use cases where we need to fetch full records by ID
+    /// after HNSW returns candidate IDs.
     pub async fn vector(&self, file_path: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         debug!(
             "🔍 vector: Looking for vector '{}' in file '{}'",
@@ -3035,59 +3039,275 @@ impl UnifiedSstableReader {
             vector_id
         );
 
-        // Create minimal context for the operation
-        let context = CollectionContext {
-            file_path: file_path.to_string(),
-            sstable_files: vec![file_path.to_string()],
-            total_vectors: 0,
-            metadata_columns: vec![],
-            level: 0,
-            creation_time: chrono::Utc::now(),
-            io_optimization_hints: None,
-            collection: None,
-        };
+        // OPTIMIZED: Use B+ tree index for efficient block lookup
+        // Instead of loading all blocks, we:
+        // 1. Load the SSTable index with B+ tree
+        // 2. Use leaf_for_key to find candidate blocks
+        // 3. Read only those blocks
+        // 4. Search within the block for the specific ID
 
-        // Use full scan strategy for single key lookup
-        // TODO: Optimize with index-based lookup
-        let strategy = SstableReadingStrategy::FullScan {
-            use_block_cache: true,
-        };
+        // Create a temporary reader for this file
+        let mut reader = ModularBlockReader::open(self.filesystem.clone(), file_path).await?;
+        let header = reader.read_header_async().await?;
+        let index = reader.read_index(&header).await?;
 
-        // Load blocks and search for the vector
-        let blocks = self
-            .apply_strategy(&strategy, &Default::default(), &context)
-            .await?;
-        debug!("📦 Loaded {} blocks from file", blocks.len());
+        // Use B+ tree if available for O(log n) block lookup
+        if let Some(ref bplus_tree) = index.bplus_tree {
+            debug!("🌳 Using B+ tree index for efficient lookup");
 
-        // Search through blocks for the vector
-        for (block_idx, block) in blocks.iter().enumerate() {
-            debug!("  Block {}: {} records", block_idx, block.records.len());
-            for record in &block.records {
+            // Find the leaf that might contain our key
+            if let Some(leaf) = bplus_tree.leaf_for_key(vector_id) {
                 debug!(
-                    "    Checking record: id='{:?}' vs looking for '{}'",
-                    record.id, vector_id
+                    "📍 B+ tree leaf found: key range [{}, {}], {} entries starting at idx {}",
+                    leaf.start_key, leaf.end_key, leaf.len, leaf.start_idx
                 );
-                if record.id == vector_id {
-                    // Convert HashMap metadata to Vec<MetadataItem>
-                    // Already have metadata items, just clone them
-                    let metadata_items = record.metadata.clone();
 
-                    return Ok(Some(VectorRecord {
-                        id: record.id.clone(),
-                        // TODO: Optimize - use Arc to avoid clone
-                        vector: record.vector.clone(),
-                        metadata: metadata_items,
-                        timestamp: record.timestamp,
-                        updated_at: record.updated_at,
-                        expires_at: record.expires_at,
-                        version: record.version,
-                        source: None,
-                    }));
+                // Get the index entries for this leaf
+                let entries_in_leaf = &index.entries[leaf.start_idx..leaf.start_idx + leaf.len];
+
+                // Find which block(s) might contain our key
+                // Each entry represents a block with min_key = entry.key
+                for (i, entry) in entries_in_leaf.iter().enumerate() {
+                    // Check if vector_id could be in this block
+                    // Block contains keys from entry.key up to (next entry's key - 1)
+                    let block_min_key = &entry.key;
+                    let block_max_key = if i + 1 < entries_in_leaf.len() {
+                        &entries_in_leaf[i + 1].key
+                    } else {
+                        // Last block in leaf - check against leaf end_key
+                        &leaf.end_key
+                    };
+
+                    // Check if vector_id falls within this block's key range
+                    if vector_id >= block_min_key.as_str() && vector_id <= block_max_key.as_str() {
+                        debug!(
+                            "📦 Reading block at offset {} (keys: {} - {})",
+                            entry.offset, block_min_key, block_max_key
+                        );
+
+                        // Read only this specific block
+                        let block = reader
+                            .read_data_block_at_offset(entry.offset, entry.size as usize)
+                            .await?;
+
+                        // Search within the block for the exact ID
+                        for record in &block.records {
+                            if record.id == vector_id {
+                                debug!("✅ Found vector '{}' in block", vector_id);
+                                return Ok(Some(VectorRecord {
+                                    id: record.id.clone(),
+                                    vector: record.vector.clone(),
+                                    metadata: record.metadata.clone(),
+                                    timestamp: record.timestamp,
+                                    updated_at: record.updated_at,
+                                    expires_at: record.expires_at,
+                                    version: record.version,
+                                    source: None,
+                                }));
+                            }
+                        }
+
+                        debug!("❌ Vector '{}' not found in expected block", vector_id);
+                    }
+                }
+            } else {
+                debug!("❌ B+ tree has no leaf for key '{}'", vector_id);
+            }
+        } else {
+            // Fallback: No B+ tree available, use linear scan through index entries
+            debug!("⚠️ No B+ tree index, falling back to linear block scan");
+
+            // Find candidate blocks by scanning index entries
+            for (i, entry) in index.entries.iter().enumerate() {
+                let block_min_key = &entry.key;
+                let block_max_key = if i + 1 < index.entries.len() {
+                    &index.entries[i + 1].key
+                } else {
+                    &index.max_key
+                };
+
+                if vector_id >= block_min_key.as_str() && vector_id <= block_max_key.as_str() {
+                    let block = reader
+                        .read_data_block_at_offset(entry.offset, entry.size as usize)
+                        .await?;
+
+                    for record in &block.records {
+                        if record.id == vector_id {
+                            return Ok(Some(VectorRecord {
+                                id: record.id.clone(),
+                                vector: record.vector.clone(),
+                                metadata: record.metadata.clone(),
+                                timestamp: record.timestamp,
+                                updated_at: record.updated_at,
+                                expires_at: record.expires_at,
+                                version: record.version,
+                                source: None,
+                            }));
+                        }
+                    }
                 }
             }
         }
 
         Ok(None)
+    }
+
+    /// Batch get operation for multiple vector IDs
+    ///
+    /// OPTIMIZED FOR RAG: When HNSW returns multiple IDs, this method efficiently
+    /// fetches full records (including metadata) for all IDs in a single pass.
+    /// Uses B+ tree index to group IDs by block, minimizing I/O operations.
+    ///
+    /// # Arguments
+    /// * `file_path` - Path to the SSTable file
+    /// * `vector_ids` - Slice of vector IDs to fetch
+    ///
+    /// # Returns
+    /// * Vector of (id, VectorRecord) tuples for found records
+    pub async fn vectors_batch(
+        &self,
+        file_path: &str,
+        vector_ids: &[&str],
+    ) -> Result<Vec<(String, VectorRecord)>> {
+        use std::collections::HashMap;
+
+        if vector_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "🔍 vectors_batch: Looking for {} vectors in file '{}'",
+            vector_ids.len(),
+            file_path
+        );
+
+        // Step 1: Filter out IDs that definitely don't exist (bloom filter)
+        let mut candidate_ids: Vec<&str> = Vec::with_capacity(vector_ids.len());
+        for id in vector_ids {
+            if self.might_contain_key(file_path, id).await {
+                candidate_ids.push(*id);
+            } else {
+                debug!("❌ Bloom filter rejected '{}'", id);
+            }
+        }
+
+        if candidate_ids.is_empty() {
+            debug!("❌ All IDs rejected by bloom filter");
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "✅ {} IDs passed bloom filter check",
+            candidate_ids.len()
+        );
+
+        // Step 2: Load the index with B+ tree
+        let mut reader = ModularBlockReader::open(self.filesystem.clone(), file_path).await?;
+        let header = reader.read_header_async().await?;
+        let index = reader.read_index(&header).await?;
+
+        // Step 3: Group IDs by block for efficient I/O
+        // Map: block_idx -> Vec<id>
+        let mut block_to_ids: HashMap<usize, Vec<&str>> = HashMap::new();
+
+        if let Some(ref bplus_tree) = index.bplus_tree {
+            debug!("🌳 Using B+ tree for batch block assignment");
+
+            for id in &candidate_ids {
+                if let Some(leaf) = bplus_tree.leaf_for_key(id) {
+                    let entries_in_leaf = &index.entries[leaf.start_idx..leaf.start_idx + leaf.len];
+
+                    // Find the specific block
+                    for (i, entry) in entries_in_leaf.iter().enumerate() {
+                        let block_min_key = &entry.key;
+                        let block_max_key = if i + 1 < entries_in_leaf.len() {
+                            &entries_in_leaf[i + 1].key
+                        } else {
+                            &leaf.end_key
+                        };
+
+                        if *id >= block_min_key.as_str() && *id <= block_max_key.as_str() {
+                            let block_idx = leaf.start_idx + i;
+                            block_to_ids.entry(block_idx).or_default().push(*id);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback: Linear scan to assign IDs to blocks
+            debug!("⚠️ No B+ tree, using linear assignment");
+
+            for id in &candidate_ids {
+                for (i, entry) in index.entries.iter().enumerate() {
+                    let block_min_key = &entry.key;
+                    let block_max_key = if i + 1 < index.entries.len() {
+                        &index.entries[i + 1].key
+                    } else {
+                        &index.max_key
+                    };
+
+                    if *id >= block_min_key.as_str() && *id <= block_max_key.as_str() {
+                        block_to_ids.entry(i).or_default().push(*id);
+                        break;
+                    }
+                }
+            }
+        }
+
+        debug!(
+            "📦 IDs grouped into {} blocks",
+            block_to_ids.len()
+        );
+
+        // Step 4: Read each block once and extract all matching records
+        let mut results: Vec<(String, VectorRecord)> = Vec::with_capacity(candidate_ids.len());
+        let id_set: std::collections::HashSet<&str> = candidate_ids.iter().copied().collect();
+
+        for (block_idx, ids_in_block) in block_to_ids {
+            if block_idx >= index.entries.len() {
+                continue;
+            }
+
+            let entry = &index.entries[block_idx];
+            let block = reader
+                .read_data_block_at_offset(entry.offset, entry.size as usize)
+                .await?;
+
+            debug!(
+                "📦 Block {}: {} records, looking for {} IDs",
+                block_idx,
+                block.records.len(),
+                ids_in_block.len()
+            );
+
+            // Scan block once, collect all matching records
+            for record in &block.records {
+                if id_set.contains(record.id.as_str()) {
+                    results.push((
+                        record.id.clone(),
+                        VectorRecord {
+                            id: record.id.clone(),
+                            vector: record.vector.clone(),
+                            metadata: record.metadata.clone(),
+                            timestamp: record.timestamp,
+                            updated_at: record.updated_at,
+                            expires_at: record.expires_at,
+                            version: record.version,
+                            source: None,
+                        },
+                    ));
+                }
+            }
+        }
+
+        info!(
+            "✅ vectors_batch: Found {}/{} vectors",
+            results.len(),
+            vector_ids.len()
+        );
+
+        Ok(results)
     }
 
     /// Check if a key might be contained using bloom filter

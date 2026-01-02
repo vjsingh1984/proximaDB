@@ -238,6 +238,7 @@ pub mod unified_reader;
 pub mod writer;
 
 // New modular structure
+pub mod block_format;
 pub mod blocks;
 #[allow(dead_code)]
 mod blocks_archive; // Legacy types preserved for reference

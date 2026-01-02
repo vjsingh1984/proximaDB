@@ -10,9 +10,11 @@
 //! large-scale compactions.
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
+use super::block_format::BlockFormatReader;
 use super::readers::sst_query_engine::{BlockIterator, SstDirectReader};
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
 use anyhow::Result;
@@ -890,52 +892,96 @@ impl SstCompactor {
         }
 
         info!(
-            "📊 Writing {} sorted records to SST file at level {}",
+            "📊 Writing {} sorted records to file at level {}",
             records.len(),
             level
         );
 
-        // Create SSTable writer with compression config
-        debug!("🔍 SST_COMPACTOR: Creating SstableWriter");
-        let writer = if let Some(ref compression) = compression_config {
-            debug!(
-                "   ✅ WITH compression: algorithm={}, level={:?}",
-                compression.algorithm, compression.level
-            );
-            debug!("   Block size passed to writer: {} bytes", self.block_size);
-            SstableWriter::with_compression(
-                output_path,
-                self.block_size,
-                self.filesystem_factory.clone(),
-                Some(compression.clone()),
-            )
-        } else {
-            debug!("   ⚠️ NO compression - using default writer");
-            debug!("   Block size passed to writer: {} bytes", self.block_size);
-            SstableWriter::new(
-                output_path,
-                self.block_size,
-                self.filesystem_factory.clone(),
-            )
-        };
+        // Detect format from file extension
+        let block_format = BlockFormatReader::detect_format(output_path);
+        debug!(
+            "🔍 SST_COMPACTOR: Detected block format: {:?} for path: {}",
+            block_format, output_path
+        );
 
-        // Convert records to sorted format (id, record)
-        let sorted_records: Vec<(String, VectorRecord)> = records
-            .into_iter()
-            .map(|r| {
-                let id = r.id.clone().clone();
-                stats.records_written += 1;
-                stats.bytes_written += bincode::serialized_size(&r).unwrap_or(0);
-                (id, r)
-            })
-            .collect();
+        match block_format {
+            super::block_format::BlockFormat::ArrowBlock => {
+                // Use ArrowBlockWriter for Arrow IPC format
+                debug!("🔍 SST_COMPACTOR: Using ArrowBlockWriter for Arrow format");
 
-        let record_count = sorted_records.len();
+                // Infer dimension from first record
+                let dimension = records
+                    .first()
+                    .map(|r| r.vector.len() as u32)
+                    .unwrap_or(128);
 
-        // Write using the streaming API
-        writer
-            .write_sorted_vector_records(sorted_records.into_iter(), record_count)
-            .await?;
+                // Ensure parent directory exists
+                let path = std::path::Path::new(output_path);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                let config = ArrowBlockConfig::new(dimension);
+                let mut writer = ArrowBlockWriter::new(path, config)?;
+
+                // Update stats
+                for record in &records {
+                    stats.records_written += 1;
+                    stats.bytes_written += bincode::serialized_size(record).unwrap_or(0);
+                }
+
+                writer.write_block(&records)?;
+                writer.finalize()?;
+
+                info!(
+                    "✅ SST_COMPACTOR: Wrote {} records to Arrow block",
+                    records.len()
+                );
+            }
+            super::block_format::BlockFormat::ProximaBlocks => {
+                // Use SstableWriter for ProximaBlocks format
+                debug!("🔍 SST_COMPACTOR: Creating SstableWriter");
+                let writer = if let Some(ref compression) = compression_config {
+                    debug!(
+                        "   ✅ WITH compression: algorithm={}, level={:?}",
+                        compression.algorithm, compression.level
+                    );
+                    debug!("   Block size passed to writer: {} bytes", self.block_size);
+                    SstableWriter::with_compression(
+                        output_path,
+                        self.block_size,
+                        self.filesystem_factory.clone(),
+                        Some(compression.clone()),
+                    )
+                } else {
+                    debug!("   ⚠️ NO compression - using default writer");
+                    debug!("   Block size passed to writer: {} bytes", self.block_size);
+                    SstableWriter::new(
+                        output_path,
+                        self.block_size,
+                        self.filesystem_factory.clone(),
+                    )
+                };
+
+                // Convert records to sorted format (id, record)
+                let sorted_records: Vec<(String, VectorRecord)> = records
+                    .into_iter()
+                    .map(|r| {
+                        let id = r.id.clone().clone();
+                        stats.records_written += 1;
+                        stats.bytes_written += bincode::serialized_size(&r).unwrap_or(0);
+                        (id, r)
+                    })
+                    .collect();
+
+                let record_count = sorted_records.len();
+
+                // Write using the streaming API
+                writer
+                    .write_sorted_vector_records(sorted_records.into_iter(), record_count)
+                    .await?;
+            }
+        }
 
         Ok(stats)
     }
