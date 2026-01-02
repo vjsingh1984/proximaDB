@@ -54,6 +54,7 @@
 //! └─────────────────────────────────────┘
 //! ```
 
+pub mod canonical;
 pub mod engines;
 // Generic, engine-agnostic traversal utilities
 pub use engines::generic_traversal;
@@ -79,6 +80,13 @@ pub use service::GraphOperationsService as GraphService;
 pub use service_algorithms::{
     CentralityAlgorithm, CentralityConfig, CentralityResult, CommunityAlgorithm,
     CommunityConfig, CommunityResult,
+};
+
+// Canonical types for REST/gRPC parity
+pub use canonical::{
+    BatchError, BatchResults, CanonicalEdge, CanonicalEmbedding, CanonicalNode, CanonicalPath,
+    ErrorCode, GraphError, GraphResponse, QueryResults, ResponseMetadata, ShortestPathResult,
+    TraversalResults, TraversalStats as CanonicalTraversalStats,
 };
 
 // Export proto types for convenience
