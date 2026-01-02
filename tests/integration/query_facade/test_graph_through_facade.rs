@@ -203,7 +203,7 @@ impl QueryStrategy for MockGraphStrategy {
                 paths: self.paths.clone(),
             }),
             metrics: Some(ExecutionMetrics {
-                execution_path: "graph".to_string(),
+                execution_path: "unified".to_string(), // Unified facade path
                 strategy_name: "mock_graph".to_string(),
                 execution_time_ms: 8,
                 planning_time_ms: 1,
@@ -349,7 +349,7 @@ async fn test_graph_query_includes_metrics() {
 
     let metrics = result.metrics.expect("Should have metrics");
     assert_eq!(metrics.strategy_name, "mock_graph");
-    assert_eq!(metrics.execution_path, "graph");
+    assert_eq!(metrics.execution_path, "unified"); // All queries route through unified facade
 
     // Verify extra metrics
     assert!(metrics.extra.get("nodes_returned").is_some());
@@ -739,7 +739,7 @@ async fn test_unified_facade_routing_graph_concept() {
 
     // Verify metrics are available
     let metrics = result.metrics.expect("Should have metrics");
-    assert_eq!(metrics.execution_path, "graph");
+    assert_eq!(metrics.execution_path, "unified"); // All queries route through unified facade
 }
 
 /// Test graph query with properties in response

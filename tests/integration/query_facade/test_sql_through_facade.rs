@@ -146,7 +146,7 @@ impl QueryStrategy for MockSqlStrategy {
         Ok(QueryResult {
             data: QueryResultData::Rows(limited_rows.clone()),
             metrics: Some(ExecutionMetrics {
-                execution_path: "federated".to_string(),
+                execution_path: "unified".to_string(), // Unified facade path
                 strategy_name: "mock_sql".to_string(),
                 execution_time_ms: 10,
                 planning_time_ms: 2,
@@ -272,7 +272,7 @@ async fn test_sql_query_includes_metrics() {
 
     let metrics = result.metrics.expect("Should have metrics");
     assert_eq!(metrics.strategy_name, "mock_sql");
-    assert_eq!(metrics.execution_path, "federated");
+    assert_eq!(metrics.execution_path, "unified"); // All queries route through unified facade
     assert!(metrics.extra.get("sql").is_some());
 }
 
@@ -624,5 +624,5 @@ async fn test_federated_query_full_roundtrip() {
 
     // Metrics should indicate federated execution
     let metrics = result.metrics.unwrap();
-    assert_eq!(metrics.execution_path, "federated");
+    assert_eq!(metrics.execution_path, "unified"); // All queries route through unified facade
 }
