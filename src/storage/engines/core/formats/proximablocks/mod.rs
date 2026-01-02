@@ -228,6 +228,7 @@
 //! | SWIFT | `composite_indexes` | Ultra-low latency |
 //! | RAPTOR | `centroid_matrix` | Adaptive clustering |
 
+pub mod arrow_reader; // Arrow reader for .sst files - enables external tool access
 pub mod block_reader; // ✅ NEW: Unified Proxima block reader with strategies
 pub mod block_structures;
 pub mod bloom_filter; // Row-based bloom filter for SST and Swift
@@ -280,6 +281,9 @@ pub use sst_io_layer::{
 
 // NEW: Export zero-copy metadata serialization components
 pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadataSerializer};
+
+// NEW: Export Arrow reader for .sst files
+pub use arrow_reader::ProximaBlocksArrowReader;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;

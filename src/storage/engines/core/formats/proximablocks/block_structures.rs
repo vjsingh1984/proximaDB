@@ -107,7 +107,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
@@ -2461,15 +2461,21 @@ impl ProximaDataBlock {
             );
         }
 
+        // TIMING: Start vector decode timing
+        let decode_start = std::time::Instant::now();
+        let format_name;
+
         let mut records = if vector_data.len() >= 2
             && vector_data[0] == 0x46
             && vector_data[1] == 0x56
         {
             // FullVector format detected (FV marker)
+            format_name = "FullVector";
             trace!("[DECODE] FullVector format detected, decoding...");
             Self::decode_full_vector(&vector_data, dimension, record_count)?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x56 {
             // GroupedFieldEncodedAndCompressedVector format detected (GV marker)
+            format_name = "GroupedField";
             trace!("[DECODE] GroupedFieldEncodedAndCompressedVector format detected, decoding...");
             Self::decode_grouped_field_encoded_and_compressed_vector(
                 &vector_data,
@@ -2478,6 +2484,7 @@ impl ProximaDataBlock {
             )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x42 {
             // GroupedFieldEncodedBlockCompressedVector format detected (GB marker)
+            format_name = "GroupedBlock";
             trace!(
                 "[DECODE] GroupedFieldEncodedBlockCompressedVector format detected, decoding..."
             );
@@ -2488,6 +2495,7 @@ impl ProximaDataBlock {
             )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x56 {
             // TransposeFieldEncodedAndCompressedVector format detected (TV marker)
+            format_name = "TransposeField";
             trace!(
                 "[DECODE] TransposeFieldEncodedAndCompressedVector format detected, decoding..."
             );
@@ -2498,6 +2506,7 @@ impl ProximaDataBlock {
             )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x42 {
             // TransposeFieldEncodedBlockCompressedVector format detected (TB marker)
+            format_name = "TransposeBlock";
             trace!(
                 "[DECODE] TransposeFieldEncodedBlockCompressedVector format detected, decoding..."
             );
@@ -2508,9 +2517,21 @@ impl ProximaDataBlock {
             )?
         } else {
             // Legacy format: decode using existing columnar logic
+            format_name = "Legacy";
             trace!("[DECODE] Legacy format detected, decoding...");
             Self::decode_existing_columnar_format(&vector_data, encoding_marker)?
         };
+
+        // TIMING: Log vector decode timing
+        let decode_elapsed = decode_start.elapsed();
+        info!(
+            "📊 DECODE_TIMING: {} format, {}D x {} vectors, {:.2}ms ({:.1} vectors/ms)",
+            format_name,
+            dimension,
+            record_count,
+            decode_elapsed.as_secs_f64() * 1000.0,
+            record_count as f64 / (decode_elapsed.as_secs_f64() * 1000.0)
+        );
 
         // ============ CRITICAL: Decode the remaining sections that encoder wrote ============
 
