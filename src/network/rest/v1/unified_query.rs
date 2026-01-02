@@ -210,6 +210,15 @@ impl UnifiedQueryApiState {
         self
     }
 
+    /// Set the query facade adapter for unified query execution
+    ///
+    /// When set, queries will route through the unified facade instead of
+    /// using the internal decomposer/executor pipeline.
+    pub fn with_query_adapter(mut self, adapter: Arc<QueryFacadeAdapter>) -> Self {
+        self.query_adapter = Some(adapter);
+        self
+    }
+
     /// Check if a query should be routed to the federated query engine
     fn should_use_federated(&self, query: &str) -> bool {
         // Check for multi-model SQL extensions
@@ -829,6 +838,13 @@ async fn execute_federated_query(
     info!("Executing federated query: {}", request.query);
     let start = Instant::now();
 
+    // When unified-facade-routing is enabled and adapter is available, use it
+    #[cfg(feature = "unified-facade-routing")]
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Routing federated query through QueryFacadeAdapter");
+        return execute_federated_via_adapter(adapter, &request, start).await;
+    }
+
     // Use the federated query context if available
     let federated_context = match &state.federated_context {
         Some(ctx) => ctx.clone(),
@@ -1172,6 +1188,108 @@ pub struct FederatedMetricsResponse {
     pub sub_query_times: Vec<SubQueryTimeResponse>,
     /// Rows scanned
     pub rows_scanned: u64,
+}
+
+/// Execute federated query through the unified QueryFacadeAdapter
+///
+/// This function routes the query through the facade for consistent execution
+/// across all query paths (REST, gRPC, internal).
+#[cfg(feature = "unified-facade-routing")]
+async fn execute_federated_via_adapter(
+    adapter: &QueryFacadeAdapter,
+    request: &ExecuteQueryRequest,
+    start: std::time::Instant,
+) -> ApiResult<JsonResponse<FederatedQueryResponse>> {
+    use crate::query::facade::QueryResultData;
+
+    let result = adapter.federated_query(&request.query)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Federated query failed: {}", e)))?;
+
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    // Convert QueryResult to FederatedQueryResponse
+    let records = match result.data {
+        QueryResultData::Rows(rows) => {
+            rows.into_iter()
+                .take(request.limit.unwrap_or(100) as usize)
+                .enumerate()
+                .map(|(i, row)| FederatedRecordResponse {
+                    id: format!("row_{}", i),
+                    source_model: "unified".to_string(),
+                    data: row,
+                    score: None,
+                    metadata: HashMap::new(),
+                })
+                .collect()
+        }
+        QueryResultData::VectorResults(matches) => {
+            matches.into_iter()
+                .take(request.limit.unwrap_or(100) as usize)
+                .map(|m| {
+                    // Convert metadata from Value to HashMap<String, String>
+                    let metadata = m.metadata
+                        .and_then(|v| v.as_object().cloned())
+                        .map(|obj| {
+                            obj.into_iter()
+                                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    FederatedRecordResponse {
+                        id: m.id,
+                        source_model: "vector".to_string(),
+                        data: serde_json::json!({ "score": m.score }),
+                        score: Some(m.score as f64),
+                        metadata,
+                    }
+                })
+                .collect()
+        }
+        QueryResultData::Graph(graph_result) => {
+            graph_result.nodes.into_iter()
+                .take(request.limit.unwrap_or(100) as usize)
+                .enumerate()
+                .map(|(i, node)| FederatedRecordResponse {
+                    id: format!("node_{}", i),
+                    source_model: "graph".to_string(),
+                    data: node,
+                    score: None,
+                    metadata: HashMap::new(),
+                })
+                .collect()
+        }
+        QueryResultData::Empty => vec![],
+    };
+
+    let metrics_info = result.metrics.unwrap_or_default();
+
+    let response = FederatedQueryResponse {
+        records_returned: records.len() as u64,
+        total_count: Some(records.len() as u64),
+        records,
+        query_type: "unified".to_string(),
+        involved_models: vec!["unified".to_string()],
+        execution_plan: Some(FederatedPlanResponse {
+            is_cross_model: false,
+            extensions_used: vec![],
+        }),
+        metrics: FederatedMetricsResponse {
+            total_time_ms: elapsed_ms,
+            parse_time_ms: metrics_info.planning_time_ms as f64,
+            optimize_time_ms: 0.0,
+            execute_time_ms: metrics_info.execution_time_ms as f64,
+            sub_query_times: vec![],
+            rows_scanned: 0,
+        },
+    };
+
+    info!(
+        "Federated query via adapter in {:.2}ms, returned {} records",
+        elapsed_ms, response.records_returned
+    );
+
+    Ok(JsonResponse(response))
 }
 
 #[cfg(test)]
