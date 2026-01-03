@@ -22,8 +22,8 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock, Semaphore};
-use tracing::{debug, info, warn, error};
+use tokio::sync::{RwLock, Semaphore};
+use tracing::{debug, warn};
 use serde::{Serialize, Deserialize};
 
 use super::shard::{Shard, ShardId};

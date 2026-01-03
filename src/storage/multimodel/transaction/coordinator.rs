@@ -5,17 +5,17 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
-use super::isolation::{IsolationLevel, IsolationManager, ReadSnapshot, WriteSet};
+use super::isolation::{IsolationLevel, IsolationManager, ReadSnapshot};
 use super::two_phase_commit::{
-    CommitResult, ParticipantType, PrepareResult, TransactionState, TwoPhaseCommitConfig,
-    TwoPhaseCommitProtocol, TwoPhaseParticipant,
+    ParticipantType, TransactionState, TwoPhaseCommitConfig, TwoPhaseCommitProtocol,
+    TwoPhaseParticipant,
 };
 
 /// Transaction configuration

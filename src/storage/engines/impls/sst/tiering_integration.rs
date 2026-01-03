@@ -67,13 +67,11 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::storage::tiering::{
-    AccessEvent, AccessTracker,
-    MigrationTask, MigrationResult,
-    PerformanceTier, TieringEngineConfig,
+    AccessEvent, MigrationTask, MigrationResult, PerformanceTier, TieringEngineConfig,
     TieringPolicy, TieringPolicyEngine, TieringStats,
 };
 // Import additional types from submodules that aren't re-exported at top level
-use crate::storage::tiering::tracker::{AccessTrackerConfig, AccessType};
+use crate::storage::tiering::tracker::AccessType;
 use crate::storage::tiering::policy::TieringMetadata;
 
 /// Configuration for SST tiering integration

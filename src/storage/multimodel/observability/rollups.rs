@@ -4,12 +4,11 @@
 //! Supports multiple rollup intervals (1min, 5min, 1hr, 1day).
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Rollup interval
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

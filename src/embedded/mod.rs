@@ -2225,7 +2225,6 @@ impl EmbeddedProximaDB {
         id: Option<&str>,
         document: serde_json::Value,
     ) -> Result<(String, u64), Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::SqlObject;
         use crate::storage::document::DocumentService;
 
         self.runtime.block_on(async {
@@ -2306,7 +2305,7 @@ impl EmbeddedProximaDB {
         filter: Option<&str>,
         limit: u32,
     ) -> Result<Vec<(String, serde_json::Value)>, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, DocumentFilter};
+        use crate::proto::proximadb_v1::DocumentFilter;
         use crate::storage::document::{DocumentQueryParams, DocumentService};
 
         self.runtime.block_on(async {
@@ -2744,7 +2743,7 @@ impl EmbeddedProximaDB {
 
     /// Convert serde_json::Value to SqlValue
     fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::{sql_value::Value, SqlArray, SqlObject, SqlValue};
+        use crate::proto::proximadb_v1::{sql_value::Value, SqlArray, SqlValue};
 
         let inner = match value {
             serde_json::Value::Null => Value::NullValue(0),

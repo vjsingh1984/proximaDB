@@ -22,14 +22,14 @@
 //! - Dispatching vector changes to relevant subscriptions
 //! - Cleaning up stale subscriptions
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, info, warn};
 
 use super::evaluator::QueryEvaluator;
 use super::subscription::{

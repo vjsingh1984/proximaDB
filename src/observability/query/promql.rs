@@ -8,11 +8,10 @@
 // - Time duration parsing
 
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use anyhow::{anyhow, Result};
 
-use super::metrics::{MetricAggregationFn, MetricQuery, MetricQueryBuilder, MetricResult};
+use super::metrics::MetricResult;
 use crate::proto::proximadb_v1::MetricSample;
 
 /// PromQL query parser

@@ -3,7 +3,7 @@
 //! Reads VectorRecords from Arrow IPC format with B+ tree index support.
 
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
 

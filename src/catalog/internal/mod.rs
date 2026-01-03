@@ -36,14 +36,11 @@ pub mod enforcement;
 pub mod information_schema;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use anyhow::Result;
 use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
 use serde::{Deserialize, Serialize};
 
-use super::types::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogTableSchema, ColumnConstraint,
-};
+use super::types::{CatalogColumn, CatalogIndex, CatalogTableSchema};
 
 // Re-exports
 pub use registry::InternalSchemaRegistry;

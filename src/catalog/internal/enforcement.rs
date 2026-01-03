@@ -8,12 +8,10 @@
 //! - Not Null: Null value prevention
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::{
     CatalogObject, ConstraintType, ForeignKeyReference, ObjectSchema, ReferentialAction,

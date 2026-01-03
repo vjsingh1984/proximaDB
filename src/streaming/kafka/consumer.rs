@@ -24,11 +24,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
-use super::config::{CommitStrategy, KafkaConsumerConfig};
-use super::deserializer::{DeserializationError, MessageDeserializer, VectorMessage};
-use crate::streaming::{BackpressureLevel, PushResult, StreamCoordinator, StreamId};
+use super::config::KafkaConsumerConfig;
+use super::deserializer::{MessageDeserializer, VectorMessage};
+use crate::streaming::{BackpressureLevel, StreamCoordinator, StreamId};
 
 /// Consumer handle for controlling the consumer
 pub struct ConsumerHandle {

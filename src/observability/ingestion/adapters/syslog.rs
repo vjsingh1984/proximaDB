@@ -7,7 +7,6 @@
 // - TLS encryption (optional)
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -15,10 +14,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::mpsc;
 
 use super::{AdapterConfig, InputAdapter};
-use crate::proto::proximadb_v1::{LogEntry, Severity, SqlValue};
+use crate::proto::proximadb_v1::{LogEntry, Severity};
 
 /// Syslog adapter for TCP and UDP
 pub struct SyslogAdapter {

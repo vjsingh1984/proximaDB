@@ -4,12 +4,11 @@
 //! Enables efficient range queries and automatic retention.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Partition granularity
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

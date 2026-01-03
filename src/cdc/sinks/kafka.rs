@@ -18,13 +18,12 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::cdc::event::ChangeEvent;
 
-use super::traits::{CdcSink, MessageFormat, SinkError, SinkResult, SinkStats};
+use super::traits::{CdcSink, MessageFormat, SinkResult, SinkStats};
 
 /// Kafka sink configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,7 +3,7 @@
 //! Writes VectorRecords to Arrow IPC format with B+ tree indexing.
 
 use std::fs::File;
-use std::io::{BufWriter, Seek, SeekFrom, Write};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 use crate::storage::schema::proxima_schema::ProximaSchema;
 
-use super::config::{ArrowBlockConfig, ArrowBlockMetadata, CompressionCodec};
+use super::config::{ArrowBlockConfig, ArrowBlockMetadata};
 use super::index::{ArrowBlockIndex, ArrowIndexEntry};
 use super::{ArrowBlockError, ArrowBlockResult, ARROW_BLOCK_MAGIC, ARROW_BLOCK_VERSION};
 

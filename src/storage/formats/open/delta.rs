@@ -74,9 +74,8 @@ use tracing::{debug, info, warn};
 
 use super::StorageOptions;
 use crate::storage::formats::{
-    CompressionCodec, FileEntry, FileStats, ColumnStats, FilterExpression,
-    FormatStatistics, FormatType, MergeAction, OptimizeContext, OptimizeResult,
-    ReadContext, RecordBatchStream, Snapshot, StorageFormat, OpenTableFormat,
+    CompressionCodec, FileEntry, FilterExpression, FormatType, MergeAction, OptimizeContext,
+    OptimizeResult, ReadContext, RecordBatchStream, Snapshot, StorageFormat, OpenTableFormat,
     VectorBatchStream, VectorReadContext, WriteContext, WriteMode,
 };
 

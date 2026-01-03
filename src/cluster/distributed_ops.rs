@@ -9,13 +9,13 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use super::routing::{OperationType, RouteDecision, RoutingService};
+use super::routing::RoutingService;
 use super::shard::{Shard, ShardId, ShardManager, ShardState};
-use super::node_registry::{NodeInfo, NodeRegistry};
+use super::node_registry::NodeRegistry;
 use super::consensus::RaftConsensus;
 
 /// Configuration for distributed operations

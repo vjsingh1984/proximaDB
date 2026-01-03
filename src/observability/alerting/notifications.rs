@@ -7,12 +7,11 @@
 // - Email notifications (SMTP)
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use super::Alert;
 

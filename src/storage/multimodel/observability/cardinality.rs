@@ -4,11 +4,9 @@
 //! index explosion and memory issues.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 /// Configuration for cardinality limiting
 #[derive(Debug, Clone)]

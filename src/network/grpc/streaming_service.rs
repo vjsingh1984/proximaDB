@@ -39,11 +39,11 @@ use crate::proto::proximadb_streaming_v1::{
     SessionStats as ProtoSessionStats, StreamInsertRequest, StreamInsertResponse,
     SubscribeRequest, VectorBatch,
 };
-use crate::proto::proximadb_v1::{SearchResult, SearchVectorRecord, VectorRecord};
+use crate::proto::proximadb_v1::{SearchVectorRecord, VectorRecord};
 use crate::streaming::{
     subscriptions::{
-        QueryUpdate as SubQueryUpdate, ResultChange, ScoredResult, SubscriptionConfig,
-        SubscriptionManager, UpdateType,
+        QueryUpdate as SubQueryUpdate, ResultChange, SubscriptionConfig, SubscriptionManager,
+        UpdateType,
     },
     BackpressureLevel, SessionConfig, SessionState, StreamConfig, StreamCoordinator, StreamId,
 };

@@ -7,14 +7,13 @@
 // - Alert state management
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::info;
 
 use super::rules::{AlertRule, AlertRuleId, RuleCondition};
-use super::{Alert, AlertSeverity};
+use super::Alert;
 
 /// Alert evaluation engine
 pub struct AlertEngine {

@@ -219,7 +219,7 @@
 //! 4. Background threads handle compaction asynchronously
 
 // bloom_filter now in core module for unified implementation
-use crate::core::bloom::{self as bloom_filter, BloomFilterStrategy};
+use crate::core::bloom as bloom_filter;
 pub mod compaction;
 pub mod decompression_cache;
 pub mod error;
@@ -289,7 +289,6 @@ use crate::core::search::json_value_serde;
 use crate::core::compression::CompressionAlgorithm;
 // Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
 // SortingStats now comes from utils module
-use crate::storage::persistence::filesystem::FileSystem;
 // Unified search engine removed - using direct search methods
 // MetadataItem is part of VectorRecord proto
 use serde::{Deserialize, Serialize};
@@ -1539,8 +1538,8 @@ mod block_utils {
     use super::*;
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
     use crate::core::bloom::{
-        adaptive::AdaptiveBloomConfig, factory::BloomFilterFactory,
-        BloomFilterStats, BloomFilterStrategy, SstableBloomFilter,
+        adaptive::AdaptiveBloomConfig, factory::BloomFilterFactory, BloomFilterStats,
+        SstableBloomFilter,
     };
 
     /// Create a new ProximaDataBlock for SST usage with automatic bloom filter generation
