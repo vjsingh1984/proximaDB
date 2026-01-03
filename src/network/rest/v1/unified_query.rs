@@ -93,42 +93,112 @@ use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::storage::traits::UnifiedStorageEngine;
 
 /// Unified Query API state with all services for cross-model queries
+///
+/// # Architecture Modes
+///
+/// This state supports two execution modes:
+///
+/// ## 1. Adapter Mode (Recommended when `unified-facade-routing` is enabled)
+///
+/// When `query_adapter` is set, all queries route through `QueryFacadeAdapter`:
+/// - Simpler configuration: only `query_adapter` is needed
+/// - Consistent execution across REST, gRPC, and internal paths
+/// - Use `new_with_adapter()` constructor
+///
+/// ## 2. Legacy Mode (Fallback)
+///
+/// When `query_adapter` is None, queries use the internal pipeline:
+/// - Requires: `decomposer`, `executor`, `fuser`, `config`
+/// - Services: `vector_ops`, `document_service`, `graph_service`, `observability_service`
+/// - Optional: `federated_context` for SQL with multi-model extensions
+///
+/// The legacy mode will be deprecated once adapter mode is proven stable.
 #[derive(Clone)]
 pub struct UnifiedQueryApiState {
-    /// Document service for document queries
-    pub document_service: Arc<DocumentService>,
-    /// Storage engine for vector queries
-    pub storage_engine: Arc<dyn UnifiedStorageEngine>,
-    /// Vector operations service for vector searches
-    pub vector_ops: Option<Arc<VectorOperationsService>>,
-    /// Graph operations service for graph traversals
-    pub graph_service: Option<Arc<GraphOperationsService>>,
-    /// Observability service for logs/metrics
-    pub observability_service: Option<Arc<ObservabilityService>>,
-    /// Query decomposer
-    pub decomposer: Arc<QueryDecomposer>,
-    /// Parallel executor for multi-model queries
-    pub executor: Arc<ParallelExecutor>,
-    /// Result fuser
-    pub fuser: Arc<ResultFuser>,
-    /// Configuration
-    pub config: UnifiedQueryConfig,
-    /// Federated query context for SQL with multi-model extensions
-    pub federated_context: Option<Arc<FederatedQueryContext>>,
-    /// Federated parser for detecting multi-model query patterns
-    federated_parser: Arc<FederatedParser>,
-    /// Query facade adapter for unified query execution (optional for feature-gated routing)
+    // =========================================================================
+    // ADAPTER MODE (preferred) - Only query_adapter is needed
+    // =========================================================================
+    /// Query facade adapter for unified query execution
+    ///
+    /// When set, all queries route through this adapter, making the legacy
+    /// fields below unnecessary. This is the preferred mode.
     pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
+
+    // =========================================================================
+    // LEGACY MODE - Used when query_adapter is None
+    // =========================================================================
+    /// Document service for document queries (legacy mode)
+    pub document_service: Arc<DocumentService>,
+    /// Storage engine for vector queries (legacy mode)
+    pub storage_engine: Arc<dyn UnifiedStorageEngine>,
+    /// Vector operations service for vector searches (legacy mode)
+    pub vector_ops: Option<Arc<VectorOperationsService>>,
+    /// Graph operations service for graph traversals (legacy mode)
+    pub graph_service: Option<Arc<GraphOperationsService>>,
+    /// Observability service for logs/metrics (legacy mode)
+    pub observability_service: Option<Arc<ObservabilityService>>,
+    /// Query decomposer (legacy mode)
+    pub decomposer: Arc<QueryDecomposer>,
+    /// Parallel executor for multi-model queries (legacy mode)
+    pub executor: Arc<ParallelExecutor>,
+    /// Result fuser (legacy mode)
+    pub fuser: Arc<ResultFuser>,
+    /// Configuration (legacy mode)
+    pub config: UnifiedQueryConfig,
+    /// Federated query context for SQL with multi-model extensions (legacy mode)
+    pub federated_context: Option<Arc<FederatedQueryContext>>,
+    /// Federated parser for detecting multi-model query patterns (legacy mode)
+    federated_parser: Arc<FederatedParser>,
 }
 
 impl UnifiedQueryApiState {
+    /// Create a new state with only the query adapter (preferred mode)
+    ///
+    /// When using this constructor, all queries route through the adapter.
+    /// The legacy fields are initialized with placeholder values that won't be used.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let adapter = Arc::new(QueryFacadeAdapter::new(facade));
+    /// let state = UnifiedQueryApiState::new_with_adapter(adapter, document_service, storage_engine);
+    /// ```
+    #[cfg(feature = "unified-facade-routing")]
+    pub fn new_with_adapter(
+        adapter: Arc<QueryFacadeAdapter>,
+        document_service: Arc<DocumentService>,
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+    ) -> Self {
+        let config = UnifiedQueryConfig::default();
+        Self {
+            query_adapter: Some(adapter),
+            // Legacy fields (not used when adapter is present, but required for struct)
+            document_service,
+            storage_engine,
+            vector_ops: None,
+            graph_service: None,
+            observability_service: None,
+            decomposer: Arc::new(QueryDecomposer::new()),
+            executor: Arc::new(ParallelExecutor::new(1)), // Minimal, not used
+            fuser: Arc::new(ResultFuser::new(config.default_fusion.clone())),
+            config,
+            federated_context: None,
+            federated_parser: Arc::new(FederatedParser::new()),
+        }
+    }
+
     /// Create a new unified query API state (minimal, for backwards compatibility)
+    ///
+    /// # Deprecated
+    ///
+    /// When `unified-facade-routing` is enabled, prefer `new_with_adapter()` instead.
     pub fn new(
         document_service: Arc<DocumentService>,
         storage_engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Self {
         let config = UnifiedQueryConfig::default();
         Self {
+            query_adapter: None,
             document_service,
             storage_engine,
             vector_ops: None,
@@ -140,11 +210,14 @@ impl UnifiedQueryApiState {
             config,
             federated_context: None,
             federated_parser: Arc::new(FederatedParser::new()),
-            query_adapter: None,
         }
     }
 
-    /// Create a new unified query API state with all services
+    /// Create a new unified query API state with all services (legacy mode)
+    ///
+    /// # Deprecated
+    ///
+    /// When `unified-facade-routing` is enabled, prefer `new_with_adapter()` instead.
     pub fn new_with_services(
         document_service: Arc<DocumentService>,
         storage_engine: Arc<dyn UnifiedStorageEngine>,
@@ -154,6 +227,7 @@ impl UnifiedQueryApiState {
     ) -> Self {
         let config = UnifiedQueryConfig::default();
         Self {
+            query_adapter: None,
             document_service,
             storage_engine,
             vector_ops,
@@ -165,11 +239,10 @@ impl UnifiedQueryApiState {
             config,
             federated_context: None,
             federated_parser: Arc::new(FederatedParser::new()),
-            query_adapter: None,
         }
     }
 
-    /// Create a new unified query API state with federated query context
+    /// Create a new unified query API state with federated query context (legacy mode)
     ///
     /// This enables SQL with multi-model extensions like:
     /// - VECTOR_SEARCH('collection', vector, top_k)
@@ -177,6 +250,10 @@ impl UnifiedQueryApiState {
     /// - DOCUMENT_QUERY('collection', filter)
     /// - LOGS('namespace'), METRICS('namespace')
     /// - pgvector-compatible <-> operator
+    ///
+    /// # Deprecated
+    ///
+    /// When `unified-facade-routing` is enabled, prefer `new_with_adapter()` instead.
     pub fn new_with_federated(
         document_service: Arc<DocumentService>,
         storage_engine: Arc<dyn UnifiedStorageEngine>,
@@ -189,6 +266,7 @@ impl UnifiedQueryApiState {
         let federated_context = Arc::new(FederatedQueryContext::new(multimodel_storage));
 
         Self {
+            query_adapter: None,
             document_service,
             storage_engine,
             vector_ops,
@@ -200,7 +278,6 @@ impl UnifiedQueryApiState {
             config,
             federated_context: Some(federated_context),
             federated_parser: Arc::new(FederatedParser::new()),
-            query_adapter: None,
         }
     }
 
@@ -220,6 +297,16 @@ impl UnifiedQueryApiState {
     }
 
     /// Check if a query should be routed to the federated query engine
+    ///
+    /// # Deprecated
+    ///
+    /// This method is deprecated. When the `unified-facade-routing` feature is enabled,
+    /// routing is handled by `QueryFacadeAdapter` instead. Use `with_query_adapter()`
+    /// to configure the adapter for automatic routing.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use QueryFacadeAdapter for routing when unified-facade-routing feature is enabled"
+    )]
     fn should_use_federated(&self, query: &str) -> bool {
         // Check for multi-model SQL extensions
         let query_upper = query.to_uppercase();
@@ -366,7 +453,10 @@ pub fn create_router() -> Router<UnifiedQueryApiState> {
 /// POST /api/v1/unified/execute
 ///
 /// This endpoint intelligently routes queries based on content:
-/// - Queries with multi-model extensions (VECTOR_SEARCH, GRAPH_QUERY, etc.) are routed to FederatedQueryContext
+/// - When `unified-facade-routing` feature is enabled and adapter is available,
+///   all queries route through `QueryFacadeAdapter.federated_query()`
+/// - Otherwise, queries with multi-model extensions (VECTOR_SEARCH, GRAPH_QUERY, etc.)
+///   are routed to FederatedQueryContext
 /// - Standard SQL queries use the existing QueryDecomposer
 ///
 /// Request body:
@@ -395,9 +485,18 @@ async fn execute_query(
     info!("Executing unified query: {}", request.query);
     let start = Instant::now();
 
-    // Check if query should use federated engine
+    // When unified-facade-routing is enabled and adapter is available, use it for all queries
+    #[cfg(feature = "unified-facade-routing")]
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Routing query through QueryFacadeAdapter");
+        return execute_query_via_adapter(adapter, &request, start).await;
+    }
+
+    // Fallback: Check if query should use federated engine
+    #[allow(deprecated)]
     if state.should_use_federated(&request.query) {
         debug!("Routing query to federated engine");
+        #[allow(deprecated)]
         return execute_federated_query_internal(&state, &request, start).await;
     }
 
@@ -480,9 +579,122 @@ async fn execute_query(
     Ok(JsonResponse(response))
 }
 
+/// Execute query through the unified QueryFacadeAdapter
+///
+/// This function routes the query through the facade for consistent execution
+/// across all query paths (REST, gRPC, internal).
+#[cfg(feature = "unified-facade-routing")]
+async fn execute_query_via_adapter(
+    adapter: &QueryFacadeAdapter,
+    request: &ExecuteQueryRequest,
+    start: std::time::Instant,
+) -> ApiResult<JsonResponse<QueryResultResponse>> {
+    let result = adapter.federated_query(&request.query)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Query execution failed: {}", e)))?;
+
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    // Convert QueryResult to QueryResultResponse
+    let response = transform_query_result_to_response(result, elapsed_ms, request.limit);
+
+    info!(
+        "Query via adapter executed in {:.2}ms, returned {} records",
+        elapsed_ms, response.records.len()
+    );
+
+    Ok(JsonResponse(response))
+}
+
+/// Transform QueryResult from facade to QueryResultResponse for REST API
+///
+/// This function handles backward-compatible conversion from the unified
+/// QueryResult type to the REST API response format.
+fn transform_query_result_to_response(
+    result: crate::query::facade::QueryResult,
+    elapsed_ms: f64,
+    limit: Option<u32>,
+) -> QueryResultResponse {
+    use crate::query::facade::QueryResultData;
+
+    let limit = limit.unwrap_or(100) as usize;
+
+    let records: Vec<UnifiedRecordResponse> = match result.data {
+        QueryResultData::Rows(rows) => {
+            rows.into_iter()
+                .take(limit)
+                .enumerate()
+                .map(|(i, row)| UnifiedRecordResponse {
+                    id: row.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("row_{}", i)),
+                    source_model: "unified".to_string(),
+                    data: row,
+                    score: None,
+                    metadata: HashMap::new(),
+                })
+                .collect()
+        }
+        QueryResultData::VectorResults(matches) => {
+            matches.into_iter()
+                .take(limit)
+                .map(|m| {
+                    let metadata = m.metadata
+                        .and_then(|v| v.as_object().cloned())
+                        .map(|obj| {
+                            obj.into_iter()
+                                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    UnifiedRecordResponse {
+                        id: m.id,
+                        source_model: "vector".to_string(),
+                        data: serde_json::json!({ "score": m.score }),
+                        score: Some(m.score as f64),
+                        metadata,
+                    }
+                })
+                .collect()
+        }
+        QueryResultData::Graph(graph_result) => {
+            graph_result.nodes.into_iter()
+                .take(limit)
+                .enumerate()
+                .map(|(i, node)| UnifiedRecordResponse {
+                    id: format!("node_{}", i),
+                    source_model: "graph".to_string(),
+                    data: node,
+                    score: None,
+                    metadata: HashMap::new(),
+                })
+                .collect()
+        }
+        QueryResultData::Empty => vec![],
+    };
+
+    let metrics_info = result.metrics.unwrap_or_default();
+
+    QueryResultResponse {
+        total_count: Some(records.len() as u64),
+        records_returned: records.len() as u64,
+        records,
+        metrics: QueryMetricsResponse {
+            total_time_ms: elapsed_ms,
+            sub_query_times: vec![],
+            records_scanned: metrics_info.results_scanned as u64,
+            records_returned: metrics_info.results_returned as u64,
+        },
+    }
+}
+
 /// Execute a programmatic multi-model query
 ///
 /// POST /api/v1/unified/multi-model
+///
+/// This endpoint converts programmatic multi-model queries to federated SQL
+/// and routes through the unified adapter for consistent execution.
 ///
 /// Request body:
 /// ```json
@@ -514,10 +726,156 @@ async fn execute_multi_model_query(
     Json(request): Json<MultiModelQueryRequest>,
 ) -> ApiResult<JsonResponse<QueryResultResponse>> {
     use std::time::Instant;
-    use crate::query::unified::ast::{ModelOperation, QueryComponent};
 
     info!("Executing multi-model query with {} components", request.components.len());
     let start = Instant::now();
+
+    // When unified-facade-routing is enabled and adapter is available, use it
+    #[cfg(feature = "unified-facade-routing")]
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Routing multi-model query through QueryFacadeAdapter");
+        return execute_multi_model_via_adapter(adapter, &request, start).await;
+    }
+
+    // Fallback: use legacy execution path
+    #[allow(deprecated)]
+    execute_multi_model_legacy(&state, &request, start).await
+}
+
+/// Execute multi-model query through the unified QueryFacadeAdapter
+///
+/// Converts the programmatic multi-model query to a federated SQL query
+/// and routes through the adapter for consistent execution.
+#[cfg(feature = "unified-facade-routing")]
+async fn execute_multi_model_via_adapter(
+    adapter: &QueryFacadeAdapter,
+    request: &MultiModelQueryRequest,
+    start: std::time::Instant,
+) -> ApiResult<JsonResponse<QueryResultResponse>> {
+    // Convert multi-model request to federated SQL
+    let sql = convert_multi_model_to_sql(request)?;
+    debug!("Converted multi-model query to SQL: {}", sql);
+
+    let result = adapter.federated_query(&sql)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Multi-model query failed: {}", e)))?;
+
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    // Convert QueryResult to QueryResultResponse
+    let response = transform_query_result_to_response(result, elapsed_ms, request.limit);
+
+    info!(
+        "Multi-model query via adapter executed in {:.2}ms, returned {} records",
+        elapsed_ms, response.records.len()
+    );
+
+    Ok(JsonResponse(response))
+}
+
+/// Convert a programmatic multi-model query to federated SQL
+///
+/// Generates SQL with multi-model extensions (VECTOR_SEARCH, GRAPH_QUERY, etc.)
+/// that can be executed through the federated query engine.
+#[cfg(feature = "unified-facade-routing")]
+fn convert_multi_model_to_sql(request: &MultiModelQueryRequest) -> ApiResult<String> {
+    let mut sql_parts = Vec::new();
+
+    for component in &request.components {
+        let sql_part = match component.component_type.as_str() {
+            "vector" => {
+                let collection = component.config.get("collection")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+                let query_vector = component.config.get("query_vector")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_f64())
+                            .map(|f| f.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                let top_k = component.config.get("top_k")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10);
+
+                format!("SELECT * FROM VECTOR_SEARCH('{}', '[{}]', {})", collection, query_vector, top_k)
+            }
+            "document" => {
+                let collection = component.config.get("collection")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+                let filter = component.config.get("filter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("true");
+
+                format!("SELECT * FROM DOCUMENT_QUERY('{}', '{}')", collection, filter)
+            }
+            "graph" => {
+                let graph = component.config.get("graph")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+                let cypher = component.config.get("cypher")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("MATCH (n) RETURN n");
+
+                format!("SELECT * FROM GRAPH_QUERY('{}: {}')", graph, cypher)
+            }
+            "log" => {
+                let namespace = component.config.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+
+                format!("SELECT * FROM LOGS('{}')", namespace)
+            }
+            "metric" => {
+                let namespace = component.config.get("namespace")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+
+                format!("SELECT * FROM METRICS('{}')", namespace)
+            }
+            unknown => {
+                return Err(ApiError::InvalidArgument(format!(
+                    "Unknown component type: {}",
+                    unknown
+                )));
+            }
+        };
+        sql_parts.push(sql_part);
+    }
+
+    // Combine with UNION based on fusion strategy
+    let combined_sql = if sql_parts.len() == 1 {
+        sql_parts.into_iter().next().unwrap_or_default()
+    } else {
+        // For intersection/union strategies, use UNION (federated engine handles fusion)
+        sql_parts.join(" UNION ALL ")
+    };
+
+    // Add LIMIT if specified
+    let final_sql = if let Some(limit) = request.limit {
+        format!("{} LIMIT {}", combined_sql, limit)
+    } else {
+        combined_sql
+    };
+
+    Ok(final_sql)
+}
+
+/// Legacy execution path for multi-model queries (pre-adapter)
+///
+/// This function is deprecated and will be removed once unified-facade-routing
+/// is enabled by default.
+#[deprecated(note = "Use execute_multi_model_via_adapter instead when unified-facade-routing is enabled")]
+async fn execute_multi_model_legacy(
+    state: &UnifiedQueryApiState,
+    request: &MultiModelQueryRequest,
+    start: std::time::Instant,
+) -> ApiResult<JsonResponse<QueryResultResponse>> {
+    use crate::query::unified::ast::{ModelOperation, QueryComponent};
 
     // Parse fusion strategy
     let fusion_strategy = parse_fusion_strategy(&request.fusion_strategy);
@@ -720,6 +1078,9 @@ fn parse_path_filters(filter_str: &str) -> Vec<PathFilter> {
 ///
 /// POST /api/v1/unified/explain
 ///
+/// When `unified-facade-routing` is enabled, routes through the adapter's
+/// explain method for consistent behavior across all query paths.
+///
 /// Request body:
 /// ```json
 /// {
@@ -732,6 +1093,48 @@ async fn explain_query(
 ) -> ApiResult<JsonResponse<ExplainResponse>> {
     info!("Explaining query: {}", request.query);
 
+    // When unified-facade-routing is enabled and adapter is available, use it
+    #[cfg(feature = "unified-facade-routing")]
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Explaining query through QueryFacadeAdapter");
+        return explain_query_via_adapter(adapter, &request);
+    }
+
+    // Fallback: use legacy decomposer path
+    #[allow(deprecated)]
+    explain_query_legacy(&state, &request)
+}
+
+/// Explain query through the unified QueryFacadeAdapter
+#[cfg(feature = "unified-facade-routing")]
+fn explain_query_via_adapter(
+    adapter: &QueryFacadeAdapter,
+    request: &ExecuteQueryRequest,
+) -> ApiResult<JsonResponse<ExplainResponse>> {
+    let explain_result = adapter.explain(&request.query)
+        .map_err(|e| ApiError::Internal(format!("Explain failed: {}", e)))?;
+
+    let response = ExplainResponse {
+        components: explain_result.components.into_iter().map(|c| {
+            ComponentPlanResponse {
+                model: c.model,
+                estimated_cost: c.estimated_cost,
+                parallelizable: c.parallelizable,
+            }
+        }).collect(),
+        fusion_strategy: explain_result.fusion_strategy,
+        estimated_total_cost: explain_result.estimated_total_cost,
+    };
+
+    Ok(JsonResponse(response))
+}
+
+/// Legacy explain path using QueryDecomposer
+#[deprecated(note = "Use explain_query_via_adapter instead when unified-facade-routing is enabled")]
+fn explain_query_legacy(
+    state: &UnifiedQueryApiState,
+    request: &ExecuteQueryRequest,
+) -> ApiResult<JsonResponse<ExplainResponse>> {
     // Decompose the query
     let multi_model_query = match state.decomposer.decompose(&request.query) {
         Ok(q) => q,
@@ -851,6 +1254,7 @@ async fn execute_federated_query(
         None => {
             warn!("Federated query context not configured, falling back to standard execution");
             // Convert to standard query response format
+            #[allow(deprecated)]
             let standard_result = execute_federated_query_internal(&state, &request, start).await?;
             return Ok(JsonResponse(FederatedQueryResponse {
                 records: standard_result.0.records.into_iter().map(|r| FederatedRecordResponse {
@@ -939,6 +1343,16 @@ async fn execute_federated_query(
 }
 
 /// Internal function to execute federated query through FederatedQueryContext
+///
+/// # Deprecated
+///
+/// This function is deprecated. When the `unified-facade-routing` feature is enabled,
+/// use `execute_query_via_adapter()` instead which routes through `QueryFacadeAdapter`.
+/// This function will be removed in a future version.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use execute_query_via_adapter or execute_federated_via_adapter instead"
+)]
 async fn execute_federated_query_internal(
     state: &UnifiedQueryApiState,
     request: &ExecuteQueryRequest,

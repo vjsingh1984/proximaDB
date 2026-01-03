@@ -29,7 +29,7 @@
 pub mod adapter;
 pub mod strategies;
 
-pub use adapter::QueryFacadeAdapter;
+pub use adapter::{QueryFacadeAdapter, ExplainResult, ExplainComponent};
 pub use strategies::{
     ColumnarStrategy, DocumentStrategy, GraphStrategy, ObservabilityStrategy,
     SqlStrategy, VectorSearchStrategy,

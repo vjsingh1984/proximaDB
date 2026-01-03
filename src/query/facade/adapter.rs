@@ -33,12 +33,40 @@ use std::time::Instant;
 use anyhow::{Result, anyhow};
 use tracing::{debug, instrument};
 
+use serde::{Deserialize, Serialize};
+
 use crate::proto::proximadb_v1::{
     VectorSearchRequest, VectorOperationResponse, SearchResult, SearchVectorRecord,
 };
 use super::{
-    UnifiedQueryFacade, QueryRequest, QueryResult, QueryResultData, VectorMatch,
+    UnifiedQueryFacade, QueryRequest, QueryResult, QueryResultData,
 };
+
+/// Result of explaining a query's execution plan
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainResult {
+    /// Components involved in the query
+    pub components: Vec<ExplainComponent>,
+    /// Fusion strategy to be used
+    pub fusion_strategy: String,
+    /// Estimated total cost (max of component costs for parallel execution)
+    pub estimated_total_cost: f64,
+    /// Name of the strategy that will handle this query
+    pub strategy_name: String,
+    /// Whether this is a multi-model query
+    pub is_multi_model: bool,
+}
+
+/// Execution plan component for a single data model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainComponent {
+    /// Data model (Vector, Graph, Document, Observability, Relational)
+    pub model: String,
+    /// Estimated execution cost
+    pub estimated_cost: f64,
+    /// Whether this component can be parallelized with others
+    pub parallelizable: bool,
+}
 
 /// Adapter for routing protocol-specific requests through UnifiedQueryFacade
 ///
@@ -154,6 +182,106 @@ impl QueryFacadeAdapter {
         self.facade.execute(query_request).await
     }
 
+    /// Explain a query's execution plan without executing it
+    ///
+    /// Analyzes the query and returns the planned execution strategy,
+    /// estimated costs, and component breakdown.
+    #[instrument(skip(self), fields(sql_len = sql.len()))]
+    pub fn explain(&self, sql: &str) -> Result<ExplainResult> {
+        debug!("Explaining query via adapter");
+
+        // Create a federated query request to analyze
+        let query_request = QueryRequest::federated(sql);
+
+        // Find which strategy would handle this query
+        let strategy_name = self.facade.strategy_names()
+            .into_iter()
+            .find(|name| {
+                // Check if this strategy can handle the query type
+                *name == "federated" || *name == "sql" || *name == "vector"
+            })
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Parse the query to detect multi-model extensions
+        let sql_upper = sql.to_uppercase();
+        let mut components = Vec::new();
+        let mut estimated_cost: f64 = 1.0;
+
+        // Detect VECTOR_SEARCH
+        if sql_upper.contains("VECTOR_SEARCH") || sql.contains("<->") || sql.contains("::vector") {
+            components.push(ExplainComponent {
+                model: "Vector".to_string(),
+                estimated_cost: 1.0,
+                parallelizable: true,
+            });
+            estimated_cost = estimated_cost.max(1.0_f64);
+        }
+
+        // Detect GRAPH_QUERY
+        if sql_upper.contains("GRAPH_QUERY") {
+            components.push(ExplainComponent {
+                model: "Graph".to_string(),
+                estimated_cost: 3.0,
+                parallelizable: true,
+            });
+            estimated_cost = estimated_cost.max(3.0_f64);
+        }
+
+        // Detect DOCUMENT_QUERY
+        if sql_upper.contains("DOCUMENT_QUERY") {
+            components.push(ExplainComponent {
+                model: "Document".to_string(),
+                estimated_cost: 2.0,
+                parallelizable: true,
+            });
+            estimated_cost = estimated_cost.max(2.0_f64);
+        }
+
+        // Detect LOGS/METRICS
+        if sql_upper.contains("LOGS(") || sql_upper.contains("METRICS(") {
+            components.push(ExplainComponent {
+                model: "Observability".to_string(),
+                estimated_cost: 2.5,
+                parallelizable: true,
+            });
+            estimated_cost = estimated_cost.max(2.5_f64);
+        }
+
+        // If no multi-model extensions detected, it's a standard SQL query
+        if components.is_empty() {
+            components.push(ExplainComponent {
+                model: "Relational".to_string(),
+                estimated_cost: 1.0,
+                parallelizable: false,
+            });
+        }
+
+        // Detect fusion strategy from query (if UNION is present)
+        let fusion_strategy = if sql_upper.contains("UNION ALL") {
+            "Union".to_string()
+        } else if sql_upper.contains("INTERSECT") {
+            "Intersection".to_string()
+        } else if components.len() > 1 {
+            "Intersection".to_string() // Default for multi-model
+        } else {
+            "None".to_string()
+        };
+
+        Ok(ExplainResult {
+            components,
+            fusion_strategy,
+            estimated_total_cost: estimated_cost,
+            strategy_name,
+            is_multi_model: sql_upper.contains("VECTOR_SEARCH")
+                || sql_upper.contains("GRAPH_QUERY")
+                || sql_upper.contains("DOCUMENT_QUERY")
+                || sql_upper.contains("LOGS(")
+                || sql_upper.contains("METRICS(")
+                || sql.contains("<->"),
+        })
+    }
+
     /// Convert QueryResult to VectorOperationResponse proto
     fn query_result_to_vector_response(
         &self,
@@ -242,7 +370,7 @@ impl QueryFacadeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::facade::{FacadeConfig, QueryStrategy, QueryContext};
+    use crate::query::facade::{FacadeConfig, QueryStrategy, QueryContext, VectorMatch};
     use crate::proto::proximadb_v1::SearchQuery;
     use async_trait::async_trait;
 
