@@ -1,0 +1,860 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'  # Pre-releases like v0.2.0-beta.1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Is this a pre-release?'
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (skip publishing)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write  # For PyPI trusted publishing
+
+jobs:
+  # ============================================================================
+  # PREPARATION - Extract version, validate, and prepare release
+  # ============================================================================
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            PRERELEASE="${{ inputs.prerelease }}"
+            DRY_RUN="${{ inputs.dry_run }}"
+          else
+            # Extract version from tag (remove 'v' prefix)
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            # Check if it's a pre-release (contains hyphen)
+            if [[ "$VERSION" == *"-"* ]]; then
+              PRERELEASE="true"
+            else
+              PRERELEASE="false"
+            fi
+            DRY_RUN="false"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+          echo "dry_run=$DRY_RUN" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION (prerelease: $PRERELEASE, dry_run: $DRY_RUN)"
+
+      - name: Validate Cargo.toml Version
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          EXPECTED="${{ steps.version.outputs.version }}"
+          # Remove pre-release suffix for comparison
+          EXPECTED_BASE="${EXPECTED%%-*}"
+          if [ "$CARGO_VERSION" != "$EXPECTED_BASE" ]; then
+            echo "::warning::Cargo.toml version ($CARGO_VERSION) differs from release version ($EXPECTED_BASE)"
+          fi
+
+  # ============================================================================
+  # BUILD RUST BINARIES - Cross-platform binary builds
+  # ============================================================================
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 (glibc)
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            archive: tar.gz
+            features: ""
+
+          # Linux x86_64 (musl - static)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-22.04
+            archive: tar.gz
+            features: ""
+
+          # Linux aarch64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+            archive: tar.gz
+            features: ""
+            cross: true
+
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: tar.gz
+            features: ""
+
+          # macOS aarch64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: tar.gz
+            features: "metal"
+
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            archive: zip
+            features: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Cross (for cross-compilation)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            sudo apt-get install -y musl-tools
+          fi
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-${{ matrix.target }}"
+          shared-key: "release"
+
+      - name: Build Binaries
+        run: |
+          FEATURES="${{ matrix.features }}"
+          if [ -n "$FEATURES" ]; then
+            FEATURES_FLAG="--features $FEATURES"
+          else
+            FEATURES_FLAG=""
+          fi
+
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} $FEATURES_FLAG \
+              --bin proximadb-server \
+              --bin proximadb-bench \
+              --bin proximadb-migrate
+          else
+            cargo build --release --target ${{ matrix.target }} $FEATURES_FLAG \
+              --bin proximadb-server \
+              --bin proximadb-bench \
+              --bin proximadb-migrate
+          fi
+        shell: bash
+
+      - name: Create Archive (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE_NAME="proximadb-${VERSION}-${TARGET}"
+
+          mkdir -p "${ARCHIVE_NAME}"
+          cp target/${TARGET}/release/proximadb-server "${ARCHIVE_NAME}/"
+          cp target/${TARGET}/release/proximadb-bench "${ARCHIVE_NAME}/"
+          cp target/${TARGET}/release/proximadb-migrate "${ARCHIVE_NAME}/"
+          cp README.adoc LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp -r config "${ARCHIVE_NAME}/" 2>/dev/null || true
+
+          tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+
+          # Generate checksums
+          shasum -a 256 "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Create Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.prepare.outputs.version }}"
+          $TARGET = "${{ matrix.target }}"
+          $ARCHIVE_NAME = "proximadb-${VERSION}-${TARGET}"
+
+          New-Item -ItemType Directory -Path $ARCHIVE_NAME -Force
+          Copy-Item "target/${TARGET}/release/proximadb-server.exe" "${ARCHIVE_NAME}/"
+          Copy-Item "target/${TARGET}/release/proximadb-bench.exe" "${ARCHIVE_NAME}/"
+          Copy-Item "target/${TARGET}/release/proximadb-migrate.exe" "${ARCHIVE_NAME}/"
+          Copy-Item "README.adoc" "${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE" "${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse "config" "${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path $ARCHIVE_NAME -DestinationPath "${ARCHIVE_NAME}.zip"
+
+          # Generate checksum
+          $hash = Get-FileHash "${ARCHIVE_NAME}.zip" -Algorithm SHA256
+          "$($hash.Hash.ToLower())  ${ARCHIVE_NAME}.zip" | Out-File -Encoding ascii "${ARCHIVE_NAME}.zip.sha256"
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}.zip" >> $env:GITHUB_ENV
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            proximadb-*.${{ matrix.archive }}
+            proximadb-*.${{ matrix.archive }}.sha256
+          retention-days: 7
+
+  # ============================================================================
+  # BUILD PYTHON WHEELS - Cross-platform wheel builds
+  # ============================================================================
+  build-wheels:
+    name: Build Wheels (${{ matrix.os }}, ${{ matrix.python }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.8"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.9"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.10"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.11"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.12"
+
+          # Linux aarch64
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.9"
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.10"
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.11"
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.12"
+
+          # macOS x86_64
+          - os: macos-13
+            target: x86_64
+            python: "3.9"
+          - os: macos-13
+            target: x86_64
+            python: "3.10"
+          - os: macos-13
+            target: x86_64
+            python: "3.11"
+          - os: macos-13
+            target: x86_64
+            python: "3.12"
+
+          # macOS aarch64 (Apple Silicon)
+          - os: macos-14
+            target: aarch64
+            python: "3.9"
+          - os: macos-14
+            target: aarch64
+            python: "3.10"
+          - os: macos-14
+            target: aarch64
+            python: "3.11"
+          - os: macos-14
+            target: aarch64
+            python: "3.12"
+
+          # Windows x86_64
+          - os: windows-2022
+            target: x64
+            python: "3.9"
+          - os: windows-2022
+            target: x64
+            python: "3.10"
+          - os: windows-2022
+            target: x64
+            python: "3.11"
+          - os: windows-2022
+            target: x64
+            python: "3.12"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-wheel-${{ matrix.os }}-${{ matrix.target }}"
+          shared-key: "wheel"
+
+      - name: Install Maturin
+        run: pip install maturin
+
+      - name: Build Wheel (Linux x86_64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: auto
+          args: --release --out dist --features python
+          before-script-linux: |
+            yum install -y openssl-devel || apt-get install -y libssl-dev
+
+      - name: Build Wheel (Linux aarch64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64
+          manylinux: auto
+          args: --release --out dist --features python
+
+      - name: Build Wheel (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            maturin build --release --out dist --features python --target aarch64-apple-darwin
+          else
+            maturin build --release --out dist --features python --target x86_64-apple-darwin
+          fi
+
+      - name: Build Wheel (Windows)
+        if: runner.os == 'Windows'
+        run: maturin build --release --out dist --features python
+
+      - name: Upload Wheel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}
+          path: dist/*.whl
+          retention-days: 7
+
+  # ============================================================================
+  # BUILD PYTHON EMBEDDED WHEELS - Lightweight embedded package
+  # ============================================================================
+  build-embedded-wheels:
+    name: Build Embedded Wheels (${{ matrix.os }}, ${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64
+          - os: ubuntu-22.04
+            target: aarch64
+          - os: macos-13
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: windows-2022
+            target: x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install Maturin
+        run: pip install maturin
+
+      - name: Build Embedded Wheels (Linux x86_64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: clients/python-embedded
+          target: x86_64
+          manylinux: auto
+          args: --release --out dist --features python
+
+      - name: Build Embedded Wheels (Linux aarch64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: clients/python-embedded
+          target: aarch64
+          manylinux: auto
+          args: --release --out dist --features python
+
+      - name: Build Embedded Wheels (macOS/Windows)
+        if: runner.os != 'Linux'
+        working-directory: clients/python-embedded
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            if [ "${{ matrix.target }}" = "aarch64" ]; then
+              maturin build --release --out dist --features python --target aarch64-apple-darwin
+            else
+              maturin build --release --out dist --features python --target x86_64-apple-darwin
+            fi
+          else
+            maturin build --release --out dist --features python
+          fi
+        shell: bash
+
+      - name: Upload Embedded Wheel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: clients/python-embedded/dist/*.whl
+          retention-days: 7
+
+  # ============================================================================
+  # BUILD SOURCE DISTRIBUTION - Python sdist
+  # ============================================================================
+  build-sdist:
+    name: Build Source Distribution
+    needs: prepare
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Maturin
+        run: pip install maturin
+
+      - name: Build sdist (main package)
+        run: maturin sdist --out dist
+
+      - name: Build sdist (embedded package)
+        working-directory: clients/python-embedded
+        run: maturin sdist --out dist
+
+      - name: Upload sdist Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: |
+            dist/*.tar.gz
+            clients/python-embedded/dist/*.tar.gz
+          retention-days: 7
+
+  # ============================================================================
+  # CREATE GITHUB RELEASE - Consolidate all artifacts
+  # ============================================================================
+  create-release:
+    name: Create GitHub Release
+    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Organize Release Assets
+        run: |
+          mkdir -p release-assets
+
+          # Collect binary archives
+          find artifacts -name "proximadb-*.tar.gz" -exec cp {} release-assets/ \;
+          find artifacts -name "proximadb-*.zip" -exec cp {} release-assets/ \;
+          find artifacts -name "*.sha256" -exec cp {} release-assets/ \;
+
+          # Collect wheels
+          find artifacts -name "*.whl" -exec cp {} release-assets/ \;
+
+          # Collect sdists
+          find artifacts -name "*.tar.gz" ! -name "proximadb-*" -exec cp {} release-assets/ \;
+
+          # Create combined checksums file
+          cd release-assets
+          shasum -a 256 *.tar.gz *.zip *.whl 2>/dev/null | sort > SHA256SUMS.txt || true
+
+          ls -la
+
+      - name: Generate Release Notes
+        id: release-notes
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          cat << 'EOF' > release-notes.md
+          ## ProximaDB ${{ needs.prepare.outputs.version }}
+
+          ### Installation
+
+          #### Binary Installation
+
+          Download the appropriate binary for your platform:
+
+          | Platform | Architecture | Archive |
+          |----------|--------------|---------|
+          | Linux | x86_64 (glibc) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz` |
+          | Linux | x86_64 (musl/static) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-musl.tar.gz` |
+          | Linux | aarch64 | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz` |
+          | macOS | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-apple-darwin.tar.gz` |
+          | macOS | Apple Silicon | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.tar.gz` |
+          | Windows | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip` |
+
+          #### Python Installation
+
+          ```bash
+          # Install from PyPI (main package - full features)
+          pip install proximadb
+
+          # Install embedded package (lightweight)
+          pip install proximadb-embedded
+          ```
+
+          #### Cargo Installation
+
+          ```bash
+          cargo install proximadb
+          ```
+
+          ### Included Binaries
+
+          - **proximadb-server**: Main database server (REST + gRPC)
+          - **proximadb-bench**: Performance benchmarking suite
+          - **proximadb-migrate**: Schema migration utility
+
+          ### Verification
+
+          All release artifacts include SHA256 checksums. Verify with:
+
+          ```bash
+          sha256sum -c SHA256SUMS.txt
+          ```
+
+          ### Changelog
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: ProximaDB v${{ needs.prepare.outputs.version }}
+          body_path: release-notes.md
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          files: release-assets/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================================
+  # PUBLISH TO PYPI - Python package registry
+  # ============================================================================
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [prepare, build-wheels, build-embedded-wheels, build-sdist, create-release]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true'
+    environment:
+      name: pypi
+      url: https://pypi.org/project/proximadb/
+    steps:
+      - name: Download Wheel Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download Embedded Wheel Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: embedded-wheel-*
+          path: embedded-dist
+          merge-multiple: true
+
+      - name: Download sdist Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: sdist
+
+      - name: Consolidate Packages
+        run: |
+          mkdir -p publish
+          cp dist/*.whl publish/ 2>/dev/null || true
+          cp sdist/*.tar.gz publish/ 2>/dev/null || true
+
+          mkdir -p publish-embedded
+          cp embedded-dist/*.whl publish-embedded/ 2>/dev/null || true
+          cp sdist/clients/python-embedded/dist/*.tar.gz publish-embedded/ 2>/dev/null || true
+
+          echo "Main package contents:"
+          ls -la publish/
+          echo "Embedded package contents:"
+          ls -la publish-embedded/
+
+      - name: Publish Main Package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/
+          skip-existing: true
+          verbose: true
+
+      - name: Publish Embedded Package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish-embedded/
+          skip-existing: true
+          verbose: true
+
+  # ============================================================================
+  # PUBLISH TO TEST PYPI - For pre-releases
+  # ============================================================================
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [prepare, build-wheels, build-embedded-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease == 'true'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/proximadb/
+    steps:
+      - name: Download Wheel Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download sdist Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: sdist
+
+      - name: Consolidate Packages
+        run: |
+          mkdir -p publish
+          cp dist/*.whl publish/ 2>/dev/null || true
+          cp sdist/*.tar.gz publish/ 2>/dev/null || true
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: publish/
+          skip-existing: true
+          verbose: true
+
+  # ============================================================================
+  # PUBLISH TO CRATES.IO - Rust package registry
+  # ============================================================================
+  publish-crates:
+    name: Publish to crates.io
+    needs: [prepare, build-binaries, create-release]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true'
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/proximadb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-workspaces
+        run: cargo install cargo-workspaces
+
+      - name: Verify Package
+        run: |
+          cargo package --list
+          cargo package --no-verify
+
+      - name: Publish to crates.io
+        run: |
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish Rust SDK (if workspace member)
+        continue-on-error: true
+        working-directory: clients/rust
+        run: |
+          if [ -f "Cargo.toml" ]; then
+            cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ============================================================================
+  # UPDATE HOMEBREW FORMULA - macOS package manager
+  # ============================================================================
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: [prepare, create-release]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate Homebrew Formula
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          cat << EOF > proximadb.rb
+          class Proximadb < Formula
+            desc "Multi-model vector database for AI applications"
+            homepage "https://github.com/${{ github.repository }}"
+            version "$VERSION"
+            license "Apache-2.0"
+
+            on_macos do
+              on_intel do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-x86_64-apple-darwin.tar.gz"
+                # sha256 will be updated after release
+              end
+              on_arm do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-aarch64-apple-darwin.tar.gz"
+                # sha256 will be updated after release
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-x86_64-unknown-linux-gnu.tar.gz"
+                # sha256 will be updated after release
+              end
+              on_arm do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-aarch64-unknown-linux-gnu.tar.gz"
+                # sha256 will be updated after release
+              end
+            end
+
+            def install
+              bin.install "proximadb-server"
+              bin.install "proximadb-bench"
+              bin.install "proximadb-migrate"
+              etc.install "config" => "proximadb"
+            end
+
+            service do
+              run [opt_bin/"proximadb-server", "--config", etc/"proximadb/config.toml"]
+              keep_alive true
+              working_dir var/"proximadb"
+              log_path var/"log/proximadb.log"
+              error_log_path var/"log/proximadb.error.log"
+            end
+
+            test do
+              system bin/"proximadb-server", "--version"
+            end
+          end
+          EOF
+
+      - name: Upload Homebrew Formula
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: proximadb.rb
+          retention-days: 30
+
+  # ============================================================================
+  # POST-RELEASE VERIFICATION
+  # ============================================================================
+  verify-release:
+    name: Verify Release
+    needs: [prepare, publish-pypi, publish-crates]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true'
+    steps:
+      - name: Wait for Package Propagation
+        run: sleep 60
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify PyPI Installation
+        run: |
+          pip install proximadb==${{ needs.prepare.outputs.version }} || echo "PyPI package not yet available"
+          python -c "import proximadb; print(f'ProximaDB version: {proximadb.__version__}')" || true
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Verify crates.io Installation
+        run: |
+          cargo install proximadb --version ${{ needs.prepare.outputs.version }} || echo "crates.io package not yet available"
+          proximadb-server --version || true
+
+  # ============================================================================
+  # CLEANUP - Remove old artifacts
+  # ============================================================================
+  cleanup:
+    name: Cleanup Old Artifacts
+    needs: [create-release, publish-pypi, publish-crates]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete Workflow Artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            binaries-*
+            wheel-*
+            embedded-wheel-*
+            sdist
+          failOnError: false

@@ -252,9 +252,51 @@ aws = ["dep:aws-config", "dep:aws-sdk-s3"]
 azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
 gcp = ["dep:google-cloud-storage"]
 
-# Test gating (keeps default test runs lean)
-comprehensive_tests = []
-perf_tests = []
+# ============================================================================
+# TEST CATEGORIZATION (Strategic CI/CD Gating)
+# ============================================================================
+# These feature flags categorize tests for efficient CI pipeline execution.
+# Usage in CI:
+#   - Fast CI: cargo test --lib (unit tests only, ~2-5s)
+#   - Standard CI: cargo test (unit + integration, ~30-60s)
+#   - Full CI: cargo test --features test-full (all tests, ~5-10min)
+#
+# Test Categories:
+#   - test-unit: Unit tests in src/ (always run, fastest)
+#   - test-integration: Integration tests in tests/ (run on PRs)
+#   - test-graph: Graph database tests (test_graph_*, graph_*)
+#   - test-storage: Storage engine tests (sst, helix, viper, nova, swift, raptor)
+#   - test-query: Query engine tests (sql, unified_query, federated)
+#   - test-perf: Performance benchmarks (slow, CI-gated)
+#   - test-security: Security/penetration tests
+#   - test-cloud: Cloud backend tests (requires credentials)
+#
+# Example CI usage:
+#   cargo test --lib                           # Fast: unit tests only
+#   cargo test --features test-integration     # Standard: integration tests
+#   cargo test --features test-graph           # Graph-specific tests
+#   cargo test --features test-full            # All tests
+
+# Default test runs (lean - unit tests only in CI by default)
+comprehensive_tests = []  # Legacy flag for comprehensive tests
+perf_tests = []           # Legacy flag for performance tests
+
+# Strategic test categories for CI/CD
+test-unit = []        # Unit tests (always fast, always run)
+test-integration = [] # Integration tests (tests/*_test.rs)
+test-graph = []       # Graph database tests
+test-storage = []     # Storage engine tests
+test-query = []       # Query engine tests (SQL, unified, federated)
+test-perf = []        # Performance/benchmark tests
+test-security = []    # Security and penetration tests
+test-cloud = ["aws", "azure", "gcp"]  # Cloud backend tests
+
+# Composite test categories
+test-quick = ["test-unit"]  # Fast CI (<1min)
+test-standard = ["test-unit", "test-integration"]  # Standard CI (<5min)
+test-full = ["test-unit", "test-integration", "test-graph", "test-storage", "test-query"]  # Full CI
+
+# Cloud storage features (optional to avoid linking issues during testing)
 cloud-full = ["aws", "azure", "gcp"]
 
 # SQL frontend feature flag (default on). When disabled, the server uses legacy sql_engine path.
